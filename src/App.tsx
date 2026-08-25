@@ -41,7 +41,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "27";
+const CONTENT_REVISION = "28";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -231,6 +231,13 @@ const REVISION_RESETS: Record<string, string[]> = {
   // spine forked at the end of Part 2 and re-forked after the shared Blue
   // Cue via nwd_ending_a / nwd_ending_b.
   "27": ["nobodys-witness-draft"],
+  // Act Three ending architecture: the Part 2 A/B fork is gone (routes are
+  // emergent from flags), the trade splits 5a/5b/5c with the hold-still
+  // QTE (any input = violence -> D), the Blue Cue is skippable, the finale
+  // is a resolver dispatching A/B/C/D (+ TELL HER / SAY NOTHING inside A
+  // and B), and Endings C ("A Stopped Watch") and D ("Ten Past Nine")
+  // arrive verbatim.
+  "28": ["nobodys-witness-draft"],
 };
 
 function migrateLegacyStoryStorage() {
