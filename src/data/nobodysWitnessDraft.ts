@@ -351,7 +351,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       sceneIds: [
         "nwd_call", "nwd_rosa",
         "nwd_mill", "nwd_mill_ask", "nwd_cost", "nwd_cost_ask",
-        "nwd_bluecue",
+        "nwd_bluecue", "nwd_bluecue_walk",
         "nwd_trade", "nwd_trade_violence", "nwd_trade_5b", "nwd_trade_ask", "nwd_trade_5c",
         "nwd_finale", "nwd_finale_a", "nwd_finale_a_told", "nwd_finale_a_quiet",
         "nwd_finale_b", "nwd_finale_b_told", "nwd_finale_b_quiet", "nwd_finale_c", "nwd_finale_d",
@@ -437,6 +437,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     // — Row 7 · Act Three alt sub-scenes (ASKs + violence) —
     nwd_mill_ask: { x: 440, y: 1320 },
     nwd_cost_ask: { x: 660, y: 1320 },
+    nwd_bluecue_walk: { x: 880, y: 1320 },
     nwd_trade_violence: { x: 1100, y: 1320 },
     nwd_trade_ask: { x: 1320, y: 1320 },
     // — Row 8 · The finale family —
@@ -3949,6 +3950,18 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           text: "It came to me at the funeral. Solomon shook my hand at my father's funeral and told me he was sorry for my loss and that we'd talk when I was ready. That's the whole town, Jack. That's Blackwood in one handshake.",
         },
         {
+          id: "nwd_m_v16b",
+          characterId: "vera",
+          expression: "flat — a beat after 'a fortnight'",
+          text: "He bought that watch for twenty-odd quid, forty years ago. It stopped the winter before he died, and he never did get it fixed — the repair was forty pound, and forty pound was a fortnight.",
+        },
+        {
+          id: "nwd_m_v16c",
+          characterId: "vera",
+          expression: "quieter — a beat after 'worthless'",
+          text: "It's the only thing in that house Solomon never came for. Not because he's decent. Because it's worthless.",
+        },
+        {
           id: "nwd_m_v17",
           characterId: "vera",
           expression: "quieter — a beat after 'I'd ever have'",
@@ -4500,6 +4513,74 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           conditionRule: { requiresFlags: ["david_already_dead"] },
           text: "He didn't know it was coming. If that's — I know that's not nothing to some people. He was home. The door was shut. He never did hear it.",
         },
+      ],
+      choices: [
+        { id: "nwd_b_go", text: "Turn. Walk out.", targetSceneId: "nwd_bluecue_walk", attitudeTag: "Neutral" },
+        {
+          id: "nwd_b_fight",
+          text: "Do something about it.",
+          targetSceneId: "nwd_trade",
+          attitudeTag: "Neutral",
+          consequences: { setFlags: ["violence"], meterChanges: [{ meter: "Suspicion", delta: 4 }] },
+        },
+      ],
+      hotspots: [
+        {
+          id: "nwd_b_hs_jukebox",
+          label: "The jukebox",
+          cursor: "use",
+          bounds: { x: 4, y: 30, w: 18, h: 40 },
+          isRepeatable: true,
+          action: { type: "showText", text: "Something old and warped. It plays a recording, Desh. That's all it is." },
+        },
+        {
+          id: "nwd_b_hs_sign",
+          label: "The dead neon beer sign",
+          cursor: "look",
+          bounds: { x: 62, y: 10, w: 30, h: 26 },
+          isRepeatable: true,
+          action: { type: "showText", text: "Moe and Desh at the bar, backs to the door, silhouetted against a dead neon beer sign. Smoke hanging still in the light." },
+        },
+        {
+          id: "nwd_b_hs_jacket",
+          label: "Moe's jacket",
+          cursor: "use",
+          bounds: { x: 40, y: 40, w: 16, h: 30 },
+          isRepeatable: false,
+          examine: true,
+          examineSeconds: 2.5,
+          action: { type: "setFlag", flagSet: "knows_theyre_armed" },
+        },
+      ],
+      onEnterActions: [
+        { consequences: { setFlags: ["act3v_bluecue", "knows_david_protected_her"] } },
+        { conditionRule: { requiresFlags: ["act3v_millask"] }, consequences: { setFlags: ["timer_expired"] } },
+        { conditionRule: { requiresFlags: ["act3v_costask"] }, consequences: { setFlags: ["timer_expired"] } },
+      ],
+    },
+
+    /* ================================================================ */
+    /*  PART 4b (CONT.) — THE ROOM'S LAST WORDS (walk-out path)         */
+    /*  The fork lands after 'he never turned round': the player who    */
+    /*  swings at it doesn't hear any of this; the one who walks gets   */
+    /*  the room's final round — including the line that feeds A/B.    */
+    /* ================================================================ */
+    {
+      id: "nwd_bluecue_walk",
+      title: "Part 4b — The Blue Cue, Again",
+      background: "/img/nw2/bg-poolhall.jpg",
+      ambientAudio: "jazz",
+      particles: "smoke",
+      transition: "cut",
+      cinematic: {
+        mode: "dolly",
+        dollyDistance: 6,
+        dollyDuration: 26,
+        dimAmount: 0.3,
+        lights: [{ x: 50, y: 18, color: "#ffb761", intensity: 0.3, size: 26, pulseSeconds: 6.5, pulseAmount: 0.4 }],
+      },
+      prose: "Jack hasn't reached the door. The room talks him through it one last time — then lets him go.",
+      dialogueBeats: [
         { id: "nwd_b_j3", characterId: "jack", expression: "very quiet", text: "Why are you telling me that." },
         {
           id: "nwd_b_desh4",
@@ -4546,49 +4627,9 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           text: "It plays a recording, Desh. That's all it is. It's a recording.",
         },
       ],
-      choices: [
-        { id: "nwd_b_go", text: "Turn. Walk out.", targetSceneId: "nwd_trade", attitudeTag: "Neutral" },
-        {
-          id: "nwd_b_fight",
-          text: "Do something about it.",
-          targetSceneId: "nwd_trade",
-          attitudeTag: "Aggressive",
-          consequences: { setFlags: ["violence"], meterChanges: [{ meter: "Suspicion", delta: 4 }] },
-        },
-      ],
-      hotspots: [
-        {
-          id: "nwd_b_hs_jukebox",
-          label: "The jukebox",
-          cursor: "use",
-          bounds: { x: 4, y: 30, w: 18, h: 40 },
-          isRepeatable: true,
-          action: { type: "showText", text: "Something old and warped. It plays a recording, Desh. That's all it is." },
-        },
-        {
-          id: "nwd_b_hs_sign",
-          label: "The dead neon beer sign",
-          cursor: "look",
-          bounds: { x: 62, y: 10, w: 30, h: 26 },
-          isRepeatable: true,
-          action: { type: "showText", text: "Moe and Desh at the bar, backs to the door, silhouetted against a dead neon beer sign. Smoke hanging still in the light." },
-        },
-        {
-          id: "nwd_b_hs_jacket",
-          label: "Moe's jacket",
-          cursor: "use",
-          bounds: { x: 40, y: 40, w: 16, h: 30 },
-          isRepeatable: false,
-          examine: true,
-          examineSeconds: 2.5,
-          action: { type: "setFlag", flagSet: "knows_theyre_armed" },
-        },
-      ],
-      onEnterActions: [
-        { consequences: { setFlags: ["act3v_bluecue", "knows_david_protected_her"] } },
-        { conditionRule: { requiresFlags: ["act3v_millask"] }, consequences: { setFlags: ["timer_expired"] } },
-        { conditionRule: { requiresFlags: ["act3v_costask"] }, consequences: { setFlags: ["timer_expired"] } },
-      ],
+      choices: [{ id: "nwd_b_walk_go", text: "Out into the rain. The feed store.", targetSceneId: "nwd_trade", attitudeTag: "Neutral" }],
+      hotspots: [],
+      onEnterActions: [],
     },
 
     /* ================================================================ */
@@ -4656,6 +4697,20 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           characterId: "solomon",
           expression: "mild, not gloating — a beat after 'a decision'",
           text: "I did wonder whether you'd come today or Thursday. Thursday would have been panic. Today's a decision. I prefer decisions.",
+        },
+        {
+          id: "nwd_tr_j5a",
+          characterId: "jack",
+          expression: "flat",
+          conditionRule: { excludesFlags: ["david_already_dead", "vera_held"] },
+          text: "The forty-eight hours. You never said they stopped.",
+        },
+        {
+          id: "nwd_tr_sol5a",
+          characterId: "solomon",
+          expression: "mild, not looking up — housekeeping",
+          conditionRule: { excludesFlags: ["david_already_dead", "vera_held"] },
+          text: "I stopped counting it the moment there was a body — a clock's a way of making somebody hurry, and you'd stopped needing one. I didn't mention it because you'd have taken it as mercy, and it wasn't. It was housekeeping.",
         },
         { id: "nwd_tr_j4", characterId: "jack", expression: "direct", text: "Put it on me." },
         {
@@ -5868,6 +5923,20 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           expression: "flat, formal",
           text: "Vera Voss owes me nothing. The Kessler debt is closed. I'll say it to the two men I told, and it'll be around town by noon, which is what you actually came for.",
         },
+        { id: "nwd_t5c_j16b", characterId: "jack", expression: "not moving, flat", text: "The two men." },
+        {
+          id: "nwd_t5c_sol18b",
+          characterId: "solomon",
+          expression: "businesslike — a beat after 'Sato'",
+          text: "A man at the depot. And your Mr. Sato.",
+        },
+        { id: "nwd_t5c_s1b", characterId: "narrator", expression: "nothing. The heater.", silent: true, text: "" },
+        {
+          id: "nwd_t5c_sol18c",
+          characterId: "solomon",
+          expression: "entirely without malice",
+          text: "He's very good, incidentally. Six hundred pounds and he doesn't haggle.",
+        },
         {
           id: "nwd_t5c_s1",
           characterId: "narrator",
@@ -6784,8 +6853,14 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
         {
           id: "nwd_fc_r3",
           characterId: "rosa",
+          expression: "gently — a beat after 'the other way'",
+          text: "Doc Sato told her Thursday night. He's one of the two men Solomon tells things to. Has been for years. Only this once he ran it the other way.",
+        },
+        {
+          id: "nwd_fc_r3b",
+          characterId: "rosa",
           expression: "gently — a beat after 'the sun came up'",
-          text: "Doc Sato told her Thursday night. She was at the depot before the sun came up. She didn't wait to find out if you'd go through with it. She left so that you couldn't be talked out of it.",
+          text: "She was at the depot before the sun came up. She didn't wait to find out if you'd go through with it. She left so that you couldn't be talked out of it.",
         },
         { id: "nwd_fc_s7", characterId: "narrator", expression: "something small set on the table. A soft weight.", silent: true, text: "" },
         {
@@ -6861,7 +6936,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           id: "nwd_fc_vo9",
           characterId: "jack",
           expression: "V.O. — very quiet — a beat after 'never wore it once'",
-          text: "Her father wore that for nine years while he paid on four thousand pounds. She kept it in a shoebox and never wore it once. And she gave it to a man she'd known nine days, and got on a bus.",
+          text: "Her father wore that for nine years while he paid on four thousand pounds. She kept it in a shoebox and never wore it once. And she gave it to me — nine days, that's all I'd known her — and got on a bus.",
         },
         { id: "nwd_fc_s16", characterId: "narrator", expression: "rain. The fan.", silent: true, text: "" },
         {
