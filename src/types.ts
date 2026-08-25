@@ -98,7 +98,10 @@ export interface Hotspot {
 export interface Choice {
   id: string;
   text: string;
-  targetSceneId: string;
+  /** Where this choice navigates. Omitted for reply choices (reply: true),
+   * which answer in place without moving; the validator warns if a reply
+   * choice carries a target (it would navigate instead of replying). */
+  targetSceneId?: string;
   attitudeTag?: AttitudeTag;
   gating?: Gating;
   consequences?: Consequences;
@@ -259,6 +262,9 @@ export interface Episode {
   /** 1-based number shown on the title card ("Episode Two"). Defaults to its
    * position in the season. */
   number?: number;
+  /** Optional suffix after the number for sub-chapters ("Episode 2a"). Used
+   * when an act is split into several short episodes instead of one long one. */
+  numberSuffix?: string;
   title: string;
   /** small kicker above the title (default: the story title) */
   kicker?: string;
@@ -590,6 +596,10 @@ export interface CaseBriefing {
 
 export interface OnEnterAction {
   consequences?: Consequences;
+  /** Optional gate: the consequences apply only when the rule passes against
+   * the state at entry. Lets a scene fire a flag conditionally (e.g. a
+   * budget running out before a certain point) without a choice involved. */
+  conditionRule?: Gating;
 }
 
 /** Composure-pressure interrogation on the scene's suspect. Talking is the

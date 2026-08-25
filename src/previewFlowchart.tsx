@@ -78,12 +78,13 @@ function buildJourney(picks: Record<string, string>, qteExpire = false) {
     if (pick.quickTime && qteExpire) {
       rec(sc, pick, true);
       if (pick.timedOutConsequences) st = applyConsequences(S, pick.timedOutConsequences, st);
-      id = pick.timedOutTargetSceneId ?? pick.targetSceneId;
+      // nav is filtered on c.targetSceneId, so both fall throughs are set.
+      id = pick.timedOutTargetSceneId ?? pick.targetSceneId!;
       continue;
     }
     rec(sc, pick);
     if (pick.consequences) st = applyConsequences(S, pick.consequences, st);
-    id = pick.targetSceneId;
+    id = pick.targetSceneId!;
   }
   return { journey, ending };
 }

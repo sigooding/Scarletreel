@@ -23,9 +23,10 @@ export function plateStyle(image?: string): React.CSSProperties {
 
 const ROMAN = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"];
 
-/** "Episode Two" for small numbers, "Episode 13" beyond the spelled-out range. */
-export function episodeLabel(n: number): string {
-  return `Episode ${ROMAN[n] ?? n}`;
+/** "Episode Two" for small numbers, "Episode 13" beyond the spelled-out
+ * range. An optional suffix renders "Episode 2a" for sub-chapters. */
+export function episodeLabel(n: number, suffix?: string): string {
+  return `Episode ${ROMAN[n] ?? n}${suffix ?? ""}`;
 }
 
 function avatarNode(character: Character | undefined) {
@@ -102,7 +103,7 @@ export function SeasonScreen({
                 <div className="relative h-40 w-56 shrink-0 overflow-hidden md:w-72" style={plateStyle(poster)}>
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent to-noir-900/95" />
                   <div className="absolute left-2 top-2 border border-gold/60 bg-noir-950/85 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold">
-                    {episodeLabel(ep.number ?? i + 1)}
+                    {episodeLabel(ep.number ?? i + 1, ep.numberSuffix)}
                   </div>
                   {!unlocked && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/65 text-3xl" aria-hidden>
@@ -320,7 +321,7 @@ export function EpisodeTitleCard({
           {episode.kicker ?? story.title}
         </div>
         <div className="title-card-number font-pulp mt-3 text-sm uppercase tracking-[0.5em] text-gold">
-          {episodeLabel(episode.number ?? 1)}
+          {episodeLabel(episode.number ?? 1, episode.numberSuffix)}
         </div>
         <h1 className="title-card-title font-pulp mt-2 text-5xl uppercase leading-none text-paper drop-shadow-[0_4px_18px_rgba(0,0,0,0.95)] md:text-7xl">
           {episode.title}
@@ -340,7 +341,7 @@ export function EpisodeTitleCard({
               }}
               className="pop-in border-2 border-gold bg-gold/10 px-7 py-2.5 font-pulp text-xs uppercase tracking-[0.22em] text-gold hover:bg-gold/30"
             >
-              ▸ Begin {episodeLabel(episode.number ?? 1)}
+              ▸ Begin {episodeLabel(episode.number ?? 1, episode.numberSuffix)}
             </button>
           )}
         </div>
@@ -398,7 +399,7 @@ export function NextTimeCard({
 
         <div className="mt-6 border-t border-gold/30 pt-5">
           <div className="font-pulp text-[10px] uppercase tracking-[0.4em] text-gold">
-            {episodeLabel(toEpisode.number ?? 1)}
+            {episodeLabel(toEpisode.number ?? 1, toEpisode.numberSuffix)}
           </div>
           <h2 className="font-pulp mt-1 text-3xl uppercase leading-tight text-paper md:text-4xl">{toEpisode.title}</h2>
         </div>
@@ -411,7 +412,7 @@ export function NextTimeCard({
             }}
             className="border-2 border-gold bg-gold/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold hover:bg-gold/30"
           >
-            ▸ Play {episodeLabel(toEpisode.number ?? 1)}
+            ▸ Play {episodeLabel(toEpisode.number ?? 1, toEpisode.numberSuffix)}
           </button>
           <button
             onClick={() => {
@@ -463,7 +464,7 @@ export function EpisodeEndCard({
     <div className="pop-in mt-2 border-4 border-double border-gold bg-paper p-4 text-noir-900 shadow-[0_0_60px_rgba(232,178,60,0.25)]">
       <div className="flex items-baseline justify-between gap-2 border-b border-noir-900/20 pb-1">
         <span className="font-pulp text-[11px] uppercase tracking-[0.3em] text-noir-700">
-          {episodeLabel(episode.number ?? idx + 1)} — {episode.title}
+          {episodeLabel(episode.number ?? idx + 1, episode.numberSuffix)} — {episode.title}
         </span>
         <span
           className={`font-pulp text-[10px] uppercase tracking-[0.2em] ${

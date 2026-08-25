@@ -3017,6 +3017,7 @@ function CasePlayer({
     // every backtrack was a major source of progression farming.
     if (!revisit && !restoring) {
       scene.onEnterActions?.forEach((a) => {
+        if (a.conditionRule && !meetsGating(a.conditionRule, next)) return;
         next = applyConsequences(story, a.consequences, next);
       });
     }
@@ -4795,7 +4796,7 @@ function CasePlayer({
             </span>
             {episode && (
               <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
-                {episodeLabel(episode.number ?? 1)} · {episode.title}
+                {episodeLabel(episode.number ?? 1, episode.numberSuffix)} · {episode.title}
               </span>
             )}
           </div>
@@ -6225,7 +6226,7 @@ function CasePlayer({
 
       {overlay?.type === "save" && (
         <Modal
-          title={episode ? `Save — ${episodeLabel(episode.number ?? 1)}` : "Save — choose a slot"}
+          title={episode ? `Save — ${episodeLabel(episode.number ?? 1, episode.numberSuffix)}` : "Save — choose a slot"}
           onClose={() => {
             saveThenExitRef.current = false;
             setOverlay(null);
