@@ -1,0 +1,719 @@
+import { useCallback, useEffect, useState } from "react";
+import type { AssetType, CinematicSettings, MediaAsset, Story } from "../types";
+
+/**
+ * Media assets are stored in IndexedDB instead of localStorage.
+ * localStorage is capped at ~5MB per origin in most browsers, which silently
+ * fails (or throws QuotaExceededError) the moment anyone uploads a real video
+ * clip — that was the root cause of "upload video doesn't work". IndexedDB
+ * gives every story a realistic amount of headroom for audio/video/images.
+ */
+
+const DB_NAME = "scarlet-reel-media";
+const STORE_NAME = "assets";
+const DB_VERSION = 1;
+
+const MAX_ASSET_SIZE: Record<AssetType, number> = {
+  audio: 8 * 1024 * 1024,
+  video: 20 * 1024 * 1024,
+  image: 4 * 1024 * 1024,
+};
+const MAX_TOTAL_SIZE = 60 * 1024 * 1024;
+
+type StoredAsset = MediaAsset & { storyId: string };
+
+type DesktopMediaBridge = {
+  saveUpload(payload: {
+    storyId: string;
+    assetId: string;
+    name: string;
+    mimeType: string;
+    type: AssetType;
+    bytes: ArrayBuffer;
+  }): Promise<{ url?: string; path?: string }>;
+  setFullscreen?(enabled: boolean): Promise<boolean>;
+  isFullscreen?(): Promise<boolean>;
+  setWindowSize?(width: number, height: number): Promise<{ width: number; height: number }>;
+  quit?(): Promise<void>;
+};
+
+declare global {
+  interface Window {
+    scarletReelDesktop?: DesktopMediaBridge;
+  }
+}
+
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+function openDb(): Promise<IDBDatabase> {
+  if (typeof indexedDB === "undefined") {
+    return Promise.reject(new Error("This browser does not support file storage (IndexedDB unavailable)."));
+  }
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
+        store.createIndex("storyId", "storyId", { unique: false });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error("Failed to open media database"));
+  });
+  return dbPromise;
+}
+
+/* ---------------------------- live subscriptions --------------------------- */
+// Multiple components (Media tab, per-scene dropdowns, upload buttons) all need
+// to reflect the same asset list instantly, regardless of which one triggered
+// the change. This is a minimal pub/sub keyed by story id.
+
+const listeners: Record<string, Set<() => void>> = {};
+/** Wildcard subscription key — listeners here refresh on ANY library change. */
+const ALL_LISTENERS = "*";
+
+export function subscribeAssets(storyId: string, cb: () => void): () => void {
+  (listeners[storyId] ??= new Set()).add(cb);
+  return () => {
+    listeners[storyId]?.delete(cb);
+  };
+}
+
+function notify(storyId: string) {
+  listeners[storyId]?.forEach((cb) => cb());
+  if (storyId !== ALL_LISTENERS) listeners[ALL_LISTENERS]?.forEach((cb) => cb());
+}
+
+/* --------------------------------- reads ---------------------------------- */
+
+export async function loadAssets(storyId: string): Promise<MediaAsset[]> {
+  try {
+    const db = await openDb();
+    return await new Promise<MediaAsset[]>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const index = tx.objectStore(STORE_NAME).index("storyId");
+      const req = index.getAll(IDBKeyRange.only(storyId));
+      req.onsuccess = () => {
+        const rows = (req.result as StoredAsset[]).sort((a, b) => b.uploadedAt - a.uploadedAt);
+        resolve(rows);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Load every asset in the library (optionally filtered by type), newest first.
+ * Used for the global "reuse anywhere" pickers, independent of which story an
+ * asset was uploaded in. */
+export async function loadAllAssets(assetType?: AssetType): Promise<MediaAsset[]> {
+  try {
+    const db = await openDb();
+    return await new Promise<MediaAsset[]>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).getAll();
+      req.onsuccess = () => {
+        const rows = (req.result as StoredAsset[])
+          .filter((a) => !assetType || a.type === assetType)
+          .sort((a, b) => b.uploadedAt - a.uploadedAt);
+        resolve(rows);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function getAssetType(file: File): AssetType | null {
+  if (file.type.startsWith("audio/")) return "audio";
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("image/")) return "image";
+  return null;
+}
+
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/* --------------------------------- writes --------------------------------- */
+
+async function copyUploadToDesktopGameFolder(
+  storyId: string,
+  assetId: string,
+  name: string,
+  mimeType: string,
+  type: AssetType,
+  bytes: ArrayBuffer
+): Promise<string | undefined> {
+  const bridge = typeof window !== "undefined" ? window.scarletReelDesktop : undefined;
+  if (!bridge) return undefined;
+  try {
+    const result = await bridge.saveUpload({ storyId, assetId, name, mimeType, type, bytes });
+    return result.url;
+  } catch (err) {
+    console.warn("[media] Desktop media copy failed; falling back to browser storage.", err);
+    return undefined;
+  }
+}
+
+async function copyDataUrlToDesktopGameFolder(
+  storyId: string,
+  assetId: string,
+  name: string,
+  type: AssetType,
+  dataUrl: string
+): Promise<string | undefined> {
+  if (typeof window === "undefined" || !window.scarletReelDesktop) return undefined;
+  try {
+    const res = await fetch(dataUrl);
+    const bytes = await res.arrayBuffer();
+    const mimeType = dataUrl.match(/^data:([^;,]+)/)?.[1] ?? res.headers.get("content-type") ?? `${type}/*`;
+    return await copyUploadToDesktopGameFolder(storyId, assetId, name, mimeType, type, bytes);
+  } catch (err) {
+    console.warn("[media] Desktop data URL copy failed; keeping browser storage copy.", err);
+    return undefined;
+  }
+}
+
+export async function addAsset(storyId: string, asset: MediaAsset): Promise<{ success: boolean; error?: string }> {
+  const limit = MAX_ASSET_SIZE[asset.type];
+  if (asset.size > limit) {
+    return {
+      success: false,
+      error: `${asset.type} files must be under ${(limit / 1024 / 1024).toFixed(0)}MB (this file is ${(asset.size / 1024 / 1024).toFixed(1)}MB).`,
+    };
+  }
+  try {
+    const existing = await loadAssets(storyId);
+    const currentTotal = existing.reduce((sum, a) => sum + a.size, 0);
+    if (currentTotal + asset.size > MAX_TOTAL_SIZE) {
+      return {
+        success: false,
+        error: `Story media library is full (${(MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0)}MB limit). Delete something first.`,
+      };
+    }
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).put({ ...asset, storyId } satisfies StoredAsset);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    notify(storyId);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Failed to save media file." };
+  }
+}
+
+export async function deleteAsset(storyId: string, assetId: string): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).delete(assetId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    notify(storyId);
+  } catch {
+    /* best effort — nothing else to do if delete fails */
+  }
+}
+
+/** Delete every media asset tagged to a story. Used by "permanently delete a
+ * story" when the author explicitly opts to remove its files too — by default
+ * media assets are kept in the library so they stay reusable elsewhere. */
+export async function deleteStoryAssets(storyId: string): Promise<void> {
+  try {
+    const all = await loadAssets(storyId);
+    await Promise.all(all.map((a) => deleteAsset(storyId, a.id)));
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Import and write a batch of media assets directly to IndexedDB.
+ * This is the magic step that allows cases shared between users to retain
+ * 100% of their custom graphics and sound files. */
+export async function importStoryAssets(storyId: string, assets: MediaAsset[]): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      assets.forEach(({ fileUrl: _fileUrl, ...asset }) => {
+        store.put({ ...asset, storyId } satisfies StoredAsset);
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    notify(storyId);
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * One-shot helper used by every direct "Upload" button across Studio
+ * (scene music, scene narration, scene video background, dialogue voice
+ * lines). It validates the file, converts it, stores it in the shared
+ * library, and returns a playable URL to use immediately in the field that
+ * triggered the upload — so the same file is both applied instantly AND
+ * shows up later in every asset dropdown. In Electron, the file is also copied
+ * to the game media folder while the portable base64 copy stays available for
+ * exports/imports.
+ */
+export async function uploadAsset(
+  storyId: string,
+  file: File
+): Promise<{ success: boolean; url?: string; assetId?: string; error?: string }> {
+  const type = getAssetType(file);
+  if (!type) return { success: false, error: `Unsupported file type: "${file.name}". Use an audio, video, or image file.` };
+  try {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const bytes = await file.arrayBuffer();
+    const fileUrl = await copyUploadToDesktopGameFolder(storyId, id, file.name, file.type, type, bytes);
+    const dataUrl = await fileToBase64(file);
+    const asset: MediaAsset = {
+      id,
+      name: file.name,
+      type,
+      dataUrl,
+      fileUrl,
+      size: file.size,
+      uploadedAt: Date.now(),
+    };
+    const result = await addAsset(storyId, asset);
+    return {
+      success: result.success,
+      url: result.success ? fileUrl ?? dataUrl : undefined,
+      assetId: result.success ? asset.id : undefined,
+      error: result.error,
+    };
+  } catch {
+    return { success: false, error: `Failed to process "${file.name}".` };
+  }
+}
+
+/** Resolve a compact `asset:<id>` reference into the IndexedDB data URL. */
+export async function resolveAssetReference(value?: string): Promise<string | undefined> {
+  if (!value) return undefined;
+  if (!value.startsWith("asset:")) return value;
+  const assetId = value.slice(6);
+  try {
+    const db = await openDb();
+    return await new Promise<string | undefined>((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).get(assetId);
+      req.onsuccess = () => {
+        const row = req.result as StoredAsset | undefined;
+        resolve(row ? row.fileUrl ?? row.dataUrl : undefined);
+      };
+      req.onerror = () => resolve(undefined);
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Resolve one media value against an in-memory `assetId -> dataUrl` map.
+ * `asset:<id>` becomes the data URL, `video:asset:<id>` becomes `video:<dataUrl>`.
+ * Anything else (paths, gradients, `video:` paths, already-resolved data URLs)
+ * passes through untouched. Returns `undefined` when a reference cannot be
+ * resolved yet (asset not loaded or missing). */
+export function resolveMediaValue(value: string | undefined, map: Record<string, string>): string | undefined {
+  if (!value) return value;
+  if (value.startsWith("asset:")) return map[value.slice(6)];
+  if (value.startsWith("video:asset:")) {
+    const dataUrl = map[value.slice(12)];
+    return dataUrl ? `video:${dataUrl}` : undefined;
+  }
+  return value;
+}
+
+/** Walk every media reference in a story — every field that can hold an image,
+ *  audio clip, video, `asset:<id>` or `video:asset:<id>` — and call `visit`
+ *  on it. This is the SINGLE source of truth for which fields carry media, so
+ *  the play-time resolver and the export bundler stay in lock-step as the
+ *  schema grows (acts, episodes, cinematic layers, …). Add a new media-bearing
+ *  field here once and both pick it up — that is what keeps import/export
+ *  complete.
+ *
+ *  (compactStoryMedia is type-aware — image/audio/video fallbacks differ — so
+ *  it walks fields by hand; keep its list in sync with this one.) */
+function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) => void): void {
+  const cinematic = (c?: CinematicSettings) => {
+    if (!c) return;
+    visit(c.foregroundImage);
+    c.foregroundAnimation?.frames?.forEach(visit);
+  };
+  story.scenes.forEach((sc) => {
+    visit(sc.background);
+    visit(sc.musicUrl);
+    visit(sc.sceneAudioUrl);
+    visit(sc.narrationAudioUrl);
+    cinematic(sc.cinematic);
+    sc.credits?.montage?.forEach(visit);
+    sc.dialogueBeats?.forEach((b) => {
+      visit(b.audioUrl);
+      visit(b.background);
+      cinematic(b.cinematic);
+    });
+  });
+  story.items.forEach((i) => visit(i.iconUrl));
+  story.characters.forEach((c) => {
+    visit(c.avatarUrl);
+    c.talkingFrames?.forEach(visit);
+    visit(c.talkingRest);
+  });
+  story.acts?.forEach((a) => visit(a.titleCardImage));
+  story.episodes?.forEach((ep) => {
+    visit(ep.titleCardImage);
+    visit(ep.posterImage);
+    visit(ep.titleCardMusicUrl);
+    ep.recapLines?.forEach((line) => visit(line.image));
+  });
+  visit(story.coverImage);
+  visit(story.dialogueBox?.backgroundImage);
+}
+
+/** Every IndexedDB asset id a story references (via `asset:` or `video:asset:`),
+ *  anywhere in its data — scenes, items, characters, acts, episodes, the cover
+ *  and the dialogue box. Powers play-time resolution and export bundling. */
+export function collectStoryAssetIds(story: Story): Set<string> {
+  const ids = new Set<string>();
+  visitStoryMediaRefs(story, (v) => {
+    if (!v) return;
+    if (v.startsWith("asset:")) ids.add(v.slice(6));
+    else if (v.startsWith("video:asset:")) ids.add(v.slice(12));
+  });
+  return ids;
+}
+
+/** Replace every `asset:<id>` reference inside a story with the actual data URL
+ * from IndexedDB, returning a new story (the input is never mutated). The game
+ * player and previews then only ever see real URLs. Used before playing a case,
+ * so the persisted story can stay tiny (references only) and never blow the
+ * localStorage quota. */
+export async function resolveStoryMedia(story: Story): Promise<Story> {
+  const ids = collectStoryAssetIds(story);
+
+  const map: Record<string, string> = {};
+  if (ids.size) {
+    try {
+      const db = await openDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        ids.forEach((id) => {
+          const req = store.get(id);
+          req.onsuccess = () => {
+            const row = req.result as StoredAsset | undefined;
+            if (row?.dataUrl) map[id] = row.fileUrl ?? row.dataUrl;
+          };
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch {
+      /* leave references unresolved if the store is unavailable */
+    }
+  }
+
+  const next = JSON.parse(JSON.stringify(story)) as Story;
+  const apply = (obj: unknown, key: string) => {
+    if (!obj || typeof obj !== "object") return;
+    const record = obj as Record<string, unknown>;
+    const v = record[key];
+    if (typeof v === "string") record[key] = resolveMediaValue(v, map) ?? v;
+  };
+  const applyCinematic = (c?: CinematicSettings) => {
+    if (!c) return;
+    apply(c, "foregroundImage");
+    if (c.foregroundAnimation?.frames?.length) {
+      c.foregroundAnimation.frames = c.foregroundAnimation.frames.map((f) => resolveMediaValue(f, map) ?? f);
+    }
+  };
+  next.scenes.forEach((sc) => {
+    apply(sc, "background");
+    apply(sc, "musicUrl");
+    apply(sc, "sceneAudioUrl");
+    apply(sc, "narrationAudioUrl");
+    applyCinematic(sc.cinematic);
+    if (sc.credits?.montage?.length) {
+      sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
+    }
+    sc.dialogueBeats?.forEach((b) => {
+      apply(b, "audioUrl");
+      apply(b, "background");
+      applyCinematic(b.cinematic);
+    });
+  });
+  next.items.forEach((i) => apply(i, "iconUrl"));
+  next.characters.forEach((c) => {
+    apply(c, "avatarUrl");
+    if (c.talkingFrames?.length) c.talkingFrames = c.talkingFrames.map((f) => resolveMediaValue(f, map) ?? f);
+    if (c.talkingRest) c.talkingRest = resolveMediaValue(c.talkingRest, map) ?? c.talkingRest;
+  });
+  next.acts?.forEach((a) => apply(a, "titleCardImage"));
+  next.episodes?.forEach((ep) => {
+    apply(ep, "titleCardImage");
+    apply(ep, "posterImage");
+    apply(ep, "titleCardMusicUrl");
+    ep.recapLines?.forEach((line) => apply(line, "image"));
+  });
+  apply(next, "coverImage");
+  if (next.dialogueBox) apply(next.dialogueBox, "backgroundImage");
+  return next;
+}
+
+/** Store an already-encoded data URL (e.g. a resized avatar) in the media
+ * library and hand back its `asset:<id>` reference. */
+export async function uploadDataUrlAsset(
+  storyId: string,
+  name: string,
+  type: AssetType,
+  dataUrl: string
+): Promise<{ success: boolean; assetId?: string; error?: string }> {
+  const comma = dataUrl.indexOf(",");
+  const base64Length = Math.max(0, dataUrl.length - comma - 1);
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const fileUrl = await copyDataUrlToDesktopGameFolder(storyId, id, name, type, dataUrl);
+  const asset: MediaAsset = {
+    id,
+    name,
+    type,
+    dataUrl,
+    fileUrl,
+    size: Math.round((base64Length * 3) / 4),
+    uploadedAt: Date.now(),
+  };
+  const result = await addAsset(storyId, asset);
+  return { success: result.success, assetId: result.success ? asset.id : undefined, error: result.error };
+}
+
+/** Convert any embedded base64 `data:` URLs inside a story into `asset:<id>`
+ * references (creating IndexedDB assets for ones that don't exist yet) so the
+ * story stays small enough to persist in localStorage. Legacy drafts and old
+ * exports that still embed data URLs are migrated automatically. Returns a new
+ * story; the input is never mutated. */
+export async function compactStoryMedia(story: Story): Promise<Story> {
+  const next = JSON.parse(JSON.stringify(story)) as Story;
+
+  // Safe fallback for an image/video field whose data URL can't be persisted
+  // (e.g. too large or IndexedDB unavailable). Dropping the raw base64 keeps
+  // the story small enough to persist; the author can re-upload a smaller file.
+  const IMAGE_FALLBACK = "gradient:linear-gradient(135deg,#0c0c14 0%,#2b2b3f 100%)";
+
+  let known: MediaAsset[] = [];
+  try {
+    known = await loadAssets(story.id);
+  } catch {
+    /* library unavailable — data URLs will be dropped below, not persisted */
+  }
+  const byUrl = new Map(known.map((a) => [a.dataUrl, a.id]));
+
+  const getOrCreate = async (dataUrl: string, type: AssetType, name: string): Promise<string | undefined> => {
+    const existingId = byUrl.get(dataUrl);
+    if (existingId) return existingId;
+    const result = await uploadDataUrlAsset(story.id, name, type, dataUrl);
+    if (result.success && result.assetId) {
+      byUrl.set(dataUrl, result.assetId);
+      return result.assetId;
+    }
+    return undefined;
+  };
+
+  // Always returns a persistable value: an `asset:` reference when the data can
+  // be stored, the input when it's already a path/ref, or a safe fallback when
+  // a raw data URL can't be migrated — NEVER the raw base64 itself.
+  const compact = async (value: string | undefined, type: AssetType, name: string): Promise<string | undefined> => {
+    if (!value) return value;
+    if (value.startsWith("video:data:")) {
+      const id = await getOrCreate(value.slice(6), "video", name);
+      if (id) return `video:asset:${id}`;
+      console.warn(`[media] Couldn't persist video "${name}" — dropped to keep the story saveable.`);
+      return IMAGE_FALLBACK;
+    }
+    if (value.startsWith("data:")) {
+      const id = await getOrCreate(value, type, name);
+      if (id) return `asset:${id}`;
+      console.warn(`[media] Couldn't persist ${type} "${name}" — dropped to keep the story saveable.`);
+      return type === "image" ? IMAGE_FALLBACK : undefined;
+    }
+    return value;
+  };
+
+  for (const sc of next.scenes) {
+    const bgType: AssetType = sc.background.startsWith("video:") ? "video" : "image";
+    sc.background = (await compact(sc.background, bgType, sc.title)) ?? IMAGE_FALLBACK;
+    sc.musicUrl = await compact(sc.musicUrl, "audio", sc.title);
+    sc.sceneAudioUrl = await compact(sc.sceneAudioUrl, "audio", sc.title);
+    sc.narrationAudioUrl = await compact(sc.narrationAudioUrl, "audio", sc.title);
+    if (sc.credits?.montage?.length) {
+      sc.credits.montage = (
+        await Promise.all(sc.credits.montage.map((m) => compact(m, "image", `${sc.title} montage`)))
+      ).filter((m): m is string => !!m);
+    }
+    if (sc.cinematic?.foregroundImage) {
+      sc.cinematic.foregroundImage = (await compact(sc.cinematic.foregroundImage, "image", sc.title)) || undefined;
+    }
+    if (sc.cinematic?.foregroundAnimation?.frames?.length) {
+      sc.cinematic.foregroundAnimation.frames = (
+        await Promise.all(sc.cinematic.foregroundAnimation.frames.map((f) => compact(f, "image", sc.title)))
+      ).filter((f): f is string => !!f);
+    }
+    for (const b of sc.dialogueBeats ?? []) {
+      b.audioUrl = await compact(b.audioUrl, "audio", sc.title);
+      b.background = await compact(b.background, "image", sc.title);
+      if (b.cinematic?.foregroundImage) {
+        b.cinematic.foregroundImage = (await compact(b.cinematic.foregroundImage, "image", sc.title)) || undefined;
+      }
+      if (b.cinematic?.foregroundAnimation?.frames?.length) {
+        b.cinematic.foregroundAnimation.frames = (
+          await Promise.all(b.cinematic.foregroundAnimation.frames.map((f) => compact(f, "image", sc.title)))
+        ).filter((f): f is string => !!f);
+      }
+    }
+  }
+  for (const it of next.items) {
+    it.iconUrl = await compact(it.iconUrl, "image", it.name);
+  }
+  for (const c of next.characters) {
+    c.avatarUrl = (await compact(c.avatarUrl, "image", c.name)) ?? "emoji:👤";
+    if (c.talkingFrames?.length) {
+      c.talkingFrames = (
+        await Promise.all(c.talkingFrames.map((f) => compact(f, "image", `${c.name} talking`)))
+      ).filter((f): f is string => !!f);
+    }
+    c.talkingRest = (await compact(c.talkingRest, "image", `${c.name} resting`)) || undefined;
+  }
+  for (const a of next.acts ?? []) {
+    a.titleCardImage = await compact(a.titleCardImage, "image", a.title || a.label || "act");
+  }
+  for (const ep of next.episodes ?? []) {
+    ep.titleCardImage = await compact(ep.titleCardImage, "image", ep.title || "episode");
+    ep.posterImage = await compact(ep.posterImage, "image", ep.title || "episode");
+    ep.titleCardMusicUrl = await compact(ep.titleCardMusicUrl, "audio", ep.title || "episode");
+    if (ep.recapLines?.length) {
+      for (const line of ep.recapLines) line.image = await compact(line.image, "image", ep.title || "episode");
+    }
+  }
+  next.coverImage = (await compact(next.coverImage, "image", next.title)) ?? IMAGE_FALLBACK;
+  if (next.dialogueBox?.backgroundImage) {
+    next.dialogueBox.backgroundImage =
+      (await compact(next.dialogueBox.backgroundImage, "image", `${next.title} dialogue box`)) || undefined;
+  }
+  return next;
+}
+
+/** React hook: loads every asset for `storyId` into an `assetId -> dataUrl`
+ * map (and keeps it live via the existing subscription), returning a resolver
+ * function that Studio previews use to show `asset:` references as real URLs. */
+export function useResolvedMedia(storyId: string): (value?: string) => string | undefined {
+  const [map, setMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      loadAssets(storyId).then((all) => {
+        if (cancelled) return;
+        setMap(Object.fromEntries(all.map((a) => [a.id, a.fileUrl ?? a.dataUrl])));
+      });
+    };
+    refresh();
+    const unsubscribe = subscribeAssets(storyId, refresh);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [storyId]);
+  return useCallback((value?: string) => resolveMediaValue(value, map), [map]);
+}
+
+/** React hook: the full global asset list (optionally filtered by type),
+ * kept live across every story's uploads. Used by the background picker so an
+ * image uploaded anywhere is reusable in any scene of any story. */
+export function useAllAssets(assetType?: AssetType): MediaAsset[] {
+  const [assets, setAssets] = useState<MediaAsset[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      loadAllAssets(assetType).then((all) => {
+        if (cancelled) return;
+        setAssets(all);
+      });
+    };
+    refresh();
+    const unsubscribe = subscribeAssets(ALL_LISTENERS, refresh);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [assetType]);
+  return assets;
+}
+
+/** Collect the assets a story needs for a self-contained export: its own
+ * library rows plus any `asset:` references it points at (which may live in a
+ * shared/global bucket after cross-scene reuse). */
+export async function loadStoryAssetsForExport(story: Story): Promise<MediaAsset[]> {
+  const ids = collectStoryAssetIds(story);
+
+  try {
+    const db = await openDb();
+    const all = await new Promise<StoredAsset[]>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).getAll();
+      req.onsuccess = () => resolve(req.result as StoredAsset[]);
+      req.onerror = () => reject(req.error);
+    });
+    const map = new Map<string, StoredAsset>();
+    all.forEach((a) => {
+      if (a.storyId === story.id || ids.has(a.id)) map.set(a.id, a);
+    });
+    return [...map.values()]
+      .sort((a, b) => b.uploadedAt - a.uploadedAt)
+      .map(({ fileUrl: _fileUrl, ...asset }) => asset);
+  } catch {
+    return loadAssets(story.id);
+  }
+}
+
+/** React hook: whether IndexedDB (file storage) is available in this browser.
+ * `null` while checking, then true/false. Studio surfaces a warning when
+ * storage is unavailable so uploads that can't persist are never a mystery. */
+export function useStorageAvailable(): boolean | null {
+  const [available, setAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof indexedDB === "undefined") {
+      setAvailable(false);
+      return;
+    }
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onsuccess = () => {
+      if (!cancelled) setAvailable(true);
+      try { req.result.close(); } catch { /* noop */ }
+    };
+    req.onerror = () => {
+      if (!cancelled) setAvailable(false);
+    };
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return available;
+}
+
+export const ASSET_LIMITS = MAX_ASSET_SIZE;
+export const ASSET_TOTAL_LIMIT = MAX_TOTAL_SIZE;

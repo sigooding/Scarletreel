@@ -1,0 +1,6589 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { audio, type MixChannel } from "../audio";
+import {
+  calculateGhostElements,
+  lensFlareStyle,
+  lightStyle,
+  resolveLensFlares,
+  resolveLights,
+  type ResolvedLensFlare,
+} from "../cinematic";
+import {
+  applyConsequences,
+  carryOverState,
+  characterOpinion,
+  clamp,
+  combineItems,
+  createInitialState,
+  currentEpisode,
+  effectiveChoiceGating,
+  examineZoom,
+  interrogationOutcome,
+  isPressingReply,
+  pressComposure,
+  pressReaction,
+  steadyComposure,
+  gatingHint,
+  heatBustTarget,
+  isEpisodic,
+  meetsGating,
+  METER_LABELS,
+  nextEpisode,
+  prettyFlagName,
+  presentationConsequences,
+  readSave,
+  readSaves,
+  AUTO_SLOT,
+  recordEnding,
+  recordEpisodeProgress,
+  recordMemory,
+  recordPresentation,
+  resolveBeatText,
+  resolveRecap,
+  sceneById,
+  seasonEpisodes,
+  uid,
+  writeSave,
+} from "../logic";
+import { assetBackground, assetUrl } from "../assetPath";
+import {
+  ActTitleCard,
+  EpisodeChip,
+  EpisodeEndCard,
+  EpisodeRecap,
+  EpisodeTitleCard,
+  NextTimeCard,
+  SeasonScreen,
+  episodeLabel,
+  plateStyle,
+} from "./Episode";
+import { Flowchart } from "./Flowchart";
+import { PatternPuzzleGame } from "./PatternPuzzle";
+import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
+import { RouteMap } from "./RouteMap";
+import { actOfScene } from "./routeGraph";
+import type {
+  Choice,
+  CinematicSettings,
+  CreditsLine,
+  CreditsSettings,
+  DialogueBoxTheme,
+  Episode,
+  EpisodeProgress,
+  ForegroundAnimation,
+  GameSave,
+  GlobalState,
+  Hotspot,
+  Act,
+  Item,
+  JourneyStep,
+  MeterKey,
+  SceneNode,
+  Story,
+} from "../types";
+
+/* ------------------------------------------------------------------ */
+/*  helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+type PrimedAudio = { url: string; el: HTMLAudioElement };
+
+function playSceneProse(scene: SceneNode, primedNarration?: PrimedAudio | null) {
+  if (!scene.prose) return;
+  if (scene.narrationAudioUrl) {
+    const prepared = primedNarration?.url === scene.narrationAudioUrl ? primedNarration.el : undefined;
+    void audio.playClip(scene.narrationAudioUrl, prepared);
+  } else {
+    audio.speak(scene.prose);
+  }
+}
+
+function shouldAutoNarrateSceneProse(scene: SceneNode) {
+  if (!scene.prose || scene.autoNarrate === false) return false;
+  // Credit/title nodes are usually visual cards, so avoid robotic Web Speech
+  // reading their titles aloud. If the author explicitly attached recorded
+  // prose narration, though, that audio is intentional and should play — this
+  // is especially important when a credits/cutscene node is the start scene.
+  if (scene.nodeType === "credits" && !scene.narrationAudioUrl) return false;
+  return true;
+}
+
+function proseNarrationDelayMs(scene: SceneNode) {
+  // Recorded clips and instant/ceremonial nodes should start with the frame.
+  // The old blanket 600ms delay made short start cards easy to click past
+  // before their narration had even been attempted.
+  if (scene.narrationAudioUrl || scene.noTypewriter || scene.nodeType === "credits" || scene.nodeType === "cutscene") return 0;
+  return 600;
+}
+
+/* ------------------------------------------------------------------ *
+ *  MUSIC FADES
+ *
+ *  The soundtrack is a raw <audio> element outside the WebAudio graph, so
+ *  there is no GainNode to automate — the fade is a rAF loop on .volume.
+ *
+ *  Two rules make this feel like a film rather than a playlist:
+ *    · leaving a track always RAMPS DOWN, never cuts
+ *    · a replacement track ramps UP over the same window, so the two
+ *      overlap into a crossfade instead of leaving a hole
+ *
+ *  equalPower keeps perceived loudness steady through the overlap. A linear
+ *  crossfade dips in the middle, because two signals at half amplitude are
+ *  quieter than one at full.
+ * ------------------------------------------------------------------ */
+
+/** Default fade length. Long enough to read as intentional, short enough
+ *  that it never delays a scene change the player has already committed to. */
+const MUSIC_FADE_MS = 1400;
+
+/** Equal-power crossfade pair. sin² + cos² = 1 at every t, so a track fading
+ *  out on `down` and one fading in on `up` sum to constant perceived
+ *  loudness. The obvious `1 - sin` for the outgoing side is NOT equivalent:
+ *  it dips to ~0.51 of full power halfway through, an audible hole in the
+ *  middle of the crossfade. */
+const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+const fadeUpCurve = (t: number) => Math.sin((clamp01(t) * Math.PI) / 2);
+const fadeDownCurve = (t: number) => Math.cos((clamp01(t) * Math.PI) / 2);
+
+/**
+ * Ramp an element's volume to `to` over `ms`, then optionally stop it.
+ * Returns a cancel function. Any previous ramp on the same element is
+ * cancelled first, so rapid scene changes can't leave two loops fighting
+ * over one volume property.
+ */
+type FadeHandle = { cancel: () => void };
+const activeFades = new WeakMap<HTMLAudioElement, FadeHandle>();
+
+/** True while a ramp is in flight on this element. Callers that set .volume
+ *  directly (the mixer faders) must not fight a running fade. */
+const isFading = (el: HTMLAudioElement) => activeFades.has(el);
+
+function fadeAudio(
+  el: HTMLAudioElement,
+  to: number,
+  ms: number,
+  onDone?: () => void
+): FadeHandle {
+  activeFades.get(el)?.cancel();
+  const from = el.volume;
+  // Nothing to do — still run onDone so callers can rely on it firing.
+  if (ms <= 0 || Math.abs(to - from) < 0.001) {
+    try {
+      el.volume = clamp01(to);
+    } catch {
+      /* element detached */
+    }
+    onDone?.();
+    const noop = { cancel: () => {} };
+    return noop;
+  }
+  const start = performance.now();
+  let raf = 0;
+  let cancelled = false;
+  const step = (now: number) => {
+    if (cancelled) return;
+    const t = Math.min(1, (now - start) / ms);
+    // Going down travels the cos curve from `from` to `to`; going up travels
+    // the sin curve. Run as a simultaneous pair they hold constant power.
+    const v =
+      to < from
+        ? to + (from - to) * fadeDownCurve(t)
+        : from + (to - from) * fadeUpCurve(t);
+    try {
+      el.volume = clamp01(v);
+    } catch {
+      /* element detached mid-ramp */
+    }
+    if (t < 1) {
+      raf = requestAnimationFrame(step);
+    } else {
+      try {
+        el.volume = clamp01(to);
+      } catch {
+        /* noop */
+      }
+      activeFades.delete(el);
+      onDone?.();
+    }
+  };
+  raf = requestAnimationFrame(step);
+  const handle: FadeHandle = {
+    cancel: () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      activeFades.delete(el);
+    },
+  };
+  activeFades.set(el, handle);
+  return handle;
+}
+
+const ATTITUDE_COLOR: Record<string, string> = {
+  Sultry: "border-neon/70 text-neon",
+  Aggressive: "border-crimson/70 text-crimson",
+  Clever: "border-cyan-neon/70 text-cyan-neon",
+  Neutral: "border-paper/40 text-paper/80",
+};
+
+const ATTITUDE_ICON: Record<string, string> = {
+  Sultry: "💋",
+  Aggressive: "✊",
+  Clever: "🧠",
+  Neutral: "💬",
+};
+
+/** Number-badge colours per attitude — the small circular index on each
+ * choice button inherits the row's accent so the palette reads at a glance. */
+const ATTITUDE_BADGE: Record<string, string> = {
+  Sultry: "border-neon/50 text-neon",
+  Aggressive: "border-crimson/50 text-crimson",
+  Clever: "border-cyan-neon/50 text-cyan-neon",
+  Neutral: "border-paper/30 text-paper/80",
+};
+
+/** Per-speaker accent colours for the bottom-panel nameplate, cycled by
+ * cast order so every character has a consistent identity across the
+ * whole case. The narrator keeps the house gold. */
+const SPEAKER_ACCENTS = [
+  { text: "text-gold", bar: "bg-gold", glow: "rgba(232,178,60,0.5)" },
+  { text: "text-neon", bar: "bg-neon", glow: "rgba(255,46,136,0.5)" },
+  { text: "text-cyan-neon", bar: "bg-cyan-neon", glow: "rgba(42,217,217,0.5)" },
+  { text: "text-crimson", bar: "bg-crimson", glow: "rgba(226,59,78,0.5)" },
+];
+const speakerAccent = (story: Story, characterId: string) => {
+  if (characterId === "narrator") return SPEAKER_ACCENTS[0];
+  const idx = story.characters.findIndex((c) => c.id === characterId);
+  // Offset by one so the first character doesn't share the narrator's gold.
+  return SPEAKER_ACCENTS[((idx < 0 ? 0 : idx) + 1) % SPEAKER_ACCENTS.length];
+};
+
+const CURSOR_ICON: Record<string, string> = { look: "👁", take: "✋", talk: "💬", use: "⚙", go: "➜" };
+
+/* ---------------------------------------------------------------------
+ * DIALOGUE PANEL GEOMETRY
+ *
+ * The narrative panel is pinned to the bottom of the frame, so its height is
+ * load-bearing for the whole HUD: every pixel it grows pushes its own inline
+ * controls (narrate / skip / back) upward. Typing prose in one character at a
+ * time changes that height continuously, which turned those buttons into a
+ * moving target mid-sentence.
+ *
+ * The fix is to reserve the text area's height up front instead of letting it
+ * grow into it. `min-height` is set from the number of lines the author wants
+ * room for, so the box is full-size from the first character and the controls
+ * never move. It is a floor, not a cap: prose longer than the reservation
+ * still expands rather than clipping or scrolling away.
+ * ------------------------------------------------------------------ */
+
+/** Default lines of prose to reserve. Three covers the overwhelming majority
+ *  of subtitle-length beats at the panel's max width. */
+const DEFAULT_RESERVE_LINES = 3;
+
+/** Panel prose is text-xl/2xl with leading-snug (~1.375). Track it here so
+ *  the reserved height matches what the text actually occupies. */
+const PROSE_LINE_EM = 1.375;
+
+/** Height to hold open for the typing area, as a CSS length. Returns
+ *  undefined when the author has switched the reservation off. */
+function reservedProseHeight(theme: DialogueBoxTheme | undefined): string | undefined {
+  const lines = theme?.reserveLines ?? DEFAULT_RESERVE_LINES;
+  if (lines <= 0) return undefined;
+  return `${(lines * PROSE_LINE_EM).toFixed(3)}em`;
+}
+
+/** Backdrop layer for the narrative panel. Sits behind the panel's content
+ *  and, unlike the default scrim, can carry an authored image at an authored
+ *  opacity. Pointer-events-none so it never intercepts a choice click. */
+function DialogueBackdrop({ theme }: { theme: DialogueBoxTheme | undefined }) {
+  const image = theme?.backgroundImage;
+  const opacity = Math.max(0, Math.min(1, theme?.backgroundOpacity ?? 0.85));
+  const blur = Math.max(0, theme?.backdropBlur ?? 0);
+  const tint = theme?.backgroundColor ?? "#07080c";
+  // Nothing authored and nothing to blur — the default gradient scrim already
+  // handles this case, so don't stack a second layer over it.
+  if (!image && !theme?.backgroundColor && !blur && theme?.backgroundOpacity === undefined) return null;
+  return (
+    <div
+      className={`pointer-events-none absolute inset-0 -z-[1] ${theme?.bordered ? "border border-paper/15 shadow-2xl shadow-black/60" : ""}`}
+      style={{
+        backgroundColor: tint,
+        opacity,
+        ...(image ? bgStyle(assetUrl(image)) : {}),
+        // backgroundColor is painted under the image, so an image at partial
+        // opacity still reads against a consistent base rather than the art.
+        ...(blur ? { backdropFilter: `blur(${blur}px)`, WebkitBackdropFilter: `blur(${blur}px)` } : {}),
+      }}
+      aria-hidden
+    />
+  );
+}
+
+function bgStyle(bg: string): React.CSSProperties {
+  const resolved = assetBackground(bg);
+  if (resolved.startsWith("gradient:")) return { background: resolved.slice(9) };
+  if (resolved.startsWith("video:")) return { background: "#05050a" };
+  return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
+}
+
+/** Build the CSS class + variables that apply cinematic camera motion and
+ * dimming to an image layer. Used for the scene background and per-beat
+ * replacement backgrounds. Light glows are separate layers (see LightGlow). */
+export function cinematicLayer(c: CinematicSettings | undefined, url: string): { className: string; style: React.CSSProperties } {
+  const mode = c?.mode ?? "pan";
+  const focalPos = c?.focalPoint ?? "50% 50%";
+  const zoomDur = c?.zoomDuration ?? 8;
+  const shake = Math.max(0, Math.min(1, c?.shakeAmount ?? 0.5));
+  // Roll defaults to intensity-derived so pre-existing shake scenes look the
+  // same; authors can override it (and the jitter tempo) for finer control.
+  const shakeRot = c?.shakeRotation ?? shake * 0.7;
+  const shakeDur = Math.max(0.1, c?.shakeDuration ?? 0.5);
+  // Slow pan drift — 0 keeps the old gentle push-in behaviour.
+  const panDist = Math.max(0, c?.panDistance ?? 0);
+  const panDir = c?.panDirection === "left" ? "-" : "";
+  // Vertigo dolly-zoom: direction chooses which half of the move plays.
+  const zoomAmount = Math.max(1, c?.dollyZoomAmount ?? 1.35);
+  const zoomDir = c?.dollyZoomDirection ?? "both";
+  const style: React.CSSProperties = {
+    ...bgStyle(url),
+    "--cin-zoom-dur": `${zoomDur}s`,
+    "--cin-zoom-end": `scale(1.22) translate(${focalPos.split(" ").map((v) => `${((50 - parseFloat(v)) * 0.14).toFixed(2)}%`).join(", ")})`,
+    "--cin-pan-x": `${panDir}${panDist}%`,
+    "--cin-pan-y": "0%",
+    "--cin-pan-dur": `${zoomDur}s`,
+    "--cin-dim": String(c?.dimAmount ?? 0),
+    // Handheld shake: amplitude in px + rotation in deg, driven by intensity.
+    "--cin-shake-amt": `${(shake * 6).toFixed(2)}px`,
+    "--cin-shake-rot": `${shakeRot.toFixed(2)}deg`,
+    "--cin-shake-dur": `${shakeDur}s`,
+    // Rail/dolly track: travel distance + direction + one-pass duration, plus
+    // an optional vertical drift for a diagonal/crane pan.
+    "--cin-dolly-dist": `${Math.max(0, c?.dollyDistance ?? 8)}%`,
+    "--cin-dolly-dir": c?.dollyDirection === "left" ? "-1" : "1",
+    "--cin-dolly-dur": `${Math.max(1, c?.dollyDuration ?? 10)}s`,
+    "--cin-dolly-vert": `${Math.max(0, Math.min(8, c?.dollyVertical ?? 0))}%`,
+    // Vertigo dolly-zoom: start/end scale (push in, pull out, or both) + blur.
+    "--cin-dolly-zoom-from": `${zoomDir === "pull" ? zoomAmount : 1}`,
+    "--cin-dolly-zoom-to": `${zoomDir === "pull" ? 1 : zoomAmount}`,
+    "--cin-dolly-zoom-blur": `${Math.max(0, c?.dollyZoomBlur ?? 0)}px`,
+    "--cin-dolly-zoom-dur": `${Math.max(1, c?.dollyZoomDuration ?? 8)}s`,
+  } as React.CSSProperties;
+  // Dolly needs the image larger than the frame so it has room to travel —
+  // pin the height and let the width overflow instead of cropping to cover.
+  if (mode === "dolly") {
+    style.backgroundSize = "auto 122%";
+    style.backgroundPosition = "center center";
+  }
+  const className = [
+    mode === "pan"
+      ? "cin-pan"
+      : mode === "zoom-hold"
+        ? "cin-zoom-hold"
+        : mode === "shake"
+          ? "cin-shake"
+          : mode === "dolly"
+            ? "cin-dolly"
+            : mode === "dolly-zoom"
+              ? zoomDir === "push"
+                ? "cin-dolly-zoom-push"
+                : zoomDir === "pull"
+                  ? "cin-dolly-zoom-pull"
+                  : "cin-dolly-zoom"
+              : "cin-static",
+    (c?.dimAmount ?? 0) > 0 ? "cin-dim" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return { className, style };
+}
+
+/** Parse a CSS background-position style anchor ("50% 20%", "center bottom",
+ * "left top", etc.) into percentage coordinates on the foreground image. */
+export function parseAnchor(v?: string): { ax: number; ay: number } {
+  let ax = 50;
+  let ay = 50;
+  if (!v) return { ax, ay };
+  let xSet = false;
+  let ySet = false;
+  for (const raw of v.trim().split(/\s+/).filter(Boolean)) {
+    let val: number | null = null;
+    const t = raw.toLowerCase();
+    if (/%$/.test(t)) val = clamp(parseFloat(t) || 0, 0, 100);
+    else if (t === "left") val = 0;
+    else if (t === "right") val = 100;
+    else if (t === "top") val = 0;
+    else if (t === "bottom") val = 100;
+    else if (t === "center" || t === "centre") val = 50;
+    if (val === null) continue;
+    if (t === "left" || t === "right") {
+      ax = val;
+      xSet = true;
+    } else if (t === "top" || t === "bottom") {
+      ay = val;
+      ySet = true;
+    } else if (t === "center" || t === "centre") {
+      if (!xSet) {
+        ax = val;
+        xSet = true;
+      } else if (!ySet) {
+        ay = val;
+        ySet = true;
+      }
+    } else if (!xSet) {
+      ax = val;
+      xSet = true;
+    } else if (!ySet) {
+      ay = val;
+      ySet = true;
+    }
+  }
+  return { ax, ay };
+}
+
+/** Size the foreground image's box for the chosen fit mode. The result is the
+ * box dimensions in frame pixels BEFORE the scale/zoom transform — scale is
+ * applied as a CSS transform around the anchor point so zooming never moves the
+ * focused point. */
+function computeForegroundBox(
+  fit: "contain" | "cover" | "fill" | "native",
+  frame: { w: number; h: number },
+  nat: { w: number; h: number } | null
+): { w: number; h: number } {
+  if (!nat || !nat.w || !nat.h || !frame.w || !frame.h) return { w: 0, h: 0 };
+  const nw = nat.w;
+  const nh = nat.h;
+  switch (fit) {
+    case "cover": {
+      const s = Math.max(frame.w / nw, frame.h / nh);
+      return { w: nw * s, h: nh * s };
+    }
+    case "fill":
+      return { w: frame.w, h: frame.h };
+    case "native":
+      return { w: nw, h: nh };
+    case "contain":
+    default: {
+      const s = Math.min(frame.w / nw, frame.h / nh);
+      return { w: nw * s, h: nh * s };
+    }
+  }
+}
+
+/** A transparent foreground overlay (the "vertigo anchor"). Rendered as a
+ * sibling of the moving background layer — never inside it — so it stays
+ * perfectly still while the camera shakes, dollies or dolly-zooms behind it.
+ * The subject is sized by `foregroundFit`, pinned by `foregroundAnchor` at
+ * `foregroundX/foregroundY`, scaled by `foregroundScale`, and (optionally)
+ * zoomed toward the anchor with `foregroundZoom`. */
+export function ForegroundLayer({
+  cinematic,
+  src,
+  resolve,
+}: {
+  cinematic?: CinematicSettings;
+  src?: string;
+  /** optional resolver for compact `asset:<id>` references — Studio previews
+   * pass their live media resolver; the game passes nothing (already resolved). */
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const r = resolve ?? ((v?: string) => v);
+  const base = assetUrl(r(src ?? cinematic?.foregroundImage));
+  const anim = cinematic?.foregroundAnimation;
+  const rawFrames = anim?.frames?.length ? anim.frames : base ? [base] : [];
+  const frames = rawFrames.map((f) => assetUrl(r(f))).filter((f): f is string => !!f);
+  if (!frames.length) return null;
+  const scale = Math.max(0.05, cinematic?.foregroundScale ?? 1);
+  const fit = cinematic?.foregroundFit ?? "contain";
+  const x = clamp(cinematic?.foregroundX ?? 50, 0, 100);
+  const y = clamp(cinematic?.foregroundY ?? 50, 0, 100);
+  const anchor = parseAnchor(cinematic?.foregroundAnchor);
+  const zoom = cinematic?.foregroundZoom !== undefined && cinematic.foregroundZoom !== 1 ? cinematic.foregroundZoom : undefined;
+  const zoomDur = Math.max(1, cinematic?.foregroundZoomDuration ?? 8);
+  // z-[1]: above the scene/beat background (z-auto) but below a beat's
+  // replacement background layer (z-2), so insert shots cover the anchor.
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[1]">
+      <ForegroundFrames
+        frames={frames}
+        fit={fit}
+        scale={scale}
+        x={x}
+        y={y}
+        anchor={anchor}
+        zoom={zoom}
+        zoomDur={zoomDur}
+        anim={anim}
+      />
+    </div>
+  );
+}
+
+/** Stacks every animation keyframe and cycles through them. Frames swap hard
+ * (opacity 1/0 with no transition) in "frames" mode, or cross-fade over
+ * `fadeDuration` in "dissolve" mode — the Ace Attorney / Hotel Dusk limited
+ * animation look vs. a smooth pose dissolve. Every frame shares one sized,
+ * anchored box, so the pose never drifts between keyframes. */
+function ForegroundFrames({
+  frames,
+  fit,
+  scale,
+  x,
+  y,
+  anchor,
+  zoom,
+  zoomDur,
+  anim,
+}: {
+  frames: string[];
+  fit: "contain" | "cover" | "fill" | "native";
+  scale: number;
+  x: number;
+  y: number;
+  anchor: { ax: number; ay: number };
+  zoom?: number;
+  zoomDur: number;
+  anim?: ForegroundAnimation;
+}) {
+  const [index, setIndex] = useState(0);
+  const idxRef = useRef(0);
+  const total = frames.length;
+  const hold = Math.max(0.05, anim?.frameDuration ?? 0.2);
+  const fade = anim?.mode === "dissolve" ? Math.max(0, anim?.fadeDuration ?? hold) : 0;
+  const period = Math.max(0.05, hold + fade);
+  const loops = anim?.loops;
+
+  // Measure the frame and the image's natural size so the fit box can be
+  // computed. The box is shared by all keyframes (assumed to be the same sprite
+  // sheet / canvas, so a single natural size drives the layout).
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [frame, setFrame] = useState({ w: 0, h: 0 });
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    // Only publish real changes. Writing identical numbers still schedules a
+    // React commit, and a commit that touches the observed element re-enters
+    // the observer — which is what makes Chrome report "ResizeObserver loop
+    // completed with undelivered notifications".
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      setFrame((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    update();
+    if (typeof ResizeObserver !== "undefined") {
+      // Defer to the next frame so the callback never writes layout during
+      // the browser's own observation pass.
+      let raf = 0;
+      const ro = new ResizeObserver(() => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(update);
+      });
+      ro.observe(el);
+      return () => {
+        cancelAnimationFrame(raf);
+        ro.disconnect();
+      };
+    }
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  const onLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    if (img.naturalWidth && img.naturalHeight) {
+      setNat((n) => n ?? { w: img.naturalWidth, h: img.naturalHeight });
+    }
+  }, []);
+
+  // Restart the cycle whenever the sequence or timing changes.
+  useEffect(() => {
+    idxRef.current = 0;
+    setIndex(0);
+  }, [frames.join("\u0000"), anim?.mode, hold, fade, loops]);
+
+  useEffect(() => {
+    if (total <= 1) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    let completed = 0;
+    const step = () => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        const next = idxRef.current + 1;
+        if (next < total) {
+          idxRef.current = next;
+          setIndex(next);
+          step();
+          return;
+        }
+        completed += 1;
+        // Finite loop count: after the last pass, hold on the final frame.
+        if (loops !== undefined && loops > 0 && completed >= loops) return;
+        idxRef.current = 0;
+        setIndex(0);
+        step();
+      }, period * 1000);
+    };
+    step();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [total, period, loops]);
+
+  const box = computeForegroundBox(fit, frame, nat);
+  const zoomOn = !!zoom;
+  // Key each frame on the zoom + duration so the CSS zoom animation restarts
+  // whenever the value changes (pushing in or pulling out). Without this the
+  // foreground only ever animates once, so a value change in the preview never
+  // re-renders the pull-out end state.
+  const zoomKey = `${zoom ?? 1}-${zoomDur}`;
+  // Always set a base transform so the element rests at scale(scale). When a
+  // zoom is active the .fg-zoom animation overrides transform (forwards fill),
+  // and this guarantees the *un-animated* / reduced-motion state is correct for
+  // both push-in and pull-out (scale below the base).
+  const restingTransform = `scale(${scale})`;
+
+  return (
+    <div ref={frameRef} className="absolute inset-0">
+      {frames.map((f, i) => (
+        <div
+          key={`${i}-${f.slice(-24)}-${zoomKey}`}
+          data-fg-anchor-box="1"
+          className="absolute"
+          style={{
+            left: `${x}%`,
+            top: `${y}%`,
+            width: box.w ? `${box.w}px` : 0,
+            height: box.h ? `${box.h}px` : 0,
+            // translate by the anchor so the anchor point lands on (x, y).
+            transform: `translate(${(-anchor.ax).toFixed(2)}%, ${(-anchor.ay).toFixed(2)}%)`,
+          }}
+        >
+          <img
+            src={f}
+            alt=""
+            draggable={false}
+            decoding="async"
+            onLoad={onLoad}
+            data-fg-img="1"
+            className={`absolute inset-0 select-none ${zoomOn ? "fg-zoom" : ""}`}
+            style={{
+              width: "100%",
+              height: "100%",
+              maxWidth: "none",
+              transformOrigin: `${anchor.ax}% ${anchor.ay}%`,
+              transform: restingTransform,
+              opacity: i === index ? 1 : 0,
+              transition: fade > 0 ? `opacity ${fade}s ease` : undefined,
+              ...(zoomOn
+                ? ({
+                    "--fg-base": String(scale),
+                    "--fg-zoom": String(zoom),
+                    "--fg-zoom-dur": `${zoomDur}s`,
+                  } as React.CSSProperties)
+                : {}),
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Renders every animated light glow for a cinematic as stacked screen-blend
+ * layers. Lives inside the transformed background container so glows stay
+ * anchored to the image while the camera pans or zooms. */
+/** A character on the scene floor. When `animate` is true it cycles the talking
+ *  keyframes (the VN/Ace-Attorney animated-while-talking look); otherwise it
+ *  shows the resting pose (or the first frame). `flip` mirrors them so two
+ *  speakers can face each other, `y` lifts them off the floor, and `dim`
+ *  fades non-active speakers back. z-[6] sits above the beat background but
+ *  below the hotspots and dialogue panel, so the text box overlaps the lower
+ *  edge the way a dialogue box sits in front of a standing character. */
+function StageSprite({
+  frames,
+  rest,
+  animate,
+  frameDuration,
+  x,
+  y,
+  scale,
+  flip,
+  dim,
+}: {
+  frames: string[];
+  rest?: string;
+  animate: boolean;
+  frameDuration: number;
+  x: number;
+  y: number;
+  scale: number;
+  flip: boolean;
+  dim: boolean;
+}) {
+  const cycle = animate && frames.length > 1;
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    setI(0);
+  }, [frames.join("\u0000")]);
+  useEffect(() => {
+    if (!cycle) return;
+    const hold = Math.max(0.04, frameDuration) * 1000;
+    let cancelled = false;
+    let timer: number | null = null;
+    const step = () => {
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        setI((v) => (v + 1) % frames.length);
+        step();
+      }, hold);
+    };
+    step();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [cycle, frames.length, frameDuration]);
+  const shown = cycle ? frames[i] : rest ?? frames[0];
+  if (!shown) return null;
+  const heightPct = Math.min(96, Math.max(20, 72 * Math.max(0.2, scale)));
+  return (
+    <div
+      className="talking-sprite pointer-events-none absolute z-[6]"
+      style={{
+        left: `${x}%`,
+        bottom: `${y}%`,
+        transform: `translateX(-50%)${flip ? " scaleX(-1)" : ""}`,
+        height: `${heightPct}%`,
+        opacity: dim ? 0.72 : 1,
+        transition: "opacity .3s ease",
+      }}
+    >
+      <img src={assetUrl(shown)} alt="" className="h-full w-auto max-w-none object-contain" />
+    </div>
+  );
+}
+
+function LightGlow({ cinematic }: { cinematic?: CinematicSettings }) {
+  const lights = resolveLights(cinematic);
+  if (!lights.length) return null;
+  return (
+    <>
+      {lights.map((l, i) => (
+        <div key={i} className="cin-light" style={lightStyle(l)} />
+      ))}
+    </>
+  );
+}
+
+function SingleLensFlare({ flare }: { flare: ResolvedLensFlare }) {
+  const ghosts = useMemo(() => calculateGhostElements(flare), [flare]);
+  const style = useMemo(() => lensFlareStyle(flare), [flare]);
+
+  const starburstRaysCount = flare.starburstRays;
+  const rayAngles = useMemo(() => {
+    const half = Math.max(2, Math.floor(starburstRaysCount / 2));
+    const step = 180 / half;
+    const angles: number[] = [];
+    for (let i = 0; i < half; i++) {
+      angles.push(i * step);
+    }
+    return angles;
+  }, [starburstRaysCount]);
+
+  return (
+    <div className="cin-lensflare-container" style={style}>
+      {/* 1. Anamorphic Horizontal Streak Beam */}
+      {flare.streakIntensity > 0 && (
+        <div className="cin-flare-streak-container">
+          <div className="cin-flare-laser" />
+          <div className="cin-flare-streak-wide" />
+          <div className="cin-flare-streak-diffuse" />
+        </div>
+      )}
+
+      {/* 2. Starburst / Diffraction Spikes */}
+      {flare.starburstIntensity > 0 && (
+        <div className="cin-flare-starburst-group">
+          {rayAngles.map((angle, i) => (
+            <div
+              key={i}
+              className="cin-flare-ray"
+              style={{ "--ray-rot": `${angle}deg` } as React.CSSProperties}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 3. Central Core & Corona Halo */}
+      <div className="cin-flare-core-group">
+        <div className="cin-flare-corona" />
+        <div className="cin-flare-core" />
+      </div>
+
+      {/* 4. Optical Ghost Reflections Chain */}
+      {flare.ghostIntensity > 0 &&
+        ghosts.map((g) => {
+          if (g.opacity <= 0.01) return null;
+          const ghostStyle: React.CSSProperties = {
+            left: `${g.x}%`,
+            top: `${g.y}%`,
+            width: `${g.size}vw`,
+            height: `${g.size}vw`,
+            maxWidth: `${g.size * 12}px`,
+            maxHeight: `${g.size * 12}px`,
+            opacity: g.opacity,
+          };
+
+          if (g.type === "halo-rainbow") {
+            return (
+              <div
+                key={g.id}
+                className="cin-flare-ghost-element cin-flare-halo-rainbow"
+                style={ghostStyle}
+              />
+            );
+          }
+
+          if (g.type === "aperture") {
+            return (
+              <div
+                key={g.id}
+                className="cin-flare-ghost-element cin-flare-aperture-shape"
+                style={{
+                  ...ghostStyle,
+                  transform: `translate(-50%, -50%) rotate(${g.rotateDeg ?? 0}deg)`,
+                  background: `radial-gradient(circle at center, transparent 30%, ${g.color === "rainbow" ? flare.color : g.color} 100%)`,
+                  border: `1.5px solid ${g.color === "rainbow" ? flare.color : g.color}`,
+                  boxShadow: `inset 0 0 8px ${g.color === "rainbow" ? flare.color : g.color}`,
+                }}
+              />
+            );
+          }
+
+          if (g.type === "ring" || g.type === "ring-thin") {
+            return (
+              <div
+                key={g.id}
+                className="cin-flare-ghost-element rounded-full"
+                style={{
+                  ...ghostStyle,
+                  border: `${g.type === "ring" ? 1.5 : 1}px solid ${g.color}`,
+                  boxShadow: g.type === "ring" ? `0 0 6px ${g.color}, inset 0 0 6px ${g.color}` : undefined,
+                  background: `radial-gradient(circle at center, transparent 70%, ${g.color}33 90%)`,
+                }}
+              />
+            );
+          }
+
+          if (g.type === "star-pin") {
+            return (
+              <div
+                key={g.id}
+                className="cin-flare-ghost-element flex items-center justify-center"
+                style={{
+                  ...ghostStyle,
+                  width: `${g.size * 0.8}vw`,
+                  height: `${g.size * 0.8}vw`,
+                }}
+              >
+                <div
+                  className="rounded-full"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    background: `radial-gradient(circle at center, #ffffff 0%, ${g.color} 60%, transparent 85%)`,
+                    boxShadow: `0 0 10px #ffffff, 0 0 18px ${g.color}`,
+                  }}
+                />
+              </div>
+            );
+          }
+
+          if (g.type === "disc-soft" || g.type === "disc-wide") {
+            return (
+              <div
+                key={g.id}
+                className="cin-flare-ghost-element rounded-full"
+                style={{
+                  ...ghostStyle,
+                  background: `radial-gradient(circle at center, ${g.color} 0%, transparent 70%)`,
+                  filter: `blur(${g.type === "disc-wide" ? 6 : 3}px)`,
+                }}
+              />
+            );
+          }
+
+          // Standard disc
+          return (
+            <div
+              key={g.id}
+              className="cin-flare-ghost-element rounded-full"
+              style={{
+                ...ghostStyle,
+                background: `radial-gradient(circle at center, ${g.color} 0%, ${g.color}66 45%, transparent 75%)`,
+                boxShadow: `0 0 12px ${g.color}44`,
+              }}
+            />
+          );
+        })}
+    </div>
+  );
+}
+
+export function LensFlareLayer({
+  cinematic,
+  flareOverride,
+}: {
+  cinematic?: CinematicSettings;
+  flareOverride?: ResolvedLensFlare | null;
+}) {
+  const flares = useMemo(() => {
+    if (flareOverride) return [flareOverride];
+    return resolveLensFlares(cinematic);
+  }, [cinematic, flareOverride]);
+
+  if (!flares.length) return null;
+
+  return (
+    <>
+      {flares.map((f, i) => (
+        <SingleLensFlare key={i} flare={f} />
+      ))}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  focus trap modal                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Scrollable transcript of the run. Auto-scrolls to the newest line so
+ * opening the log mid-scene lands you on what was just said. */
+function DialogueLogView({ lines }: { lines: { speaker: string; text: string }[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [lines.length]);
+  return (
+    <div className="max-h-[56vh] space-y-2 overflow-y-auto border border-noir-600 bg-noir-950/70 p-3">
+      {lines.map((l, i) => (
+        <div key={i} className="font-type text-xs leading-relaxed">
+          {l.speaker ? (
+            <span className="mr-2 font-pulp text-[10px] uppercase tracking-widest text-gold">{l.speaker}</span>
+          ) : (
+            <span className="mr-2 font-pulp text-[10px] uppercase tracking-widest text-paper/35">scene</span>
+          )}
+          <span className="text-paper/80">{l.text}</span>
+        </div>
+      ))}
+      {!lines.length && <p className="font-type text-xs text-paper/40">Nothing spoken yet.</p>}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+function Modal({
+  title,
+  onClose,
+  children,
+  wide,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const prev = document.activeElement as HTMLElement | null;
+    const focusables = () =>
+      Array.from(el.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'));
+    focusables()[0]?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+      if (e.key === "Tab") {
+        const f = focusables();
+        if (!f.length) return;
+        const first = f[0];
+        const last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    el.addEventListener("keydown", onKey);
+    return () => {
+      el.removeEventListener("keydown", onKey);
+      prev?.focus();
+    };
+  }, [onClose]);
+  return (
+    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(e) => e.stopPropagation()}
+        className={`pop-in relative border-2 border-gold/60 bg-noir-800 shadow-[0_0_60px_rgba(232,178,60,0.15)] ${
+          wide ? "w-full max-w-4xl" : "w-full max-w-md"
+        }`}
+      >
+        <div className="flex items-center justify-between border-b border-gold/30 px-4 py-2">
+          <h3 className="font-pulp text-gold tracking-wide text-sm uppercase">{title}</h3>
+          <button
+            onClick={onClose}
+            className="text-paper/60 hover:text-neon text-lg leading-none px-2"
+            aria-label="Close dialog"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  typewriter                                                         */
+/* ------------------------------------------------------------------ */
+
+function Typewriter({
+  text,
+  speed,
+  onDone,
+  className,
+  forceComplete,
+}: {
+  text: string;
+  speed: number;
+  onDone?: () => void;
+  className?: string;
+  forceComplete?: boolean;
+}) {
+  const [n, setN] = useState(0);
+  const doneFired = useRef(false);
+  useEffect(() => {
+    setN(0);
+    doneFired.current = false;
+  }, [text]);
+  useEffect(() => {
+    if (forceComplete) setN(text.length);
+  }, [forceComplete, text]);
+  useEffect(() => {
+    if (n >= text.length) {
+      if (!doneFired.current) {
+        doneFired.current = true;
+        onDone?.();
+      }
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setN((v) => v + 1);
+      if (n % 3 === 0) audio.tick();
+    }, speed);
+    return () => window.clearTimeout(t);
+  }, [n, text, speed, onDone]);
+  const done = n >= text.length;
+  return (
+    <span
+      className={`${className ?? ""} ${done ? "" : "typewriter-caret"} cursor-pointer`}
+      onClick={() => {
+        if (!done) setN(text.length);
+      }}
+    >
+      {text.slice(0, n)}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  credits intro                                                      */
+/* ------------------------------------------------------------------ */
+
+const CREDITS_TYPE_SPEED = 42;
+
+/** Title-sequence typefaces. Each value is a CSS font stack backed by a web
+ * font loaded in index.html. */
+const CREDITS_FONTS: Record<string, string> = {
+  pulp: "var(--font-pulp)",
+  poster: "var(--font-poster)",
+  elegant: "var(--font-elegant)",
+  epic: "var(--font-epic)",
+  modern: "var(--font-modern)",
+  type: "var(--font-type)",
+};
+
+/** Per-face tracking. A condensed poster face wants air; a heavy slab does not. */
+const CREDITS_TRACKING: Record<string, { title: string; line: string }> = {
+  pulp: { title: "0.06em", line: "0.24em" },
+  poster: { title: "0.14em", line: "0.34em" },
+  elegant: { title: "0.04em", line: "0.26em" },
+  epic: { title: "0.12em", line: "0.3em" },
+  modern: { title: "0.2em", line: "0.36em" },
+  type: { title: "0.08em", line: "0.26em" },
+};
+
+/** Resolve title / subtitle / role-name lines from the credits settings, falling
+ * back to the scene's prose (line 1 = title, line 2 = subtitle, the rest =
+ * name-only lines) so older stories and imports keep working. */
+function resolveCredits(prose: string, settings?: CreditsSettings): { title: string; subtitle: string; lines: CreditsLine[] } {
+  const p = prose
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !/^(tap|touch|click|press)( to)? begin$/i.test(l));
+  const title = settings?.title ?? p[0] ?? "";
+  const subtitle = settings?.subtitle ?? p[1] ?? "";
+  const lines = settings?.lines?.length ? settings.lines : p.slice(2).map((name) => ({ role: "", name }));
+  return { title, subtitle, lines };
+}
+
+/** A cross-dissolving montage of full-bleed stills, used as the backdrop to a
+ * title sequence. Every still is mounted and stacked; only the active one is
+ * opaque, so the browser cross-fades between them instead of hard-cutting.
+ * Each layer carries a slow Ken Burns drift so the frame is never static. */
+export function CreditsMontage({
+  images,
+  seconds = 5,
+  loop = true,
+  transition = "dissolve",
+}: {
+  images: string[];
+  seconds?: number;
+  loop?: boolean;
+  /** dissolve = long cross-fade; cut = hard cut, still to still (the
+   * Tarantino title-sequence bang). */
+  transition?: "dissolve" | "cut";
+}) {
+  const [idx, setIdx] = useState(0);
+  const hold = Math.max(1.5, seconds) * 1000;
+
+  useEffect(() => {
+    if (images.length <= 1) return;
+    const t = window.setInterval(() => {
+      setIdx((i) => {
+        if (i + 1 < images.length) return i + 1;
+        return loop ? 0 : i; // hold on the last frame when not looping
+      });
+    }, hold);
+    return () => window.clearInterval(t);
+  }, [images.length, hold, loop]);
+
+  if (!images.length) return null;
+
+  return (
+    <div className="absolute inset-0 overflow-hidden bg-black" aria-hidden>
+      {images.map((img, i) => (
+        <div
+          key={`${img}-${i}`}
+          className={`absolute inset-0 ${i % 2 === 0 ? "kenburns-a" : "kenburns-b"}`}
+          style={{
+            ...plateStyle(img),
+            opacity: i === idx ? 1 : 0,
+            // Long dissolve — half the hold, capped so it always completes.
+            // A hard cut swaps instantly: no dissolve, the plate just bangs in.
+            transition:
+              transition === "cut"
+                ? "none"
+                : `opacity ${Math.min(2.2, Math.max(1.5, seconds) / 2)}s ease-in-out`,
+          }}
+        />
+      ))}
+      {/* Keeps white credit type legible over a bright neon still. */}
+      <div className="absolute inset-0 bg-black/45" />
+    </div>
+  );
+}
+
+/** A film-style intro for `credits` nodes: kicker, big title, subtitle, a thin
+ * divider, then a list of role/name credits. The title can type or fade up; the
+ * list can stagger in place, roll as scrolling credits, or present as sequential
+ * fade-in/fade-out cards over a montage. */
+function Credits({
+  prose,
+  settings,
+  onDone,
+}: {
+  prose: string;
+  settings?: CreditsSettings;
+  onDone: () => void;
+}) {
+  const { title, subtitle, lines } = useMemo(() => resolveCredits(prose, settings), [prose, settings]);
+  const titleEntrance = settings?.titleEntrance ?? "fade-up";
+  const style = settings?.style ?? "fade-up";
+  const stagger = Math.max(0, settings?.stagger ?? 0.4);
+  const duration = Math.max(0.1, settings?.duration ?? 0.85);
+  const scrollDur = Math.max(6, settings?.scrollDuration ?? 24);
+  const cardSeconds = Math.max(1.2, settings?.cardSeconds ?? 3.4);
+  const accent = settings?.accentColor ?? "#2ad9d9";
+  // A custom title colour swaps the neon gold for the author's pick and re-tints
+  // the glow to match, so a yellow title-card doesn't sit in a gold haze.
+  const titleColor = settings?.titleColor;
+  const titleStyle = (slamDelay?: number): React.CSSProperties =>
+    titleColor
+      ? {
+          color: titleColor,
+          textShadow: `0 0 12px ${titleColor}55, 0 0 44px ${titleColor}33`,
+          ...(slamDelay !== undefined ? { animationDelay: `${slamDelay}s` } : {}),
+        }
+      : slamDelay !== undefined
+        ? { animationDelay: `${slamDelay}s` }
+        : {};
+  const fontKey = settings?.font ?? "pulp";
+  const fontFamily = CREDITS_FONTS[fontKey] ?? CREDITS_FONTS.pulp;
+  const tracking = CREDITS_TRACKING[fontKey] ?? CREDITS_TRACKING.pulp;
+  const cardMotion = settings?.cardMotion ?? "blur-rise";
+  const gateWeave = settings?.gateWeave ?? "off";
+  const [titleDone, setTitleDone] = useState(false);
+  const showRest = titleEntrance !== "typewriter" || titleDone;
+  const animated = style !== "scroll";
+
+  // Keep a stable handle to onDone so re-renders don't reset the timer.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  /* --- "cards": a proper title sequence -----------------------------
+   * One credit on screen at a time — fade in, hold, fade out, next. The
+   * card list is [title, subtitle?, ...lines], so the image carries the
+   * sequence and the type punctuates it. */
+  const cards = useMemo(() => {
+    const out: { role?: string; name: string; big?: boolean }[] = [{ name: title, big: true }];
+    if (subtitle) out.push({ name: subtitle });
+    lines.forEach((l) => out.push({ role: l.role, name: l.name }));
+    return out;
+  }, [title, subtitle, lines]);
+  const [cardIdx, setCardIdx] = useState(0);
+
+  useEffect(() => {
+    if (style !== "cards") return;
+    if (cardIdx >= cards.length) return;
+    const t = window.setTimeout(() => setCardIdx((i) => i + 1), cardSeconds * 1000);
+    return () => window.clearTimeout(t);
+  }, [style, cardIdx, cards.length, cardSeconds]);
+
+  useEffect(() => {
+    if (style === "cards") {
+      // Sequence is over once the last card has faded out.
+      if (cardIdx >= cards.length) onDoneRef.current();
+      return;
+    }
+    if (style === "scroll") {
+      const t = window.setTimeout(() => onDoneRef.current(), 700);
+      return () => window.clearTimeout(t);
+    }
+    if (titleEntrance === "typewriter" && !titleDone) return;
+    const lastDelay = (titleEntrance === "typewriter" ? lines.length : 2 + lines.length) * stagger;
+    const t = window.setTimeout(() => onDoneRef.current(), lastDelay * 1000 + duration * 1000 + 450);
+    return () => window.clearTimeout(t);
+  }, [style, titleEntrance, titleDone, stagger, duration, lines.length, cardIdx, cards.length]);
+
+  /* Wrap the whole title sequence in the gate. Three nested elements
+   * because each one can only carry a single transform, and the point of
+   * the effect is that the sway, the per-frame jitter and the splice bump
+   * are independent mechanical errors that happen to stack. Nesting also
+   * means the inner content is untouched — no layout, no reflow. */
+  const inGate = (content: React.ReactNode) => {
+    if (gateWeave === "off") return content;
+    const inner = (
+      <div className={`credits-gate credits-gate-${gateWeave}`}>
+        <div className="credits-gate-jitter">{content}</div>
+      </div>
+    );
+    // Only the tired projector throws splices.
+    return gateWeave === "projector" ? (
+      <div className="credits-gate-splice">{inner}</div>
+    ) : (
+      inner
+    );
+  };
+
+  const rise = (delay: number): React.CSSProperties =>
+    animated ? ({ animationDelay: `${delay}s` } as React.CSSProperties) : {};
+  const riseCls = (_delay: number) => (animated ? "credits-rise" : "");
+
+  const kicker = (
+    <p className={`${riseCls(0)} font-type text-[10px] uppercase tracking-[0.6em] text-paper/50`} style={rise(0)}>
+      Gaslight Reelworks presents
+    </p>
+  );
+  const titleNode =
+    titleEntrance === "typewriter" ? (
+      <h1 className="credits-title mt-2 text-4xl uppercase leading-tight tracking-wide text-gold md:text-6xl" style={{ fontFamily }}>
+        <Typewriter text={title} speed={CREDITS_TYPE_SPEED} onDone={() => setTitleDone(true)} className="text-gold" />
+      </h1>
+    ) : titleEntrance === "slam" ? (
+      // The pulp main-title punch: lands oversized and snaps to size.
+      <h1
+        className={`credits-slam-title ${titleColor ? "" : "credits-title"} mt-2 text-4xl uppercase leading-tight tracking-wide md:text-6xl ${titleColor ? "" : "text-gold"}`}
+        style={{ fontFamily, ...titleStyle(stagger) }}
+      >
+        {title}
+      </h1>
+    ) : (
+      <h1 className={`${riseCls(stagger)} credits-title mt-2 text-4xl uppercase leading-tight tracking-wide text-gold md:text-6xl`} style={{ ...rise(stagger), fontFamily }}>
+        {title}
+      </h1>
+    );
+  const subtitleNode = subtitle ? (
+    <p className={`${riseCls(titleEntrance === "typewriter" ? 0 : 2 * stagger)} font-type mt-4 text-sm uppercase tracking-[0.45em]`} style={{ ...rise(titleEntrance === "typewriter" ? 0 : 2 * stagger), color: accent }}>
+      {subtitle}
+    </p>
+  ) : null;
+  const ruleNode = (
+    <div className={`${riseCls(titleEntrance === "typewriter" ? 0.5 * stagger : 2.5 * stagger)} credits-rule`} style={{ ...rise(titleEntrance === "typewriter" ? 0.5 * stagger : 2.5 * stagger), "--credits-accent": accent } as React.CSSProperties} />
+  );
+  const listNode = (
+    <div className="flex flex-col items-center gap-5">
+      {lines.map((line, i) => {
+        const delay = (titleEntrance === "typewriter" ? 1 + i : 3 + i) * stagger;
+        return (
+          <div key={i} className={`${riseCls(delay)} flex flex-col items-center`} style={rise(delay)}>
+            {line.role && <div className="credits-entry-role font-type" style={{ color: accent }}>{line.role}</div>}
+            <div className="credits-entry-name text-paper" style={{ fontFamily }}>{line.name}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if (style === "cards") {
+    const card = cards[cardIdx];
+    // The main title has to be able to run near the full frame width — a heavy
+    // slab face at display size is far wider than the panel's prose column, and
+    // clamping it is what makes a title sequence wrap and fall apart. Long
+    // titles step down a size rather than breaking.
+    // Tiers are set against the widest face (Alfa Slab One, ~0.9em/char):
+    // 16 chars ≈ 1060px at 7xl, which is the practical ceiling inside max-w-6xl.
+    // Longer strings step down so a title never wraps mid-phrase.
+    const titleLen = (card?.name ?? "").length;
+    const titleSize =
+      titleLen > 40
+        ? "text-xl md:text-3xl"
+        : titleLen > 28
+          ? "text-2xl md:text-4xl"
+          : titleLen > 16
+            ? "text-3xl md:text-5xl"
+            : "text-5xl md:text-7xl";
+    return inGate(
+      // Fixed height stops the montage jumping as cards of different sizes
+      // swap in and out.
+      <div className="flex min-h-[46vh] w-full flex-col items-center justify-center text-center">
+        {card && (
+          <div
+            key={cardIdx}
+            className={`credits-card credits-motion-${cardMotion} flex flex-col items-center`}
+            style={
+              {
+                "--credits-card-dur": `${cardSeconds}s`,
+                "--credits-track": card.big ? tracking.title : tracking.line,
+              } as React.CSSProperties
+            }
+          >
+            {card.role && (
+              <div
+                className="credits-card-line credits-entry-role"
+                style={{ color: accent, fontFamily: CREDITS_FONTS.type }}
+              >
+                {card.role}
+              </div>
+            )}
+            {card.big ? (
+              <h1
+                className={`credits-card-line ${titleColor ? "" : "credits-title"} ${titleSize} uppercase leading-[1.05] ${titleColor ? "" : "text-gold"}`}
+                style={{ fontFamily, letterSpacing: tracking.title, ...titleStyle() }}
+              >
+                {card.name}
+              </h1>
+            ) : (
+              // Supporting lines are short by nature; a long one (a subtitle,
+              // say) wraps to a balanced second line rather than shrinking.
+              <div
+                className="credits-card-line max-w-4xl text-lg uppercase leading-snug text-paper md:text-2xl"
+                style={{ fontFamily, letterSpacing: tracking.line, textWrap: "balance" } as React.CSSProperties}
+              >
+                {card.name}
+              </div>
+            )}
+            {card.big && (
+              <div className="credits-rule" style={{ "--credits-accent": accent } as React.CSSProperties} />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (style === "scroll") {
+    return inGate(
+      <div className="credits-scroll-viewport max-h-[60vh] w-full">
+        <div className="credits-scroll-track flex flex-col items-center" style={{ "--credits-scroll-dur": `${scrollDur}s` } as React.CSSProperties}>
+          {kicker}
+          {titleNode}
+          {subtitleNode}
+          {ruleNode}
+          <div className="mt-8">{listNode}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return inGate(
+    <div className="flex flex-col items-center text-center" style={{ "--credits-dur": `${duration}s` } as React.CSSProperties}>
+      {kicker}
+      {titleNode}
+      {showRest && subtitleNode}
+      {showRest && ruleNode}
+      {showRest && <div className="mt-6">{listNode}</div>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  particles                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Lightning for the storm atmosphere. Every strike is randomized: bolt
+ * position/shape/scale/skew/opacity, flash colour/brightness/duration, how many
+ * forks, the wait between strikes, and how long the thunder lags behind. */
+const STORM_BOLT_PATHS = [
+  "polygon(50% 0%, 34% 26%, 54% 26%, 40% 52%, 58% 52%, 36% 100%, 68% 46%, 46% 46%)",
+  "polygon(50% 0%, 38% 18%, 56% 18%, 42% 42%, 60% 42%, 32% 78%, 48% 78%, 34% 100%)",
+  "polygon(50% 0%, 30% 30%, 50% 30%, 36% 60%, 56% 60%, 42% 88%, 64% 62%, 44% 62%)",
+  "polygon(50% 0%, 28% 14%, 50% 14%, 40% 46%, 58% 46%, 30% 72%, 50% 72%, 38% 100%, 64% 50%, 44% 50%)",
+];
+
+interface StormStrike {
+  id: number;
+  x: number;
+  path: string;
+  height: number;
+  scaleX: number;
+  skew: number;
+  opacity: number;
+  forkX?: number;
+  forkScale?: number;
+  flashColor: string;
+  flashDur: number;
+}
+
+function StormLightning({ soundOn }: { soundOn: boolean }) {
+  const [strike, setStrike] = useState<StormStrike | null>(null);
+  const idRef = useRef(0);
+  const rand = (a: number, b: number) => a + Math.random() * (b - a);
+
+  useEffect(() => {
+    let cancelled = false;
+    let strikeTimer: number | null = null;
+    let clearTimer: number | null = null;
+    let thunderTimer: number | null = null;
+
+    const schedule = () => {
+      // Wait a randomized interval, then strike.
+      strikeTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        const id = ++idRef.current;
+        const flashAlpha = rand(0.55, 1);
+        const flashTint = Math.random() < 0.5
+          ? `rgba(205,228,255,${flashAlpha.toFixed(2)})`
+          : Math.random() < 0.5
+            ? `rgba(180,210,255,${flashAlpha.toFixed(2)})`
+            : `rgba(190,205,255,${flashAlpha.toFixed(2)})`;
+        setStrike({
+          id,
+          x: rand(8, 92),
+          path: STORM_BOLT_PATHS[Math.floor(Math.random() * STORM_BOLT_PATHS.length)],
+          height: rand(45, 88),
+          scaleX: rand(0.7, 1.5),
+          skew: rand(-14, 14),
+          opacity: rand(0.65, 1),
+          forkX: Math.random() < 0.55 ? rand(6, 94) : undefined,
+          forkScale: rand(0.4, 0.75),
+          flashColor: flashTint,
+          flashDur: rand(0.32, 0.6),
+        });
+        // Thunder rolls in a randomized beat after the light.
+        thunderTimer = window.setTimeout(() => {
+          if (!cancelled && soundOn) audio.thunder();
+        }, rand(400, 1800));
+        // Let the flicker play out, then clear and wait for the next strike.
+        clearTimer = window.setTimeout(() => {
+          if (cancelled) return;
+          setStrike(null);
+          schedule();
+        }, 500);
+      }, rand(3000, 10000));
+    };
+    schedule();
+
+    return () => {
+      cancelled = true;
+      if (strikeTimer !== null) window.clearTimeout(strikeTimer);
+      if (clearTimer !== null) window.clearTimeout(clearTimer);
+      if (thunderTimer !== null) window.clearTimeout(thunderTimer);
+    };
+  }, [soundOn]);
+
+  if (!strike) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[21] overflow-hidden" aria-hidden>
+      <div
+        className="storm-flash"
+        style={{
+          background: `radial-gradient(ellipse at ${strike.x}% 0%, ${strike.flashColor}, rgba(130,170,220,0.28) 45%, transparent 78%)`,
+          "--flash-dur": `${strike.flashDur}s`,
+        } as React.CSSProperties}
+      />
+      <div
+        className="storm-bolt"
+        style={{
+          left: `${strike.x}%`,
+          height: `${strike.height}%`,
+          clipPath: strike.path,
+          opacity: strike.opacity,
+          transform: `translateX(-50%) scaleX(${strike.scaleX}) skewX(${strike.skew}deg)`,
+        }}
+      />
+      {strike.forkX !== undefined && (
+        <div
+          className="storm-bolt"
+          style={{
+            left: `${strike.forkX}%`,
+            height: `${strike.height * 0.66}%`,
+            clipPath: STORM_BOLT_PATHS[Math.floor(Math.random() * STORM_BOLT_PATHS.length)],
+            opacity: (strike.opacity * 0.7).toFixed(2),
+            transform: `translateX(-50%) scaleX(${strike.forkScale}) skewX(${-strike.skew * 0.6}deg)`,
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function Particles({ kind, soundOn }: { kind: "rain" | "smoke" | "storm"; soundOn: boolean }) {
+  const items = useMemo(
+    () =>
+      Array.from({ length: kind === "smoke" ? 7 : kind === "storm" ? 52 : 34 }, (_, i) => ({
+        left: Math.random() * 100,
+        top: kind === "smoke" ? 25 + Math.random() * 60 : 0,
+        dur: kind === "smoke" ? 9 + Math.random() * 9 : 0.7 + Math.random() * 0.9,
+        delay: Math.random() * (kind === "smoke" ? 6 : 1.5),
+        size: 90 + Math.random() * 180,
+        key: i,
+      })),
+    [kind]
+  );
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden" aria-hidden>
+      {items.map((p) =>
+        kind === "smoke" ? (
+          <span
+            key={p.key}
+            className="smoke-puff"
+            style={{
+              left: `${p.left}%`,
+              top: `${p.top}%`,
+              width: p.size,
+              height: p.size * 0.6,
+              animationDuration: `${p.dur}s`,
+              animationDelay: `${p.delay}s`,
+            }}
+          />
+        ) : (
+          <span
+            key={p.key}
+            className="rain-drop"
+            style={{ left: `${p.left}%`, animationDuration: `${p.dur}s`, animationDelay: `${p.delay}s` }}
+          />
+        )
+      )}
+      {kind === "storm" && <StormLightning soundOn={soundOn} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  per-beat replacement background                                    */
+/* ------------------------------------------------------------------ */
+
+type BeatBackgroundTransition =
+  | "cut"
+  | "fade"
+  | "crossfade"
+  | "fade-black"
+  | "slide-left"
+  | "slide-right"
+  | "iris-in";
+
+interface BeatBgLayer {
+  key: string;
+  background: string;
+  cinematic?: CinematicSettings;
+  exiting: boolean;
+}
+
+/** Renders the current dialogue beat's replacement background and crossfades
+ * between beats — the outgoing image stays mounted and fades out while the
+ * incoming one animates in, so images transition beat-to-beat (not against the
+ * scene default). When no beat has an image, the layers fade out to reveal the
+ * scene background. */
+function BeatBackground({
+  beat,
+  transitionName,
+  transitionSpeed,
+}: {
+  beat: { id: string; background?: string; cinematic?: CinematicSettings } | null;
+  transitionName: BeatBackgroundTransition;
+  transitionSpeed: number;
+}) {
+  const [layers, setLayers] = useState<BeatBgLayer[]>([]);
+  const activeBgRef = useRef<string | null>(null);
+  const speed = Math.max(0.05, transitionSpeed);
+
+  useEffect(() => {
+    const bg = beat?.background;
+    if (bg) {
+      if (activeBgRef.current === bg) return; // same image already showing
+      setLayers((prev) => {
+        if (transitionName === "cut") {
+          return [{ key: beat.id, background: bg, cinematic: beat.cinematic, exiting: false }];
+        }
+        return [
+          ...prev.map((l) => ({ ...l, exiting: true })),
+          { key: beat.id, background: bg, cinematic: beat.cinematic, exiting: false },
+        ];
+      });
+      activeBgRef.current = bg;
+    } else if (activeBgRef.current !== null) {
+      // No replacement image: fade out whatever is showing (reveal scene bg).
+      setLayers((prev) => prev.map((l) => ({ ...l, exiting: true })));
+      activeBgRef.current = null;
+    }
+  }, [beat?.id, beat?.background, transitionName]);
+
+  // Prune layers whose exit animation has finished.
+  useEffect(() => {
+    if (!layers.some((l) => l.exiting)) return;
+    const t = window.setTimeout(() => setLayers((prev) => prev.filter((l) => !l.exiting)), speed * 1000 + 120);
+    return () => window.clearTimeout(t);
+  }, [layers, speed]);
+
+  if (!layers.length) return null;
+
+  return (
+    <>
+      {layers.map((l) => {
+        const { className: cinClass, style: cinStyle } = cinematicLayer(l.cinematic, l.background);
+        const animClass = l.exiting ? "beatbg-out" : `beatbg-in-${transitionName}`;
+        return (
+          <div
+            key={l.key}
+            className={`absolute inset-0 z-[2] ${animClass}`}
+            style={{ "--beatbg-speed": `${speed}s` } as React.CSSProperties}
+          >
+            <div className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
+              <LightGlow cinematic={l.cinematic} />
+              <LensFlareLayer cinematic={l.cinematic} />
+            </div>
+            <ForegroundLayer cinematic={l.cinematic} />
+            {!l.exiting && transitionName === "fade-black" && (
+              <div className="beatbg-black absolute inset-0 z-[3] bg-black" style={{ "--beatbg-speed": `${speed}s` } as React.CSSProperties} />
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  meters HUD                                                         */
+/* ------------------------------------------------------------------ */
+
+const METER_STYLE: Record<MeterKey, { bar: string; icon: string }> = {
+  Sultry: { bar: "bg-neon", icon: "💋" },
+  Aggressive: { bar: "bg-crimson", icon: "✊" },
+  Clever: { bar: "bg-cyan-neon", icon: "🧠" },
+  Suspicion: { bar: "bg-gold", icon: "🔥" },
+};
+
+interface Perks {
+  velvetTongue: boolean;
+  ironNerve: boolean;
+  sharpEye: boolean;
+  heat: boolean;
+}
+
+const perkDefs: { key: keyof Perks; icon: string; name: string; desc: string; danger?: boolean }[] = [
+  { key: "velvetTongue", icon: "💋", name: "Velvet Tongue", desc: "Charm 4+ · positive trust gains get +1" },
+  { key: "ironNerve", icon: "✊", name: "Iron Nerve", desc: "Intimidate 4+ · hard-nosed choices stop costing Heat" },
+  { key: "sharpEye", icon: "🧠", name: "Sharp Eye", desc: "Deduce 4+ · hotspots shimmer and bad board guesses stay quiet" },
+  { key: "heat", icon: "🔥", name: "HEAT", desc: "Heat 6+ · trust gains are halved and wrong board links cost 2", danger: true },
+];
+
+function getPerks(state: GlobalState): Perks {
+  return {
+    velvetTongue: state.meters.Sultry >= 4,
+    ironNerve: state.meters.Aggressive >= 4,
+    sharpEye: state.meters.Clever >= 4,
+    heat: state.meters.Suspicion >= 6,
+  };
+}
+
+function MetersHUD({
+  state,
+  story,
+  sceneTitle,
+  encounteredCharacters,
+  visitedCount,
+}: {
+  state: GlobalState;
+  story: Story;
+  sceneTitle?: string;
+  encounteredCharacters: Set<string>;
+  visitedCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const clues = state.inventory.filter((i) => i.isClue);
+  const suspects = story.characters.filter((c) =>
+    story.deduction?.suspectIds.includes(c.id) && encounteredCharacters.has(c.id)
+  );
+  const perks = getPerks(state);
+  const solved = story.deduction?.connections.filter((c) => state.activeFlags.has(c.flagSet)).length ?? 0;
+  return (
+    <div className="absolute left-3 top-3 z-50 w-64">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="mb-1 w-full border border-paper/20 bg-noir-950/85 px-2 py-1 text-left font-pulp text-[10px] uppercase tracking-widest text-paper/70 hover:text-gold"
+        aria-expanded={open}
+      >
+        ▤ Case Progress {perks.heat && <span className="ml-1 text-crimson animate-pulse">HEAT</span>} {open ? "▾" : "▸"}
+      </button>
+      {open && (
+        <div className="slide-up max-h-[calc(100dvh-5.5rem)] space-y-1.5 overflow-y-auto border border-paper/15 bg-noir-950/85 p-2 backdrop-blur-sm">
+          <p className="border-b border-paper/10 pb-1 font-type text-[9px] leading-snug text-paper/45">
+            This panel tracks your choices: attitude perks, people met, clues held, and corkboard progress.
+          </p>
+          {sceneTitle && (
+            <div className="border border-gold/20 bg-gold/5 px-2 py-1">
+              <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">Current scene</div>
+              <div className="flex items-center justify-between font-type text-[11px] text-paper/75">
+                <span>{sceneTitle}</span>
+                <span className="text-paper/35">{visitedCount} places visited</span>
+              </div>
+            </div>
+          )}
+          {(Object.keys(METER_STYLE) as MeterKey[]).map((k) => {
+            const label = METER_LABELS[k];
+            const threshold = k === "Suspicion" ? 6 : 4;
+            return (
+              <div key={k} className="flex items-center gap-1.5" title={`${label}: ${state.meters[k]}/10 · perk at ${threshold}`}>
+                <span className="w-4 text-xs" aria-hidden>
+                  {METER_STYLE[k].icon}
+                </span>
+                <span className="w-16 text-[10px] uppercase tracking-wider text-paper/60">{label}</span>
+                <div className="relative h-1.5 flex-1 bg-noir-600" role="meter" aria-valuenow={state.meters[k]} aria-valuemin={0} aria-valuemax={10} aria-label={label}>
+                  <div className={`h-full transition-all duration-500 ${METER_STYLE[k].bar} ${k === "Suspicion" && state.meters[k] >= 6 ? "animate-pulse" : ""}`} style={{ width: `${state.meters[k] * 10}%` }} />
+                  <span className="absolute top-[-2px] h-2.5 w-0.5 bg-paper/50" style={{ left: `${threshold * 10}%` }} aria-hidden />
+                </div>
+              </div>
+            );
+          })}
+          <div className="border-t border-paper/10 pt-1.5">
+            <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-neon">Active perks</div>
+            <div className="space-y-1">
+              {perkDefs.map((perk) => (
+                <div key={perk.key} className={`text-[9px] ${perks[perk.key] ? (perk.danger ? "text-crimson" : "text-gold") : "text-paper/35"}`}>
+                  <span className="mr-1">{perks[perk.key] ? perk.icon : "○"}</span>
+                  <span className="font-pulp uppercase tracking-wider">{perk.name}</span>
+                  {perks[perk.key] && <span className="ml-1 font-type">{perk.desc.split("·")[1]}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-paper/10 pt-1.5">
+            <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">Known suspects</div>
+            {suspects.length ? suspects.map((c) => (
+              <div key={c.id} className="flex items-center justify-between text-[10px] text-paper/60">
+                <span>{c.name.split(" ")[0]}</span>
+                <span className={state.characterTrust[c.id] > 0 ? "text-cyan-neon" : state.characterTrust[c.id] < 0 ? "text-crimson" : "text-paper/40"}>
+                  {"♥".repeat(Math.max(0, state.characterTrust[c.id] ?? 0)) || (state.characterTrust[c.id] < 0 ? "✖".repeat(-state.characterTrust[c.id]) : "—")}
+                </span>
+              </div>
+            )) : <div className="text-[10px] text-paper/35">No suspects pinned yet.</div>}
+          </div>
+          <div className="border-t border-paper/10 pt-1.5">
+            <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-crimson">Collected clues</div>
+            {clues.length ? clues.map((clue) => (
+              <div key={clue.id} className="flex items-center gap-2 text-[10px] text-paper/65">
+                <span>{clue.icon}</span>
+                <span>{clue.name}</span>
+              </div>
+            )) : <div className="text-[10px] text-paper/35">No clue cards collected.</div>}
+          </div>
+          <div className="border-t border-paper/10 pt-1.5">
+            <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-gold">Story so far — flags set</div>
+            {state.activeFlags.size ? (
+              <ul className="space-y-0.5">
+                {[...state.activeFlags].map((flag) => (
+                  <li key={flag} className="flex items-baseline gap-1 text-[10px] leading-snug" title={flag}>
+                    <span className="shrink-0 text-gold/80">🏷</span>
+                    <span className="text-paper/70">
+                      {story.flagNotes?.[flag]?.trim() || prettyFlagName(flag)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-[10px] text-paper/35">No flags set yet — your story choices will list here.</div>
+            )}
+          </div>
+          {!!story.deduction && (
+            <div className="border-t border-paper/10 pt-1.5">
+              <div className="mb-1 flex items-center justify-between font-pulp text-[9px] uppercase tracking-widest text-gold">
+                <span>Board progress</span>
+                <span>{solved}/{story.deduction.connections.length} links</span>
+              </div>
+              <div className="h-2 bg-noir-700">
+                <div className="h-full bg-crimson transition-all" style={{ width: `${(solved / Math.max(1, story.deduction.connections.length)) * 100}%` }} />
+              </div>
+            </div>
+          )}
+          <div className="border-t border-paper/10 pt-1.5">
+            <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-gold">Relationships</div>
+            {story.characters.filter((c) => encounteredCharacters.has(c.id)).length ? (
+              <div className="space-y-1">
+                {story.characters
+                  .filter((c) => encounteredCharacters.has(c.id))
+                  .map((c) => {
+                    const op = characterOpinion(c, state.characterTrust[c.id] ?? c.trustMeter, state.activeFlags);
+                    const col =
+                      op.sentiment === "devoted" || op.sentiment === "trusting"
+                        ? "text-emerald-400"
+                        : op.sentiment === "warming"
+                          ? "text-gold"
+                          : op.sentiment === "hostile" || op.sentiment === "terrified"
+                            ? "text-crimson"
+                            : "text-paper/70";
+                    return (
+                      <div key={c.id} className="flex items-center justify-between gap-2 text-[10px]">
+                        <span className="truncate">{c.name.split(" ")[0]}</span>
+                        <span className={`text-right ${col}`}>{op.line}</span>
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : (
+              <div className="text-[10px] text-paper/35">No one trusts you yet — and no one fears you. Talk to people.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  deduction board                                                    */
+/* ------------------------------------------------------------------ */
+
+interface BoardCard {
+  id: string;
+  kind: "clue" | "suspect";
+  title: string;
+  icon: string;
+  sub: string;
+  img?: string;
+}
+
+function DeductionBoard({
+  story,
+  state,
+  encounteredCharacters,
+  onConnect,
+  onClose,
+}: {
+  story: Story;
+  state: GlobalState;
+  encounteredCharacters: Set<string>;
+  onConnect: (flag: string, revelation: string) => void;
+  onClose: () => void;
+}) {
+  const boardRef = useRef<HTMLDivElement>(null);
+  const cards: BoardCard[] = useMemo(() => {
+    const clues = state.inventory
+      .filter((i) => i.isClue)
+      .map((i) => ({ id: i.id, kind: "clue" as const, title: i.name, icon: i.icon, sub: i.flavorText }));
+    const suspects = (story.deduction?.suspectIds ?? []).filter((id) => encounteredCharacters.has(id)).map((id) => {
+      const c = story.characters.find((x) => x.id === id)!;
+      return {
+        id,
+        kind: "suspect" as const,
+        title: c.name,
+        icon: c.avatarUrl.startsWith("emoji:") ? c.avatarUrl.slice(6) : "🕵️",
+        sub: c.role,
+        img: c.avatarUrl.startsWith("emoji:") ? undefined : c.avatarUrl,
+      };
+    });
+    return [...clues, ...suspects];
+  }, [story, state.inventory, encounteredCharacters]);
+
+  const [pos, setPos] = useState<Record<string, { x: number; y: number }>>({});
+  useEffect(() => {
+    setPos((prev) => {
+      const next = { ...prev };
+      cards.forEach((c, i) => {
+        if (!next[c.id]) {
+          const col = i % 4;
+          const row = Math.floor(i / 4);
+          next[c.id] = { x: 40 + col * 190 + (c.kind === "suspect" ? 30 : 0), y: 40 + row * 160 };
+        }
+      });
+      return next;
+    });
+  }, [cards]);
+
+  const [selected, setSelected] = useState<string | null>(null);
+  const made = useMemo(
+    () => (story.deduction?.connections ?? []).filter((c) => state.activeFlags.has(c.flagSet)),
+    [story, state.activeFlags]
+  );
+  const profilePercent = useMemo(() => {
+    const total = (story.deduction?.connections ?? []).length || 1;
+    return Math.round((made.length / total) * 100);
+  }, [story, made]);
+
+  const drag = useRef<{
+    id: string;
+    dx: number;
+    dy: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const [wire, setWire] = useState<{ from: string; x: number; y: number } | null>(null);
+
+  const tryConnect = (a: string, b: string) => {
+    const isClueToSuspect = (ca: string, cb: string) => {
+      const clueIds = cards.filter((c) => c.kind === "clue").map((c) => c.id);
+      const suspectIds = cards.filter((c) => c.kind === "suspect").map((c) => c.id);
+      return (clueIds.includes(ca) && suspectIds.includes(cb)) || (clueIds.includes(cb) && suspectIds.includes(ca));
+    };
+    const conn = (story.deduction?.connections ?? []).find(
+      (c) => ((c.a === a && c.b === b) || (c.a === b && c.b === a)) && isClueToSuspect(a, b)
+    );
+    if (conn && !state.activeFlags.has(conn.flagSet)) {
+      audio.stringSnap();
+      audio.success();
+      onConnect(conn.flagSet, conn.revelation);
+    } else if (conn) {
+      audio.hover();
+    } else {
+      audio.fail();
+      onConnect("", "Those two don't sing together. Yet.");
+    }
+  };
+
+  const center = (id: string) => {
+    const p = pos[id] ?? { x: 0, y: 0 };
+    return { x: p.x + 80, y: p.y + 55 };
+  };
+  const pinPoint = (id: string) => {
+    const p = pos[id] ?? { x: 0, y: 0 };
+    return { x: p.x + 80, y: p.y + 2 };
+  };
+  const boardPoint = (e: React.PointerEvent) => {
+    const r = boardRef.current!.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+
+  return (
+    <Modal title="Deduction Corkboard — pin the truth" onClose={onClose} wide>
+      <p className="mb-2 font-type text-xs text-paper/70">
+        Drag from a card's <span className="text-crimson">red pin</span> to wire it onto another node. Correct strings sharpen your case; bad hunches draw heat.
+      </p>
+      <div
+        ref={boardRef}
+        className="corkboard relative aspect-video min-h-[340px] w-full overflow-hidden border-2 border-noir-700 select-none"
+        onPointerMove={(e) => {
+          if (wire) {
+            const p = boardPoint(e);
+            setWire((w) => (w ? { ...w, x: p.x, y: p.y } : w));
+            return;
+          }
+          if (!drag.current || !boardRef.current) return;
+          if (!drag.current.moved) {
+            const distance = Math.hypot(e.clientX - drag.current.startX, e.clientY - drag.current.startY);
+            if (distance < 6) return;
+            drag.current.moved = true;
+          }
+          const r = boardRef.current.getBoundingClientRect();
+          const x = clamp(e.clientX - r.left - drag.current.dx, 0, r.width - 160);
+          const y = clamp(e.clientY - r.top - drag.current.dy, 0, r.height - 110);
+          const id = drag.current.id;
+          setPos((p) => ({ ...p, [id]: { x, y } }));
+        }}
+        onPointerUp={() => {
+          if (wire) {
+            setWire(null);
+            audio.hover();
+          }
+          if (drag.current && !drag.current.moved) {
+            const id = drag.current.id;
+            if (selected && selected !== id) {
+              tryConnect(selected, id);
+              setSelected(null);
+            } else {
+              setSelected(selected === id ? null : id);
+              audio.click();
+            }
+          }
+          drag.current = null;
+        }}
+      >
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
+          {made.map((c) => {
+            const a = center(c.a);
+            const b = center(c.b);
+            const mx = (a.x + b.x) / 2;
+            const my = Math.max(a.y, b.y) + 36;
+            return (
+              <path
+                key={c.flagSet}
+                d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`}
+                stroke="#e23b4e"
+                strokeWidth="2.5"
+                fill="none"
+                strokeLinecap="round"
+              />
+            );
+          })}
+          {wire && (
+            <path
+              d={`M ${pinPoint(wire.from).x} ${pinPoint(wire.from).y} Q ${(pinPoint(wire.from).x + wire.x) / 2} ${Math.max(pinPoint(wire.from).y, wire.y) + 30} ${wire.x} ${wire.y}`}
+              stroke="#ff2e88"
+              strokeWidth="2.5"
+              strokeDasharray="6 4"
+              fill="none"
+              strokeLinecap="round"
+            />
+          )}
+        </svg>
+        {cards.map((c) => (
+          <div
+            key={c.id}
+            onPointerDown={(e) => {
+              if (wire) return;
+              const r = boardRef.current!.getBoundingClientRect();
+              const p = pos[c.id] ?? { x: 0, y: 0 };
+              boardRef.current?.setPointerCapture(e.pointerId);
+              drag.current = {
+                id: c.id,
+                dx: e.clientX - r.left - p.x,
+                dy: e.clientY - r.top - p.y,
+                startX: e.clientX,
+                startY: e.clientY,
+                moved: false,
+              };
+            }}
+            onPointerUp={(e) => {
+              if (wire && wire.from !== c.id) {
+                e.stopPropagation();
+                tryConnect(wire.from, c.id);
+                setWire(null);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.code === "Space") {
+                e.preventDefault();
+                if (selected && selected !== c.id) {
+                  tryConnect(selected, c.id);
+                  setSelected(null);
+                } else setSelected(selected === c.id ? null : c.id);
+              }
+            }}
+            className={`absolute w-40 cursor-grab border-2 p-2 shadow-lg transition-shadow ${
+              c.kind === "suspect" ? "bg-noir-800 border-gold/70" : "bg-paper text-noir-900 border-crimson/60 rotate-1"
+            } ${selected === c.id ? "ring-4 ring-crimson shadow-[0_0_24px_rgba(226,59,78,0.7)]" : ""} ${wire && wire.from !== c.id ? "ring-2 ring-neon/60" : ""}`}
+            style={{ left: pos[c.id]?.x ?? 0, top: pos[c.id]?.y ?? 0 }}
+          >
+            <button
+              aria-label={`Start string from ${c.title}`}
+              title="Drag me onto another card"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const p = boardPoint(e);
+                setWire({ from: c.id, x: p.x, y: p.y });
+                audio.click();
+              }}
+              className="absolute -top-2.5 left-1/2 -ml-2 h-4 w-4 cursor-crosshair rounded-full border-2 border-noir-950 bg-crimson shadow-[0_0_8px_rgba(226,59,78,0.9)] transition-transform hover:scale-150"
+            />
+            <div className="flex items-center gap-2">
+              {c.img ? (
+                <img src={assetUrl(c.img)} alt="" loading="lazy" decoding="async" className="h-10 w-10 object-cover border border-gold/40" />
+              ) : (
+                <span className="text-2xl">{c.icon}</span>
+              )}
+              <div>
+                <div className={`font-pulp text-[10px] uppercase leading-tight ${c.kind === "suspect" ? "text-gold" : ""}`}>{c.title}</div>
+                <div className={`text-[9px] italic ${c.kind === "suspect" ? "text-paper/50" : "text-noir-700/70"}`}>{c.sub}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+        {cards.filter((c) => c.kind === "clue").length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center font-type text-paper/80 bg-black/40 text-sm">
+            No clue cards yet — go collect evidence, gumshoe.
+          </div>
+        )}
+      </div>
+      <div className="mt-2 flex items-center gap-3 border-t border-paper/20 pt-2">
+        <span className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">Profile</span>
+        <div className="h-2 w-32 bg-noir-600">
+          <div className={`h-full transition-all duration-500 ${profilePercent === 100 ? "bg-emerald-500" : "bg-crimson"}`} style={{ width: `${profilePercent}%` }} />
+        </div>
+        <span className="font-type text-[10px] text-paper/70">{profilePercent}%</span>
+        {profilePercent === 100 && (
+          <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">★ Full Profile ★</span>
+        )}
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 border-t border-paper/20 pt-2">
+        <div>
+          <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">Nodes</div>
+          <ul className="space-y-1">
+            {cards.map((card) => {
+              const connected = made.some((conn) => conn.a === card.id || conn.b === card.id);
+              return (
+                <li key={card.id} className={`font-type text-[10px] ${connected ? "text-gold" : "text-paper/45"}`}>
+                  {connected ? "●" : "○"} {card.title}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div>
+          <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-crimson">Unlocked deductions</div>
+          {made.length > 0 ? (
+            <ul className="space-y-1">
+              {made.map((c) => (
+                <li key={c.flagSet} className="font-type text-[10px] text-gold">
+                  🔗 {c.revelation}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="font-type text-[10px] text-paper/40">Connect clue nodes to suspect nodes to unlock deductions.</div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  inventory dock                                                     */
+/* ------------------------------------------------------------------ */
+
+function InventoryDock({
+  state,
+  onInspect,
+  onCombine,
+  onExplainCrafting,
+  hasCrafting,
+}: {
+  state: GlobalState;
+  onInspect: (item: Item) => void;
+  onCombine: (a: Item, b: Item) => void;
+  onExplainCrafting: () => void;
+  hasCrafting: boolean;
+}) {
+  const [open, setOpen] = useState(true);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [combineMode, setCombineMode] = useState(false);
+  const [combineSel, setCombineSel] = useState<string | null>(null);
+  useEffect(() => {
+    if (flash) {
+      const t = setTimeout(() => setFlash(null), 900);
+      return () => clearTimeout(t);
+    }
+  }, [flash]);
+
+  return (
+    <div className="absolute bottom-3 left-3 z-50">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <button
+          onClick={() => {
+            audio.click();
+            setOpen((o) => !o);
+          }}
+          className="hud-btn px-3 py-1.5"
+          data-active={open || undefined}
+          aria-expanded={open}
+        >
+          🧳 Satchel {state.inventory.length} {open ? "▾" : "▸"}
+        </button>
+        {hasCrafting && (
+          <>
+            <button
+              onClick={() => {
+                audio.click();
+                setCombineMode((m) => !m);
+                setCombineSel(null);
+              }}
+              data-color={!combineMode ? "neon" : undefined}
+              data-active={combineMode || undefined}
+              className="hud-btn px-2 py-1.5"
+              title="Tap one item, then another, to combine them — no dragging needed"
+            >
+              🔧 {combineMode ? "Tapping" : "Combine"}
+            </button>
+            <button
+              onClick={() => {
+                audio.click();
+                onExplainCrafting();
+              }}
+              data-color="cyan"
+              className="hud-btn px-2 py-1.5"
+              title="Show the recipe available in this story"
+            >
+              ? Recipes
+            </button>
+          </>
+        )}
+      </div>
+      {combineMode && open && state.inventory.length > 0 && (
+        <div className="mb-1.5 border border-gold/30 bg-gold/10 px-2 py-1 font-type text-[10px] text-gold">
+          Tap the first item, then tap the second to combine.
+        </div>
+      )}
+      {open && state.inventory.length > 0 && (
+        <div className="hud-frame slide-up flex max-w-md flex-wrap gap-2 p-2">
+          {state.inventory.map((item) => (
+            <button
+              key={item.id}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/item", item.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const otherId = e.dataTransfer.getData("text/item");
+                const other = state.inventory.find((i) => i.id === otherId);
+                if (other && other.id !== item.id) {
+                  setFlash(item.id);
+                  setCombineSel(null);
+                  onCombine(other, item);
+                }
+              }}
+              onClick={() => {
+                if (combineMode) {
+                  audio.click();
+                  if (!combineSel) {
+                    setCombineSel(item.id);
+                  } else if (combineSel === item.id) {
+                    setCombineSel(null);
+                  } else {
+                    const first = state.inventory.find((i) => i.id === combineSel);
+                    setCombineSel(null);
+                    if (first) {
+                      setFlash(item.id);
+                      onCombine(first, item);
+                    }
+                  }
+                  return;
+                }
+                audio.click();
+                onInspect(item);
+              }}
+              title={`${item.name} — ${combineMode ? "combine mode: tap two items" : "click to inspect, drag onto another item to combine"}`}
+              className={`relative flex h-14 w-14 items-center justify-center border-2 text-2xl transition-transform hover:scale-110 ${
+                item.isClue ? "border-crimson/60 bg-crimson/10" : "border-paper/30 bg-noir-700"
+              } ${flash === item.id ? "combine-flash" : ""} ${
+                combineMode && combineSel === item.id ? "ring-2 ring-gold shadow-[0_0_14px_rgba(232,178,60,0.6)]" : ""
+              }`}
+            >
+              {item.iconUrl ? (
+                <img src={assetUrl(item.iconUrl)} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+              ) : (
+                item.icon
+              )}
+              {item.isClue && <span className="absolute -right-1 -top-1 text-[9px]">📌</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  main player                                                        */
+/* ------------------------------------------------------------------ */
+
+interface Toast {
+  id: string;
+  text: string;
+  kind: "info" | "fail" | "success";
+}
+
+/** A Telltale-style "X will remember that" impact card, shown briefly after a
+ * consequential choice. Fades in, holds, then fades out. */
+interface RememberCard {
+  line: string;
+  key: number;
+}
+
+function choiceHasEffects(choice: Choice): boolean {
+  if (!choice.consequences) return false;
+  return Object.values(choice.consequences).some((value) => Array.isArray(value) && value.length > 0);
+}
+
+function choiceRepeats(choice: Choice): boolean {
+  if (choice.isRepeatable !== undefined) return choice.isRepeatable;
+  // Conversational replies advance the scene's dialogue, so they're one-shot
+  // unless explicitly marked repeatable (otherwise the same answer would
+  // re-trigger forever).
+  if (choice.reply) return false;
+  // Pure navigation is safe to repeat. Anything that changes state defaults to
+  // one-shot so trust, items and meters cannot be farmed by scene loops.
+  return !choiceHasEffects(choice);
+}
+
+type Overlay =
+  | { type: "instructions" }
+  | { type: "inspect"; item: Item }
+  | { type: "board" }
+  | { type: "relationships" }
+  | { type: "log" }
+  | { type: "save" }
+  | { type: "load" }
+  | { type: "quit" }
+  | null;
+
+/**
+ * Plays one continuous run of a story. In an episodic season this is exactly
+ * one episode: it opens on the episode's start scene, inherits the world state
+ * carried out of the previous episode, keeps its own save slots, and reports
+ * back through `onEpisodeComplete` when it reaches an ending.
+ */
+function CasePlayer({
+  story,
+  typeSpeed,
+  isNewGamePlus,
+  resumeSlot,
+  primedMusic,
+  primedNarration,
+  episode,
+  initialState,
+  startSceneId,
+  onEpisodeComplete,
+  episodeEndPanel,
+  onOpenSeason,
+  onExit,
+}: {
+  story: Story;
+  typeSpeed: number;
+  isNewGamePlus: boolean;
+  resumeSlot?: number;
+  primedMusic?: PrimedAudio | null;
+  /** recorded prose narration that was started inside the user's Play click */
+  primedNarration?: PrimedAudio | null;
+  /** the episode being played, when the story is packed into a season */
+  episode?: Episode;
+  /** world state to open with (episode carry-over); defaults to a fresh state */
+  initialState?: GlobalState;
+  /** scene to open on; defaults to the story's start scene */
+  startSceneId?: string;
+  /** called when an episodic run reaches an ending scene */
+  onEpisodeComplete?: (progress: EpisodeProgress, highlights: string[]) => void;
+  /** replaces the case-closed panel on an ending scene — the season wrapper
+   * supplies the end-of-episode card here */
+  episodeEndPanel?: React.ReactNode;
+  /** open the season / episode-list screen */
+  onOpenSeason?: () => void;
+  onExit: () => void;
+}) {
+  const [state, setState] = useState<GlobalState>(() => initialState ?? createInitialState(story));
+  const [sceneId, setSceneId] = useState(startSceneId ?? story.startSceneId);
+  const [entrySeq, setEntrySeq] = useState(0);
+  const [proseDone, setProseDone] = useState(false);
+  const [proseAcknowledged, setProseAcknowledged] = useState(false);
+
+  const [beatIdx, setBeatIdx] = useState(0);
+  const [beatDone, setBeatDone] = useState(false);
+  const [overlay, setOverlay] = useState<Overlay>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  /* Subtitles presentation — a player-menu option.
+   * "cinematic" (default): big pulp lettering centred over the art.
+   * "classic": a compact reading-size caption — "SPEAKER: line" — for small
+   * screens or players who prefer plain subtitles. Remembered per player. */
+  const [classicSubtitles, setClassicSubtitles] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-subtitles") === "classic";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("scarlet-reel-subtitles", classicSubtitles ? "classic" : "cinematic");
+    } catch {
+      /* storage unavailable — lasts the session */
+    }
+  }, [classicSubtitles]);
+
+  /* Pacing options — remembered per player.
+   * Auto: hands-off reading. Once a line finishes typing it advances on a
+   *   comfortable timer; stops at choices so the player still decides.
+   * Skip: fast-forward. Types instantly and steps with only a brief gap —
+   *   the replay pacing win, since the game already auto-skips revisits. */
+  const [autoAdvance, setAutoAdvance] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-auto") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("scarlet-reel-auto", autoAdvance ? "1" : "0");
+    } catch {
+      /* session only */
+    }
+  }, [autoAdvance]);
+  const [skipMode, setSkipMode] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-skip") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("scarlet-reel-skip", skipMode ? "1" : "0");
+    } catch {
+      /* session only */
+    }
+  }, [skipMode]);
+
+  /* "Reveal hotspots" — a momentary shimmer over every interactable zone so a
+   * stuck player can see what's clickable without spoilers. Auto-clears after
+   * a few seconds and on scene change. */
+  const [hintActive, setHintActive] = useState(false);
+  const hintTimerRef = useRef<number | null>(null);
+  const triggerHint = useCallback(() => {
+    setHintActive(true);
+    if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = window.setTimeout(() => setHintActive(false), 3600);
+  }, []);
+  useEffect(
+    () => () => {
+      if (hintTimerRef.current !== null) window.clearTimeout(hintTimerRef.current);
+    },
+    []
+  );
+
+  /* Checkpoint confirmation — a brief "✓ Checkpoint" pulse the moment the
+   * auto-save lands, so players know their progress is safe without digging
+   * into a menu. */
+  const [checkpointFlash, setCheckpointFlash] = useState(false);
+  /* Examination card — what a hotspot tells you, printed where you can't
+   * miss it: white text on a near-black card above the dialogue panel, with
+   * the zone's label. Hotspot results (and locked-zone messages) used to
+   * live in a small toast that was easy to click past; now they hold the
+   * screen until dismissed (or ~7s pass). */
+  const [examCard, setExamCard] = useState<{ label: string; text: string; kind: "info" | "fail" } | null>(null);
+  /* Pattern puzzle — an in-place evidence mini-game. When active it covers
+   * the screen with the ledger puzzle. Solved → reward consequences + close;
+   * wrong → wrongSubmissionConsequences + retry or consequence scene. */
+  const [patternPuzzle, setPatternPuzzle] = useState<{ config: PatternPuzzleConfig; hotspot: Hotspot } | null>(null);
+  /* EXAMINE — hold-to-inspect. While active, the camera zooms onto the
+   * hotspot bounds and a meter fills over examineSeconds; releasing early
+   * aborts, completion fires the hotspot's normal action (pickup / the
+   * description) and consumes the zone. */
+  const [examining, setExamining] = useState<{ hs: Hotspot; progress: number } | null>(null);
+  const examineRaf = useRef<number | null>(null);
+  const examineStart = useRef(0);
+  /* INTERROGATION — live composure + the urgency layer. `iqComposure` is the
+   * per-scene live value (persisted to the save); `iqSteadied` tracks the
+   * one-shot recovery. The rest are transient FX triggers (press jolt, steady
+   * creep, reaction line, break/clamp stamp slam). */
+  const [iqComposure, setIqComposure] = useState<Record<string, number>>({});
+  const iqSteadied = useRef<Record<string, boolean>>({});
+  const [iqPressKey, setIqPressKey] = useState(0);
+  const [iqSteadyKey, setIqSteadyKey] = useState(0);
+  const [iqReaction, setIqReaction] = useState<{ text: string; key: number } | null>(null);
+  const [iqStamp, setIqStamp] = useState<{ kind: "broke" | "clamped"; key: number } | null>(null);
+  useEffect(() => {
+    if (!examCard) return;
+    const t = window.setTimeout(() => {
+      audio.stopSpeech();
+      setExamCard(null);
+    }, 7000);
+    return () => window.clearTimeout(t);
+  }, [examCard]);
+  const [remember, setRemember] = useState<RememberCard | null>(null);
+  const [usedHotspots, setUsedHotspots] = useState<Set<string>>(new Set());
+  /* ---------- end-of-scene investigation nudge ----------
+   * When a scene's dialogue has run out and there are still searchable
+   * hotspots the player hasn't touched on this visit, the game tells them:
+   * a toast when the choices appear, then a quiet pulsing banner until they
+   * search (or dismiss it / leave). Exits (goToScene) don't count — the
+   * nudge is about looking around, not moving on. */
+  const [investigatedThisVisit, setInvestigatedThisVisit] = useState(false);
+  const [investigateNudgeDismissed, setInvestigateNudgeDismissed] = useState(false);
+  const investigateToastShown = useRef(false);
+  useEffect(() => {
+    setInvestigatedThisVisit(false);
+    setInvestigateNudgeDismissed(false);
+    investigateToastShown.current = false;
+    // A hotspot reveal is for the scene you're stuck on — don't carry it into
+    // the next one.
+    setHintActive(false);
+    if (hintTimerRef.current !== null) {
+      window.clearTimeout(hintTimerRef.current);
+      hintTimerRef.current = null;
+    }
+  }, [sceneId, entrySeq]);
+  const [usedChoices, setUsedChoices] = useState<Set<string>>(new Set());
+  const [visitedScenes, setVisitedScenes] = useState<Set<string>>(new Set());
+  /** ordered decision log — powers the end-of-part flowchart */
+  const [journey, setJourney] = useState<JourneyStep[]>([]);
+  /** when set, the part-break route chart is covering the screen; the parked
+   * destination is entered once the player dismisses it */
+  const [partBreak, setPartBreak] = useState<{ title: string; nextSceneId: string } | null>(null);
+  /** when set, the full branching route map for the act just finished is
+   * covering the screen. Shown at act boundaries only; ordinary part breaks
+   * keep the lighter linear chart. */
+  const [actMap, setActMap] = useState<{ actId: string; nextSceneId: string } | null>(null);
+  /** an act title card waiting to play. Shown AFTER any part-break chart, so a
+   * boundary reads: route chart -> act card -> first scene of the new act. */
+  const [pendingAct, setPendingAct] = useState<{ act: Act; nextSceneId: string } | null>(null);
+  /** acts whose card has already played this run, so re-entering a scene
+   * (or stepping back) doesn't replay it */
+  const seenActs = useRef<Set<string>>(new Set());
+  /** how many journey steps had already been charted at the last part break,
+   * so each part's chart shows only that part's decisions */
+  const [chartedUpTo, setChartedUpTo] = useState(0);
+  const [encounteredCharacters, setEncounteredCharacters] = useState<Set<string>>(new Set());
+  const [fading, setFading] = useState(false);
+  const [choiceFocus, setChoiceFocus] = useState(0);
+  const [expiredChoices, setExpiredChoices] = useState<Set<string>>(new Set());
+  const [choiceClocks, setChoiceClocks] = useState<Record<string, number>>({});
+  const [banner, setBanner] = useState(isNewGamePlus);
+  const [autoNarrate, setAutoNarrate] = useState(true);
+  const [showCaseFile, setShowCaseFile] = useState(false);
+  const [holdRemaining, setHoldRemaining] = useState(0);
+  const [autoAdvanceRemaining, setAutoAdvanceRemaining] = useState(0);
+  const [soundOn, setSoundOn] = useState(() => {
+    // Mute survives the session — a player who silenced the reel once
+    // shouldn't be ambushed by the theme on the next launch.
+    try {
+      return localStorage.getItem("scarlet-reel-muted") !== "1";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("scarlet-reel-muted", soundOn ? "0" : "1");
+    } catch {
+      /* storage unavailable — mute lasts the session */
+    }
+  }, [soundOn]);
+  const [soundBlocked, setSoundBlocked] = useState(false);
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  const [musicTrack, setMusicTrack] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [volumes, setVolumes] = useState<Record<MixChannel, number>>(() => ({ ...audio.volumes }));
+  const episodeId = episode?.id;
+  const [saves, setSaves] = useState<(GameSave | null)[]>(() => readSaves(story.id, episodeId));
+  // Choices the player made during THIS episode, in order — replayed on the
+  // end-of-episode card as "your defining choices".
+  const [episodeHighlights, setEpisodeHighlights] = useState<string[]>([]);
+  const highlightsRef = useRef<string[]>([]);
+  highlightsRef.current = episodeHighlights;
+  const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Elements currently fading out. They are detached from sceneAudioRef the
+  // moment the fade starts, so the incoming track can be wired up immediately
+  // and the two overlap into a crossfade rather than a gap.
+  const fadingOutRef = useRef<Set<HTMLAudioElement>>(new Set());
+
+  /** Ramp a detached element down, then pause it and release it. Tracked in
+   *  fadingOutRef so unmount can cut any fade still in flight — otherwise a
+   *  player leaving mid-fade would hear the tail continue over the menu. */
+  const fadeOutAndStop = useCallback((el: HTMLAudioElement, ms = MUSIC_FADE_MS) => {
+    fadingOutRef.current.add(el);
+    const finish = () => {
+      try {
+        el.pause();
+        el.currentTime = 0;
+      } catch {
+        /* already gone */
+      }
+      fadingOutRef.current.delete(el);
+    };
+    // A muted or already-silent element has nothing to ramp.
+    if (el.paused || el.muted || el.volume < 0.001) {
+      finish();
+      return;
+    }
+    fadeAudio(el, 0, ms, finish);
+  }, []);
+  const musicSrcRef = useRef<string | null>(null);
+  const bgVideoRef = useRef<HTMLVideoElement | null>(null);
+  const narrationTimerRef = useRef<number | null>(null);
+  const primedNarrationRef = useRef<PrimedAudio | null>(primedNarration ?? null);
+  const craftHintShown = useRef(false);
+  // Fire the corkboard hint once per run, on the first collected clue.
+  const boardHintShown = useRef(false);
+  const visitedRef = useRef<Set<string>>(new Set());
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  // The journey log is appended during the same handler that navigates, so
+  // reads of it there must not go through the (lagging) state value.
+  const journeyRef = useRef(journey);
+  journeyRef.current = journey;
+  const chartedUpToRef = useRef(chartedUpTo);
+  chartedUpToRef.current = chartedUpTo;
+  const sceneIdRef = useRef(sceneId);
+  sceneIdRef.current = sceneId;
+  const soundOnRef = useRef(soundOn);
+  soundOnRef.current = soundOn;
+  // A save waiting to be applied on the next scene-entry pass, so restoring
+  // does not get clobbered by the normal first-entry/reset logic.
+  const restoreRef = useRef<GameSave | null>(null);
+  // Which quick-time choices have already fired their heartbeat sting, so it
+  // only sounds once per choice per window. Reset when a new set of clocks is
+  // initialised (scene entry / resume).
+  const qtHeartbeatFired = useRef<Set<string>>(new Set());
+  // When true, the next successful save exits back to the newsstand.
+  const saveThenExitRef = useRef(false);
+
+  const scene = sceneById(story, sceneId);
+  const playProse = useCallback((target: SceneNode) => {
+    const primed = primedNarrationRef.current;
+    primedNarrationRef.current = null;
+    if (primed && primed.url === target.narrationAudioUrl) {
+      playSceneProse(target, primed);
+    } else {
+      // A primer that doesn't match this scene's narration (e.g. the opening
+      // clip left over from a resume-fired prime) must not keep playing.
+      if (primed) {
+        try {
+          primed.el.pause();
+        } catch {
+          /* noop */
+        }
+      }
+      playSceneProse(target);
+    }
+  }, []);
+
+  // StrictMode double-mounts every component in dev (setup → cleanup → setup).
+  // The scene-entry effect's `enteredRef` guard makes its SECOND run a no-op,
+  // so any teardown this effect performs between the two runs kills the work
+  // of the first: the opening track and the primed prose MP3 get paused and
+  // the 0ms narration timer is cleared, and nothing restarts them. That made
+  // recorded prose narration silently dead on a start scene in dev. Defer the
+  // real teardown one tick and skip it if the effect re-ran (StrictMode);
+  // a genuine unmount still tears down immediately after the tick.
+  const audioTeardownRun = useRef(0);
+  useEffect(() => {
+    const fading = fadingOutRef.current;
+    const run = ++audioTeardownRun.current;
+    return () => {
+      window.setTimeout(() => {
+        if (audioTeardownRun.current !== run) return; // StrictMode re-mount — keep the audio
+        if (sceneAudioRef.current) {
+          sceneAudioRef.current.pause();
+          sceneAudioRef.current = null;
+        }
+        // Leaving the player cuts immediately — a fade tail must not outlive
+        // the story and bleed over the main menu.
+        fading.forEach((el) => {
+          try {
+            el.pause();
+          } catch {
+            /* noop */
+          }
+        });
+        fading.clear();
+        if (narrationTimerRef.current !== null) window.clearTimeout(narrationTimerRef.current);
+        if (primedNarrationRef.current) {
+          try {
+            primedNarrationRef.current.el.pause();
+          } catch {
+            /* noop */
+          }
+          primedNarrationRef.current = null;
+        }
+        audio.stopSpeech();
+        audio.setAmbient(null);
+      }, 0);
+    };
+  }, []);
+
+  // Auto-dismiss the "New Game+" banner after 8 seconds so it doesn't sit over
+  // the scene. Re-arms each time it reappears (e.g. after starting New Game+).
+  useEffect(() => {
+    if (!banner) return;
+    const t = window.setTimeout(() => setBanner(false), 8000);
+    return () => window.clearTimeout(t);
+  }, [banner]);
+
+  const pushToast = useCallback((text: string, kind: Toast["kind"] = "info") => {
+    const id = uid();
+    setToasts((t) => [...t.slice(-3), { id, text, kind }]);
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
+  }, []);
+
+  // Auto-dismiss the "will remember that" card after a short hold.
+  useEffect(() => {
+    if (!remember) return;
+    const t = window.setTimeout(() => setRemember(null), 2600);
+    return () => window.clearTimeout(t);
+  }, [remember]);
+
+  const explainCrafting = useCallback(() => {
+    // Context-aware crafting help. The previous version was useless because it
+    // fired the same static string regardless of what was in the satchel.
+    const inv = stateRef.current.inventory;
+    if (!inv.length) {
+      pushToast("Crafting hint: you need at least two items in your satchel. Search for hotspots first.", "info");
+      return;
+    }
+    if (inv.length === 1) {
+      pushToast(`Crafting hint: ${inv[0].icon} ${inv[0].name} is lonely. Find its partner in another scene.`, "info");
+      return;
+    }
+    // Find an actual pair that will craft
+    for (const a of inv) {
+      const partner = inv.find((b) => b.id !== a.id && combineItems(story, a, b));
+      if (partner) {
+        pushToast(`✨ Recipe ready: drag ${a.icon} ${a.name} onto ${partner.icon} ${partner.name} in your satchel.`, "success");
+        return;
+      }
+    }
+    // Look for items that could combine with something we haven't found yet
+    const pending = inv.find((i) => i.combinableWith);
+    if (pending) {
+      const missing = story.items.find((x) => x.id === pending.combinableWith?.targetItemId);
+      pushToast(`Crafting hint: ${pending.icon} ${pending.name} needs ${missing?.icon ?? "another item"} ${missing?.name ?? "somewhere in the story"}.`, "info");
+      return;
+    }
+    pushToast("These items don't combine with each other. Look for evidence in other scenes.", "info");
+  }, [story, pushToast]);
+
+  useEffect(() => {
+    if (!craftHintShown.current && story.items.some((item) => item.combinableWith) && state.inventory.length > 1) {
+      craftHintShown.current = true;
+      explainCrafting();
+    }
+  }, [state.inventory.length, explainCrafting]);
+
+  const goToScene = useCallback((id: string) => {
+    audio.click();
+    setFading(true);
+    window.setTimeout(() => {
+      setSceneId(id);
+      setEntrySeq((s) => s + 1);
+      setFading(false);
+    }, 380);
+  }, []);
+
+  /* -------- scene entry -------- */
+  const enteredRef = useRef<string>("");
+  const heatBustFired = useRef(false);
+  useEffect(() => {
+    if (!scene) return;
+    const key = `${sceneId}#${entrySeq}`;
+    if (enteredRef.current === key) return;
+    enteredRef.current = key;
+
+    const revisit = visitedRef.current.has(sceneId);
+    visitedRef.current.add(sceneId);
+    setVisitedScenes(new Set(visitedRef.current));
+
+    // A restore (load slot) reapplies saved scene progress instead of the normal
+    // first-entry/revisit reset, so the player lands exactly where they left off.
+    const restoring = restoreRef.current;
+    if (restoring) restoreRef.current = null;
+
+    if (restoring) {
+      setProseDone(restoring.proseAcknowledged || !!scene.noTypewriter);
+      setProseAcknowledged(restoring.proseAcknowledged);
+      setBeatIdx(restoring.proseAcknowledged ? Math.min(restoring.beatIdx, scene.dialogueBeats?.length ?? 0) : 0);
+      setBeatDone(restoring.proseAcknowledged);
+      setChoiceFocus(0);
+      setExpiredChoices(new Set(restoring.expiredChoices ?? []));
+      setChoiceClocks(restoring.choiceClocks ?? {});
+      qtHeartbeatFired.current = new Set();
+      setHoldRemaining(0);
+      setAutoAdvanceRemaining(0);
+    } else {
+      // If noTypewriter is enabled (for MP3 voice sync), show prose instantly
+      // instead of animating it letter-by-letter. Credits nodes are the
+      // exception: their animated intro controls when the Begin button appears.
+      setProseDone(revisit || (!!scene.noTypewriter && scene.nodeType !== "credits"));
+      setProseAcknowledged(revisit);
+      setBeatIdx(revisit ? (scene.dialogueBeats?.length ?? 0) : 0);
+      setBeatDone(false);
+      setChoiceFocus(0);
+      setExpiredChoices(new Set());
+      setChoiceClocks({});
+      qtHeartbeatFired.current = new Set();
+      // Cinematic hold: a scene with `choiceDelaySeconds` keeps its choices (and
+      // on credits/cutscene nodes, its continue button) locked until the timer
+      // elapses. Only applied on first entry — revisits stay snappy.
+      setHoldRemaining(revisit ? 0 : Math.max(0, scene.choiceDelaySeconds ?? 0));
+      setAutoAdvanceRemaining(0);
+    }
+    audio.stopSpeech();
+    if (narrationTimerRef.current !== null) {
+      window.clearTimeout(narrationTimerRef.current);
+      narrationTimerRef.current = null;
+    }
+    // Scene music — continuous across scenes. A scene with a track switches to
+    // it, a scene with "no music" stops it, and everything else inherits the
+    // currently-playing track so it keeps looping until changed or silenced.
+    //
+    // Nothing stops abruptly: leaving a track ramps it down over
+    // MUSIC_FADE_MS and a new track ramps up over the same window, so a
+    // switch reads as a crossfade the way a film reel changes cue.
+    const musicUrl = scene.musicUrl ?? scene.sceneAudioUrl;
+    const musicMode = scene.musicMode ?? "inherit";
+    // Per-scene fade length. A long title sequence can breathe out slowly; a
+    // hard cut into a shock scene sets this to 0.
+    const fadeMs =
+      scene.musicFadeSeconds === undefined
+        ? MUSIC_FADE_MS
+        : Math.max(0, scene.musicFadeSeconds) * 1000;
+
+    const startTrack = (url: string) => {
+      // Ramp the outgoing track down rather than cutting it. It is detached
+      // from sceneAudioRef immediately so the incoming track can be wired up
+      // straight away — the two overlap and read as a crossfade.
+      const outgoing = sceneAudioRef.current;
+      if (outgoing) {
+        outgoing.onplaying = null;
+        outgoing.onpause = null;
+        sceneAudioRef.current = null;
+        fadeOutAndStop(outgoing, fadeMs);
+      }
+      // Adopt the element primed inside the user's click gesture (see App.tsx)
+      // so the opening track plays even though this effect runs after the
+      // activation window. If it's a different track, stop the primer and start
+      // a fresh element.
+      const reuse = primedMusic && primedMusic.url === url ? primedMusic.el : null;
+      if (primedMusic && !reuse && !primedMusic.el.paused) primedMusic.el.pause();
+      const a = reuse ?? new Audio(assetUrl(url));
+      if (!reuse) a.loop = true;
+      a.muted = !soundOnRef.current;
+      const target = audio.volumes.master * audio.volumes.music;
+      // Start silent and ramp in. A track adopted from the priming click may
+      // already be audible, so it fades from wherever it actually is.
+      a.volume = reuse ? a.volume : 0;
+      fadeAudio(a, target, fadeMs);
+      a.onplaying = () => {
+        setMusicPlaying(true);
+        setSoundBlocked(false);
+      };
+      a.onpause = () => setMusicPlaying(false);
+      // The primed element already fired `playing` before we adopted it, so
+      // reflect the state directly instead of waiting for a second event.
+      if (reuse && !a.paused) {
+        setMusicPlaying(true);
+        setSoundBlocked(false);
+      }
+      try {
+        const attempt = a.play();
+        if (attempt && typeof attempt.catch === "function") {
+          attempt
+            .then(() => {
+              setSoundBlocked(false);
+              // Some webviews resolve play() but stay silent (a soft autoplay
+              // block). Double-check the track is actually advancing.
+              window.setTimeout(() => {
+                if (a.paused && !a.error) {
+                  setSoundBlocked(true);
+                  pushToast("🔇 Music is paused — tap to enable sound.", "info");
+                }
+              }, 500);
+            })
+            .catch(() => {
+              if (!a.error) {
+                setSoundBlocked(true);
+                pushToast("🔇 The browser blocked music autoplay — tap to enable sound.", "info");
+              } else {
+                pushToast(`Music couldn't be played (${a.error.message ?? `error ${a.error.code}`}).`, "fail");
+              }
+            });
+        }
+      } catch {
+        // Some browsers throw synchronously instead of returning a rejected
+        // promise — treat it the same as an autoplay block.
+        setSoundBlocked(true);
+        pushToast("🔇 The browser blocked music autoplay — tap to enable sound.", "info");
+      }
+      sceneAudioRef.current = a;
+      musicSrcRef.current = url;
+      setMusicTrack(url);
+    };
+
+    if (musicMode === "none") {
+      // "No music" is a cue too: ramp the soundtrack out instead of dropping
+      // it, so entering a silent scene lands rather than lurches.
+      if (sceneAudioRef.current) {
+        const outgoing = sceneAudioRef.current;
+        outgoing.onplaying = null;
+        outgoing.onpause = null;
+        sceneAudioRef.current = null;
+        fadeOutAndStop(outgoing, fadeMs);
+      }
+      // A primed opening track that a "no music" scene won't use goes too.
+      if (primedMusic && !primedMusic.el.paused) fadeOutAndStop(primedMusic.el, fadeMs);
+      musicSrcRef.current = null;
+      setMusicTrack(null);
+      setMusicPlaying(false);
+    } else if (musicUrl && (musicMode === "track" || musicSrcRef.current !== musicUrl)) {
+      // A scene that sets a track (either explicitly or via legacy musicUrl)
+      // switches to it; a scene re-using the SAME track keeps it running
+      // without restarting.
+      if (musicSrcRef.current !== musicUrl) startTrack(musicUrl);
+    } else {
+      // Inherit: leave whatever is playing untouched (sync mute state only).
+      const a = sceneAudioRef.current;
+      if (a) a.muted = !soundOnRef.current;
+      setMusicTrack(musicSrcRef.current);
+    }
+    audio.setAmbient(soundOnRef.current ? scene.ambientAudio ?? null : null);
+    // Video cutscenes: start via a JS play() (not the autoplay attribute), the
+    // same way music starts — the attribute is blocked by stricter autoplay
+    // policies even after a click, which is why start-scene videos stayed silent.
+    const bgVideo = bgVideoRef.current;
+    if (bgVideo) {
+      bgVideo.muted = !soundOnRef.current;
+      bgVideo.volume = audio.volumes.master;
+      bgVideo.play().then(() => setSoundBlocked(false)).catch(() => {
+        if (!bgVideo.error) setSoundBlocked(true);
+      });
+    }
+    // Auto-narrate only on first visit. Repeated narration made backtracking feel
+    // like the whole scene had reset. Title cards skip generated TTS, but an
+    // explicitly attached prose MP3 is authored audio and should play.
+    const shouldPlayProse =
+      !revisit &&
+      !restoring &&
+      overlay?.type !== "instructions" &&
+      autoNarrate &&
+      shouldAutoNarrateSceneProse(scene);
+    if (shouldPlayProse) {
+      narrationTimerRef.current = window.setTimeout(() => playProse(scene), proseNarrationDelayMs(scene));
+    } else if (primedNarrationRef.current) {
+      // The primed opening clip is adopted only by playProse. If this entry is
+      // not going to call it (restore, revisit, narration off, or an
+      // instructions overlay), stop it here — otherwise it keeps playing over
+      // the scene, exactly like the music primer is paused when unused.
+      const leftover = primedNarrationRef.current;
+      primedNarrationRef.current = null;
+      try {
+        leftover.el.pause();
+      } catch {
+        /* noop */
+      }
+    }
+    let next = stateRef.current;
+    // onEnter actions are first-entry actions. Reapplying rewards and meters on
+    // every backtrack was a major source of progression farming.
+    if (!revisit && !restoring) {
+      scene.onEnterActions?.forEach((a) => {
+        next = applyConsequences(story, a.consequences, next);
+      });
+    }
+    // Compute "who you met" against the post-onEnter state, so a beat that only
+    // unlocks because of a same-scene trust/flag bump still counts correctly.
+    const metHere = (scene.dialogueBeats ?? [])
+      .filter((beat) => meetsGating(beat.conditionRule, next))
+      .map((beat) => beat.characterId);
+    if (metHere.length) {
+      setEncounteredCharacters((old) => {
+        const nextSet = new Set(old);
+        metHere.forEach((id) => nextSet.add(id));
+        return nextSet;
+      });
+    }
+    if (next !== stateRef.current) setState(next);
+    if (!restoring && scene.isEnding && scene.endingData) {
+      audio.stinger();
+      recordEnding(story.id, {
+        sceneId: scene.id,
+        headline: scene.endingData.headline,
+        tier: scene.endingData.tier,
+        unlockedAt: Date.now(),
+        episodeId,
+      });
+      // Reaching an ending inside a season closes the EPISODE: snapshot the
+      // world state so the next chapter opens with these consequences already
+      // in place, and hand control back to the season wrapper.
+      if (episode && onEpisodeComplete) {
+        const carrying = next;
+        onEpisodeComplete(
+          {
+            episodeId: episode.id,
+            endingSceneId: scene.id,
+            endingHeadline: scene.endingData.headline,
+            endingTier: scene.endingData.tier,
+            completedAt: Date.now(),
+            carry: {
+              activeFlags: [...carrying.activeFlags],
+              inventory: carrying.inventory.map((i) => i.id),
+              meters: { ...carrying.meters },
+              characterTrust: { ...carrying.characterTrust },
+              memories: { ...carrying.memories },
+            },
+          },
+          highlightsRef.current
+        );
+      }
+    }
+    // First-visit discoverability: nudge the player when a scene hides
+    // collectible evidence behind its hotspots.
+    if (
+      !revisit &&
+      !restoring &&
+      scene.nodeType !== "credits" &&
+      scene.nodeType !== "cutscene" &&
+      (scene.hotspots ?? []).some((hs) => hs.action.type === "giveItem" && hs.action.itemGranted && meetsGating(hs.gating, next))
+    ) {
+      pushToast("🔍 Look around the scene — evidence is hidden in the picture.", "info");
+    }
+    if (revisit && !restoring) pushToast(`Revisited: ${scene.title}. Previous narration skipped.`, "info");
+  }, [scene, sceneId, entrySeq, story, startSceneId, autoNarrate, overlay?.type, pushToast, goToScene, playProse, episode, episodeId, onEpisodeComplete]);
+
+  // Heat bust — evaluated continuously, not just on scene arrival. Meter
+  // gains from reply choices, pattern-puzzle outcomes and on-enter effects
+  // don't navigate, and the old entry-time-only check let a player keep
+  // exploring a scene they should already have been folded out of (with no
+  // "Heat rising" feedback at all). The isEnding guard keeps it from racing
+  // a choice that is simultaneously navigating to a victory ending: if
+  // you're at an ending, the case is decided.
+  useEffect(() => {
+    if (!scene) return;
+    const bust = heatBustTarget(story, state, sceneId, episode);
+    if (!bust || heatBustFired.current || scene.isEnding) return;
+    heatBustFired.current = true;
+    audio.stinger();
+    pushToast("Too much heat. The city closes in.", "fail");
+    enteredRef.current = "";
+    goToScene(bust);
+  }, [state, scene, sceneId, story, episode, goToScene, pushToast]);
+
+  /* -------- save / load slots -------- */
+  const buildSave = useCallback((): GameSave => {
+    return {
+      storyId: story.id,
+      episodeId,
+      sceneId,
+      sceneTitle: scene?.title ?? "",
+      savedAt: Date.now(),
+      activeFlags: [...state.activeFlags],
+      inventory: state.inventory.map((i) => i.id),
+      meters: { ...state.meters },
+      characterTrust: { ...state.characterTrust },
+      memories: { ...state.memories },
+      proseAcknowledged,
+      beatIdx,
+      usedHotspots: [...usedHotspots],
+      usedChoices: [...usedChoices],
+      visitedScenes: [...visitedScenes],
+      journey,
+      chartedUpTo,
+      seenActs: [...seenActs.current],
+      encounteredCharacters: [...encounteredCharacters],
+      expiredChoices: [...expiredChoices],
+      choiceClocks: { ...choiceClocks },
+      composure: { ...iqComposure },
+      steadied: { ...iqSteadied.current },
+    };
+  }, [story, episodeId, scene, sceneId, state, proseAcknowledged, beatIdx, usedHotspots, usedChoices, visitedScenes, encounteredCharacters, expiredChoices, choiceClocks, journey, chartedUpTo, iqComposure]);
+
+  const restoreSave = useCallback(
+    (save: GameSave) => {
+      // A save can be older than the current schema, hand-edited, or truncated
+      // by a storage quota error mid-write. Every field is therefore treated as
+      // optional here: a missing array must degrade to empty, never throw —
+      // an exception in this path unmounts the whole app and leaves the player
+      // staring at a white screen with no way back to the menu.
+      const arr = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
+      const inv = arr(save.inventory)
+        .map((id) => story.items.find((i) => i.id === id))
+        .filter((i): i is Item => !!i);
+      const restored: GlobalState = {
+        activeFlags: new Set(arr(save.activeFlags)),
+        inventory: inv,
+        meters: Object.assign({ Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 0 }, save.meters ?? {}),
+        characterTrust: { ...(save.characterTrust ?? {}) },
+        memories: { ...(save.memories ?? {}) },
+      };
+      // Stage the save so the scene-entry pass applies it without clobbering.
+      restoreRef.current = save;
+      visitedRef.current = new Set(arr(save.visitedScenes));
+      enteredRef.current = "";
+      heatBustFired.current = false;
+      craftHintShown.current = true;
+      setState(restored);
+      setUsedHotspots(new Set(arr(save.usedHotspots)));
+      setUsedChoices(new Set(arr(save.usedChoices)));
+      setVisitedScenes(new Set(arr(save.visitedScenes)));
+      setEncounteredCharacters(new Set(arr(save.encounteredCharacters)));
+      setExpiredChoices(new Set(arr(save.expiredChoices)));
+      setChoiceClocks(save.choiceClocks ?? {});
+      setIqComposure(save.composure && typeof save.composure === "object" ? { ...save.composure } : {});
+      iqSteadied.current = save.steadied && typeof save.steadied === "object" ? { ...save.steadied } : {};
+      setJourney(Array.isArray(save.journey) ? save.journey : []);
+      setChartedUpTo(save.chartedUpTo ?? 0);
+      seenActs.current = new Set(arr(save.seenActs));
+      setPartBreak(null);
+      setPendingAct(null);
+      setActMap(null);
+      setOverlay(null);
+      // A scene id can vanish between releases (a cut or renamed scene). Fall
+      // back to the story's opening rather than rendering an undefined scene.
+      const target = story.scenes.some((sc) => sc.id === save.sceneId)
+        ? save.sceneId
+        : story.startSceneId;
+      setSceneId(target);
+      setEntrySeq((s) => s + 1);
+    },
+    [story]
+  );
+
+  /* -------- automatic checkpoint --------
+   * A snapshot is written to the invisible AUTO slot on every scene arrival,
+   * after the entry state has settled. "▶ Resume" on the newsstand and the
+   * Load screen's Auto row both read it, so closing the tab mid-case never
+   * costs more than the current scene. Manual slots are never touched. */
+  useEffect(() => {
+    if (!scene || scene.isEnding) return;
+    const t = window.setTimeout(() => {
+      writeSave(AUTO_SLOT, buildSave());
+      setCheckpointFlash(true);
+    }, 400);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId, entrySeq]);
+
+  useEffect(() => {
+    if (!checkpointFlash) return;
+    const t = window.setTimeout(() => setCheckpointFlash(false), 1400);
+    return () => window.clearTimeout(t);
+  }, [checkpointFlash]);
+
+  const doSave = useCallback(
+    (slot: number) => {
+      if (!writeSave(slot, buildSave())) {
+        pushToast("Save failed — browser storage unavailable.", "fail");
+        audio.fail();
+        return;
+      }
+      audio.success();
+      if (saveThenExitRef.current) {
+        saveThenExitRef.current = false;
+        audio.stopSpeech();
+        onExit();
+        return;
+      }
+      pushToast(`Saved to slot ${slot}.`, "success");
+      setSaves(readSaves(story.id, episodeId));
+      setOverlay(null);
+    },
+    [buildSave, story, episodeId, onExit, pushToast]
+  );
+
+  const doLoad = useCallback(
+    (slot: number) => {
+      const save = readSave(story.id, slot, episodeId);
+      if (!save) {
+        pushToast("That slot is empty.", "fail");
+        audio.fail();
+        return;
+      }
+      restoreSave(save);
+      pushToast(`Loaded from slot ${slot}.`, "success");
+    },
+    [story, episodeId, restoreSave, pushToast]
+  );
+
+  // Resume straight into a save slot (the newsstand "▶ Resume" path).
+  useEffect(() => {
+    if (!resumeSlot) return;
+    const save = readSave(story.id, resumeSlot, episodeId);
+    if (save) restoreSave(save);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* -------- sound toggle (music, ambient, video cutscene audio) -------- */
+  // Persist the mixer to the same settings key the main-menu Sound Booth uses,
+  // so in-story volume changes carry back out to the menu and vice versa.
+  const applyElementVolumes = useCallback(() => {
+    // The scene-music element is a raw Audio() that bypasses the WebAudio
+    // buses, so it must be multiplied by master manually.
+    //
+    // Skip it while a fade is running: the ramp owns .volume for its
+    // duration, and writing full volume underneath it would make the fader
+    // and the fade fight, producing an audible stutter. The ramp already
+    // targets the live mixer value, so the new level lands when it settles.
+    if (sceneAudioRef.current && !isFading(sceneAudioRef.current)) {
+      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music;
+    }
+    // Video cutscenes follow master only.
+    if (bgVideoRef.current) bgVideoRef.current.volume = audio.volumes.master;
+  }, []);
+
+  const changeVolume = useCallback((ch: MixChannel, v: number) => {
+    const next = { ...audio.volumes, [ch]: v };
+    audio.setVolume(ch, v);
+    setVolumes(next);
+    applyElementVolumes();
+    try {
+      const raw = localStorage.getItem("scarlet-reel-settings-v1");
+      const parsed = raw ? JSON.parse(raw) : {};
+      localStorage.setItem("scarlet-reel-settings-v1", JSON.stringify({ ...parsed, volumes: next }));
+    } catch {
+      /* storage unavailable — volume still applies for this session */
+    }
+  }, [applyElementVolumes]);
+
+  const retryMusic = useCallback(() => {
+    const a = sceneAudioRef.current;
+    if (a && soundOnRef.current && a.paused) {
+      a.play().then(() => setSoundBlocked(false)).catch(() => setSoundBlocked(true));
+    }
+    // Video cutscenes are blocked by autoplay policy more often than audio —
+    // retry the video too on any gesture.
+    const v = bgVideoRef.current;
+    if (v && soundOnRef.current && v.paused) {
+      v.muted = false;
+      v.play().then(() => setSoundBlocked(false)).catch(() => setSoundBlocked(true));
+    }
+  }, []);
+
+  const enableSound = useCallback(() => {
+    setSoundOn(true);
+    setSoundBlocked(false);
+    audio.unlock();
+    const a = sceneAudioRef.current;
+    if (a) {
+      a.muted = false;
+      // Turning sound on mid-scene fades the track up instead of slamming it
+      // in at full level.
+      a.volume = 0;
+      a.play()
+        .then(() => {
+          setSoundBlocked(false);
+          setMusicPlaying(true);
+          fadeAudio(a, audio.volumes.master * audio.volumes.music, MUSIC_FADE_MS);
+        })
+        .catch(() => setSoundBlocked(true));
+    }
+    const v = bgVideoRef.current;
+    if (v) {
+      v.muted = false;
+      v.volume = audio.volumes.master;
+      v.play().catch(() => {});
+    }
+    if (scene) audio.setAmbient(scene.ambientAudio ?? null);
+  }, [scene]);
+
+  useEffect(() => {
+    const a = sceneAudioRef.current;
+    if (a) {
+      a.muted = !soundOn;
+      if (soundOn) {
+        a.play()
+          .then(() => setMusicPlaying(true))
+          .catch(() => setMusicPlaying(false));
+      } else {
+        setMusicPlaying(false);
+      }
+    }
+    const v = bgVideoRef.current;
+    if (v) {
+      v.muted = !soundOn;
+      if (soundOn) v.play().catch(() => {});
+    }
+    if (!soundOn) audio.setAmbient(null);
+    else if (scene) audio.setAmbient(scene.ambientAudio ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soundOn]);
+
+  // If the browser blocked video-with-sound autoplay (no music to report the
+  // rejection), detect it shortly after the cutscene mounts and surface the
+  // "tap for sound" affordance.
+  useEffect(() => {
+    const v = bgVideoRef.current;
+    if (!v) return;
+    const t = window.setTimeout(() => {
+      if (v.paused && !v.muted && soundOnRef.current) {
+        setSoundBlocked(true);
+        pushToast("🔇 The browser blocked the video's sound — tap the speaker (bottom-right) to enable it.", "info");
+      }
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [sceneId, entrySeq, scene?.background, pushToast]);
+
+  // Beats must re-evaluate when world state changes, otherwise a beat gated on a
+  // flag set by onEnterActions (or a just-collected item) never renders. Gating
+  // also reads meters and character trust, so those are part of the signature
+  // too — otherwise a trust/meter-gated reply beat never appears mid-scene.
+  const beatsSignature = useMemo(
+    () =>
+      `${[...state.activeFlags].sort().join(",")}|${state.inventory.map((i) => i.id).sort().join(",")}|${Object.entries(state.meters).sort().map(([k, v]) => `${k}:${v}`).join(",")}|${Object.entries(state.characterTrust).sort().map(([k, v]) => `${k}:${v}`).join(",")}|${Object.keys(state.memories).sort().join(",")}`,
+    [state.activeFlags, state.inventory, state.meters, state.characterTrust, state.memories]
+  );
+  const visibleBeats = useMemo(() => {
+    if (!scene?.dialogueBeats && !scene?.interrogation) return [];
+    const beats = [...(scene.dialogueBeats ?? [])];
+    // The interrogation's broke / clamped beats join the queue the moment
+    // their flag is set — the crack plays as the next line of the
+    // conversation, no special scene cut needed.
+    const q = scene.interrogation;
+    if (q) {
+      if (stateRef.current.activeFlags.has(q.brokeFlag)) beats.push(q.brokeBeat);
+      if (q.clampFlag && q.clampedBeat && stateRef.current.activeFlags.has(q.clampFlag)) beats.push(q.clampedBeat);
+    }
+    return beats.filter((b) => meetsGating(b.conditionRule, stateRef.current));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, entrySeq, sceneId, beatsSignature]);
+
+
+
+  /* -------- cinematic hold countdown -------- */
+  useEffect(() => {
+    if (holdRemaining <= 0) return;
+    const t = window.setTimeout(() => setHoldRemaining((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearTimeout(t);
+  }, [holdRemaining]);
+
+  /* -------- dialogue panel theme -------- */
+  // Story-wide look for the bottom panel. The reserved height is the part
+  // that matters mechanically: it stops the panel resizing as text types and
+  // therefore stops the inline controls drifting under the player's cursor.
+  const dialogueTheme = story.dialogueBox;
+  const reservedProse = useMemo(() => reservedProseHeight(dialogueTheme), [dialogueTheme]);
+  /* The panel's final height, computed from the LONGEST text this scene can
+   * show (prose + every beat, including memory-recall variants). The full
+   * text is rendered as an invisible sizer under the typed output, so the
+   * box reaches its final height at the FIRST character of the scene and
+   * never moves again — not while a line types, not between beats, not when
+   * the choices arrive. Works at any width/font because it measures the real
+   * text instead of estimating lines from character counts. */
+  const panelSizerText = useMemo(() => {
+    if (!scene || scene.nodeType === "credits" || scene.nodeType === "cutscene") return "";
+    let longest = scene.prose ?? "";
+    (scene.dialogueBeats ?? []).forEach((b) => {
+      if (b.text.length > longest.length) longest = b.text;
+      Object.values(b.recalls ?? {}).forEach((line) => {
+        if (line.length > longest.length) longest = line;
+      });
+    });
+    return longest;
+  }, [scene]);
+  // Only the standard bottom-anchored node needs its continue slot held open.
+  // Credits and cutscene nodes are vertically centred, so a late button grows
+  // the box symmetrically instead of shunting the controls.
+  const reserveContinueSlot =
+    !!reservedProse && scene?.nodeType !== "credits" && scene?.nodeType !== "cutscene";
+
+  /* -------- beats advancement -------- */
+  const holdActive = holdRemaining > 0;
+  const sceneReady = proseAcknowledged && !holdActive;
+  const inBeats = proseAcknowledged && beatIdx < visibleBeats.length;
+  const interactive = sceneReady && !inBeats;
+  const hasValidAutoAdvance = !!scene?.autoAdvanceTargetSceneId && story.scenes.some((candidate) => candidate.id === scene.autoAdvanceTargetSceneId);
+  const currentBeat = inBeats ? visibleBeats[beatIdx] : null;
+  // Effective text with memory recall substitution — an NPC echoing what you
+  // said, not just a flag-gated generic line.
+  const currentBeatText = currentBeat
+    ? resolveBeatText(currentBeat, state.memories, state.activeFlags, story.flagNotes)
+    : "";
+
+  /* -------- dialogue log --------
+   * Every spoken line of the run — prose and beats, with speakers — is
+   * appended as it plays, so the L key / menu button can show exactly what
+   * was said (and skipped text still lands in the record). A keyed set keeps
+   * each line logged exactly once per scene entry even under double-invoked
+   * effects. */
+  const [dialogueLog, setDialogueLog] = useState<{ speaker: string; text: string }[]>([]);
+  const loggedLinesRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!scene || scene.nodeType === "credits" || scene.nodeType === "cutscene") return;
+    const key = `${sceneId}#${entrySeq}#prose`;
+    if (scene.prose && !loggedLinesRef.current.has(key)) {
+      loggedLinesRef.current.add(key);
+      setDialogueLog((l) => [...l.slice(-199), { speaker: "", text: scene.prose }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId, entrySeq, scene?.prose]);
+  useEffect(() => {
+    if (!currentBeat) return;
+    const key = `${sceneId}#${entrySeq}#${currentBeat.id}`;
+    if (!loggedLinesRef.current.has(key)) {
+      loggedLinesRef.current.add(key);
+      const speaker =
+        currentBeat.characterId === "narrator"
+          ? "Narrator"
+          : story.characters.find((c) => c.id === currentBeat.characterId)?.name ?? "—";
+      setDialogueLog((l) => [...l.slice(-199), { speaker, text: currentBeatText }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId, entrySeq, currentBeat?.id]);
+
+  const advanceBeat = useCallback(() => {
+    if (!inBeats) return;
+    if (!beatDone) {
+      setBeatDone(true);
+      return;
+    }
+    audio.click();
+    setBeatDone(false);
+    setBeatIdx((i) => i + 1);
+  }, [inBeats, beatDone]);
+
+  // Rewind the scene's dialogue only — never into a previous scene. From the
+  // choices it returns to the final line (shown instantly); from a beat it steps
+  // back one line; from the first line — or a prose-only scene — it returns to
+  // the opening prose, which is the start of the scene.
+  const goBack = useCallback(() => {
+    if (!proseAcknowledged) return; // already at the scene start
+    audio.click();
+    if (inBeats && beatIdx > 0) {
+      setBeatDone(true); // show the previous line fully, no re-type
+      setBeatIdx((i) => i - 1);
+      return;
+    }
+    if (inBeats) {
+      audio.stopSpeech();
+      setBeatDone(false);
+      setProseAcknowledged(false);
+      return;
+    }
+    if (visibleBeats.length > 0) {
+      setBeatDone(true);
+      setBeatIdx(visibleBeats.length - 1);
+    } else {
+      audio.stopSpeech();
+      setProseAcknowledged(false);
+    }
+  }, [proseAcknowledged, inBeats, beatIdx, visibleBeats.length]);
+
+  // Jump straight back to the start of the current scene (the opening prose),
+  // resetting the dialogue so it replays from the first line on continue.
+  const goToSceneStart = useCallback(() => {
+    if (!proseAcknowledged) return;
+    audio.click();
+    audio.stopSpeech();
+    setBeatDone(false);
+    setBeatIdx(0);
+    setProseAcknowledged(false);
+  }, [proseAcknowledged]);
+
+  // Both rewind controls have somewhere to go once the opening prose has been
+  // acknowledged; while the prose itself is showing there is nothing further
+  // back within this scene.
+  const canRewind = proseAcknowledged;
+
+  const skipCurrentText = useCallback(() => {
+    audio.click();
+    audio.stopSpeech();
+    if (!proseDone) {
+      setProseDone(true);
+      return;
+    }
+    if (!proseAcknowledged) {
+      setProseAcknowledged(true);
+      return;
+    }
+    if (inBeats && !beatDone) {
+      setBeatDone(true);
+      return;
+    }
+    if (inBeats && beatDone) {
+      // Skip the current beat only — advance to the next one, not past all of
+      // them. Previously this jumped beatIdx to the end, silently swallowing
+      // every remaining line of dialogue.
+      setBeatDone(false);
+      setBeatIdx((i) => i + 1);
+    }
+  }, [proseDone, proseAcknowledged, inBeats, beatDone]);
+
+  /* -------- auto-advance / skip-read engine --------
+   * Drives the dialogue forward with no input. Skip types instantly and steps
+   * on a hair-trigger; Auto waits for the typewriter to finish, then advances
+   * on a comfortable timer. A scene-level auto-route also opts into this reader
+   * so prose-only / dialogue-only cutscenes can move on without the player
+   * pressing Continue first. Manual clicks win: each advance changes state,
+   * which cancels the pending timer and re-arms it for the next line, so the
+   * two never double-advance. */
+  useEffect(() => {
+    const sceneAutoRead = hasValidAutoAdvance;
+    if ((!autoAdvance && !skipMode && !sceneAutoRead) || !scene || scene.isEnding) return;
+    if (overlay || menuOpen || holdActive) return;
+    // Credits / cutscene intros control their own timing — don't rush them,
+    // unless this scene explicitly has an auto-route and needs hands-off flow.
+    if ((scene.nodeType === "credits" || scene.nodeType === "cutscene") && !proseAcknowledged && !sceneAutoRead) return;
+    if (!proseAcknowledged) {
+      if (!proseDone) {
+        // Skip finishes the typing instantly; Auto lets it run and re-arms
+        // when proseDone flips.
+        if (skipMode) {
+          const t = window.setTimeout(() => setProseDone(true), 50);
+          return () => window.clearTimeout(t);
+        }
+        return;
+      }
+      const t = window.setTimeout(() => {
+        audio.stopSpeech();
+        setProseAcknowledged(true);
+      }, skipMode ? 200 : 900);
+      return () => window.clearTimeout(t);
+    }
+    if (inBeats) {
+      if (!beatDone) {
+        if (skipMode) {
+          const t = window.setTimeout(() => setBeatDone(true), 50);
+          return () => window.clearTimeout(t);
+        }
+        return;
+      }
+      const t = window.setTimeout(() => {
+        setBeatDone(false);
+        setBeatIdx((i) => i + 1);
+      }, skipMode ? 350 : 1150);
+      return () => window.clearTimeout(t);
+    }
+    // Choices are up — hands off until the player picks.
+  }, [
+    autoAdvance,
+    skipMode,
+    hasValidAutoAdvance,
+    scene,
+    overlay,
+    menuOpen,
+    holdActive,
+    proseAcknowledged,
+    proseDone,
+    inBeats,
+    beatDone,
+  ]);
+
+  const speakLine = useCallback(
+    (beat: { text: string; characterId: string; audioUrl?: string; silent?: boolean }, textOverride?: string) => {
+      if (beat.silent) return; // no narration at all
+      if (beat.audioUrl) {
+        audio.playClip(beat.audioUrl);
+        return;
+      }
+      const ch = story.characters.find((c) => c.id === beat.characterId);
+      audio.speak(textOverride ?? beat.text, beat.characterId, ch?.voice);
+    },
+    [story]
+  );
+
+  useEffect(() => {
+    if (autoNarrate && currentBeat && currentBeatText) {
+      const t = window.setTimeout(() => speakLine(currentBeat, currentBeatText), 220);
+      return () => window.clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoNarrate, currentBeat, currentBeatText]);
+
+  /* -------- choices -------- */
+  const availableChoices = useMemo(() => {
+    if (!scene?.choices) return [];
+    return scene.choices.filter((c) => {
+      if (expiredChoices.has(c.id)) return false;
+      if (!choiceRepeats(c) && usedChoices.has(`${sceneId}:${c.id}`)) return false;
+      // "hidden" choices stay invisible until their gate is met (sequential
+      // dialogue), rather than rendering as a disabled hint. The effective
+      // gate includes the item a present-item choice shows, so "show the
+      // photograph" stays hidden until you actually hold the photograph.
+      if (c.hidden && !meetsGating(effectiveChoiceGating(c), state)) return false;
+      return true;
+    });
+  }, [scene, sceneId, expiredChoices, usedChoices, state]);
+
+  const hasUsableChoice = availableChoices.some((c) => meetsGating(effectiveChoiceGating(c), state) && (c.reply || !!c.targetSceneId));
+
+  /* -------- quick-time prompt state (reactive) -------- */
+  // A quick-time prompt is live while at least one QTE choice is still on the
+  // table and its clock hasn't been picked or expired.
+  const qteActive = availableChoices.some((c) => c.quickTime && c.timeLimitSeconds);
+
+  /* -------- next-scene art prefetch --------
+   * While the player sits reading choices (or a long line), the browser is
+   * quietly decoding where they're likely to go next: every navigation
+   * choice's target background, plus the next beat's replacement image. The
+   * scene-to-scene cut then swaps plates instead of flashing black while an
+   * image loads off disk. Gradients and videos are skipped (nothing to
+   * decode / too heavy). */
+  useEffect(() => {
+    const prefetch = (bg?: string) => {
+      if (!bg || bg.startsWith("gradient:") || bg.startsWith("data:")) return;
+      const url = bg.startsWith("video:") ? bg.slice(6) : bg;
+      if (!url || url.startsWith("gradient:") || url.startsWith("data:")) return;
+      const img = new Image();
+      img.src = assetUrl(url);
+    };
+    const targets = new Set<string>();
+    if (interactive) {
+      availableChoices.forEach((c) => {
+        if (c.reply) return;
+        if (c.targetSceneId) targets.add(c.targetSceneId);
+        if (c.quickTime && c.timedOutTargetSceneId) targets.add(c.timedOutTargetSceneId);
+      });
+      [...targets].slice(0, 4).forEach((id) => prefetch(sceneById(story, id)?.background));
+    }
+    if (inBeats) {
+      const next = visibleBeats[beatIdx + 1];
+      if (next?.background) prefetch(next.background);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interactive, inBeats, beatIdx, availableChoices, story]);
+  // Once any QTE choice with qteShakyCam dips below ~30% remaining, swap the
+  // scene's cinematic to SHAKY CAM for the duration of the choice option.
+  const qtShaky = availableChoices.some(
+    (c) =>
+      c.quickTime &&
+      c.qteShakyCam &&
+      c.timeLimitSeconds &&
+      (choiceClocks[c.id] ?? c.timeLimitSeconds) / c.timeLimitSeconds <= 0.3
+  );
+  // The background cinematic used while a QTE is active. When the clock runs low
+  // and qteShakyCam is on, we override to SHAKY CAM regardless of whether the
+  // scene already has a base cinematic (otherwise the swap does nothing on a
+  // scene with no cinematic configured).
+  const bgCinematic = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+
+  // Keep the latest closure values for the timer's interval callback so it never
+  // reads a stale `scene`, `availableChoices`, or `choiceClocks` (which is what
+  // made the heartbeat/shaky-cam and expiry checks unreliable).
+  const qtSceneRef = useRef(scene);
+  qtSceneRef.current = scene;
+  const qtChoicesRef = useRef(availableChoices);
+  qtChoicesRef.current = availableChoices;
+  const qtClocksRef = useRef(choiceClocks);
+  qtClocksRef.current = choiceClocks;
+
+  // timers for timed choices
+  useEffect(() => {
+    // The menu pauses the clock: a player weighing a save or quit shouldn't
+    // be routed down the "you hesitated" path while the screen is behind a
+    // panel. The counts live in choiceClocks, so closing the menu resumes
+    // from where the pause left off instead of restarting.
+    if (!interactive || menuOpen) return;
+    const timed = availableChoices.filter((c) => c.timeLimitSeconds);
+    if (!timed.length) return;
+    setChoiceClocks((prev) => {
+      const next = { ...prev };
+      timed.forEach((c) => {
+        if (next[c.id] === undefined) next[c.id] = c.timeLimitSeconds!;
+      });
+      return next;
+    });
+    const iv = window.setInterval(() => {
+      // 1) Decrement every live clock; collect expiries. Uses the functional
+      //    updater so we always decrement from the latest committed state.
+      const expiredNow: string[] = [];
+      setChoiceClocks((prev) => {
+        const next: Record<string, number> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (v <= 1) expiredNow.push(k);
+          else next[k] = v - 1;
+        }
+        return next;
+      });
+      // 2) Heartbeat sting for QTE choices that have just crossed ~30% left.
+      //    Reads the LIVE clocks via the ref so the threshold check is accurate.
+      const liveScene = qtSceneRef.current;
+      const liveChoices = qtChoicesRef.current;
+      const liveClocks = qtClocksRef.current;
+      if (liveScene?.choices) {
+        for (const c of liveChoices) {
+          if (!c.quickTime || !c.qteHeartbeat || !c.timeLimitSeconds) continue;
+          const total = c.timeLimitSeconds;
+          const remaining = (liveClocks[c.id] ?? total) / total;
+          if (remaining > 0 && remaining <= 0.3 && !qtHeartbeatFired.current.has(c.id)) {
+            qtHeartbeatFired.current.add(c.id);
+            if (soundOnRef.current) audio.heartbeat();
+          }
+        }
+      }
+      // 3) Expiry is NOT silent removal for quick-time prompts — apply the
+      //    timed-out consequences and route to the "you hesitated" target.
+      if (expiredNow.length) {
+        audio.fail();
+        setExpiredChoices((e) => {
+          const s = new Set(e);
+          expiredNow.forEach((k) => s.add(k));
+          return s;
+        });
+        expiredNow.forEach((id) => {
+          const choice = liveScene?.choices?.find((c) => c.id === id);
+          if (choice?.quickTime) {
+            if (choice.timedOutConsequences) {
+              setState((s) => applyConsequences(story, choice.timedOutConsequences, s));
+            }
+            const dest = choice.timedOutTargetSceneId ?? choice.targetSceneId;
+            if (dest && dest !== sceneId) {
+              // Letting the window close is a decision. Log it as one —
+              // passing the choice so its timed-out consequences (flags,
+              // heat) are captured for the route chart's notes.
+              recordJourney(choice, { timedOut: true });
+              leaveFor(dest, liveScene?.partBreak);
+            }
+          }
+        });
+      }
+    }, 1000);
+    return () => window.clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interactive, menuOpen, sceneId, entrySeq, availableChoices.length, goToScene]);
+
+  /** Would the part-break chart have anything to show? A break that charts
+   * nothing must not interrupt the player with an empty screen. Mirrors the
+   * filter inside <Flowchart>. */
+  const hasChartableSteps = useCallback(
+    (steps: JourneyStep[]) =>
+      steps.some((s) => s.options.length > 1 || s.timedOut || s.rememberLine),
+    []
+  );
+
+  /** The act a destination scene opens, if entering it begins a new act whose
+   * card hasn't played yet. Only a scene that IS an act's startSceneId opens
+   * one, so mid-act scenes never trigger a card. */
+  const actOpenedBy = useCallback(
+    (destSceneId: string): Act | null => {
+      const act = story.acts?.find((a) => a.startSceneId === destSceneId);
+      if (!act || seenActs.current.has(act.id)) return null;
+      return act;
+    },
+    [story]
+  );
+
+  /** Single exit point for "leave the current scene for `dest`", applying the
+   * boundary ceremony in order: route chart, then act card, then the scene. */
+  const leaveFor = useCallback(
+    (dest: string, breakTitle?: string) => {
+      const act = actOpenedBy(dest);
+      const chartable = hasChartableSteps(journeyRef.current.slice(chartedUpToRef.current));
+      // At an act boundary the branching map supersedes the linear chart —
+      // showing both would chart the same decisions twice in a row.
+      const leavingAct = act ? actOfScene(story, sceneIdRef.current) : null;
+      const actBoundary = !!act && !!leavingAct && leavingAct !== act.id;
+
+      if (breakTitle && chartable && !actBoundary) {
+        setPartBreak({ title: breakTitle, nextSceneId: dest });
+        return;
+      }
+      if (breakTitle) setChartedUpTo(journeyRef.current.length);
+      if (act) {
+        // Leaving one act for another: show the whole shape of the act just
+        // played before its successor's title card.
+        if (actBoundary && leavingAct) {
+          setActMap({ actId: leavingAct, nextSceneId: dest });
+          return;
+        }
+        seenActs.current.add(act.id);
+        setPendingAct({ act, nextSceneId: dest });
+        return;
+      }
+      goToScene(dest);
+    },
+    [actOpenedBy, hasChartableSteps, goToScene, story]
+  );
+
+  /* -------- scene auto-advance --------
+   * For pure cinematic / prose-only nodes: once the setup, dialogue and any
+   * authored hold have finished, route to the configured target after a timer —
+   * but only when there are no choices currently available. This lets authors
+   * build hands-off transitions without showing a dummy "Continue" choice. */
+  useEffect(() => {
+    if (!scene || scene.isEnding || overlay || menuOpen || !interactive || hasUsableChoice) {
+      setAutoAdvanceRemaining(0);
+      return;
+    }
+    const targetId = scene.autoAdvanceTargetSceneId;
+    if (!targetId || targetId === sceneId || !hasValidAutoAdvance) {
+      setAutoAdvanceRemaining(0);
+      return;
+    }
+    const delay = Math.max(0, Math.min(600, scene.autoAdvanceDelaySeconds ?? 0));
+    setAutoAdvanceRemaining(delay);
+
+    const go = () => {
+      setAutoAdvanceRemaining(0);
+      audio.stopSpeech();
+      leaveFor(targetId, scene.partBreak);
+    };
+    if (delay <= 0) {
+      const t = window.setTimeout(go, 0);
+      return () => window.clearTimeout(t);
+    }
+
+    const tick = window.setInterval(() => setAutoAdvanceRemaining((s) => Math.max(0, s - 1)), 1000);
+    const t = window.setTimeout(go, delay * 1000);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(t);
+    };
+  }, [scene, sceneId, hasValidAutoAdvance, overlay, menuOpen, interactive, hasUsableChoice, leaveFor]);
+
+  /** Append a decision to the ordered journey log. Captures the siblings that
+   * existed at this moment — including ones gated shut — because the whole
+   * point of the flowchart is showing the roads not taken. */
+  const recordJourney = useCallback(
+    (choice: Choice | null, opts?: { timedOut?: boolean }) => {
+      const liveScene = story.scenes.find((s) => s.id === sceneId);
+      if (!liveScene) return;
+      const st = stateRef.current;
+      const siblings = (liveScene.choices ?? []).filter((c) => !c.reply && c.targetSceneId);
+      const options = siblings
+        // hidden choices that never unlocked were never really on the table
+        .filter((c) => !(c.hidden && !meetsGating(effectiveChoiceGating(c), st)))
+        .map((c) => ({
+          id: c.id,
+          text: c.text,
+          // a timed-out prompt was not chosen — the player let it lapse
+          taken: !!choice && !opts?.timedOut && c.id === choice.id,
+          locked: !meetsGating(effectiveChoiceGating(c), st),
+          attitudeTag: c.attitudeTag,
+        }));
+      const step: JourneyStep = {
+        sceneId: liveScene.id,
+        sceneTitle: liveScene.title,
+        choiceId: choice?.id ?? null,
+        choiceText: choice?.text,
+        attitudeTag: choice?.attitudeTag,
+        options,
+        rememberLine: choice?.rememberLine,
+        timedOut: opts?.timedOut,
+        trustChanges: choice?.consequences?.trustChanges,
+        // Which flags this decision set — the route notes the flowchart and
+        // route map list with their Story.flagNotes.
+        flagsSet: [
+          ...(choice?.consequences?.setFlags ?? []),
+          ...(opts?.timedOut ? (choice?.timedOutConsequences?.setFlags ?? []) : []),
+        ],
+      };
+      // Update the ref synchronously: the caller decides whether to raise a
+      // part break in this same tick, before React has re-rendered.
+      journeyRef.current = [...journeyRef.current, step];
+      setJourney(journeyRef.current);
+    },
+    [story, sceneId]
+  );
+
+  const pickChoice = useCallback(
+    (choice: Choice) => {
+      // The effective gate includes the item a present-item choice shows —
+      // "show the photograph" is un-pickable while you don't hold it.
+      const gate = effectiveChoiceGating(choice);
+      if (!meetsGating(gate, stateRef.current)) {
+        audio.fail();
+        pushToast(gatingHint(gate, story) ?? "Not yet, detective.", "fail");
+        return;
+      }
+      // Conversational replies answer in place: apply consequences, stay in the
+      // scene, and let the newly-unlocked gated beat become the response.
+      if (choice.reply) {
+        audio.click();
+        const nextUsed = new Set(usedChoices);
+        nextUsed.add(`${sceneId}:${choice.id}`);
+        if (choice.exclusiveGroup) {
+          (scene?.choices ?? [])
+            .filter((candidate) => candidate.exclusiveGroup === choice.exclusiveGroup)
+            .forEach((candidate) => nextUsed.add(`${sceneId}:${candidate.id}`));
+        }
+        setUsedChoices(nextUsed);
+        if (choice.attitudeTag && choice.attitudeTag !== "Neutral") audio.stinger();
+        // Interrogation: an attitude-tagged reply is PRESSURE. The suspect's
+        // live composure drops by one; at zero their TRUST decides crack vs
+        // clamp (the projected state includes this reply's own trust swing, so
+        // a harsh press that also dents trust counts toward the clamp).
+        const q = scene?.interrogation;
+        let iqNext: number | null = null;
+        let iqOutcome: "broke" | "clamped" | null = null;
+        if (q && isPressingReply(choice)) {
+          const initial = q.composure ?? 3;
+          const live = iqComposure[sceneId] ?? initial;
+          const resolved = stateRef.current.activeFlags.has(q.brokeFlag) || (q.clampFlag && stateRef.current.activeFlags.has(q.clampFlag));
+          if (!resolved && live > 0) {
+            const pr = pressComposure(live, initial);
+            iqNext = pr.next;
+            if (pr.broke) {
+              const projected = recordPresentation(
+                choice,
+                story,
+                recordMemory(choice, applyConsequences(story, presentationConsequences(choice), stateRef.current))
+              );
+              iqOutcome = interrogationOutcome(q, projected.characterTrust[q.characterId] ?? 0);
+            }
+          }
+        }
+        // presentationConsequences folds in the item handover (when the
+        // choice consumes what it shows); recordPresentation writes the
+        // `item:<id>` memory so later beats can recall the presentation.
+        // The crack/clamp lands in the SAME state update as the press that
+        // caused it, so the broke beat's gate already sees the flag.
+        setState((s) => {
+          let next = recordPresentation(choice, story, recordMemory(choice, applyConsequences(story, presentationConsequences(choice), s)));
+          if (q && iqOutcome && !next.activeFlags.has(q.brokeFlag) && !(q.clampFlag && next.activeFlags.has(q.clampFlag))) {
+            const flag = iqOutcome === "broke" ? q.brokeFlag : q.clampFlag;
+            if (flag) next = { ...next, activeFlags: new Set(next.activeFlags).add(flag) };
+            const cons = iqOutcome === "broke" ? q.brokeConsequences : q.clampConsequences;
+            if (cons) next = applyConsequences(story, cons, next);
+          }
+          return next;
+        });
+        // The urgency layer: a press that lands jolts the gauge + a reaction;
+        // a press that breaks the suspect slams the stamp + flash + sting.
+        if (q && isPressingReply(choice) && iqNext !== null) {
+          if (iqOutcome) {
+            setIqComposure((c) => ({ ...c, [sceneId]: 0 }));
+            setIqStamp((prev) => ({ kind: iqOutcome, key: (prev?.key ?? 0) + 1 }));
+            const name = story.characters.find((c) => c.id === q.characterId)?.name ?? "The suspect";
+            if (iqOutcome === "broke") {
+              audio.stinger();
+              pushToast(`${name} breaks.`, "success");
+            } else {
+              audio.fail();
+              pushToast(`${name} clamps down.`, "fail");
+            }
+          } else {
+            setIqComposure((c) => ({ ...c, [sceneId]: iqNext }));
+            setIqPressKey((k) => k + 1);
+            // A press resets the steadying window — restart the creep so the
+            // visual "moment passing" clock restarts with the real timeout.
+            setIqSteadyKey((k) => k + 1);
+            audio.press();
+            setIqReaction((prev) => ({ text: pressReaction(q, iqNext), key: (prev?.key ?? 0) + 1 }));
+          }
+        }
+        if (choice.rememberLine) setRemember((r) => ({ line: choice.rememberLine!, key: (r?.key ?? 0) + 1 }));
+        if (choice.rememberLine || choice.memoryLog) {
+          setEpisodeHighlights((h) => (h.includes(choice.text) ? h : [...h, choice.text].slice(-6)));
+        }
+        return;
+      }
+      if (!choice.targetSceneId) {
+        audio.fail();
+        pushToast("That path isn't wired to a scene yet — open this node in Studio and set a target.", "fail");
+        return;
+      }
+      audio.click();
+      if (!choiceRepeats(choice)) {
+        setUsedChoices((old) => {
+          const next = new Set(old);
+          next.add(`${sceneId}:${choice.id}`);
+          if (choice.exclusiveGroup) {
+            (scene?.choices ?? [])
+              .filter((candidate) => candidate.exclusiveGroup === choice.exclusiveGroup)
+              .forEach((candidate) => next.add(`${sceneId}:${candidate.id}`));
+          }
+          return next;
+        });
+      }
+      if (choice.attitudeTag && choice.attitudeTag !== "Neutral") audio.stinger();
+      const perks = getPerks(stateRef.current);
+      // Start from the presentation-aware consequences so an item handover
+      // (consumePresentedItem) survives the perk adjustments below.
+      let cons = presentationConsequences(choice);
+      if (cons?.trustChanges && (perks.velvetTongue || perks.heat)) {
+        cons = {
+          ...cons,
+          trustChanges: cons.trustChanges.map((t) => {
+            let d = t.delta;
+            if (d > 0 && perks.velvetTongue) d += 1;
+            if (d > 0 && perks.heat) d = Math.max(1, Math.floor(d / 2));
+            return { ...t, delta: d };
+          }),
+        };
+      }
+      // Iron Nerve: while the perk is active (Aggressive 4+), hard-nosed
+      // (Aggressive-tagged) choices stop costing Suspicion — you keep your nerve
+      // when you turn up the pressure. Applied before the heat toast so it
+      // reflects the actual (dampened) Suspicion delta.
+      if (cons?.meterChanges && perks.ironNerve && choice.attitudeTag === "Aggressive") {
+        cons = {
+          ...cons,
+          meterChanges: cons.meterChanges.map((m) =>
+            m.meter === "Suspicion" && m.delta > 0 ? { ...m, delta: 0 } : m
+          ),
+        };
+      }
+      // Positive feedback: surface trust/meter/item gains so players know the
+      // choice actually did something (previously only failures got a toast).
+      if (cons?.trustChanges?.length) {
+        cons.trustChanges.forEach((t) => {
+          const ch = story.characters.find((c) => c.id === t.characterId);
+          if (!ch) return;
+          if (t.delta > 0) pushToast(`♥ ${ch.name.split(" ")[0]} trusts you a little more (+${t.delta}).`, "success");
+          else if (t.delta < 0) pushToast(`✖ ${ch.name.split(" ")[0]} likes you less (${t.delta}).`, "fail");
+        });
+      }
+      if (cons?.addItems?.length) {
+        cons.addItems.forEach((id) => {
+          const it = story.items.find((i) => i.id === id);
+          if (it && !stateRef.current.inventory.some((x) => x.id === id)) {
+            pushToast(`🎁 Received: ${it.icon} ${it.name}`, "success");
+          }
+        });
+      }
+      if (cons?.meterChanges?.some((m) => m.meter === "Suspicion" && m.delta > 0)) {
+        const sus = cons.meterChanges.find((m) => m.meter === "Suspicion")!;
+        pushToast(`🔥 Heat rising (+${sus.delta}).`, "fail");
+      }
+      setState(
+        (s) => recordPresentation(choice, story, recordMemory(choice, applyConsequences(story, cons, s)))
+      );
+      if (choice.rememberLine) setRemember((r) => ({ line: choice.rememberLine!, key: (r?.key ?? 0) + 1 }));
+      // Weighty choices (the ones an NPC will remember, or that carry a memory
+      // tag) become the "your defining choices" list on the episode end card.
+      if (choice.rememberLine || choice.memoryLog) {
+        setEpisodeHighlights((h) => (h.includes(choice.text) ? h : [...h, choice.text].slice(-6)));
+      }
+      recordJourney(choice);
+      // A part break shows the route chart for the part just played before
+      // moving on. The destination is parked until the player dismisses it.
+      const liveScene = story.scenes.find((s) => s.id === sceneId);
+      leaveFor(choice.targetSceneId, liveScene?.partBreak);
+    },
+    // iqComposure is read for the live interrogation value — it must be a dep
+    // so the closure is never stale mid-interrogation.
+    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure]
+  );
+
+  const previousPerks = useRef<Perks>(getPerks(state));
+  useEffect(() => {
+    const perks = getPerks(state);
+    perkDefs.forEach((def) => {
+      if (perks[def.key] && !previousPerks.current[def.key]) {
+        pushToast(`${def.icon} ${def.name} unlocked — ${def.desc.split("·")[1]}`, def.danger ? "fail" : "success");
+      }
+    });
+    previousPerks.current = perks;
+  }, [state, pushToast]);
+
+  useEffect(() => {
+    const board = story.deduction;
+    if (!board?.connections.length) return;
+    const solvedAll = board.connections.every((c) => state.activeFlags.has(c.flagSet));
+    if (solvedAll && !state.activeFlags.has("case_cracked")) {
+      audio.success();
+      audio.stinger();
+      setState((s) => applyConsequences(story, { setFlags: ["case_cracked"], meterChanges: [{ meter: "Clever", delta: 1 }] }, s));
+      pushToast("CASE CRACKED — every string on the board now points the same direction. (+1 Deduce)", "success");
+    }
+  }, [state.activeFlags, story, pushToast]);
+
+  /* -------- hotspots -------- */
+  const completeHotspot = useCallback(
+    (hs: Hotspot, baseState?: GlobalState) => {
+      let s = baseState ?? stateRef.current;
+      if (hs.action.itemGranted) {
+        s = applyConsequences(story, { addItems: [hs.action.itemGranted] }, s);
+        const it = story.items.find((i) => i.id === hs.action.itemGranted);
+        audio.pickup();
+        pushToast(`Picked up: ${it?.icon ?? ""} ${it?.name ?? hs.action.itemGranted}`, "success");
+        if (it?.isClue && story.deduction && !boardHintShown.current) {
+          boardHintShown.current = true;
+          pushToast("📌 Clue collected — open the Corkboard (B) to pin it.", "info");
+        }
+      }
+      if (hs.action.flagSet) s = applyConsequences(story, { setFlags: [hs.action.flagSet] }, s);
+      if (hs.action.meterChange) s = applyConsequences(story, { meterChanges: [hs.action.meterChange] }, s);
+      setState(s);
+      setUsedHotspots((u) => new Set(u).add(`${sceneId}:${hs.id}`));
+      // Any successful interaction means the player searched the scene.
+      setInvestigatedThisVisit(true);
+      if (hs.action.targetSceneId && hs.action.type !== "showText") goToScene(hs.action.targetSceneId);
+    },
+    [story, sceneId, goToScene, pushToast]
+  );
+
+  const activateHotspot = useCallback(
+    (hs: Hotspot) => {
+      if (!meetsGating(hs.gating, stateRef.current)) {
+        audio.fail();
+        // Trying a locked zone still counts as searching the scene.
+        setInvestigatedThisVisit(true);
+        const failText = hs.customFailMessage || gatingHint(hs.gating, story) || "That's locked up tighter than a nun's diary.";
+        setExamCard({ label: hs.label, text: failText, kind: "fail" });
+        if (soundOnRef.current && autoNarrate) audio.speak(failText);
+        return;
+      }
+      switch (hs.action.type) {
+        case "showText":
+          audio.click();
+          const examText = hs.action.text ?? "…";
+          setExamCard({ label: hs.label, text: examText, kind: "info" });
+          if (soundOnRef.current && autoNarrate) audio.speak(examText);
+          if (hs.action.flagSet || hs.action.meterChange) completeHotspot(hs);
+          break;
+        case "goToScene":
+          if (hs.action.targetSceneId) {
+            completeHotspot(hs);
+          }
+          break;
+        case "giveItem":
+        case "setFlag":
+        case "meterChange":
+          completeHotspot(hs);
+          break;
+        case "openBoard":
+          setOverlay({ type: "board" });
+          break;
+        case "patternPuzzle":
+          if (hs.action.patternPuzzle) {
+            setPatternPuzzle({ config: hs.action.patternPuzzle, hotspot: hs });
+            setInvestigatedThisVisit(true);
+          }
+          break;
+        case "useItem": {
+          // Derive the post-consumption state and hand it straight to
+          // completeHotspot instead of mutating the ref behind React's back.
+          let nextState = stateRef.current;
+          if (hs.action.itemConsumed) {
+            nextState = applyConsequences(story, { removeItems: [hs.action.itemConsumed] }, stateRef.current);
+            if (nextState !== stateRef.current) {
+              audio.pickup();
+              pushToast(`Used: ${story.items.find((i) => i.id === hs.action.itemConsumed)?.name ?? hs.action.itemConsumed}`, "success");
+            }
+          }
+          completeHotspot(hs, nextState);
+          break;
+        }
+      }
+    },
+    [story, pushToast, completeHotspot, autoNarrate]
+  );
+
+  /* ---------- examine (hold to inspect) ---------- */
+  const cancelExamineRaf = useCallback(() => {
+    if (examineRaf.current !== null) {
+      cancelAnimationFrame(examineRaf.current);
+      examineRaf.current = null;
+    }
+  }, []);
+
+  const startExamine = useCallback(
+    (hs: Hotspot) => {
+      if (examining) return;
+      audio.click();
+      cancelExamineRaf();
+      examineStart.current = performance.now();
+      setExamining({ hs, progress: 0 });
+      const dur = Math.max(0.5, hs.examineSeconds ?? 2.5) * 1000;
+      const tick = (now: number) => {
+        const p = Math.min(1, (now - examineStart.current) / dur);
+        setExamining({ hs, progress: p });
+        if (p >= 1) {
+          examineRaf.current = null;
+          setExamining(null);
+          // Completion fires the hotspot's normal action: giveItem picks the
+          // object up, showText shows the description. The zone is consumed
+          // (hidden) and any flag it sets lets the discovery beat fire.
+          activateHotspot(hs);
+        } else {
+          examineRaf.current = requestAnimationFrame(tick);
+        }
+      };
+      examineRaf.current = requestAnimationFrame(tick);
+    },
+    [examining, audio, cancelExamineRaf, activateHotspot]
+  );
+
+  const abortExamine = useCallback(() => {
+    cancelExamineRaf();
+    setExamining(null);
+  }, [cancelExamineRaf]);
+
+  // A scene change, overlay, or menu open mid-examine aborts it cleanly.
+  useEffect(() => {
+    cancelExamineRaf();
+    setExamining(null);
+  }, [sceneId, overlay, cancelExamineRaf]);
+  useEffect(() => () => cancelExamineRaf(), [cancelExamineRaf]);
+
+  /* ---------- interrogation urgency ---------- */
+  // Clear the transient FX (reaction line, stamp slam) on scene change so a
+  // re-entry doesn't replay a break that already happened. The permanent
+  // broke/clamped label is derived from the flag, not from these.
+  useEffect(() => {
+    setIqReaction(null);
+    setIqStamp(null);
+  }, [sceneId]);
+
+  // STEADY ON HESITATION: if the suspect is pressed (0 < composure < full),
+  // not yet resolved, and hasn't steadied, they recover +1 after steadySeconds
+  // of inactivity — the moment passes if you stop pressing. Reschedules on
+  // every composure change (a press resets the window).
+  useEffect(() => {
+    const q = scene?.interrogation;
+    if (!q || !scene || overlay) return;
+    const initial = q.composure ?? 3;
+    const live = iqComposure[scene.id] ?? initial;
+    if (live <= 0 || live >= initial) return;
+    if (iqSteadied.current[scene.id]) return;
+    if (state.activeFlags.has(q.brokeFlag) || (q.clampFlag && state.activeFlags.has(q.clampFlag))) return;
+    const secs = Math.max(3, Math.min(12, q.steadySeconds ?? 7));
+    const t = window.setTimeout(() => {
+      const r = steadyComposure(iqComposure[scene.id] ?? initial, initial, iqSteadied.current[scene.id] ?? false);
+      if (!r.recovered) return;
+      iqSteadied.current = { ...iqSteadied.current, [scene.id]: true };
+      setIqComposure((c) => ({ ...c, [scene.id]: r.next }));
+      audio.steady();
+      setIqReaction((prev) => ({ text: "They steady themselves.", key: (prev?.key ?? 0) + 1 }));
+      setIqSteadyKey((k) => k + 1);
+    }, secs * 1000);
+    return () => window.clearTimeout(t);
+  }, [iqComposure, scene, state.activeFlags, overlay]);
+
+  // HEARTBEAT at critical: one press from the break, the suspect's pulse is
+  // audible. A soft interval of lub-dub thumps while composure === 1.
+  useEffect(() => {
+    const q = scene?.interrogation;
+    if (!q || !scene || overlay) return;
+    const initial = q.composure ?? 3;
+    const live = iqComposure[scene.id] ?? initial;
+    const resolved = state.activeFlags.has(q.brokeFlag) || (q.clampFlag && state.activeFlags.has(q.clampFlag));
+    if (live !== 1 || resolved) return;
+    audio.heartbeat();
+    const iv = window.setInterval(() => audio.heartbeat(), 1100);
+    return () => window.clearInterval(iv);
+  }, [iqComposure, scene, state.activeFlags, overlay]);
+
+  const visibleHotspots = useMemo(() => {
+    if (!scene?.hotspots) return [];
+    return scene.hotspots.filter((hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`));
+  }, [scene, usedHotspots, sceneId]);
+
+  /* Searchable things left in this scene: anything that isn't a pure exit.
+   * The end-of-scene nudge tells the player these exist before the choices
+   * carry them off. */
+  const searchableLeft = useMemo(
+    () => visibleHotspots.filter((hs) => hs.action.type !== "goToScene"),
+    [visibleHotspots]
+  );
+  const investigateNudge =
+    !!scene &&
+    interactive &&
+    !scene.isEnding &&
+    scene.nodeType !== "credits" &&
+    scene.nodeType !== "cutscene" &&
+    !overlay &&
+    !investigatedThisVisit &&
+    !investigateNudgeDismissed &&
+    searchableLeft.length > 0;
+  useEffect(() => {
+    if (!investigateNudge) return;
+    if (investigateToastShown.current) return;
+    investigateToastShown.current = true;
+    audio.hover();
+    pushToast(
+      `🔍 Before you move on — ${searchableLeft.length} thing${searchableLeft.length > 1 ? "s" : ""} to examine in this scene.`,
+      "info"
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [investigateNudge, searchableLeft.length]);
+
+  const objective = useMemo(() => {
+    if (!scene) return "";
+    if (!proseAcknowledged) return "Read the setup — press Continue when you're ready.";
+    if (inBeats) return `${story.characters.find((c) => c.id === currentBeat?.characterId)?.name ?? "Someone"} is talking — click through or press Space.`;
+    const takeable = visibleHotspots.find((hs) => meetsGating(hs.gating, state) && hs.action.type === "giveItem");
+    if (takeable) return `Grab evidence: ${takeable.label}.`;
+    const exit = visibleHotspots.find((hs) => meetsGating(hs.gating, state) && (hs.action.type === "goToScene" || hs.action.type === "useItem"));
+    if (exit) return `Move on: ${exit.label}.`;
+    const board = visibleHotspots.find((hs) => hs.action.type === "openBoard");
+    if (board && story.deduction) return "Open the corkboard — connect what you've learned.";
+    const openChoice = availableChoices.find((c) => meetsGating(effectiveChoiceGating(c), state));
+    if (openChoice) return `Time to decide: "${openChoice.text.slice(0, 50)}${openChoice.text.length > 50 ? "…" : ""}"`;
+    const lockedChoice = availableChoices.find((c) => effectiveChoiceGating(c));
+    if (lockedChoice) return `Locked: ${gatingHint(effectiveChoiceGating(lockedChoice), story) ?? "you need something more."}`;
+    if (hasValidAutoAdvance) {
+      const showTimer = !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0;
+      return `The reel advances automatically${showTimer ? ` in ${autoAdvanceRemaining}s` : ""}.`;
+    }
+    return "Search the scene carefully — mouse over the picture for hidden hotspots.";
+  }, [scene, proseAcknowledged, inBeats, currentBeat, story, visibleHotspots, state, availableChoices, hasValidAutoAdvance, autoAdvanceRemaining]);
+
+  /**
+   * Anti-softlock diagnostic. Looks at everything the player could still do in
+   * this scene and reports the most useful next step. If genuinely nothing is
+   * reachable, it offers an escape hatch so a bad story graph can't trap you.
+   */
+  const isSoftlocked = useMemo(() => {
+    if (!scene || scene.isEnding) return false;
+    if (!interactive) return false;
+    if (hasValidAutoAdvance) return false;
+    const anyHotspot = visibleHotspots.some((hs) => meetsGating(hs.gating, state));
+    const anyChoice = availableChoices.some((c) => meetsGating(effectiveChoiceGating(c), state));
+    const anyCraft = state.inventory.some((a) =>
+      state.inventory.some((b) => a.id !== b.id && combineItems(story, a, b))
+    );
+    return !anyHotspot && !anyChoice && !anyCraft;
+  }, [scene, interactive, hasValidAutoAdvance, visibleHotspots, currentBeat, availableChoices, state, story]);
+
+  /* -------- crafting -------- */
+  const handleCombine = useCallback(
+    (a: Item, b: Item) => {
+      const result = combineItems(story, a, b);
+      if (result) {
+        audio.combine();
+        setState((s) => applyConsequences(story, { removeItems: [a.id, b.id], addItems: [result.id] }, s));
+        pushToast(`✨ Crafted: ${result.icon} ${result.name}!`, "success");
+      } else {
+        audio.fail();
+        pushToast(`${a.icon} and ${b.icon} refuse to cooperate.`, "fail");
+      }
+    },
+    [story, pushToast]
+  );
+
+  /* -------- keyboard -------- */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (overlay) {
+        if (e.key === "Escape") setOverlay(null);
+        return;
+      }
+      if (menuOpen) {
+        if (e.key === "Escape") setMenuOpen(false);
+        return;
+      }
+      // Part-break / act-map / act-card interstitials own the keyboard.
+      // Without this guard Escape opens the quit dialog BEHIND the chart,
+      // and Space/Enter/digits fire the old scene's beats and choices
+      // behind the interstitial (RouteMap double-fired exactly this way).
+      if (partBreak || actMap || pendingAct) return;
+      if (e.key === "Escape") {
+        setOverlay({ type: "quit" });
+        return;
+      }
+      if ((e.code === "Space" || e.key === "Enter") && !overlay) {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "BUTTON" && tag !== "INPUT" && tag !== "TEXTAREA") {
+          if (!proseAcknowledged && !proseDone) {
+            // First press finishes the typing instead of doing nothing —
+            // the player never has to hunt for "." mid-sentence.
+            e.preventDefault();
+            audio.stopSpeech();
+            setProseDone(true);
+            return;
+          }
+          if (!proseAcknowledged && proseDone) {
+            e.preventDefault();
+            audio.stopSpeech();
+            setProseAcknowledged(true);
+            audio.click();
+            return;
+          }
+          if (inBeats) {
+            e.preventDefault();
+            advanceBeat();
+            return;
+          }
+        }
+      }
+      if (e.key === "ArrowLeft") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          if (e.shiftKey) goToSceneStart();
+          else goBack();
+        }
+      }
+      if (interactive && availableChoices.length) {
+        if (["ArrowDown", "s", "S"].includes(e.key)) {
+          e.preventDefault();
+          setChoiceFocus((f) => (f + 1) % availableChoices.length);
+          audio.hover();
+        } else if (["ArrowUp", "w", "W"].includes(e.key)) {
+          e.preventDefault();
+          setChoiceFocus((f) => (f - 1 + availableChoices.length) % availableChoices.length);
+          audio.hover();
+        } else if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "BUTTON") {
+          e.preventDefault();
+          const c = availableChoices[choiceFocus];
+          if (c) pickChoice(c);
+        } else if (/^[1-9]$/.test(e.key)) {
+          const c = availableChoices[parseInt(e.key, 10) - 1];
+          if (c) pickChoice(c);
+        }
+      }
+      if (e.key === ".") {
+        e.preventDefault();
+        skipCurrentText();
+      }
+      if (e.key === "b" || e.key === "B") {
+        if (story.deduction) setOverlay({ type: "board" });
+      }
+      if (e.key === "l" || e.key === "L") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          if (dialogueLog.length) setOverlay({ type: "log" });
+        }
+      }
+      if (e.key === "h" || e.key === "H") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          triggerHint();
+        }
+      }
+      if (e.key === "a" || e.key === "A") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          setAutoAdvance((v) => !v);
+        }
+      }
+      if (e.key === "m" || e.key === "M") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          if (soundOn) setSoundOn(false);
+          else enableSound();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, story.deduction, soundOn, enableSound, triggerHint]);
+
+  if (!scene)
+    return (
+      <div className="flex h-full items-center justify-center bg-noir-950 text-crimson font-pulp">
+        Missing scene: {sceneId}
+        <button onClick={onExit} className="ml-4 underline">
+          Exit
+        </button>
+      </div>
+    );
+
+  const beatChar = currentBeat ? story.characters.find((c) => c.id === currentBeat.characterId) : undefined;
+  // Voice-over / narrator lines: a reserved "narrator" speaker or an expression
+  // tagged "V.O." renders as first-person narration instead of dialogue.
+  const beatIsVo = !!currentBeat && (
+    currentBeat.characterId === "narrator" ||
+    (currentBeat.expression ?? "").toUpperCase().startsWith("V.O.")
+  );
+  // The active beat's nameplate accent: V.O./narrator lines keep the house
+  // gold; characters cycle through the cast palette by order of appearance.
+  const beatAccent = currentBeat
+    ? beatIsVo
+      ? SPEAKER_ACCENTS[0]
+      : speakerAccent(story, currentBeat.characterId)
+    : null;
+  // Characters "on stage": anyone with talking frames (or a resting pose) who
+  // speaks in this scene. The active speaker cycles their keyframes; the rest
+  // hold their resting pose (or first frame), so two characters can face each
+  // other and only the one talking animates.
+  const onStage = useMemo(
+    () =>
+      scene && scene.nodeType !== "credits" && scene.nodeType !== "cutscene"
+        ? story.characters.filter((c) => {
+            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest)) return false;
+            return (scene.dialogueBeats ?? []).some((b) => b.characterId === c.id);
+          })
+        : [],
+    [scene, story.characters]
+  );
+  const activeSpeakerId = inBeats && !beatIsVo && currentBeat ? currentBeat.characterId : null;
+  const animateActive = !!activeSpeakerId && currentBeat?.useCharacterAnimation !== false;
+  const showStage = proseAcknowledged && !overlay && !scene.isEnding && onStage.length > 0;
+  const particleKind = scene.particles ?? (scene.ambientAudio === "rain" ? "rain" : scene.ambientAudio === "tension" ? "smoke" : "none");
+  // A credits node can carry a montage of stills that cross-dissolve behind the
+  // titles, replacing the single background plate for the length of the intro.
+  const creditsMontage = (scene.nodeType === "credits" && scene.credits?.montage) || [];
+  // Scene-level cinematic polish: letterbox bars + an entry transition.
+  const letterbox = !!scene.letterbox;
+  const transition = scene.transition ?? "fade";
+  const transitionMs = Math.max(0, Math.round((scene.transitionSpeed ?? 0.5) * 1000));
+  // "fade-black" dips through black then returns; "fade" dissolves; "cut" snaps.
+  const transitionClass =
+    transition === "fade-black"
+      ? "scene-fade-black"
+      : transition === "cut"
+        ? "scene-cut"
+        : "scene-fade";
+
+  // Single cinematic background helper
+  const buildSingleBg = () => {
+    const resolvedBackground = assetBackground(scene.background);
+    const { className: cinClass, style: cinStyle } = cinematicLayer(bgCinematic, scene.background);
+    // Examine zoom: magnify the plate toward the examined hotspot's centre.
+    // It's applied to a WRAPPER (not the plate itself) because the plate's
+    // cinematic animation already owns its own `transform` property.
+    const b = examining?.hs.bounds;
+    const examineStyle: React.CSSProperties = {
+      transform: b ? `scale(${examineZoom(b)})` : "scale(1)",
+      transformOrigin: b ? `${b.x + b.w / 2}% ${b.y + b.h / 2}%` : "50% 50%",
+      transition: "transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1)",
+    };
+    return (
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0 will-change-transform" style={examineStyle}>
+          {resolvedBackground.startsWith("video:") ? (
+            <>
+              <video
+                key={`${sceneId}-${entrySeq}`}
+                ref={bgVideoRef}
+                src={resolvedBackground.slice(6)}
+                loop
+                playsInline
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+              <LightGlow cinematic={bgCinematic} />
+              <LensFlareLayer cinematic={bgCinematic} />
+            </>
+          ) : (
+            <div key={`${sceneId}-${entrySeq}`} className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
+              <LightGlow cinematic={bgCinematic} />
+              <LensFlareLayer cinematic={bgCinematic} />
+            </div>
+          )}
+          {/* Keyed by scene entry so a foreground zoom animation replays fresh
+              each time the player enters the scene (not only on first mount). */}
+          <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="fx-grain fx-vignette relative h-full w-full overflow-hidden bg-noir-950 select-none"
+      onPointerDown={() => {
+        audio.unlock();
+        retryMusic();
+      }}
+    >
+      {/* default plate renders first; dialogue beats mount their replacement background over it.
+          A credits node carrying a montage swaps the static plate for a
+          cross-dissolving title sequence instead. */}
+      {creditsMontage.length > 0 ? (
+        <CreditsMontage
+          images={creditsMontage}
+          seconds={scene.credits?.montageSeconds}
+          loop={scene.credits?.montageLoop ?? true}
+          transition={scene.credits?.montageTransition ?? "dissolve"}
+        />
+      ) : (
+        buildSingleBg()
+      )}
+      <BeatBackground
+        beat={inBeats ? currentBeat : null}
+        transitionName={currentBeat?.backgroundTransition ?? "fade"}
+        transitionSpeed={currentBeat?.backgroundTransitionSpeed ?? 0.5}
+      />
+
+      {/* Characters on stage — the active speaker cycles their talking frames;
+          the others hold their resting pose. */}
+      {showStage &&
+        onStage.map((c) => {
+          const isActive = c.id === activeSpeakerId;
+          const frames = (c.talkingFrames ?? []).filter(Boolean);
+          return (
+            <StageSprite
+              key={c.id}
+              frames={frames}
+              rest={c.talkingRest}
+              animate={isActive && animateActive}
+              frameDuration={c.talkingFrameDuration ?? 0.16}
+              x={c.talkingX ?? 50}
+              y={c.talkingY ?? 0}
+              scale={c.talkingScale ?? 1}
+              flip={!!c.talkingFlip}
+              dim={!isActive}
+            />
+          );
+        })}
+
+      <div className="fx-halftone absolute inset-0" aria-hidden />
+      {particleKind !== "none" && <Particles kind={particleKind as "rain" | "smoke" | "storm"} soundOn={soundOn} />}
+
+      {/* Scene entry transition (fade / fade-black / cut) */}
+      <div
+        className={`pointer-events-none absolute inset-0 z-[70] bg-black ${transitionClass}`}
+        style={{ "--scene-transition-ms": `${transitionMs}ms` } as React.CSSProperties}
+        data-transitioning={fading ? "1" : "0"}
+      />
+
+      {/* Telltale-style letterbox bars */}
+      {letterbox && (
+        <div className="pointer-events-none absolute inset-0 z-[44]">
+          <div className="letterbox-bar letterbox-top" style={{ "--letterbox-h": "9%" } as React.CSSProperties} />
+          <div className="letterbox-bar letterbox-bottom" style={{ "--letterbox-h": "9%" } as React.CSSProperties} />
+        </div>
+      )}
+
+      {/* Pulsing heat/risk vignette — danger reads on screen before the trapdoor fires */}
+      {!scene.isEnding && state.meters.Suspicion >= (story.briefing?.heatLimit ? story.briefing.heatLimit - 2 : 6) && (
+        <div className="heat-vignette pointer-events-none absolute inset-0 z-[43]" aria-hidden />
+      )}
+      {!scene.isEnding && state.meters.Suspicion >= (story.briefing?.heatLimit ? story.briefing.heatLimit - 2 : 6) && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[43] flex justify-center pb-2 font-pulp text-[10px] uppercase tracking-[0.4em] text-crimson animate-pulse">
+          ⚠ Heat — lay low
+        </div>
+      )}
+
+      {/* Interrogation critical vignette — one press from the break, the room
+          closes in red and the suspect's pulse is audible (heartbeat in the
+          urgency effect). */}
+      {(() => {
+        const q = scene?.interrogation;
+        if (!q || !scene || scene.isEnding) return null;
+        const live = iqComposure[scene.id] ?? (q.composure ?? 3);
+        const resolved = state.activeFlags.has(q.brokeFlag) || (q.clampFlag && state.activeFlags.has(q.clampFlag));
+        return live === 1 && !resolved ? <div className="iq-critical-vignette pointer-events-none absolute inset-0 z-[43]" aria-hidden /> : null;
+      })()}
+
+      {/* Hotspots become available once the scene setup has been read, including
+          while dialogue plays. The dialogue panel sits above them and stops
+          propagation, so this is intentional access rather than click-through. */}
+      {sceneReady && !scene.isEnding && !overlay && (
+        <div className="absolute inset-0 z-[46] pointer-events-none">
+          {visibleHotspots.map((hs) => {
+            const unlocked = meetsGating(hs.gating, state);
+            const perks = getPerks(state);
+            // While the end-of-scene investigation nudge is live, searchable
+            // zones breathe gold on the art itself — the player can literally
+            // see where to look before the choices carry them off.
+            const nudgeable = investigateNudge && hs.action.type !== "goToScene";
+            // When enabled, the granted item's artwork is drawn in the zone so
+            // players can literally see the object sitting in the scene.
+            const grantedItem = hs.showItemImage && hs.action.itemGranted
+              ? story.items.find((i) => i.id === hs.action.itemGranted)
+              : undefined;
+            return (
+              <button
+                key={hs.id}
+                onClick={hs.examine ? undefined : () => activateHotspot(hs)}
+                onPointerDown={(e) => {
+                  if (!hs.examine) return;
+                  // A locked examine zone behaves like any locked zone:
+                  // the fail card, no zoom.
+                  if (!unlocked) {
+                    activateHotspot(hs);
+                    return;
+                  }
+                  e.preventDefault();
+                  // Capture the pointer so small drifts don't abort the
+                  // hold; only a real release (or cancel) does.
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  startExamine(hs);
+                }}
+                onPointerUp={() => {
+                  if (hs.examine && examining?.hs.id === hs.id) abortExamine();
+                }}
+                onPointerCancel={() => {
+                  if (hs.examine && examining?.hs.id === hs.id) abortExamine();
+                }}
+                onMouseEnter={() => {
+                  audio.hover();
+                }}
+                className={`hotspot-box group absolute pointer-events-auto cursor-${hs.cursor} ${hs.examine ? "hotspot-examine" : ""} ${examining?.hs.id === hs.id ? "hotspot-examining" : ""} ${perks.sharpEye ? "ring-1 ring-cyan-neon/30 animate-pulse" : ""} ${nudgeable ? "hotspot-nudge" : ""} ${hintActive ? "hotspot-hint" : ""}`}
+                style={{
+                  left: `${hs.bounds.x}%`,
+                  top: `${hs.bounds.y}%`,
+                  width: `${hs.bounds.w}%`,
+                  height: `${hs.bounds.h}%`,
+                }}
+                aria-label={`${hs.label}${hs.examine ? " — hold to examine" : ""}${unlocked ? "" : " (locked)"}`}
+                title={hs.examine ? `Hold to examine: ${hs.label}` : hs.label}
+              >
+                <span className={`pointer-events-none absolute -top-7 left-1/2 z-[60] -translate-x-1/2 whitespace-nowrap border border-neon/60 bg-noir-950/95 px-2 py-1 font-pulp text-[9px] uppercase tracking-wider text-neon transition-opacity ${hintActive ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"}`}>
+                  {hs.examine ? (
+                    <>🔍 {hs.label} — hold to examine {!unlocked && "🔒"}</>
+                  ) : (
+                    <>
+                      {CURSOR_ICON[hs.cursor]} {hs.label} {!unlocked && "🔒"}
+                    </>
+                  )}
+                </span>
+                {grantedItem && unlocked && (
+                  grantedItem.iconUrl ? (
+                    <img
+                      src={assetUrl(grantedItem.iconUrl)}
+                      alt={grantedItem.name}
+                      className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full object-contain drop-shadow-[0_0_8px_rgba(232,178,60,0.5)] transition-transform group-hover:scale-110"
+                    />
+                  ) : (
+                    <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-3xl drop-shadow-[0_0_8px_rgba(232,178,60,0.7)] transition-transform group-hover:scale-125">
+                      {grantedItem.icon}
+                    </span>
+                  )
+                )}
+                {!unlocked && <span className="absolute bottom-1 right-1 text-sm drop-shadow pointer-events-none">🔒</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* EXAMINING — the hold-to-inspect meter. The camera is zoomed onto
+          the hotspot; the box shows what's being examined and how much of
+          the hold remains. Release early and the examine aborts. */}
+      {examining && (
+        <div className="pointer-events-none absolute inset-0 z-[47] flex items-center justify-center">
+          <div className="examine-box w-72 border border-gold/60 bg-noir-950/92 px-4 py-3 text-center backdrop-blur-sm">
+            <div className="font-pulp text-[10px] uppercase tracking-[0.3em] text-gold">
+              🔍 Examining — {examining.hs.label}
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden bg-noir-700">
+              <div
+                className="examine-fill h-full"
+                style={{ width: `${Math.round(examining.progress * 100)}%` }}
+              />
+            </div>
+            <div className="mt-1.5 font-type text-[9px] uppercase tracking-widest text-paper/40">
+              hold — release to abort
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HUD */}
+      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+        <>
+          <MetersHUD
+            state={state}
+            story={story}
+            sceneTitle={scene.title}
+            encounteredCharacters={encounteredCharacters}
+            visitedCount={visitedScenes.size}
+          />
+          <div
+            key={`scene-title-${sceneId}-${entrySeq}`}
+            className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
+          >
+            <span className="border-y border-paper/25 bg-gradient-to-b from-black/35 to-transparent px-6 py-2 font-pulp text-2xl uppercase tracking-[0.3em] text-paper drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] md:text-3xl">
+              {scene.title}
+            </span>
+            {episode && (
+              <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
+                {episodeLabel(episode.number ?? 1)} · {episode.title}
+              </span>
+            )}
+          </div>
+          {episode && onOpenSeason && (
+            <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2">
+              <EpisodeChip episode={episode} onOpenSeason={onOpenSeason} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* A visible action list keeps point-and-click interactions discoverable. */}
+      {proseAcknowledged && !scene.isEnding && scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+        <aside
+          className={`hud-frame absolute right-3 top-24 z-50 w-64 p-2.5 ${
+            investigateNudge ? "hud-frame-gold animate-pulse" : ""
+          }`}
+        >
+          {investigateNudge && (
+            <div className="mb-2 border border-gold/30 bg-gold/[0.07] p-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-type text-[10px] leading-snug text-gold">
+                  🔍 <b>Before you go — look around.</b> {searchableLeft.length} thing
+                  {searchableLeft.length > 1 ? "s" : ""} to examine before the scene ends.
+                </p>
+                <button
+                  onClick={() => {
+                    audio.click();
+                    setInvestigateNudgeDismissed(true);
+                  }}
+                  className="shrink-0 px-1 text-[10px] leading-none text-paper/40 hover:text-crimson"
+                  aria-label="Dismiss the search prompt"
+                  title="Search anyway — click an action below"
+                >
+                  ✕
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  const first = searchableLeft[0];
+                  if (first) activateHotspot(first);
+                }}
+                className="hud-btn mt-1.5 w-full px-2 py-1"
+                title="Examine the first thing you haven't looked at"
+              >
+                🔍 Examine “{searchableLeft[0]?.label.slice(0, 26)}{searchableLeft[0] && searchableLeft[0].label.length > 26 ? "…" : ""}”
+              </button>
+            </div>
+          )}
+          <div className="hud-kicker hud-kicker-left mb-1.5">Current lead</div>
+          <p className="font-type mb-1 text-[11px] leading-snug text-paper/70">{objective}</p>
+          {isSoftlocked && (
+            <div className="mb-1.5 border border-crimson/30 bg-crimson/[0.08] p-1.5">
+              <p className="font-type text-[10px] text-crimson">Dead end detected — nothing here is reachable.</p>
+              <button
+                onClick={() => {
+                  audio.click();
+                  pushToast(episode ? `Backtracking to the start of ${episode.title}.` : "Backtracking to the start of the case.", "info");
+                  goToScene(episode?.startSceneId ?? story.startSceneId);
+                }}
+                data-color="crimson"
+                className="hud-btn mt-1.5 w-full px-2 py-1"
+              >
+                ⤺ Escape hatch — restart {episode ? "episode" : "case"}
+              </button>
+            </div>
+          )}
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="hud-kicker hud-kicker-left">Scene actions</span>
+            <button
+              onClick={() => {
+                audio.click();
+                setOverlay({ type: "instructions" });
+              }}
+              data-color="cyan"
+              className="hud-btn px-2 py-0.5"
+              title="Open the game instructions"
+            >
+              ? Help
+            </button>
+            {inBeats && <span className="font-type text-[9px] text-paper/35">talking…</span>}
+          </div>
+          <hr className="hud-rule mb-1.5" />
+          <div className="space-y-1">
+            {visibleHotspots.map((hs) => {
+              const unlocked = meetsGating(hs.gating, state);
+              return (
+                <button
+                  key={`action-${hs.id}`}
+                  onClick={() => activateHotspot(hs)}
+                  disabled={!unlocked}
+                  className="hud-action"
+                >
+                  <span aria-hidden>{CURSOR_ICON[hs.cursor]}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{hs.label}</span>
+                    {!unlocked && <span className="block text-[9px] text-crimson/80">{gatingHint(hs.gating, story)}</span>}
+                  </span>
+                  {!unlocked && <span aria-label="Locked">🔒</span>}
+                </button>
+              );
+            })}
+            {!visibleHotspots.length && <p className="font-type text-[10px] text-paper/40">No interactive hotspots in this scene yet — draw some in Studio.</p>}
+          </div>
+        </aside>
+      )}
+      {checkpointFlash && (
+        <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2">
+          <span className="hud-chip pop-in px-3 py-1" data-kind="good">✓ Checkpoint</span>
+        </div>
+      )}
+      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+        <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-col items-start gap-1">
+          {(autoAdvance || skipMode || hintActive) && (
+            <div className="hud-frame flex items-center gap-1.5 px-2 py-1">
+              {autoAdvance && (
+                <span className="hud-chip" data-kind="good">⏩ Auto</span>
+              )}
+              {skipMode && (
+                <span className="hud-chip" data-kind="good">⏭ Skip</span>
+              )}
+              {hintActive && (
+                <span className="hud-chip" data-kind="info">🔍 Hotspots</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+        <div className="absolute right-3 top-3 z-50">
+          <button
+            onClick={() => {
+              audio.click();
+              setMenuOpen((o) => !o);
+            }}
+            className="hud-btn px-3 py-1.5"
+            data-active={menuOpen || undefined}
+            aria-expanded={menuOpen}
+            title="Menu — Case File, Corkboard, Relationships, Save, Load, Quit"
+          >
+            <span aria-hidden>☰</span> Menu {menuOpen ? "▾" : "▸"}
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40 cursor-default" onClick={() => setMenuOpen(false)} aria-hidden />
+              <div className="hud-frame hud-frame-gold absolute right-0 top-9 z-50 w-56 py-1">
+                <button
+                  onClick={() => {
+                    audio.click();
+                    setClassicSubtitles((v) => !v);
+                  }}
+                  className="hud-menu-item text-paper/80"
+                  title="Cinematic: big pulp lettering over the art · Classic: compact SPEAKER: line captions"
+                >
+                  💬 Subtitles: {classicSubtitles ? "Classic" : "Cinematic"} <span className="text-paper/35">▸</span>
+                </button>
+                <button
+                  onClick={() => {
+                    audio.click();
+                    setAutoAdvance((v) => !v);
+                  }}
+                  className={`hud-menu-item ${autoAdvance ? "text-emerald-400" : "text-paper/80"}`}
+                  title="Hands-off reading — advances dialogue on a timer, stops at choices (A)"
+                >
+                  ⏩ Auto-advance: {autoAdvance ? "On" : "Off"} <span className="text-paper/35">▸</span>
+                </button>
+                <button
+                  onClick={() => {
+                    audio.click();
+                    setSkipMode((v) => !v);
+                  }}
+                  className={`hud-menu-item ${skipMode ? "text-emerald-400" : "text-paper/80"}`}
+                  title="Fast-forward — type instantly and skip ahead, great for replays"
+                >
+                  ⏭ Skip text: {skipMode ? "On" : "Off"} <span className="text-paper/35">▸</span>
+                </button>
+                <button
+                  onClick={() => {
+                    audio.click();
+                    setMenuOpen(false);
+                    triggerHint();
+                  }}
+                  className="hud-menu-item text-cyan-neon"
+                  title="Shimmer every clickable hotspot for a few seconds (H)"
+                >
+                  🔍 Reveal hotspots (H)
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCaseFile((v) => !v);
+                    setMenuOpen(false);
+                  }}
+                  className={`hud-menu-item ${showCaseFile ? "text-gold" : "text-paper/80"}`}
+                >
+                  🗂 Case File
+                </button>
+                {story.deduction && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOverlay({ type: "board" });
+                    }}
+                    className="hud-menu-item text-crimson"
+                  >
+                    📌 Corkboard (B)
+                  </button>
+                )}
+                {dialogueLog.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOverlay({ type: "log" });
+                    }}
+                    className="hud-menu-item text-paper/80"
+                    title="Everything said in this run — press L"
+                  >
+                    📜 Dialogue log (L)
+                  </button>
+                )}
+                {story.characters.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOverlay({ type: "relationships" });
+                    }}
+                    className="hud-menu-item text-gold"
+                    title="Who trusts you, who fears you — the relationship ledger"
+                  >
+                    🎭 Relationships
+                  </button>
+                )}
+                {episode && onOpenSeason && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOpenSeason();
+                    }}
+                    className="hud-menu-item text-crimson"
+                    title="Season screen — every episode and its outcome"
+                  >
+                    🎞 Episode list
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    saveThenExitRef.current = false;
+                    setSaves(readSaves(story.id, episodeId));
+                    setMenuOpen(false);
+                    setOverlay({ type: "save" });
+                  }}
+                  className="hud-menu-item text-emerald-400"
+                >
+                  💾 Save
+                </button>
+                <button
+                  onClick={() => {
+                    setSaves(readSaves(story.id, episodeId));
+                    setMenuOpen(false);
+                    setOverlay({ type: "load" });
+                  }}
+                  className="hud-menu-item text-cyan-neon"
+                >
+                  📂 Load
+                </button>
+                <hr className="hud-rule my-1" />
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setOverlay({ type: "quit" });
+                  }}
+                  className="hud-menu-item text-paper/70"
+                >
+                  Esc · Quit
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* auto-narrate / back / skip controls */}
+      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+        <div className="hud-frame absolute right-[5.25rem] top-[52px] z-50 flex items-center gap-1.5 px-1.5 py-1">
+          <button
+            onClick={goBack}
+            disabled={!canRewind}
+            data-color={canRewind ? "cyan" : undefined}
+            className="hud-btn px-2 py-1"
+            title="Back — rewind one line at a time within this scene (←)"
+          >
+            ◂ Back
+          </button>
+          <button
+            onClick={() => {
+              // Turning narration off must silence it immediately — a line
+              // already being spoken (or a prose MP3 waiting on an autoplay
+              // retry) used to keep going until the scene changed.
+              if (autoNarrate) audio.stopSpeech();
+              setAutoNarrate((v) => !v);
+              audio.click();
+            }}
+            data-color={autoNarrate ? "neon" : undefined}
+            className="hud-btn px-2 py-1"
+            title="Toggle auto-narration"
+          >
+            🎙 {autoNarrate ? "Narration" : "Silent"}
+          </button>
+        </div>
+      )}
+      {/* Case File — the explicit win/lose contract */}
+      {showCaseFile && (
+        <div className="hud-frame hud-frame-gold pop-in absolute right-3 top-24 z-[58] w-80 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="hud-kicker hud-kicker-left">🗂 Case File</span>
+            <button onClick={() => setShowCaseFile(false)} className="text-paper/50 hover:text-neon">✕</button>
+          </div>
+          <hr className="hud-rule mb-2" />
+
+          <div className="mb-2">
+            <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">Your objective</div>
+            <p className="font-type text-[11px] leading-snug text-paper/85">
+              {story.briefing?.objective ?? `Work the case: ${story.tagline}`}
+            </p>
+          </div>
+
+          <div className="mb-2">
+            <div className="font-pulp text-[9px] uppercase tracking-widest text-emerald-400">✔ How you win</div>
+            <ul className="mt-0.5 space-y-0.5">
+              {(story.briefing?.winConditions ?? [
+                "Collect the clue items hidden in each scene.",
+                "Wire clues to suspects on the corkboard to unlock accusations.",
+                "Make your final accusation only when the evidence backs it.",
+              ]).map((w, i) => (
+                <li key={i} className="font-type text-[10px] leading-snug text-paper/70">• {w}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="mb-2">
+            <div className="font-pulp text-[9px] uppercase tracking-widest text-crimson">✖ How you lose</div>
+            <ul className="mt-0.5 space-y-0.5">
+              {(story.briefing?.loseConditions ?? [
+                "Accuse someone without the evidence to prove it.",
+                "Let Heat max out — the city stops tolerating you.",
+                "Burn every character's trust so nobody talks to you.",
+              ]).map((l, i) => (
+                <li key={i} className="font-type text-[10px] leading-snug text-paper/70">• {l}</li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Live danger read-out */}
+          {!!story.briefing?.heatLimit && (
+            <div className="border-t border-paper/15 pt-2">
+              <div className="mb-1 flex items-center justify-between font-pulp text-[9px] uppercase tracking-widest">
+                <span className="text-paper/50">Heat before bust</span>
+                <span className={state.meters.Suspicion >= story.briefing.heatLimit - 2 ? "text-crimson animate-pulse" : "text-gold"}>
+                  {state.meters.Suspicion}/{story.briefing.heatLimit}
+                </span>
+              </div>
+              <div className="h-2 w-full bg-noir-700">
+                <div
+                  className={`h-full transition-all ${state.meters.Suspicion >= story.briefing.heatLimit - 2 ? "bg-crimson" : "bg-gold"}`}
+                  style={{ width: `${Math.min(100, (state.meters.Suspicion / story.briefing.heatLimit) * 100)}%` }}
+                />
+              </div>
+              {state.meters.Suspicion >= story.briefing.heatLimit - 2 && (
+                <p className="mt-1 font-type text-[10px] text-crimson">Lay low. One more slip ends the case.</p>
+              )}
+            </div>
+          )}
+
+          {/* Live progress */}
+          {story.deduction && (
+            <div className="mt-2 border-t border-paper/15 pt-2 font-type text-[10px] text-paper/55">
+              Evidence wired: {story.deduction.connections.filter((c) => state.activeFlags.has(c.flagSet)).length}/{story.deduction.connections.length} ·
+              Clues held: {state.inventory.filter((i) => i.isClue).length}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* new game plus banner */}
+      {banner && (
+        <div className="absolute left-1/2 top-14 z-50 -translate-x-1/2 pop-in border-2 border-gold bg-noir-950/95 px-5 py-2 text-center">
+          <div className="font-pulp text-gold text-sm uppercase tracking-widest">★ New Game+ ★</div>
+          <div className="font-type text-xs text-paper/70">The city remembers you, detective. Old endings stay in your gallery.</div>
+          <button onClick={() => setBanner(false)} className="mt-1 text-[10px] uppercase text-neon hover:underline">
+            dismiss
+          </button>
+        </div>
+      )}
+
+      {/* toasts */}
+      <div className="pointer-events-none absolute right-3 top-[88px] z-[55] flex w-80 flex-col gap-1.5">
+        {toasts.map((t) => (
+          <div key={t.id} data-kind={t.kind} className="hud-toast slide-up">
+            {t.text}
+          </div>
+        ))}
+      </div>
+
+      {/* Telltale-style "X will remember that" impact card */}
+      {remember && (
+        <div key={remember.key} className="pointer-events-none absolute inset-0 z-[72] flex items-center justify-center">
+          <div className="remember-card border-y-2 border-gold/60 bg-black/85 px-8 py-4 text-center shadow-[0_0_60px_rgba(0,0,0,0.8)]">
+            <span className="font-pulp text-2xl uppercase tracking-[0.2em] text-gold md:text-3xl">{remember.line}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Examination card — what the hotspot you just clicked told you.
+       * Black card, white text, the zone's name on it: impossible to miss,
+       * impossible to misread, and it holds until you click or 7s pass. */}
+      {examCard && (
+        <div
+          className={`hud-frame ${examCard.kind === "fail" ? "hud-frame-crimson" : "hud-frame-gold"} pop-in absolute inset-x-0 bottom-[42%] z-[73] mx-auto flex w-full max-w-2xl cursor-pointer items-start gap-3 px-4 py-3`}
+          onClick={() => {
+            audio.stopSpeech();
+            setExamCard(null);
+          }}
+          role="button"
+          aria-label="Dismiss examination result"
+        >
+          <span className={`mt-0.5 shrink-0 font-pulp text-[10px] uppercase tracking-[0.2em] ${examCard.kind === "fail" ? "text-crimson" : "text-gold"}`}>
+            🔍 {examCard.kind === "fail" ? "Locked" : "Examined"}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className={`mb-0.5 block font-pulp text-[9px] uppercase tracking-[0.25em] ${examCard.kind === "fail" ? "text-crimson/80" : "text-gold/80"}`}>
+              {examCard.label}
+            </span>
+            <span className="block font-type text-sm leading-relaxed text-paper md:text-base">{examCard.text}</span>
+          </span>
+          <span className="shrink-0 px-1 text-sm text-paper/40" aria-hidden>✕</span>
+        </div>
+      )}
+
+      {/* ACT ROUTE MAP — the whole branching shape of the act just finished,
+          shown before the next act's title card. */}
+      {actMap && (
+        <RouteMap
+          story={story}
+          actId={actMap.actId}
+          journey={journey}
+          currentSceneId={sceneId}
+          onDone={() => {
+            const dest = actMap.nextSceneId;
+            setActMap(null);
+            const act = actOpenedBy(dest);
+            if (act) {
+              seenActs.current.add(act.id);
+              setPendingAct({ act, nextSceneId: dest });
+              return;
+            }
+            goToScene(dest);
+          }}
+        />
+      )}
+
+      {/* ACT TITLE CARD — plays after any route chart, before the new act. */}
+      {pendingAct && (
+        <ActTitleCard
+          story={story}
+          act={pendingAct.act}
+          onDone={() => {
+            const dest = pendingAct.nextSceneId;
+            setPendingAct(null);
+            goToScene(dest);
+          }}
+        />
+      )}
+
+      {/* END-OF-PART route chart. Covers the screen between parts, showing
+          only the decisions made since the previous break. */}
+      {partBreak && (
+        <Flowchart
+          story={story}
+          journey={journey.slice(chartedUpTo)}
+          title={partBreak.title}
+          variant="screen"
+          onDone={() => {
+            setChartedUpTo(journeyRef.current.length);
+            const dest = partBreak.nextSceneId;
+            setPartBreak(null);
+            const act = actOpenedBy(dest);
+            if (act) {
+              const leaving = actOfScene(story, sceneIdRef.current);
+              if (leaving && leaving !== act.id) {
+                setActMap({ actId: leaving, nextSceneId: dest });
+                return;
+              }
+              seenActs.current.add(act.id);
+              setPendingAct({ act, nextSceneId: dest });
+              return;
+            }
+            goToScene(dest);
+          }}
+        />
+      )}
+
+      {/* Bottom scrim so subtitles read over the art (TWAU-style) */}
+      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && !overlay && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[45] h-48 bg-gradient-to-t from-black/90 via-black/45 to-transparent" aria-hidden />
+      )}
+
+      {/* narrative panel — pointer-events-auto so clicks stay contained */}
+      <div
+        className={`absolute inset-x-0 bottom-0 z-[47] flex justify-center p-4 pl-24 ${
+          scene.nodeType === "credits"
+            ? // A montage is the point of the shot, so it stays visible: only the
+              // plain (image-less) credits node gets the black scrim.
+              `top-0 h-full items-center pl-4 ${creditsMontage.length ? "" : "bg-black/85 backdrop-blur-md"}`
+            : ""
+        }`}
+        onClick={(e) => {
+          // Prevent clicks on the panel background reaching scene hotspots
+          e.stopPropagation();
+          if (inBeats) advanceBeat();
+        }}
+      >
+        <div
+          className={
+            scene.nodeType === "credits"
+              ? // A title sequence needs the frame, not a prose column: a display
+                // face at 7xl overflows max-w-2xl and wraps into a mess.
+                "relative w-full max-w-6xl px-6 text-center"
+              : "relative w-full max-w-3xl"
+          }
+        >
+          {/* Authored panel backdrop (image / tint / blur). Credits nodes own
+              the whole frame and already have their own scrim, so they opt out. */}
+          {scene.nodeType !== "credits" && <DialogueBackdrop theme={dialogueTheme} />}
+          {/* cinematic hold countdown — a title sequence shouldn't show a
+              stopwatch, so credits nodes get a quiet progress rule pinned to
+              the bottom of the frame instead of the inline readout. */}
+          {holdActive && scene.nodeType === "credits" && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-8 flex flex-col items-center gap-2">
+              <div className="h-px w-40 overflow-hidden bg-paper/15">
+                <div
+                  className="h-full bg-gold/70"
+                  style={{
+                    width: `${100 - (holdRemaining / Math.max(1, scene.choiceDelaySeconds ?? 1)) * 100}%`,
+                    transition: "width 1s linear",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          {holdActive && scene.nodeType !== "credits" && (
+            <div className="mb-2 flex items-center justify-center gap-2">
+              <span className="animate-pulse font-pulp text-[10px] uppercase tracking-[0.3em] text-gold">
+                ⏳ {holdRemaining}s
+              </span>
+              <span className="font-type text-[9px] uppercase tracking-widest text-paper/40">hold before choices</span>
+            </div>
+          )}
+          {/* prose / dialogue as cinematic subtitles (TWAU-style). Standard
+              nodes wear the cinema frame: a shimmering hairline, viewfinder
+              corner ticks, and a speaker nameplate that re-announces each
+              beat in the speaker's own accent. */}
+          <div
+            key={scene.nodeType === undefined ? `subframe:${sceneId}:${entrySeq}` : undefined}
+            className={
+              scene.nodeType === "credits"
+                ? "p-6 text-center select-none"
+                : scene.nodeType === "cutscene"
+                  ? "border border-paper/10 bg-black/95 p-4 shadow-2xl"
+                  : "prose-enter relative w-full max-w-2xl px-2 pb-1 pt-3 text-center"
+            }
+            onClick={(e) => { e.stopPropagation(); if (inBeats) advanceBeat(); }}
+          >
+            {scene.nodeType === undefined && !scene.isEnding && (
+              <>
+                <span className="subframe-line" aria-hidden />
+                {/* Interrogation pressure gauge: pressing replies drop the
+                    suspect's composure; the colour, the live "break them now"
+                    prediction and the steadying creep make the stakes and the
+                    clock legible. At zero, trust decides crack vs clamp. */}
+                {scene.interrogation &&
+                  (() => {
+                    const q = scene.interrogation!;
+                    const suspect = story.characters.find((c) => c.id === q.characterId);
+                    const initial = q.composure ?? 3;
+                    const live = iqComposure[scene.id] ?? initial;
+                    const broke = state.activeFlags.has(q.brokeFlag);
+                    const clamped = !!q.clampFlag && state.activeFlags.has(q.clampFlag);
+                    const resolved = broke || clamped;
+                    const critical = !resolved && live === 1;
+                    const pressured = !resolved && live < initial;
+                    const willCrack = (state.characterTrust[q.characterId] ?? 0) >= (q.crackTrust ?? 0);
+                    const fill = resolved ? 0 : live / initial;
+                    const stageColor = resolved ? (broke ? "#e8b23c" : "#e23b4e") : critical ? "#e23b4e" : pressured ? "#e8b23c" : "#2ad9d9";
+                    const stageLabel = resolved ? (broke ? "broken" : "clamped") : critical ? "on the edge" : pressured ? "strained" : "steady";
+                    const steadySecs = Math.max(3, Math.min(12, q.steadySeconds ?? 7));
+                    const canSteady = pressured && !iqSteadied.current[scene.id];
+                    return (
+                      <div className="mb-1.5 select-none" title="Composure — press (attitude replies) to break them; hesitate and they steady. At zero, their trust decides: talk, or shut down.">
+                        <div className="flex items-center gap-2">
+                          <span className="w-24 truncate text-right font-pulp text-[9px] uppercase tracking-[0.22em] text-paper/70">
+                            {suspect?.name ?? "Suspect"}
+                          </span>
+                          <div key={iqPressKey} className={`iq-gauge relative flex-1 ${pressured || critical ? "iq-jolt" : ""}`}>
+                            <div className="relative h-2.5 overflow-hidden rounded-sm bg-noir-700">
+                              <div
+                                className="h-full rounded-sm transition-[width] duration-300 ease-out"
+                                style={{
+                                  width: `${fill * 100}%`,
+                                  background: `linear-gradient(90deg, ${stageColor}99, ${stageColor})`,
+                                  boxShadow: critical ? `0 0 12px ${stageColor}` : pressured ? `0 0 6px ${stageColor}66` : undefined,
+                                }}
+                              />
+                              {canSteady && (
+                                <div
+                                  key={iqSteadyKey}
+                                  className="iq-steady-creep absolute inset-y-0 left-0"
+                                  style={{ animationDuration: `${steadySecs}s` }}
+                                />
+                              )}
+                            </div>
+                          </div>
+                          <span
+                            className={`w-16 font-pulp text-[9px] uppercase tracking-[0.18em] ${
+                              resolved ? (broke ? "text-gold" : "text-crimson") : critical ? "animate-pulse text-crimson" : pressured ? "text-gold" : "text-cyan-neon"
+                            }`}
+                          >
+                            {stageLabel}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          {!resolved ? (
+                            <span className={`font-type text-[9px] uppercase tracking-wider ${willCrack ? "text-emerald-400" : "text-crimson"}`}>
+                              ◈ break them now — {willCrack ? "they'll talk" : "they'll shut down"}
+                            </span>
+                          ) : (
+                            <span className="font-type text-[9px] uppercase tracking-wider text-paper/40">
+                              {broke ? "they talked" : "they shut down"}
+                            </span>
+                          )}
+                          <div className="relative h-4 min-w-0 flex-1 overflow-hidden text-right">
+                            {iqReaction && (
+                              <span key={iqReaction.key} className="iq-reaction absolute right-0 font-type text-[10px] italic text-paper/70">
+                                {iqReaction.text}
+                              </span>
+                            )}
+                            {iqStamp && (
+                              <span
+                                key={iqStamp.key}
+                                className={`iq-stamp absolute right-0 font-pulp text-[12px] uppercase tracking-[0.2em] ${iqStamp.kind === "broke" ? "text-gold" : "text-crimson"}`}
+                              >
+                                {iqStamp.kind === "broke" ? "★ BROKE" : "✖ CLAMPED"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                <span className="subframe-tick tl" aria-hidden />
+                <span className="subframe-tick tr" aria-hidden />
+                <span className="subframe-tick bl" aria-hidden />
+                <span className="subframe-tick br" aria-hidden />
+                {/* The slot height is always reserved so the text never jumps
+                    when a beat starts; the nameplate itself is keyed per beat
+                    so every new speaker slides in under their accent. */}
+                <div className="mb-1.5 flex h-5 items-center justify-center gap-2">
+                  {inBeats && currentBeat && beatAccent && (
+                    <span key={currentBeat.id} className="nameplate-in flex items-center gap-2">
+                      <span className={`h-2.5 w-[3px] ${beatAccent.bar}`} aria-hidden />
+                      <span
+                        className={`font-pulp text-[11px] uppercase ${beatAccent.text}`}
+                        style={{ textShadow: `0 0 14px ${beatAccent.glow}` }}
+                      >
+                        {beatIsVo ? "🎙 Narrator" : beatChar?.name ?? "Narrator"}
+                      </span>
+                      {!beatIsVo && currentBeat.expression && (
+                        <span className="font-type text-[9px] italic normal-case tracking-normal text-paper/45">
+                          {currentBeat.expression}
+                        </span>
+                      )}
+                      <span className={`h-2.5 w-[3px] ${beatAccent.bar}`} aria-hidden />
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+
+            {!proseAcknowledged && (
+              <div className={scene.nodeType === "credits" ? "space-y-5" : ""}>
+                {scene.nodeType === "credits" ? (
+                  <Credits prose={scene.prose} settings={scene.credits} onDone={() => setProseDone(true)} />
+                ) : (
+                  <p
+                    className={`relative max-w-2xl leading-snug text-paper [text-shadow:_0_1px_2px_rgba(0,0,0,0.95),_0_0_10px_rgba(0,0,0,0.7)] ${
+                      classicSubtitles
+                        ? "font-type text-sm md:text-base leading-relaxed"
+                        : "font-type font-medium text-xl md:text-2xl tracking-wide"
+                    }`}
+                    // Hold the full height from the first character so the
+                    // controls above don't ride up as the line types in. The
+                    // invisible sizer carries the longest text the scene can
+                    // show; the typed output overlays it, so typing (and beat
+                    // changes) never move the panel.
+                    style={{ minHeight: reservedProse }}
+                  >
+                    <span className="invisible" aria-hidden>{panelSizerText || scene.prose}</span>
+                    <span className="absolute inset-0">
+                      {scene.noTypewriter ? (
+                        <span>{scene.prose}</span>
+                      ) : (
+                        <Typewriter
+                          key={`${sceneId}:${entrySeq}`}
+                          text={scene.prose}
+                          speed={typeSpeed}
+                          forceComplete={proseDone}
+                          onDone={() => setProseDone(true)}
+                        />
+                      )}
+                    </span>
+                  </p>
+                )}
+                {/* The continue affordance appears only once prose finishes.
+                    In the bottom-anchored panel that late arrival would shove
+                    everything above it upward, so on the standard node the
+                    slot is reserved from the start and merely filled in.
+                    Credits/cutscene nodes are centred, not bottom-anchored,
+                    and their button is a large deliberate beat — they keep the
+                    original pop-in. */}
+                {reserveContinueSlot ? (
+                  <div className="mt-3 flex h-7 items-center justify-center">
+                    {proseDone && (
+                      <button
+                        onClick={() => {
+                          audio.click();
+                          audio.stopSpeech();
+                          setProseAcknowledged(true);
+                        }}
+                        className="continue-pill"
+                      >
+                        {`▸ continue to ${visibleBeats.length ? "dialogue" : "choices"}`}
+                      </button>
+                    )}
+                  </div>
+                ) : proseDone && !((scene.nodeType === "credits" || scene.nodeType === "cutscene") && holdActive) && (
+                  <button
+                    onClick={() => {
+                      audio.click();
+                      // Credits & cutscene nodes have no side-panel choices, so the
+                      // continue button must advance straight into the first choice.
+                      const firstExit = scene.nodeType === "credits" || scene.nodeType === "cutscene"
+                        ? availableChoices.find((c) => c.targetSceneId)
+                        : undefined;
+                      if (firstExit) {
+                        pickChoice(firstExit);
+                        return;
+                      }
+                      // Moving from prose into dialogue must cut the scene's
+                      // recorded narration — otherwise the MP3 keeps droning
+                      // under the character lines.
+                      audio.stopSpeech();
+                      setProseAcknowledged(true);
+                    }}
+                    className={
+                      scene.nodeType === "credits"
+                        ? "mt-6 border-2 border-gold bg-gold/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold hover:bg-gold/35"
+                        : scene.nodeType === "cutscene"
+                          ? "mt-6 border border-paper/40 px-5 py-2 font-pulp text-xs uppercase tracking-[0.2em] text-paper/80 hover:border-neon hover:text-neon"
+                          : "mt-3 font-pulp text-[10px] uppercase tracking-widest text-gold hover:underline"
+                    }
+                  >
+                    {scene.nodeType === "credits"
+                      ? "▸ Begin Case"
+                      : scene.nodeType === "cutscene"
+                        ? "▸ Continue"
+                        : `▸ continue to ${visibleBeats.length ? "dialogue" : "choices"}`}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {inBeats && currentBeat && (
+              <div className={`flex flex-col items-center gap-1 ${beatIsVo ? "opacity-95" : ""}`}>
+                <p
+                  className={`relative max-w-2xl leading-snug text-paper [text-shadow:_0_1px_2px_rgba(0,0,0,0.95),_0_0_10px_rgba(0,0,0,0.7)] ${
+                    classicSubtitles
+                      ? "font-type text-sm md:text-base leading-relaxed text-left"
+                      : "font-type font-medium text-xl md:text-2xl tracking-wide"
+                  }`}
+                  style={{ minHeight: reservedProse }}
+                >
+                  {/* Same trick as the prose: the invisible sizer holds the
+                      scene's tallest line so the panel never moves. In
+                      classic mode the speaker prefix is part of BOTH strings
+                      so the heights stay aligned. */}
+                  <span className="invisible" aria-hidden>
+                    {classicSubtitles
+                      ? `${story.characters.find((c) => c.id === currentBeat.characterId)?.name ?? (currentBeat.characterId === "narrator" ? "Narrator" : "—")} — ${panelSizerText || currentBeatText}`
+                      : panelSizerText || currentBeatText}
+                  </span>
+                  <span className="absolute inset-0">
+                    {classicSubtitles ? (
+                      <span>
+                        <span className="mr-2 font-pulp text-[10px] uppercase tracking-[0.2em] text-gold">
+                          {story.characters.find((c) => c.id === currentBeat.characterId)?.name ?? (currentBeat.characterId === "narrator" ? "Narrator" : "—")}
+                        </span>
+                        <Typewriter key={`${currentBeat.id}-classic`} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
+                      </span>
+                    ) : (
+                      <Typewriter key={currentBeat.id} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
+                    )}
+                  </span>
+                </p>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      goBack();
+                    }}
+                    disabled={!canRewind}
+                    className="beat-ctl"
+                    title="Rewind one line (←)"
+                  >
+                    ◂ back
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      advanceBeat();
+                    }}
+                    className="beat-ctl beat-ctl-primary"
+                  >
+                    {beatDone ? "▸ continue · space" : "▸▸ skip"}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      speakLine(currentBeat, currentBeatText);
+                    }}
+                    className="beat-ctl"
+                    title="Speak the line"
+                  >
+                    🎤
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* choices — credits/cutscene nodes auto-advance via the centered continue
+              button when a choice is wired; if none is (or the author left the
+              target blank), fall back to showing the choices so the player can
+              never get trapped on a cinematic node. */}
+          {interactive && !scene.isEnding && availableChoices.length > 0 && (
+            <>
+              {/* Big on-screen quick-time prompt banner. */}
+              {qteActive && (
+                <div className={`pop-in relative z-[48] mb-2 overflow-hidden border-2 px-4 py-3 text-center ${qtShaky ? "border-crimson bg-crimson/15" : "border-neon bg-noir-950/95"}`}>
+                  <div className="font-pulp text-[9px] uppercase tracking-[0.35em] text-neon">⚠ Quick-time · Act fast</div>
+                  <div className="font-pulp mt-1 text-xl uppercase leading-tight text-paper">
+                    {availableChoices.find((c) => c.quickTime)?.qtePrompt ?? "DECIDE!"}
+                  </div>
+                  {qtShaky && (
+                    <div className="absolute inset-0 z-[-1] flex items-center justify-center opacity-30">
+                      <span className="font-pulp text-4xl tracking-[0.5em] text-crimson">⋯</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-2 space-y-1.5" role="menu" aria-label="Choices">
+                {availableChoices.map((c, i) => {
+                  const gate = effectiveChoiceGating(c);
+                  const ok = meetsGating(gate, state);
+                  const clock = choiceClocks[c.id];
+                  const qtePct = c.quickTime && c.timeLimitSeconds ? (clock !== undefined ? clock / c.timeLimitSeconds : 1) : undefined;
+                  const critical = qtePct !== undefined && qtePct <= 0.3;
+                  return (
+                    <button
+                      key={c.id}
+                      role="menuitem"
+                      disabled={!ok}
+                      onClick={() => pickChoice(c)}
+                      onMouseEnter={() => {
+                        setChoiceFocus(i);
+                        audio.hover();
+                      }}
+                      className={`pop-in choice-btn flex w-full items-center gap-2 px-3 py-2.5 text-left font-pulp text-base leading-tight backdrop-blur-sm shadow-[0_4px_18px_rgba(0,0,0,0.45)] transition-all hover:-translate-y-0.5 ${
+                        c.reply
+                          ? `rounded-xl border border-cyan-neon/40 bg-cyan-neon/10 text-cyan-neon hover:border-cyan-neon/80 hover:bg-cyan-neon/20 ${choiceFocus === i && ok ? "ring-2 ring-neon/50" : ""}`
+                          : `border-l-4 bg-noir-950/90 ${ATTITUDE_COLOR[c.attitudeTag ?? "Neutral"]} ${choiceFocus === i && ok ? "bg-noir-700/95 ring-1 ring-neon/40" : ""} ${!ok ? "opacity-45 cursor-not-allowed" : "hover:bg-noir-700/95"}`
+                      }`}
+                      style={{ animationDelay: `${i * 70}ms` }}
+                    >
+                      {/* Countdown ring around a QTE choice button. */}
+                      {qtePct !== undefined && (
+                        <span
+                          className="qte-ring relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+                          style={{ "--qte-pct": `${Math.max(0, Math.min(100, qtePct * 100))}%`, "--qte-critical": critical ? "1" : "0", "--qte-col": critical ? "#e23b4e" : "#e8b23c" } as React.CSSProperties}
+                          aria-label={`${Math.round(qtePct * 100)}% time left`}
+                        >
+                          <span className="font-pulp text-[10px] text-paper/90">{i + 1}</span>
+                        </span>
+                      )}
+                      {qtePct === undefined && (
+                        <span
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-noir-800/90 font-pulp text-[10px] ${ATTITUDE_BADGE[c.attitudeTag ?? "Neutral"]}`}
+                        >
+                          {i + 1}
+                        </span>
+                      )}
+                      <span className="flex-1">
+                        {!ok && "🔒 "}
+                        {c.reply && <span className="mr-1" title="Conversational reply — stays in this scene">💬</span>}
+                        {c.presentItem && (
+                          <span
+                            className="mr-1"
+                            title={`Presents: ${story.items.find((i) => i.id === c.presentItem)?.name ?? c.presentItem}`}
+                          >
+                            {story.items.find((i) => i.id === c.presentItem)?.icon ?? "📜"}
+                          </span>
+                        )}
+                        {c.text}
+                        {!ok && gate && (
+                          <span className="ml-2 text-[10px] uppercase tracking-wider text-paper/40">[{gatingHint(gate, story)}]</span>
+                        )}
+                        {ok && c.gating?.requiresFlags?.some((f) => story.deduction?.connections.some((d) => d.flagSet === f)) && (
+                          <span className="ml-2 text-[10px] uppercase tracking-wider text-gold">[board unlock]</span>
+                        )}
+                      </span>
+                      {c.attitudeTag && c.attitudeTag !== "Neutral" && (
+                        <span className="shrink-0 font-pulp text-[9px] uppercase tracking-widest opacity-70" title={METER_LABELS[c.attitudeTag as MeterKey] ?? c.attitudeTag}>
+                          <span className="mr-1" aria-hidden>{ATTITUDE_ICON[c.attitudeTag]}</span>
+                          {METER_LABELS[c.attitudeTag as MeterKey] ?? c.attitudeTag}
+                        </span>
+                      )}
+                      {clock !== undefined && (
+                        <span className={`font-pulp text-xs ${critical ? "text-crimson animate-pulse" : "text-gold"}`}>⏱ {clock}s</span>
+                      )}
+                      {choiceFocus === i && ok && (
+                        <span className="shrink-0 font-pulp text-[9px] uppercase tracking-widest text-paper/50">⏎</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {interactive && !scene.isEnding && !hasUsableChoice && hasValidAutoAdvance && !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0 && (
+            <div className="mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
+              <p className="font-pulp text-[10px] uppercase tracking-widest text-gold">
+                ⏱ Next scene in {autoAdvanceRemaining}s
+              </p>
+            </div>
+          )}
+
+          {/* cinematic nodes (credits/cutscene) with no reachable choices get a
+              visible escape hatch — otherwise they'd silently strand the player
+              with no HUD and no way forward. */}
+          {interactive && !scene.isEnding && !hasValidAutoAdvance && (scene.nodeType === "credits" || scene.nodeType === "cutscene") && availableChoices.length === 0 && (
+            <div className="mt-2 border border-crimson/50 bg-crimson/10 p-3 text-center">
+              <p className="font-type text-[11px] text-crimson">
+                This {scene.nodeType} node has no choices wired — there's nowhere to go.
+              </p>
+              <button
+                onClick={() => {
+                  audio.click();
+                  pushToast("Backtracking to the start.", "info");
+                  goToScene(episode?.startSceneId ?? story.startSceneId);
+                }}
+                className="mt-2 border border-crimson/60 px-3 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-crimson hover:bg-crimson/20"
+              >
+                ⤺ Return to start
+              </button>
+            </div>
+          )}
+
+          {/* Episode curtain — in a season, an ending closes the CHAPTER, so the
+              wrapper supplies an end-of-episode card (defining choices, season
+              progress, "next time on…") in place of the case-closed panel. */}
+          {proseDone && scene.isEnding && scene.endingData && episodeEndPanel && (
+            <>
+              {episodeEndPanel}
+              {/* The route map belongs to the run, and `journey` lives here in
+                  CasePlayer, so the chart is rendered beside the episode card
+                  rather than threaded up through SeasonPlayer. */}
+              <Flowchart
+                story={story}
+                journey={journey}
+                endingHeadline={scene.endingData.headline}
+                endingTier={scene.endingData.tier}
+                title={`${scene.title} — Your Route`}
+              />
+            </>
+          )}
+
+          {/* Full-screen ending — Detroit: Become Human style flowchart */}
+          {proseDone && scene.isEnding && scene.endingData && !episodeEndPanel && (
+            <div className="fixed inset-0 z-[85] flex flex-col bg-noir-950/98 overflow-hidden">
+              <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-5 py-6">
+                {/* Header: ending badge + headline */}
+                <div className="shrink-0 border-b border-gold/25 pb-4 text-center">
+                  <div className={`font-pulp text-[11px] uppercase tracking-[0.3em] ${
+                    scene.endingData.tier === "gameover" ? "text-crimson"
+                    : scene.endingData.tier === "victory-gold" ? "text-gold"
+                    : "text-paper/70"}`}>
+                    {scene.endingData.tier === "victory-gold" ? "★★ Gold Case ★★"
+                    : scene.endingData.tier === "victory-silver" ? "★ Silver Case ★"
+                    : "✖ Game Over ✖"}
+                  </div>
+                  <h2 className="font-pulp mt-1 text-3xl uppercase leading-tight text-paper drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">{scene.endingData.headline}</h2>
+                  <div className="font-type mt-1 text-[10px] uppercase tracking-[0.3em] text-paper/40">Chapter Complete · {story.title}</div>
+                </div>
+
+                {/* Scrollable flowchart */}
+                <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+                  <Flowchart
+                    story={story}
+                    journey={journey}
+                    endingHeadline={scene.endingData.headline}
+                    endingTier={scene.endingData.tier}
+                    title="Your Route"
+                  />
+                </div>
+
+                {/* Footer: recap + buttons */}
+                <div className="shrink-0 border-t border-gold/25 pt-3">
+                  <p className="text-center font-type text-sm italic text-paper/55">{scene.endingData.recap}</p>
+                  <p className="mt-2 text-center font-type text-[9px] uppercase tracking-[0.35em] text-paper/30">A Gaslight Reelworks Production</p>
+                  <div className="mt-3 flex flex-wrap justify-center gap-2">
+                    <button
+                      onClick={() => {
+                        audio.click();
+                        setState(createInitialState(story));
+                        setUsedHotspots(new Set());
+                        setUsedChoices(new Set());
+                        setVisitedScenes(new Set());
+                        setEncounteredCharacters(new Set());
+                        setJourney([]);
+                        setChartedUpTo(0);
+                        setPartBreak(null);
+                        setPendingAct(null);
+                        setActMap(null);
+                        seenActs.current = new Set();
+                        visitedRef.current = new Set();
+                        enteredRef.current = "";
+                        heatBustFired.current = false;
+                        craftHintShown.current = false;
+                        setBanner(true);
+                        goToScene(story.startSceneId);
+                      }}
+                      className="border-2 border-gold bg-gold/15 px-5 py-2 font-pulp text-xs uppercase tracking-widest text-gold hover:bg-gold hover:text-noir-950"
+                    >
+                      ↻ New Game+
+                    </button>
+                    {(() => {
+                      const newest = saves.reduce<{ slot: number; at: number } | null>(
+                        (best, s, i) => (s && (!best || s.savedAt > best.at) ? { slot: i + 1, at: s.savedAt } : best),
+                        null
+                      );
+                      return newest ? (
+                        <button
+                          onClick={() => doLoad(newest.slot)}
+                          className="border-2 border-cyan-neon/60 px-5 py-2 font-pulp text-xs uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/15"
+                        >
+                          ↺ Load last save
+                        </button>
+                      ) : null;
+                    })()}
+                    <button
+                      onClick={onExit}
+                      className="border-2 border-paper/40 px-5 py-2 font-pulp text-xs uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
+                    >
+                      Back to the Newsstand
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+        <InventoryDock
+          state={state}
+          onInspect={(item) => setOverlay({ type: "inspect", item })}
+          onCombine={handleCombine}
+          onExplainCrafting={explainCrafting}
+          hasCrafting={story.items.some((item) => item.combinableWith)}
+        />
+      )}
+
+      {/* Floating sound + help — one mixer button and one help button */}
+      <div className="hud-frame absolute bottom-4 right-4 z-[55] flex items-center gap-1.5 px-1.5 py-1">
+        <button
+          onClick={() => {
+            audio.click();
+            setMixerOpen((o) => !o);
+          }}
+          className="hud-btn relative px-2.5 py-1.5"
+          data-active={mixerOpen || undefined}
+          title="Sound mixer"
+          aria-label="Sound mixer"
+          aria-expanded={mixerOpen}
+        >
+          <span>{soundOn ? "🔊" : "🔇"}</span> Sound
+          {soundBlocked && soundOn && (
+            <span className="absolute -right-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-crimson shadow-[0_0_8px_rgba(226,59,78,0.9)]" />
+          )}
+        </button>
+        <button
+          onClick={() => {
+            audio.click();
+            setOverlay({ type: "instructions" });
+          }}
+          className="hud-btn h-8 w-8 px-0 text-sm"
+          title="How to play"
+          aria-label="How to play"
+        >
+          ?
+        </button>
+      </div>
+
+      {/* Sound mixer popover */}
+      {mixerOpen && (
+        <div className="hud-frame hud-frame-gold pop-in absolute bottom-16 right-4 z-[56] w-72 p-3">
+          <div className="mb-2 flex items-center justify-between border-b border-gold/20 pb-1.5">
+            <span className="hud-kicker hud-kicker-left">🎚 Sound</span>
+            <button onClick={() => setMixerOpen(false)} className="px-1 text-paper/50 hover:text-neon" aria-label="Close mixer">✕</button>
+          </div>
+
+          <div className="mb-3 flex gap-2">
+            <button
+              onClick={() => { setSoundOn(false); audio.click(); }}
+              data-color={!soundOn ? "crimson" : undefined}
+              data-active={!soundOn || undefined}
+              className="hud-btn flex-1 px-2 py-1.5"
+            >
+              🔇 Mute
+            </button>
+            <button
+              onClick={() => enableSound()}
+              data-color={soundOn ? "cyan" : undefined}
+              className="hud-btn flex-1 px-2 py-1.5"
+            >
+              🔊 Unmute
+            </button>
+          </div>
+
+          {musicTrack && (
+            <button
+              onClick={() => {
+                const a = sceneAudioRef.current;
+                if (a) {
+                  if (a.paused) enableSound();
+                  else { a.pause(); setMusicPlaying(false); audio.click(); }
+                }
+              }}
+              data-active={musicPlaying || undefined}
+              className="hud-btn mb-2 w-full px-2 py-1.5"
+            >
+              🎵 Music {musicPlaying ? "playing — tap to pause" : "paused — tap to play"}
+            </button>
+          )}
+
+          {/* Master + scene-music faders. Scene music is a raw Audio element, so its
+              effective volume is master × music; the music fader lets the player duck
+              just the soundtrack (e.g. under narration) without touching the rest. */}
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <span className="w-16 shrink-0">Master</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={volumes.master ?? 0.8}
+                onChange={(e) => changeVolume("master", Number(e.target.value))}
+                className="flex-1 accent-pink-500"
+                aria-label="Master volume"
+              />
+              <span className="w-9 shrink-0 text-right font-type text-paper/50">{Math.round((volumes.master ?? 0.8) * 100)}%</span>
+            </label>
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <span className="w-16 shrink-0">Scene music</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={volumes.music ?? 0.8}
+                onChange={(e) => changeVolume("music", Number(e.target.value))}
+                className="flex-1 accent-pink-500"
+                aria-label="Scene music volume"
+              />
+              <span className="w-9 shrink-0 text-right font-type text-paper/50">{Math.round((volumes.music ?? 0.8) * 100)}%</span>
+            </label>
+          </div>
+          <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+            Master scales everything · Scene music ducks just the soundtrack. Ambience, voice and effects stay in the newsstand's Sound Booth.
+          </p>
+        </div>
+      )}
+
+      {/* overlays */}
+      {overlay?.type === "instructions" && (
+        <Modal
+          title="How to Play Scarlet Reel"
+          onClose={() => {
+            setOverlay(null);
+            if (autoNarrate && scene && !proseAcknowledged && shouldAutoNarrateSceneProse(scene)) {
+              playProse(scene);
+            }
+          }}
+          wide
+        >
+          <div className="grid gap-5 md:grid-cols-[1.2fr_1fr]">
+            <div>
+              <h3 className="font-pulp text-lg uppercase text-gold">The gameplay loop</h3>
+              <ol className="mt-3 space-y-3 font-type text-sm text-paper/80">
+                <li><b className="text-cyan-neon">1. Read the scene.</b> Press Continue when the setup is clear. Skip only fast-forwards text.</li>
+                <li><b className="text-cyan-neon">2. Investigate.</b> Use Scene Actions on the right or click glowing areas in the picture. Actions stay available during dialogue.</li>
+                <li><b className="text-cyan-neon">3. Collect evidence.</b> Items go into the Satchel. If two items form a recipe, drag one item onto the other.</li>
+                <li><b className="text-cyan-neon">4. Solve mini-games.</b> Their controls appear inside each puzzle. Winning gives a clue, flag, or route to the next scene.</li>
+                <li><b className="text-cyan-neon">5. Build the case.</b> Open the Corkboard and drag from a clue's red pin onto the person it implicates. Correct links unlock deductions.</li>
+                <li><b className="text-cyan-neon">6. Accuse carefully.</b> Open the Case File to see the exact win and lose rules. Accusing without proof usually loses the case.</li>
+              </ol>
+            </div>
+            <div className="space-y-4">
+              <div className="border border-gold/35 bg-gold/5 p-3">
+                <h3 className="font-pulp text-sm uppercase text-gold">What Case Progress does</h3>
+                <p className="mt-1 font-type text-xs leading-relaxed text-paper/70">
+                  It is your detective notebook. It shows attitude meters, active perks, people you have met, clues in your satchel, and how many corkboard links you have solved. It does not require clicking to progress.
+                </p>
+              </div>
+              <div className="border border-crimson/35 bg-crimson/5 p-3">
+                <h3 className="font-pulp text-sm uppercase text-crimson">How you lose</h3>
+                <p className="mt-1 font-type text-xs leading-relaxed text-paper/70">
+                  Wrong accusations, failed puzzles, and intimidating choices can raise Heat. Some cases end automatically when Heat reaches its limit. The Case File always shows that limit.
+                </p>
+              </div>
+              <div className="border border-paper/20 p-3">
+                <h3 className="font-pulp text-sm uppercase text-paper/70">Controls</h3>
+                <p className="mt-1 font-type text-xs leading-relaxed text-paper/60">
+                  Space / Enter: continue dialogue (a press while text types finishes the line) · ←: back one line · Shift+←: restart scene · 1–9: choices · ↑↓ / W S: move choice focus · B: corkboard · L: dialogue log · M: mute · .: skip text · Esc: close / quit
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setOverlay(null);
+                  if (autoNarrate && scene && !proseAcknowledged && shouldAutoNarrateSceneProse(scene)) {
+                    playProse(scene);
+                  }
+                }}
+                className="w-full border-2 border-neon bg-neon/10 py-3 font-pulp text-sm uppercase tracking-[0.18em] text-neon hover:bg-neon/20"
+              >
+                Start / Resume Case
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {overlay?.type === "inspect" && (
+        <Modal title="Evidence Close-Up" onClose={() => setOverlay(null)}>
+          <div className="flex items-start gap-4">
+            <div className="flex h-24 w-24 items-center justify-center border-2 border-gold/50 bg-noir-950 sprite-sway">
+              {overlay.item.iconUrl ? (
+                <img src={assetUrl(overlay.item.iconUrl)} alt={overlay.item.name} className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-6xl">{overlay.item.icon}</span>
+              )}
+            </div>
+            <div>
+              <h4 className="font-pulp text-gold uppercase tracking-wide">{overlay.item.name}</h4>
+              {overlay.item.isClue && (
+                <span className="font-pulp text-[9px] uppercase tracking-widest text-crimson">📌 Clue — pin it on the corkboard</span>
+              )}
+              <p className="font-type mt-2 text-sm text-paper/85">{overlay.item.description}</p>
+              <p className="font-type mt-2 text-xs italic text-neon/80">“{overlay.item.flavorText}”</p>
+              {overlay.item.combinableWith && (
+                <p className="mt-2 text-[10px] uppercase tracking-wider text-paper/50">Feels like it pairs with something...</p>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {overlay?.type === "relationships" && (
+        <Modal title="People & Relationships — the ledger" onClose={() => setOverlay(null)} wide>
+          <p className="mb-3 font-type text-xs text-paper/70">
+            Your standing with the people you've crossed. Trust and the flags you've set shape what each of them thinks of
+            you — and it all carries across saves.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {story.characters.map((c) => {
+              const met = encounteredCharacters.has(c.id);
+              const op = characterOpinion(c, state.characterTrust[c.id] ?? c.trustMeter, state.activeFlags);
+              const border =
+                op.sentiment === "devoted" || op.sentiment === "trusting"
+                  ? "border-emerald-500/50"
+                  : op.sentiment === "warming"
+                    ? "border-gold/50"
+                    : op.sentiment === "hostile" || op.sentiment === "terrified"
+                      ? "border-crimson/60"
+                      : op.sentiment === "wary"
+                        ? "border-paper/30"
+                        : "border-noir-600";
+              const textCol =
+                op.sentiment === "devoted" || op.sentiment === "trusting"
+                  ? "text-emerald-400"
+                  : op.sentiment === "warming"
+                    ? "text-gold"
+                    : op.sentiment === "hostile" || op.sentiment === "terrified"
+                      ? "text-crimson"
+                      : op.sentiment === "wary"
+                        ? "text-paper/70"
+                        : "text-paper/60";
+              return (
+                <div key={c.id} className={`border ${border} bg-noir-900/60 p-2.5 ${met ? "" : "opacity-55"}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 shrink-0 overflow-hidden border border-gold/40 bg-noir-950">
+                      {c.avatarUrl.startsWith("emoji:") ? (
+                        <div className="flex h-full w-full items-center justify-center text-2xl">{c.avatarUrl.slice(6) || "👤"}</div>
+                      ) : (
+                        <img src={assetUrl(c.avatarUrl)} alt={c.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-pulp text-[11px] uppercase tracking-wide text-paper">{c.name}</div>
+                      <div className="truncate font-type text-[10px] text-paper/50">{c.role || "?"}</div>
+                      <div className={`font-pulp text-[10px] uppercase tracking-widest ${textCol}`}>
+                        {met ? op.label : "Not yet met"}
+                      </div>
+                    </div>
+                    <div className="w-16 shrink-0 text-right">
+                      <div className="h-1.5 w-full bg-noir-600">
+                        <div
+                          className={`h-full transition-all duration-500 ${state.characterTrust[c.id] > 0 ? "bg-emerald-500" : state.characterTrust[c.id] < 0 ? "bg-crimson" : "bg-paper/30"}`}
+                          style={{ width: `${Math.min(100, (Math.abs(state.characterTrust[c.id] ?? 0) / 5) * 100)}%` }}
+                        />
+                      </div>
+                      <div className="mt-0.5 font-type text-[9px] text-paper/45">
+                        {state.characterTrust[c.id] > 0 ? `+${state.characterTrust[c.id]}` : state.characterTrust[c.id]}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 font-type text-[11px] leading-snug text-paper/80">{met ? op.line : "You haven't crossed paths yet."}</p>
+                  {met && op.flags.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {op.flags.map((f) => (
+                        <span key={f} className="border border-gold/30 bg-gold/5 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-gold/80">
+                          {f.replace(/_/g, " ")}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
+
+      {patternPuzzle && (
+        <PatternPuzzleGame
+          config={patternPuzzle.config}
+          onSolved={() => {
+            const cfg = patternPuzzle.config;
+            if (cfg.rewardConsequences) {
+              setState((s) => applyConsequences(story, cfg.rewardConsequences, s));
+            }
+            if (cfg.payoffText) {
+              setExamCard({ label: "Pattern cracked", text: cfg.payoffText, kind: "info" });
+            }
+            setUsedHotspots((u) => new Set(u).add(`${sceneId}:${patternPuzzle.hotspot.id}`));
+            setInvestigatedThisVisit(true);
+            const dest = cfg.targetSceneId;
+            setPatternPuzzle(null);
+            if (dest) window.setTimeout(() => goToScene(dest), 100);
+          }}
+          onWrong={() => {
+            const cfg = patternPuzzle.config;
+            if (cfg.wrongSubmissionConsequences) {
+              setState((s) => applyConsequences(story, cfg.wrongSubmissionConsequences, s));
+            }
+            setUsedHotspots((u) => new Set(u).add(`${sceneId}:${patternPuzzle.hotspot.id}`));
+            const dest = cfg.wrongTargetSceneId;
+            setPatternPuzzle(null);
+            if (dest) window.setTimeout(() => goToScene(dest), 100);
+          }}
+          onClose={() => setPatternPuzzle(null)}
+        />
+      )}
+
+      {overlay?.type === "board" && (
+        <DeductionBoard
+          story={story}
+          state={state}
+          encounteredCharacters={encounteredCharacters}
+          onClose={() => setOverlay(null)}
+          onConnect={(flag, revelation) => {
+            const perks = getPerks(stateRef.current);
+            if (flag) {
+              setState((s) => applyConsequences(story, { setFlags: [flag], meterChanges: [{ meter: "Clever", delta: 1 }] }, s));
+              pushToast(`${revelation} (+1 Deduce)`, "success");
+              return;
+            }
+            if (perks.sharpEye) {
+              pushToast(`${revelation} Sharp Eye keeps the bad hunch off the books.`, "fail");
+              return;
+            }
+            const cost = perks.heat ? 2 : 1;
+            setState((s) => applyConsequences(story, { meterChanges: [{ meter: "Suspicion", delta: cost }] }, s));
+            pushToast(`${revelation} (+${cost} Heat)`, "fail");
+          }}
+        />
+      )}
+
+      {overlay?.type === "log" && (
+        <Modal title="Dialogue log — everything said this run" onClose={() => setOverlay(null)} wide>
+          <p className="mb-2 font-type text-[10px] uppercase tracking-widest text-paper/40">
+            Newest at the bottom · L or Esc closes
+          </p>
+          <DialogueLogView lines={dialogueLog} />
+        </Modal>
+      )}
+
+      {overlay?.type === "save" && (
+        <Modal
+          title={episode ? `Save — ${episodeLabel(episode.number ?? 1)}` : "Save — choose a slot"}
+          onClose={() => {
+            saveThenExitRef.current = false;
+            setOverlay(null);
+          }}
+        >
+          <p className="mb-3 font-type text-xs text-paper/60">
+            Snapshot your progress. Loading a save returns you to the same scene with your flags, inventory and meters intact.
+            A separate ⏱ auto checkpoint is written every scene — it never fills these slots (find it under Load).
+            {episode && <> These three slots belong to <b className="text-gold">{episode.title}</b> — every episode keeps its own.</>}
+          </p>
+          {saves.map((s, i) => {
+            const slot = i + 1;
+            return (
+              <div key={slot} className="mb-2 flex items-center gap-3 border border-noir-600 p-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-pulp text-[10px] uppercase tracking-wider text-gold">Slot {slot}</div>
+                  <div className="truncate font-type text-[10px] text-paper/60">
+                    {s ? `${s.sceneTitle} · ${new Date(s.savedAt).toLocaleString()}` : "Empty"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => doSave(slot)}
+                  className="shrink-0 border border-emerald-500/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-emerald-400 hover:bg-emerald-500/10"
+                >
+                  {saveThenExitRef.current ? "Save & exit" : "Save here"}
+                </button>
+              </div>
+            );
+          })}
+        </Modal>
+      )}
+
+      {overlay?.type === "load" && (
+        <Modal title={episode ? `Load — ${episodeLabel(episode.number ?? 1)}` : "Load a save"} onClose={() => setOverlay(null)}>
+          <p className="mb-3 font-type text-xs text-paper/60">
+            Return to where you left off. Any unsaved progress in this run will be replaced.
+            {episode && <> Showing the slots for <b className="text-gold">{episode.title}</b>.</>}
+          </p>
+          {(() => {
+            const auto = readSave(story.id, AUTO_SLOT, episodeId);
+            return auto ? (
+              <div className="mb-3 flex items-center gap-3 border border-cyan-neon/40 bg-cyan-neon/5 p-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-pulp text-[10px] uppercase tracking-wider text-cyan-neon">⏱ Auto checkpoint</div>
+                  <div className="truncate font-type text-[10px] text-paper/60">
+                    {auto.sceneTitle} · {new Date(auto.savedAt).toLocaleString()} · written every scene
+                  </div>
+                </div>
+                <button
+                  onClick={() => doLoad(AUTO_SLOT)}
+                  className="shrink-0 border border-cyan-neon/60 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                >
+                  Load
+                </button>
+              </div>
+            ) : null;
+          })()}
+          {saves.map((s, i) => {
+            const slot = i + 1;
+            return (
+              <div key={slot} className="mb-2 flex items-center gap-3 border border-noir-600 p-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-pulp text-[10px] uppercase tracking-wider text-gold">Slot {slot}</div>
+                  <div className="truncate font-type text-[10px] text-paper/60">
+                    {s ? `${s.sceneTitle} · ${new Date(s.savedAt).toLocaleString()}` : "Empty"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => doLoad(slot)}
+                  disabled={!s}
+                  className={`shrink-0 border px-2 py-1 font-pulp text-[9px] uppercase tracking-widest ${
+                    s ? "border-cyan-neon/60 text-cyan-neon hover:bg-cyan-neon/10" : "border-paper/20 text-paper/30 cursor-not-allowed"
+                  }`}
+                >
+                  Load
+                </button>
+              </div>
+            );
+          })}
+        </Modal>
+      )}
+
+      {overlay?.type === "quit" && (
+        <Modal title="Leave the case?" onClose={() => setOverlay(null)}>
+          <p className="font-type text-sm text-paper/85">Walk away now and this reel rewinds — save it to a slot first to pick up where you left off.</p>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => {
+                saveThenExitRef.current = true;
+                setSaves(readSaves(story.id, episodeId));
+                setOverlay({ type: "save" });
+              }}
+              className="flex-1 border border-emerald-500/60 bg-emerald-500/10 py-2 font-pulp text-xs uppercase tracking-widest text-emerald-400 hover:bg-emerald-500/20"
+            >
+              💾 Save & exit
+            </button>
+            <button
+              onClick={() => {
+                audio.stopSpeech();
+                onExit();
+              }}
+              className="flex-1 border border-crimson/60 bg-crimson/15 py-2 font-pulp text-xs uppercase tracking-widest text-crimson hover:bg-crimson/25"
+            >
+              Hang up the hat
+            </button>
+            <button
+              onClick={() => setOverlay(null)}
+              className="flex-1 border border-paper/40 py-2 font-pulp text-xs uppercase tracking-widest text-paper hover:border-gold hover:text-gold"
+            >
+              Stay on it
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  season wrapper — episodes, title cards, recaps, handoffs           */
+/* ------------------------------------------------------------------ */
+
+/** What the season wrapper is currently showing. */
+type SeasonPhase =
+  | { kind: "season" }
+  | { kind: "recap"; episode: Episode }
+  | { kind: "titleCard"; episode: Episode }
+  | { kind: "play"; episode: Episode; resumeSlot?: number; runKey: number }
+  | { kind: "nextTime"; from: Episode; to: Episode };
+
+/**
+ * The entry point the app plays a story through.
+ *
+ * A plain story drops straight into the case player, exactly as before. An
+ * episodic story is presented as a season: pick an episode, watch a
+ * "Previously on…" built from what you actually did, get a title card, play
+ * the chapter with its own save slots, then close it with an end-of-episode
+ * card that hands off to "Next time on…".
+ */
+export function GamePlayer({
+  story,
+  typeSpeed,
+  isNewGamePlus,
+  resumeSlot,
+  resumeEpisodeId,
+  primedMusic,
+  primedNarration,
+  onExit,
+}: {
+  story: Story;
+  typeSpeed: number;
+  isNewGamePlus: boolean;
+  resumeSlot?: number;
+  /** which episode's slot to resume into (episodic stories only) */
+  resumeEpisodeId?: string;
+  primedMusic?: PrimedAudio | null;
+  primedNarration?: PrimedAudio | null;
+  onExit: () => void;
+}) {
+  const episodic = isEpisodic(story);
+
+  // Non-episodic stories keep the original one-shot behaviour untouched.
+  if (!episodic) {
+    return (
+      <CasePlayer
+        story={story}
+        typeSpeed={typeSpeed}
+        isNewGamePlus={isNewGamePlus}
+        resumeSlot={resumeSlot}
+        primedMusic={primedMusic}
+        primedNarration={primedNarration}
+        onExit={onExit}
+      />
+    );
+  }
+
+  return (
+    <SeasonPlayer
+      story={story}
+      typeSpeed={typeSpeed}
+      isNewGamePlus={isNewGamePlus}
+      resumeSlot={resumeSlot}
+      resumeEpisodeId={resumeEpisodeId}
+      primedMusic={primedMusic}
+      onExit={onExit}
+    />
+  );
+}
+
+function SeasonPlayer({
+  story,
+  typeSpeed,
+  isNewGamePlus,
+  resumeSlot,
+  resumeEpisodeId,
+  primedMusic,
+  onExit,
+}: {
+  story: Story;
+  typeSpeed: number;
+  isNewGamePlus: boolean;
+  resumeSlot?: number;
+  resumeEpisodeId?: string;
+  primedMusic?: { url: string; el: HTMLAudioElement } | null;
+  onExit: () => void;
+}) {
+  const episodes = useMemo(() => seasonEpisodes(story), [story]);
+
+  // A "▶ Resume" from the newsstand should drop straight into the chapter that
+  // save belongs to, skipping the season screen and the title card.
+  const [phase, setPhase] = useState<SeasonPhase>(() => {
+    if (resumeSlot) {
+      // Prefer the episode the newsstand actually resolved the save from —
+      // slot numbers repeat across episodes, so searching by slot alone can
+      // land on the wrong chapter.
+      const named = resumeEpisodeId ? episodes.find((e) => e.id === resumeEpisodeId) : undefined;
+      if (named && readSave(story.id, resumeSlot, named.id)) {
+        return { kind: "play", episode: named, resumeSlot, runKey: 0 };
+      }
+      for (const ep of episodes) {
+        const save = readSave(story.id, resumeSlot, ep.id);
+        if (save) return { kind: "play", episode: ep, resumeSlot, runKey: 0 };
+      }
+      const fallback = currentEpisode(story) ?? episodes[0];
+      if (fallback) return { kind: "play", episode: fallback, resumeSlot, runKey: 0 };
+    }
+    return { kind: "season" };
+  });
+
+  // Bumped on every fresh run so the case player fully remounts (state, scene,
+  // narration and timers all reset) instead of leaking the previous episode.
+  const runSeq = useRef(0);
+  // The just-finished episode's result, held so the end card can render over
+  // the ending scene before the "Next time on…" handoff.
+  const [finished, setFinished] = useState<{ progress: EpisodeProgress; highlights: string[] } | null>(null);
+
+  const startEpisode = useCallback(
+    (episode: Episode, slot?: number) => {
+      setFinished(null);
+      runSeq.current += 1;
+      const runKey = runSeq.current;
+      if (slot) {
+        setPhase({ kind: "play", episode, resumeSlot: slot, runKey });
+        return;
+      }
+      // A recap only makes sense once there is something to recap: the state
+      // carried in from earlier chapters.
+      const carried = carryOverState(story, episode.id);
+      const hasRecap = resolveRecap(episode, carried).length > 0 || (episode.recapFromMemories && Object.keys(carried.memories).length > 0);
+      setPhase(hasRecap ? { kind: "recap", episode } : { kind: "titleCard", episode });
+    },
+    [story]
+  );
+
+  const handleEpisodeComplete = useCallback(
+    (progress: EpisodeProgress, highlights: string[]) => {
+      recordEpisodeProgress(story.id, progress);
+      setFinished({ progress, highlights });
+    },
+    [story.id]
+  );
+
+  const openSeason = useCallback(() => {
+    audio.stopSpeech();
+    setFinished(null);
+    setPhase({ kind: "season" });
+  }, []);
+
+  if (phase.kind === "season") {
+    return (
+      <SeasonScreen
+        story={story}
+        onPlayEpisode={(ep) => startEpisode(ep)}
+        onResume={(ep, slot) => startEpisode(ep, slot)}
+        onExit={onExit}
+      />
+    );
+  }
+
+  if (phase.kind === "recap") {
+    const carried = carryOverState(story, phase.episode.id);
+    return (
+      <div className="relative h-full w-full bg-noir-950">
+        <EpisodeRecap
+          story={story}
+          episode={phase.episode}
+          state={carried}
+          onDone={() => setPhase({ kind: "titleCard", episode: phase.episode })}
+        />
+      </div>
+    );
+  }
+
+  if (phase.kind === "titleCard") {
+    return (
+      <div className="relative h-full w-full bg-noir-950">
+        <EpisodeTitleCard
+          story={story}
+          episode={phase.episode}
+          onDone={() => {
+            runSeq.current += 1;
+            setPhase({ kind: "play", episode: phase.episode, runKey: runSeq.current });
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (phase.kind === "nextTime") {
+    return (
+      <div className="relative h-full w-full bg-noir-950">
+        <NextTimeCard
+          story={story}
+          fromEpisode={phase.from}
+          toEpisode={phase.to}
+          onContinue={() => startEpisode(phase.to)}
+          onSeasonScreen={openSeason}
+        />
+      </div>
+    );
+  }
+
+  // phase.kind === "play"
+  const episode = phase.episode;
+  const following = nextEpisode(story, episode.id);
+  // A finale (or an ending explicitly flagged as season-ending) stops here
+  // instead of teasing a chapter the story doesn't intend you to reach.
+  const endingScene = finished ? story.scenes.find((s) => s.id === finished.progress.endingSceneId) : undefined;
+  const seasonOver = !following || !!endingScene?.endingData?.endsSeason;
+
+  return (
+    <CasePlayer
+      key={`${episode.id}-${phase.runKey}`}
+      story={story}
+      typeSpeed={typeSpeed}
+      isNewGamePlus={isNewGamePlus}
+      resumeSlot={phase.resumeSlot}
+      primedMusic={primedMusic}
+      episode={episode}
+      initialState={carryOverState(story, episode.id)}
+      startSceneId={episode.startSceneId}
+      onEpisodeComplete={handleEpisodeComplete}
+      onOpenSeason={openSeason}
+      episodeEndPanel={
+        finished ? (
+          <EpisodeEndCard
+            story={story}
+            episode={episode}
+            progress={finished.progress}
+            choiceHighlights={finished.highlights}
+            hasNext={!seasonOver}
+            onNextTime={() => following && setPhase({ kind: "nextTime", from: episode, to: following })}
+            onReplay={() => startEpisode(episode)}
+            onSeasonScreen={openSeason}
+            onExit={onExit}
+          />
+        ) : undefined
+      }
+      onExit={onExit}
+    />
+  );
+}

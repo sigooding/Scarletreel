@@ -1,0 +1,75 @@
+{
+  "name": "react-vite-tailwind",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "node scripts/check-setup.mjs",
+    "test": "node scripts/engine-tests.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "desktop:preview": "npm run build && electron .",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:pack": "npm run build && electron-builder --dir",
+    "desktop:dist": "npm run build && electron-builder",
+    "desktop:preview:fullscreen": "npm run build && electron . --fullscreen"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.3",
+    "clsx": "2.1.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwind-merge": "3.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.17",
+    "@types/node": "22.19.17",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.1",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3",
+    "vite": "7.3.2",
+    "vite-plugin-singlefile": "2.3.0"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "description": "Scarlet Reel desktop game shell",
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.scarletreel.pulpengine",
+    "productName": "Scarlet Reel",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "category": "Game",
+      "target": [
+        "AppImage"
+      ]
+    }
+  },
+  "author": "sigooding"
+}

@@ -1,0 +1,848 @@
+/**
+ * Engine tests — the TS body bundled and run by scripts/engine-tests.mjs
+ * (npm test). Pure-logic: no DOM, no network, no localStorage.
+ *
+ * Three layers:
+ *   1. logic.ts unit checks (gating, recalls, collectors, validator, recipes)
+ *   2. act-membership walk checks (synthetic story) — incl. the fix that the
+ *      walk follows scene-moving hotspot edges
+ *   3. The Neon Diner playthroughs through the real engine functions:
+ *      a full gold run and a full-mistake fold run, plus the act map
+ *      assertions that the hotspot-only scenes stay on their act's RouteMap.
+ */
+import {
+  applyConsequences,
+  combineItems,
+  collectFlags,
+  collectMemoryTags,
+  composureRemaining,
+  createInitialState,
+  effectiveChoiceGating,
+  examineZoom,
+  flagSetSources,
+  heatBustTarget,
+  DEFAULT_PRESS_REACTIONS,
+  interrogationOutcome,
+  isPressingReply,
+  pressComposure,
+  pressReaction,
+  steadyComposure,
+  meetsGating,
+  presentationConsequences,
+  prettyFlagName,
+  readSave,
+  recordMemory,
+  recordPresentation,
+  resolveBeatText,
+  SAVE_SCHEMA,
+  validateStory,
+  writeSave,
+  type GlobalState,
+} from "../src/logic";
+import { scenesInAct } from "../src/game/routeGraph";
+import { NEON_DINER } from "../src/data/neonDiner";
+import type { Choice, GameSave, SceneNode, Story } from "../src/types";
+
+let passed = 0;
+const failures: string[] = [];
+function check(name: string, ok: boolean, extra?: unknown) {
+  if (ok) passed++;
+  else failures.push(`${name}${extra !== undefined ? ` — got ${JSON.stringify(extra)}` : ""}`);
+}
+
+/* ================================================================== */
+/*  1. logic.ts unit checks                                            */
+/* ================================================================== */
+
+const baseState = (): GlobalState => ({
+  activeFlags: new Set<string>(),
+  inventory: [],
+  meters: { Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 0 },
+  characterTrust: { ch1: 0 },
+  memories: {},
+});
+
+// --- meetsGating ---
+{
+  const s = baseState();
+  check("gating: undefined passes", meetsGating(undefined, s));
+  check("gating: missing item fails", !meetsGating({ requiresItems: ["i"] }, s));
+  s.inventory = [{ id: "i", name: "I", icon: "🔩", description: "", flavorText: "" }];
+  check("gating: held item passes", meetsGating({ requiresItems: ["i"] }, s));
+  check("gating: excluded item fails", !meetsGating({ excludesItems: ["i"] }, s));
+  s.activeFlags.add("f1");
+  check("gating: required flag passes", meetsGating({ requiresFlags: ["f1"] }, s));
+  check("gating: excluded flag fails", !meetsGating({ excludesFlags: ["f1"] }, s));
+  s.activeFlags.add("f2");
+  check("gating: ANY flag satisfies", meetsGating({ requiresFlags: ["f1", "nope"], requiresAll: false }, s));
+  check("gating: ALL flags must hold", !meetsGating({ requiresFlags: ["f1", "nope"] }, s));
+  s.meters.Clever = 3;
+  check("gating: minMeters passes at threshold", meetsGating({ minMeters: { Clever: 3 } }, s));
+  check("gating: minMeters fails below", !meetsGating({ minMeters: { Clever: 4 } }, s));
+  s.meters.Suspicion = 2;
+  check("gating: maxMeters fails above", !meetsGating({ maxMeters: { Suspicion: 1 } }, s));
+  s.characterTrust.ch1 = 2;
+  check("gating: minTrust passes", meetsGating({ minTrust: { ch1: 2 } }, s));
+  check("gating: minTrust fails", !meetsGating({ minTrust: { ch1: 3 } }, s));
+
+  // requiresMemories: the key can be a memoryLog tag OR a story flag.
+  s.memories.tagA = "I said something";
+  check("gating: memory-key recall passes", meetsGating({ requiresMemories: ["tagA"] }, s));
+  check("gating: flag-key recall passes", meetsGating({ requiresMemories: ["f1"] }, s));
+  check(
+    "gating: mixed memory+flag ALL passes",
+    meetsGating({ requiresMemories: ["tagA", "f1"] }, s)
+  );
+  check("gating: unknown key fails", !meetsGating({ requiresMemories: ["nope"] }, s));
+  check(
+    "gating: ANY with one unknown + one flag passes",
+    meetsGating({ requiresMemories: ["nope", "f2"], requiresAll: false }, s)
+  );
+}
+
+// --- resolveBeatText ---
+{
+  const notes = { saw_it: "You saw it happen in the alley." };
+  const flags = () => new Set(["saw_it"]);
+  check("recall: plain text when nothing matches", resolveBeatText({ text: "X" }, {}) === "X");
+  check(
+    "recall: memory echoes exact words",
+    resolveBeatText({ text: "X", recalls: { t: "You said: {said}" } }, { t: "hello" }) === "You said: hello"
+  );
+  check(
+    "recall: flag echoes its note",
+    resolveBeatText({ text: "X", recalls: { saw_it: "Because {said}" } }, {}, flags(), notes) ===
+      "Because You saw it happen in the alley."
+  );
+  check(
+    "recall: flag without note falls back to readable name",
+    resolveBeatText({ text: "X", recalls: { cracked_code: "Because {said}" } }, {}, new Set(["cracked_code"])) ===
+      "Because cracked code"
+  );
+  check(
+    "recall: first matching key in insertion order wins",
+    resolveBeatText(
+      { text: "X", recalls: { a: "A", b: "B" } },
+      { a: "1" },
+      new Set(["b"])
+    ) === "A"
+  );
+}
+
+// --- prettyFlagName / flagSetSources ---
+check("prettyFlagName: underscores", prettyFlagName("saw_the_body") === "saw the body");
+check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the body");
+{
+  const story: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    scenes: [
+      {
+        id: "a",
+        title: "Scene A",
+        background: "",
+        prose: "",
+        onEnterActions: [{ consequences: { setFlags: ["entered"] } }],
+        choices: [
+          { id: "c1", text: "Do it", targetSceneId: "", consequences: { setFlags: ["did_it"] }, timedOutConsequences: { setFlags: ["lapsed"] } },
+        ],
+        hotspots: [
+          {
+            id: "h1",
+            label: "Door",
+            bounds: { x: 0, y: 0, w: 10, h: 10 },
+            cursor: "go",
+            action: {
+              type: "patternPuzzle",
+              patternPuzzle: {
+                title: "P",
+                instruction: "",
+                rows: [{ id: "r1", date: "1", description: "d", amount: "0", isAnswer: true }],
+                targetCount: 1,
+                payoffText: "",
+                rewardConsequences: { setFlags: ["solved"] },
+                wrongSubmissionConsequences: { setFlags: ["failed"] },
+              },
+            },
+          },
+        ],
+      },
+    ],
+    items: [],
+    characters: [],
+    deduction: { suspectIds: [], connections: [{ a: "a", b: "a", flagSet: "boarded", revelation: "" }] },
+  };
+  const flags = collectFlags(story);
+  for (const f of ["entered", "did_it", "lapsed", "solved", "failed", "boarded"]) {
+    check(`collectFlags covers ${f}`, flags.includes(f), flags);
+  }
+  const src = flagSetSources(story, "did_it");
+  check("flagSetSources names the scene + choice", src.some((x) => x.includes("Scene A") && x.includes("Do it")), src);
+  check(
+    "flagSetSources distinguishes puzzle solved/failed",
+    flagSetSources(story, "solved").some((x) => x.includes("solved")) &&
+      flagSetSources(story, "failed").some((x) => x.includes("failed"))
+  );
+}
+
+// --- collectMemoryTags: memoryLog + gating + recalls + recap gating ---
+{
+  const story: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    scenes: [
+      {
+        id: "a",
+        title: "A",
+        background: "",
+        prose: "",
+        choices: [
+          { id: "c1", text: "Q", targetSceneId: "", memoryLog: "said_q", gating: { requiresMemories: ["gated_mem"] } },
+        ],
+        hotspots: [
+          { id: "h1", label: "H", bounds: { x: 0, y: 0, w: 1, h: 1 }, cursor: "look", gating: { requiresMemories: ["gated_hotspot"] }, action: { type: "showText", text: "" } },
+        ],
+        dialogueBeats: [
+          { id: "b1", characterId: "narrator", text: "", recalls: { said_q: "x", flag_recall: "y" }, conditionRule: { requiresMemories: ["gated_beat"] } },
+        ],
+      },
+    ],
+    items: [],
+    characters: [],
+    episodes: [{ id: "e1", title: "E", sceneIds: ["a"], startSceneId: "a", recapLines: [{ id: "r1", text: "", gating: { requiresMemories: ["gated_recap"] } }] }],
+  };
+  const tags = collectMemoryTags(story);
+  for (const t of ["said_q", "gated_mem", "gated_hotspot", "gated_beat", "flag_recall", "gated_recap"]) {
+    check(`collectMemoryTags covers ${t}`, tags.includes(t), tags);
+  }
+}
+
+// --- combineItems: recipe works from either side ---
+{
+  const items = [
+    { id: "a", name: "A", icon: "", description: "", flavorText: "", combinableWith: { targetItemId: "b", resultItemId: "c" } },
+    { id: "b", name: "B", icon: "", description: "", flavorText: "" },
+    { id: "c", name: "C", icon: "", description: "", flavorText: "" },
+  ] as const;
+  const story: Story = { id: "t", title: "T", tagline: "", coverImage: "", startSceneId: "a", scenes: [], items: [...items], characters: [] };
+  check("recipe: a+b -> c", combineItems(story, items[0], items[1])?.id === "c");
+  check("recipe: b+a -> c (order independent)", combineItems(story, items[1], items[0])?.id === "c");
+  check("recipe: no match returns null", combineItems(story, items[0], items[2]) === null);
+}
+
+// --- recordMemory keeps the player's exact line ---
+{
+  const s = baseState();
+  const s2 = recordMemory({ id: "c", text: "What did you see?", targetSceneId: "", memoryLog: "q" } as never, s);
+  check("recordMemory stores exact words", s2.memories.q === "What did you see?");
+}
+
+// --- validateStory: accepts flag-keyed recalls, catches strays ---
+{
+  const story: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    flagNotes: { real_flag: "a note", ghost_flag: "note for a renamed flag" },
+    scenes: [
+      {
+        id: "a",
+        title: "A",
+        background: "",
+        prose: "",
+        choices: [
+          { id: "c1", text: "Q", targetSceneId: "e", memoryLog: "said_q", gating: { requiresMemories: ["real_flag", "ghost_recall"] } },
+        ],
+        dialogueBeats: [
+          { id: "b1", characterId: "narrator", text: "", recalls: { real_flag: "x", ghost_recall: "y" }, conditionRule: { requiresMemories: ["real_flag"] } },
+        ],
+      },
+      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+    ],
+    items: [],
+    characters: [],
+  };
+  // set real_flag somewhere so it's a known flag
+  story.scenes[0].choices![0].consequences = { setFlags: ["real_flag"] };
+  const issues = validateStory(story);
+  const strayNotes = issues.filter((i) => /Flag note for "ghost_flag"/.test(i.message));
+  check("validator: warns on flag note for unknown flag", strayNotes.length === 1, issues);
+  const ghostGates = issues.filter((i) => /ghost_recall/.test(i.message));
+  check("validator: warns on recall key that is neither memory nor flag", ghostGates.length >= 1, issues);
+  const realFlagWarns = issues.filter((i) => /real_flag/.test(i.message));
+  check("validator: accepts a real flag as recall key", realFlagWarns.length === 0, realFlagWarns);
+}
+
+// Regression: checkGate used to run TWICE in the hotspot loop, so one
+// impossible hotspot gate printed the same error twice.
+{
+  const story: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    scenes: [
+      {
+        id: "a",
+        title: "A",
+        background: "",
+        prose: "",
+        hotspots: [
+          {
+            id: "h",
+            label: "Door",
+            bounds: { x: 0, y: 0, w: 10, h: 10 },
+            cursor: "go",
+            gating: { requiresItems: ["ghost_item"] },
+            action: { type: "goToScene", targetSceneId: "e" },
+          },
+        ],
+      },
+      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+    ],
+    items: [],
+    characters: [],
+  };
+  const dup = validateStory(story).filter((i) => /ghost_item/.test(i.message));
+  check("validator: bad hotspot gate reported exactly once", dup.length === 1, dup);
+}
+
+// Regression (A3): the bust contract must hold for ANY heat source — the
+// old entry-time-only check let mid-scene meter gains (replies, puzzles,
+// on-enter effects) pass the limit with the player still in the scene.
+{
+  const bustStory: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    briefing: { objective: "x", winConditions: [], loseConditions: [], heatLimit: 3, heatFailSceneId: "folded" },
+    scenes: [
+      { id: "a", title: "A", background: "", prose: "" },
+      { id: "folded", title: "Folded", background: "", prose: "", isEnding: true, endingData: { tier: "gameover", headline: "F", recap: "R" } },
+    ],
+    items: [],
+    characters: [],
+  };
+  const meters = (sus: number) => ({ Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: sus });
+  check("heatBustTarget: null under the limit", heatBustTarget(bustStory, { meters: meters(2) }, "a") === null);
+  check("heatBustTarget: at the limit, routes to the bust scene", heatBustTarget(bustStory, { meters: meters(3) }, "a") === "folded");
+  check("heatBustTarget: above the limit still busts", heatBustTarget(bustStory, { meters: meters(4) }, "a") === "folded");
+  check("heatBustTarget: no bust while standing on the bust scene", heatBustTarget(bustStory, { meters: meters(3) }, "folded") === null);
+  const noLimit: Story = { ...bustStory, briefing: { objective: "x", winConditions: [], loseConditions: [] } };
+  check("heatBustTarget: no limit configured, no bust", heatBustTarget(noLimit, { meters: meters(9) }, "a") === null);
+  const missingScene: Story = { ...bustStory, briefing: { ...bustStory.briefing!, heatFailSceneId: "ghost" } };
+  check("heatBustTarget: missing bust scene, no bust", heatBustTarget(missingScene, { meters: meters(3) }, "a") === null);
+  const episode = { id: "e1", title: "E", sceneIds: ["a"], startSceneId: "a" };
+  check("heatBustTarget: season — bust scene outside the episode is refused", heatBustTarget(bustStory, { meters: meters(3) }, "a", episode) === null);
+  const episodeWithBust = { id: "e1", title: "E", sceneIds: ["a", "folded"], startSceneId: "a" };
+  check("heatBustTarget: season — bust scene inside the episode busts", heatBustTarget(bustStory, { meters: meters(3) }, "a", episodeWithBust) === "folded");
+}
+
+// Save-slot schema versioning: writes stamp the schema, reads migrate old
+// un-stamped saves and REFUSE saves from a newer build rather than
+// mis-loading a shape they don't understand.
+{
+  // Node has no localStorage by default — a minimal in-memory stand-in for
+  // the save-slot tests only (logic.ts references the global lazily).
+  const store = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+  };
+
+  const baseSave: GameSave = {
+    storyId: "s1",
+    sceneId: "a",
+    sceneTitle: "A",
+    savedAt: 1,
+    activeFlags: [],
+    inventory: [],
+    meters: { Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 0 },
+    characterTrust: {},
+    memories: {},
+    proseAcknowledged: true,
+    beatIdx: 0,
+    usedHotspots: [],
+    usedChoices: [],
+    visitedScenes: [],
+    encounteredCharacters: [],
+    expiredChoices: [],
+    choiceClocks: {},
+  };
+  const KEY = "scarlet-reel-save-s1-slot-1";
+
+  writeSave(1, baseSave);
+  const roundTrip = readSave("s1", 1);
+  check("save: round-trip loads", roundTrip !== null && roundTrip.sceneId === "a");
+  check("save: writeSave stamps the current schema", roundTrip?.schema === SAVE_SCHEMA);
+
+  // Legacy save: hand-written raw JSON with no schema stamp (pre-versioning
+  // builds). Must load AND come back stamped.
+  store.set(KEY, JSON.stringify(baseSave));
+  const legacy = readSave("s1", 1);
+  check("save: un-stamped legacy save loads", legacy !== null);
+  check("save: legacy save is migrated (stamped)", legacy?.schema === SAVE_SCHEMA);
+
+  // Future save: schema newer than this build. Refused, not mis-loaded.
+  store.set(KEY, JSON.stringify({ ...baseSave, schema: SAVE_SCHEMA + 87 }));
+  check("save: save from a newer build is refused", readSave("s1", 1) === null);
+
+  // Existing guards must survive the versioning layer.
+  store.set(KEY, JSON.stringify({ ...baseSave, storyId: "other" }));
+  check("save: foreign story still refused", readSave("s1", 1) === null);
+  store.set(KEY, "{not json");
+  check("save: corrupt slot still refused", readSave("s1", 1) === null);
+}
+
+/* ================================================================== */
+/*  2. act-membership walk (synthetic)                                 */
+/* ================================================================== */
+
+{
+  const story: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    acts: [
+      { id: "act1", label: "Act One", title: "One", startSceneId: "a" },
+      { id: "act2", label: "Act Two", title: "Two", startSceneId: "g" },
+    ],
+    scenes: [
+      { id: "a", title: "A", background: "", prose: "", choices: [] },
+      { id: "b", title: "B (hotspot-only)", background: "", prose: "" },
+      { id: "g", title: "G (act2 start)", background: "", prose: "", choices: [{ id: "c", text: "to end", targetSceneId: "e" }] },
+      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+    ],
+    items: [],
+    characters: [],
+  };
+  // door hotspot on "a" -> "b"; puzzle with targets on "b"
+  story.scenes[0].hotspots = [
+    { id: "h1", label: "Door", bounds: { x: 0, y: 0, w: 5, h: 5 }, cursor: "go", action: { type: "goToScene", targetSceneId: "b" } },
+  ];
+  story.scenes[1].hotspots = [
+    {
+      id: "h2",
+      label: "Puzzle",
+      bounds: { x: 0, y: 0, w: 5, h: 5 },
+      cursor: "use",
+      action: {
+        type: "patternPuzzle",
+        patternPuzzle: {
+          title: "P",
+          instruction: "",
+          rows: [{ id: "r", date: "1", description: "d", amount: "0", isAnswer: true }],
+          targetCount: 1,
+          payoffText: "",
+          targetSceneId: "e",
+        },
+      },
+    },
+  ];
+  const act1 = scenesInAct(story, "act1");
+  check("walk: follows hotspot door edges", act1.has("b"), [...act1]);
+  check("walk: follows puzzle solve targets", act1.has("e"), [...act1]);
+  check("walk: stops at the next act's start scene", !act1.has("g"), [...act1]);
+  const act2 = scenesInAct(story, "act2");
+  check("walk: act2 keeps its own scenes", act2.has("g") && act2.has("e"), [...act2]);
+}
+
+/* ================================================================== */
+/*  3. The Neon Diner playthroughs                                     */
+/* ================================================================== */
+
+{
+  const S = NEON_DINER;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const item = (id: string) => S.items.find((i) => i.id === id);
+
+  // --- gold run ---
+  let st = createInitialState(S);
+  const enter = (id: string) => byId.get(id)!.onEnterActions?.forEach((a) => (st = applyConsequences(S, a.consequences, st)));
+  // Mirrors the game's pick path: effective gate (incl. the item a present
+  // choice shows), presentation-aware consequences (handover), and the
+  // `item:<id>` presentation memory. `used` mirrors usedChoices so the
+  // interrogation composure (derived from it) can be asserted.
+  const used = new Set<string>();
+  const pick = (sceneId: string, choiceId: string) => {
+    const c = byId.get(sceneId)!.choices!.find((x) => x.id === choiceId)!;
+    check(`gold: gate ${sceneId}/${choiceId}`, meetsGating(effectiveChoiceGating(c), st));
+    used.add(`${sceneId}:${choiceId}`);
+    if (c.exclusiveGroup) {
+      byId.get(sceneId)!.choices!.filter((x) => x.exclusiveGroup === c.exclusiveGroup).forEach((x) => used.add(`${sceneId}:${x.id}`));
+    }
+    st = recordPresentation(c, S, recordMemory(c, applyConsequences(S, presentationConsequences(c), st)));
+  };
+  const door = (sceneId: string, hsId: string) => {
+    const h = byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+    check(`gold: door ${h.label}`, meetsGating(h.gating, st));
+  };
+  const grab = (sceneId: string, hsId: string) => {
+    const h = byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+    check(`gold: hotspot ${h.label}`, meetsGating(h.gating, st));
+    if (h.action.itemGranted) {
+      const it = item(h.action.itemGranted)!;
+      if (!st.inventory.some((i) => i.id === it.id)) st = { ...st, inventory: [...st.inventory, it] };
+    }
+  };
+
+  check("gold: freezer door locked before key", !meetsGating({ requiresItems: ["key"] }, createInitialState(S)));
+  enter("nd_credits");
+  enter("nd_arrive");
+  grab("nd_arrive", "nd_h_coat");
+  enter("nd_kitchen");
+  grab("nd_kitchen", "nd_k_photo");
+  grab("nd_kitchen", "nd_k_key");
+  door("nd_kitchen", "nd_k_freezer");
+  enter("nd_freezer");
+  check("gold: onEnter searched_freezer", st.activeFlags.has("searched_freezer"));
+  grab("nd_freezer", "nd_f_ice");
+  pick("nd_freezer", "nd_f_out");
+  door("nd_kitchen", "nd_k_backroom");
+  enter("nd_backroom");
+  check("gold: onEnter backroom_searched", st.activeFlags.has("backroom_searched"));
+  const puzzle = byId.get("nd_backroom")!.hotspots!.find((h) => h.action.type === "patternPuzzle")!;
+  st = applyConsequences(S, puzzle.action.patternPuzzle!.rewardConsequences, st);
+  check("gold: puzzle grants ledger", st.inventory.some((i) => i.id === "ledger"));
+  check("gold: puzzle sets ledger_page", st.activeFlags.has("ledger_page"));
+  pick("nd_backroom", "nd_b_cabinet");
+  check("gold: cabinet grants bus_pass", st.inventory.some((i) => i.id === "bus_pass"));
+  pick("nd_backroom", "nd_b_door_qte");
+  check("gold: QTE answered sets answered_door", st.activeFlags.has("answered_door"));
+  check("gold: answering keeps heat at 0", st.meters.Suspicion === 0, st.meters);
+  pick("nd_backroom", "nd_b_back");
+  enter("nd_kitchen");
+  pick("nd_kitchen", "nd_k_back");
+  enter("nd_arrive");
+  pick("nd_arrive", "nd_c_booth");
+  enter("nd_vince");
+  pick("nd_vince", "nd_v_ask");
+  check("gold: memory recorded", st.memories.asked_mabel != null);
+  check("gold: Vince trust 1", st.characterTrust.vince === 1, st.characterTrust);
+  const vinceScene = byId.get("nd_vince")!;
+  const qv = vinceScene.interrogation!;
+  check("gold: composure starts full (3)", composureRemaining(vinceScene, used) === 3);
+  pick("nd_vince", "nd_v_photo");
+  check("gold: photo shown sets trusted_vince", st.activeFlags.has("trusted_vince"));
+  check(
+    "gold: presenting the photo records the item:photo memory",
+    st.memories["item:photo"] === "Mabel's Photograph",
+    st.memories
+  );
+  check("gold: flashing keeps the photo in the satchel", st.inventory.some((i) => i.id === "photo"));
+  // The photo is a Sultry press — it chips composure. The neutral ask did not.
+  check("gold: the Sultry photo press chipped composure to 2", composureRemaining(vinceScene, used) === 2);
+  // Two more presses take the suspect to zero.
+  pick("nd_vince", "nd_v_press2");
+  check("gold: composure 1 after the soft press", composureRemaining(vinceScene, used) === 1);
+  pick("nd_vince", "nd_v_threat");
+  check("gold: composure zero after the third press", composureRemaining(vinceScene, used) === 0);
+  // Warm path: trust is 1 (+1 ask, +1 photo, -1 threat) ≥ crackTrust 0 → CRACK.
+  check("gold: trust at zero is 1 (ask+photo-threat)", st.characterTrust.vince === 1, st.characterTrust);
+  check("gold: warm path cracks (trust ≥ threshold)", interrogationOutcome(qv, st.characterTrust.vince) === "broke");
+  check("gold: cold trust would clamp", interrogationOutcome(qv, -1) === "clamped");
+  check("gold: crack/clamp flags are collected for the pickers", collectFlags(S).includes("vince_broke") && collectFlags(S).includes("vince_clamped"));
+  check(
+    "gold: memory-gated beat now visible",
+    meetsGating(byId.get("nd_vince")!.dialogueBeats!.find((b) => b.id === "nd_v3")!.conditionRule, st)
+  );
+  const proof = combineItems(S, st.inventory.find((i) => i.id === "photo")!, st.inventory.find((i) => i.id === "ledger")!);
+  check("gold: recipe photo+ledger -> case file", proof?.id === "proof");
+  st = { ...st, inventory: [...st.inventory.filter((i) => i.id !== "photo" && i.id !== "ledger"), proof!] };
+  for (const c of S.deduction!.connections) {
+    check(`gold: board endpoint ${c.a}/${c.b} is valid`, !!item(c.a) || !!S.characters.find((x) => x.id === c.a), c);
+    st = applyConsequences(S, { setFlags: [c.flagSet] }, st);
+  }
+  pick("nd_vince", "nd_v_leave");
+  enter("nd_arrive");
+  pick("nd_arrive", "nd_c_porch");
+  enter("nd_porch");
+  check("gold: porch carries the part break", byId.get("nd_porch")!.partBreak === "Part One — Last Order");
+  enter("nd_street");
+  check(
+    "gold: Ruiz flag-gated beat fires on trusted_vince",
+    meetsGating(byId.get("nd_street")!.dialogueBeats!.find((b) => b.id === "nd_s2")!.conditionRule, st)
+  );
+  // The warm path used the threat as its third press, so the pressed-vince
+  // flag IS set and Ruiz's beat about it fires.
+  check(
+    "gold: Ruiz pressed-vince beat fires (the threat press set the flag)",
+    meetsGating(byId.get("nd_street")!.dialogueBeats!.find((b) => b.id === "nd_s3")!.conditionRule, st)
+  );
+  check(
+    "gold: Ruiz item-keyed beat fires on the presented photo",
+    meetsGating(byId.get("nd_street")!.dialogueBeats!.find((b) => b.id === "nd_s4")!.conditionRule, st)
+  );
+  check(
+    "gold: item recall reads the item's name into {said}",
+    resolveBeatText(byId.get("nd_street")!.dialogueBeats!.find((b) => b.id === "nd_s4")!, st.memories).includes(
+      "So that's the Mabel's Photograph"
+    )
+  );
+  pick("nd_street", "nd_s_in");
+  enter("nd_accuse");
+  check("gold: Clever 2+ reached", st.meters.Clever >= 2, st.meters);
+  pick("nd_accuse", "nd_ac_threads");
+  check("gold: threads set saw_the_threads", st.activeFlags.has("saw_the_threads"));
+  check(
+    "gold: contradiction beat unlocked",
+    meetsGating(byId.get("nd_accuse")!.dialogueBeats!.find((b) => b.id === "nd_ac3")!.conditionRule, st)
+  );
+  // The gold ending's requirement is the PRESENTED item, not an authored gate.
+  const goldChoice = byId.get("nd_accuse")!.choices!.find((c) => c.id === "nd_ac_gold")!;
+  check("gold: ending gate holds the case file (via presentItem)", meetsGating(effectiveChoiceGating(goldChoice), st));
+  pick("nd_accuse", "nd_ac_gold");
+  check("gold: handing over the file records item:proof", st.memories["item:proof"] === "The Case File", st.memories);
+  check("gold: the case file leaves the satchel (consumed)", !st.inventory.some((i) => i.id === "proof"));
+  check("gold: heat never fired", st.meters.Suspicion < S.briefing!.heatLimit!, st.meters);
+
+  // --- fold run: three mistakes = heat 3 = Folded ---
+  let ft = createInitialState(S);
+  ft = applyConsequences(S, byId.get("nd_vince")!.choices!.find((c) => c.id === "nd_v_threat")!.consequences, ft);
+  ft = applyConsequences(S, puzzle.action.patternPuzzle!.wrongSubmissionConsequences, ft);
+  ft = applyConsequences(S, byId.get("nd_backroom")!.choices!.find((c) => c.id === "nd_b_door_qte")!.timedOutConsequences, ft);
+  check("fold: three mistakes reach the heat limit", ft.meters.Suspicion >= S.briefing!.heatLimit!, ft.meters);
+  const folded = byId.get(S.briefing!.heatFailSceneId!);
+  check("fold: heat scene is a game-over ending", folded?.isEnding === true && folded?.endingData?.tier === "gameover");
+  check(
+    "fold: timeout flag note echoes in the recall",
+    resolveBeatText(byId.get("nd_vince")!.dialogueBeats!.find((b) => b.id === "nd_v4")!, {}, ft.activeFlags, S.flagNotes).includes(
+      "let it pass unanswered"
+    )
+  );
+
+  // --- act maps: hotspot-only scenes must be on their act's RouteMap ---
+  const act1 = scenesInAct(S, "nd_act1");
+  const act2 = scenesInAct(S, "nd_act2");
+  check("acts: hotspot-only freezer is in Act One", act1.has("nd_freezer"), [...act1]);
+  check("acts: hotspot-only back room is in Act One", act1.has("nd_backroom"), [...act1]);
+  check("acts: Act One stops at the porch's destination", !act1.has("nd_street"), [...act1]);
+  check("acts: Act Two owns street + accusation + endings", act2.has("nd_street") && act2.has("nd_accuse") && act2.has("nd_end_gold"), [...act2]);
+  check("acts: heat-bust ending belongs to no act (trapdoor)", !act1.has("nd_end_folded") && !act2.has("nd_end_folded"));
+
+  // --- validator: exactly the one known trapdoor note, zero errors ---
+  const issues = validateStory(S);
+  check("story: zero validator errors", !issues.some((i) => i.severity === "error"), issues.filter((i) => i.severity === "error"));
+  check(
+    "story: only the known trapdoor note remains",
+    issues.length === 1 && /belong to no act/.test(issues[0].message),
+    issues
+  );
+}
+
+// The present-item verb ("show the photograph"): effective gating, item
+// handover, the `item:<id>` presentation memory, and item-keyed recalls.
+{
+  const presStory: Story = {
+    id: "t",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    items: [
+      { id: "photo", name: "The Photograph", icon: "📷", description: "", flavorText: "" },
+      { id: "ledger", name: "The Ledger", icon: "📒", description: "", flavorText: "" },
+    ],
+    scenes: [
+      {
+        id: "a",
+        title: "A",
+        background: "",
+        prose: "",
+        choices: [
+          { id: "c_show", text: "Show him the photograph.", targetSceneId: "", reply: true, presentItem: "photo", memoryLog: "showed_photo" },
+          { id: "c_hand", text: "Hand over the ledger.", targetSceneId: "e", presentItem: "ledger", consumePresentedItem: true },
+          { id: "c_plain", text: "Leave.", targetSceneId: "e" },
+        ],
+      },
+      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+    ],
+    characters: [],
+  };
+  const pick = (id: string) => presStory.scenes[0].choices!.find((c) => c.id === id)!;
+  const state = () => createInitialState(presStory);
+
+  // effective gating: the presented item is a requirement you can't fake.
+  check("present: no presentItem, no authored gate -> undefined", effectiveChoiceGating(pick("c_plain")) === undefined);
+  check("present: presents with no authored gate -> requires the item", effectiveChoiceGating(pick("c_show"))?.requiresItems?.join(",") === "photo");
+  const gated = { ...pick("c_show"), gating: { requiresFlags: ["x"] } };
+  check("present: merges with authored gate without duplicating", effectiveChoiceGating(gated)?.requiresItems?.join(",") === "photo" && effectiveChoiceGating(gated)?.requiresFlags?.join(",") === "x");
+  const s = state();
+  check("present: locked while the item is not held", !meetsGating(effectiveChoiceGating(pick("c_show")), s));
+  s.inventory.push(presStory.items[0]);
+  check("present: unlockable once the item is held", meetsGating(effectiveChoiceGating(pick("c_show")), s));
+
+  // handover: consuming a present removes it; flashing keeps it.
+  check("present: flash keeps the item (no removeItems)", presentationConsequences(pick("c_show"))?.removeItems === undefined);
+  check("present: handover removes the item", presentationConsequences(pick("c_hand"))?.removeItems?.includes("ledger"));
+  const withRemove = { ...pick("c_hand"), consequences: { removeItems: ["photo"] } };
+  check("present: handover preserves authored removeItems", presentationConsequences(withRemove)?.removeItems?.sort().join(",") === "ledger,photo");
+
+  // the presentation memory: `item:<id>` = the item's NAME.
+  let ps = state();
+  ps.inventory.push(presStory.items[0]);
+  ps = applyConsequences(presStory, presentationConsequences(pick("c_show"))!, ps);
+  ps = recordPresentation(pick("c_show"), presStory, ps);
+  check("present: records item:photo memory with the item name", ps.memories["item:photo"] === "The Photograph");
+  const before = ps.memories["item:photo"];
+  check("present: first presentation wins (idempotent)", recordPresentation(pick("c_show"), presStory, ps).memories["item:photo"] === before);
+  check("present: no presentItem -> state unchanged", recordPresentation(pick("c_plain"), presStory, ps) === ps);
+
+  // item-keyed recall + item-keyed gate ride the existing memory machinery.
+  check(
+    "present: beat recalls item:photo, {said} = item name",
+    resolveBeatText({ text: "x", recalls: { "item:photo": "You flashed {said}." } }, ps.memories) ===
+      "You flashed The Photograph."
+  );
+  check("present: gate remembers the presentation", meetsGating({ requiresMemories: ["item:photo"] }, ps));
+  check("present: gate stays closed when never presented", !meetsGating({ requiresMemories: ["item:photo"] }, state()));
+
+  // collectMemoryTags offers item: keys for real items only.
+  const tags = collectMemoryTags(presStory);
+  check("present: collectMemoryTags offers item:photo", tags.includes("item:photo"));
+  check("present: collectMemoryTags offers item:ledger", tags.includes("item:ledger"));
+  check("present: collectMemoryTags omits unknown item keys", !tags.includes("item:ghost"));
+
+  // validator: presenting an unknown item is an error; a real item: recall key is fine.
+  const badPres: Story = {
+    ...presStory,
+    scenes: [
+      {
+        ...presStory.scenes[0],
+        choices: [
+          { id: "c_bad", text: "Show the ghost.", targetSceneId: "e", presentItem: "ghost" },
+          { id: "c_recall", text: "Say something.", targetSceneId: "e", reply: true, presentItem: "photo" },
+        ],
+        dialogueBeats: [
+          { id: "b1", characterId: "narrator", text: "", recalls: { "item:photo": "x", "item:ghost": "y" } },
+        ],
+      },
+      presStory.scenes[1],
+    ],
+  };
+  const issues = validateStory(badPres);
+  check("present: validator errors on unknown present item", issues.some((i) => i.severity === "error" && /presents unknown item "ghost"/.test(i.message)));
+  check("present: validator accepts a real item: recall key", !issues.some((i) => /item:photo/.test(i.message)));
+  check("present: validator warns on unknown item: recall key", issues.some((i) => /item:ghost/.test(i.message)));
+}
+
+// Interrogation helpers: pressing detection, composure derivation (exclusive
+// groups count once, floor at zero, derived from usedChoices so it's
+// save-proof), and the trust decides crack vs clamp boundary.
+{
+  const mkScene = (choices: Choice[], composure?: number): SceneNode => ({
+    id: "iq",
+    title: "IQ",
+    background: "",
+    prose: "",
+    choices,
+    interrogation: {
+      characterId: "sus",
+      composure,
+      crackTrust: 0,
+      brokeBeat: { id: "b", characterId: "sus", text: "talks" },
+      brokeFlag: "broke",
+    },
+  });
+  const press = (id: string, extra: Partial<Choice> = {}): Choice => ({
+    id,
+    text: `press ${id}`,
+    targetSceneId: "",
+    reply: true,
+    attitudeTag: "Aggressive",
+    ...extra,
+  });
+
+  check("interrogation: attitude reply is a press", isPressingReply(press("p1")));
+  check("interrogation: neutral reply is not a press", !isPressingReply(press("p2", { attitudeTag: "Neutral" })));
+  check("interrogation: non-reply attitude is not a press", !isPressingReply({ id: "n", text: "n", targetSceneId: "x", attitudeTag: "Aggressive" }));
+
+  const s2 = mkScene([press("a"), press("b")], 2);
+  check("composure: full before any press", composureRemaining(s2, new Set()) === 2);
+  check("composure: one press chips one", composureRemaining(s2, new Set(["iq:a"])) === 1);
+  check("composure: floors at zero", composureRemaining(s2, new Set(["iq:a", "iq:b"])) === 0);
+  check("composure: below zero stays zero", composureRemaining(mkScene([press("a")], 1), new Set(["iq:a"])) === 0);
+  check("composure: no interrogation → 0", composureRemaining({ id: "x", title: "", background: "", prose: "" }, new Set(["x:a"])) === 0);
+
+  const grouped = mkScene(
+    [press("g1", { exclusiveGroup: "q" }), press("g2", { exclusiveGroup: "q" }), press("g3", { exclusiveGroup: "q" })],
+    3
+  );
+  // Picking one group member marks all three used, but it's ONE statement.
+  check("composure: exclusive group counts once", composureRemaining(grouped, new Set(["iq:g1", "iq:g2", "iq:g3"])) === 2);
+  const mixed = mkScene([press("g1", { exclusiveGroup: "q" }), press("g2", { exclusiveGroup: "q" }), press("solo")], 3);
+  check("composure: group + solo press = 2 chips", composureRemaining(mixed, new Set(["iq:g1", "iq:g2", "iq:solo"])) === 1);
+
+  check("outcome: trust at threshold cracks", interrogationOutcome({ characterId: "s", crackTrust: 1, brokeBeat: { id: "b", characterId: "s", text: "" }, brokeFlag: "f" }, 1) === "broke");
+  check("outcome: trust below threshold clamps", interrogationOutcome({ characterId: "s", crackTrust: 1, brokeBeat: { id: "b", characterId: "s", text: "" }, brokeFlag: "f" }, 0) === "clamped");
+  check("outcome: default threshold is 0", interrogationOutcome({ characterId: "s", brokeBeat: { id: "b", characterId: "s", text: "" }, brokeFlag: "f" }, 0) === "broke");
+  check("outcome: default threshold clamps at negative trust", interrogationOutcome({ characterId: "s", brokeBeat: { id: "b", characterId: "s", text: "" }, brokeFlag: "f" }, -1) === "clamped");
+
+  // Stored-composure urgency: a press drops one (and flags the break moment);
+  // a steady recovers one, once, only while pressed.
+  check("press: first press drops full to 2", (() => { const r = pressComposure(undefined, 3); return r.next === 2 && r.broke === false && r.changed === true; })());
+  check("press: 1 -> 0 is the break", (() => { const r = pressComposure(1, 3); return r.next === 0 && r.broke === true; })());
+  check("press: 0 stays 0 (already broken)", (() => { const r = pressComposure(0, 3); return r.next === 0 && r.broke === false && r.changed === false; })());
+  check("steady: pressed + not-yet-steadied recovers one", (() => { const r = steadyComposure(2, 3, false); return r.next === 3 && r.recovered === true; })());
+  check("steady: at full, nothing to recover", (() => { const r = steadyComposure(3, 3, false); return r.next === 3 && r.recovered === false; })());
+  check("steady: already steadied, no second recovery", (() => { const r = steadyComposure(2, 3, true); return r.next === 2 && r.recovered === false; })());
+  check("steady: broken (0) can't recover", (() => { const r = steadyComposure(0, 3, false); return r.next === 0 && r.recovered === false; })());
+  check("steady: once steadied then pressed, can't steady again", (() => { const r = steadyComposure(2, 3, true); return r.recovered === false; })());
+
+  check("reaction: index 0 at first press", pressReaction({ composure: 3 }, 2) === DEFAULT_PRESS_REACTIONS[0]);
+  check("reaction: deeper index near the edge", pressReaction({ composure: 3 }, 1) === DEFAULT_PRESS_REACTIONS[1]);
+  check("reaction: custom reactions override", pressReaction({ composure: 3, pressReactions: ["A", "B", "C"] }, 2) === "A");
+  check("reaction: a short custom list holds its last line at depth", pressReaction({ composure: 5, pressReactions: ["A"] }, 1) === "A");
+  check("reaction: no custom list uses the defaults", pressReaction({ composure: 3 }, 1) === DEFAULT_PRESS_REACTIONS[1]);
+}
+
+// Examine (hold to inspect): the zoom clamps so tiny zones can't blur into
+// noise, and The Neon Diner's investigation scene is wired end to end
+// (examine hotspots → flags → gated discovery beats).
+{
+  check("examineZoom: small zone clamps to max", examineZoom({ w: 5, h: 5 }) === 3.5);
+  check("examineZoom: large zone clamps to min", examineZoom({ w: 80, h: 80 }) === 1.6);
+  check("examineZoom: mid zone magnifies", Math.abs(examineZoom({ w: 20, h: 16 }) - 3) < 0.001);
+
+  const story = NEON_DINER;
+  const sceneById = new Map(story.scenes.map((x) => [x.id, x]));
+  const station = sceneById.get("nd_station");
+  check("examine: station scene exists", !!station);
+  const examineZones = (station?.hotspots ?? []).filter((h) => h.examine);
+  check("examine: three examine zones (coffee, watch, note)", examineZones.length === 3, examineZones.map((h) => h.label));
+  check("examine: each zone sets a flag", examineZones.every((h) => !!h.action.flagSet));
+  const examineFlags = new Set(examineZones.map((h) => h.action.flagSet!));
+  const discoveryBeats = (station?.dialogueBeats ?? []).filter((b) => b.conditionRule?.requiresFlags?.some((f) => examineFlags.has(f)));
+  check("examine: a discovery beat is gated on each examined flag", discoveryBeats.length === 3, discoveryBeats.map((b) => b.id));
+  check("examine: pickups grant the watch + note", examineZones.some((h) => h.action.itemGranted === "mabel_watch") && examineZones.some((h) => h.action.itemGranted === "mabel_note"));
+  check("examine: the note cross-links to Act Two (Ruiz beat)", (sceneById.get("nd_street")!.dialogueBeats ?? []).some((b) => b.conditionRule?.requiresFlags?.includes("examined_note")));
+}
+
+/* ================================================================== */
+
+console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
+if (failures.length) {
+  for (const f of failures) console.log(`  ✖ ${f}`);
+  process.exit(1);
+}
+console.log("✔ all engine tests passed");
+process.exit(0);

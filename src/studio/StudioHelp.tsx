@@ -1,0 +1,416 @@
+import React, { useEffect, useState } from "react";
+
+/* ------------------------------------------------------------------ */
+/*  Studio help system                                                 */
+/*                                                                    */
+/*  Two pieces:                                                       */
+/*  1. HelpNote — a dismissable inline hint pinned to the editing      */
+/*     surface it explains (tabs, gating, hotspots…). Dismissals are   */
+/*     remembered in localStorage so a note never nags twice.          */
+/*  2. StudioHelpModal — the instruction manual in a modal: workflow,  */
+/*     the engine's contracts, shortcuts and the troubleshooting       */
+/*     cheat sheet, distilled from Studio-Instruction-Manual.txt.      */
+/* ------------------------------------------------------------------ */
+
+const helpNoteKey = (id: string) => `scarlet-studio-helpnote-${id}`;
+const HELPNOTE_PREFIX = "scarlet-studio-helpnote-";
+
+/** Clear every "don't show again" marker so all inline notes return. */
+export function resetHelpNotes() {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(HELPNOTE_PREFIX)) doomed.push(k);
+    }
+    doomed.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* storage unavailable — nothing to reset */
+  }
+}
+
+/** A small inline help note. Dismissing it is remembered per-note, and
+ * "Restore all help notes" (in the Help modal) brings them back. */
+export function HelpNote({
+  id,
+  title = "Help",
+  children,
+}: {
+  /** unique id — the dismissal is stored under this key */
+  id: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  const [hidden, setHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(helpNoteKey(id)) === "0";
+    } catch {
+      return false;
+    }
+  });
+  // Re-check when a "restore all notes" sweep runs while mounted.
+  useEffect(() => {
+    const onStorage = () => {
+      try {
+        setHidden(localStorage.getItem(helpNoteKey(id)) === "0");
+      } catch {
+        /* ignore */
+      }
+    };
+    const onReset = () => setHidden(false);
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("scarlet-studio-help-reset", onReset as EventListener);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("scarlet-studio-help-reset", onReset as EventListener);
+    };
+  }, [id]);
+  if (hidden) return null;
+  return (
+    <div className="relative border border-gold/30 bg-gold/5 p-2 pr-6 text-[9px] leading-relaxed text-paper/70">
+      <div className="mb-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold">
+        ? {title}
+      </div>
+      <div className="font-type">{children}</div>
+      <button
+        onClick={() => {
+          try {
+            localStorage.setItem(helpNoteKey(id), "0");
+          } catch {
+            /* storage unavailable — hide for this session only */
+          }
+          setHidden(true);
+        }}
+        className="absolute right-1 top-1 px-1 text-[10px] leading-none text-paper/40 hover:text-crimson"
+        title="Hide this note (bring it back from ? Help → “Restore all help notes”)"
+        aria-label="Hide this help note"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/* --------------------------- the manual ---------------------------- */
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <details className="group border border-noir-600/80 bg-noir-900/60">
+      <summary className="cursor-pointer list-none px-3 py-2 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-noir-800/60">
+        <span className="mr-1 inline-block transition-transform group-open:rotate-90" aria-hidden>
+          ▸
+        </span>
+        {title}
+      </summary>
+      <div className="space-y-2 border-t border-noir-700 px-3 py-2 font-type text-[10px] leading-relaxed text-paper/70">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function Key({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="border border-paper/25 bg-noir-800 px-1.5 py-0.5 font-mono text-[9px] text-paper/85">{children}</kbd>
+  );
+}
+
+const SHORTCUTS: [string, string][] = [
+  ["Ctrl+Z", "Undo"],
+  ["Ctrl+Shift+Z / Ctrl+Y", "Redo"],
+  ["Delete / Backspace", "Delete the selected node or edge"],
+  ["Esc", "Close context menus / dialogs"],
+];
+
+const PLAYER_KEYS: [string, string][] = [
+  ["1 – 9", "Pick a choice by number"],
+  ["Up / Down · W / S", "Move choice focus"],
+  ["Space / Enter", "Continue dialogue"],
+  ["←", "Rewind one line"],
+  ["Shift + ←", "Restart the scene"],
+  ["B", "Open the corkboard"],
+  ["M", "Mute / unmute"],
+  [".", "Skip current text"],
+  ["Esc", "Close / quit"],
+];
+
+const TROUBLESHOOTING: [string, string][] = [
+  ["Publish / Play blocked", "Open the Validator and fix or Repair the red errors."],
+  ["A scene has no way forward", "It's a dead end: add a choice/hotspot exit, or mark it as an ending."],
+  ["A choice is locked and you never get the item", "It's required but never granted — add a hotspot/choice that grants it."],
+  ["Characters don't appear on the board", "Tick “Show this met character on corkboard” and make sure the player meets them."],
+  ["The case is unwinnable", "Check you have a victory ending and that the final gate's flags are all settable via the corkboard/choices."],
+  ["Music isn't looping", "Set the scene's music mode to “Play a track” (not inherit) and pick a file."],
+  ["Prose shows as raw text", "Turn off “show instantly” (noTypewriter) or set a narration MP3."],
+  ["A beat never appears", "Its condition rule isn't satisfied — check the gate and the state that sets it."],
+  ["Foreground not visible", "Confirm the image loads, the foreground isn't empty, then check position/scale/fit."],
+];
+
+const SOFTLOCK_CHECKLIST = [
+  "The start scene exists and is set.",
+  "Every scene is reachable from the start.",
+  "Every non-ending scene has at least one open (ungated) exit, or is gated only on something obtainable earlier in the same run.",
+  "Every item a gate requires is granted somewhere (hotspot giveItem, a choice's reward, or a recipe result).",
+  "Every flag a gate requires is set somewhere (a choice, a hotspot, or a corkboard connection).",
+  "There is at least one victory ending, and it is reachable.",
+  "There is at least one game-over ending.",
+  "The final accusation is gated only on deductions/rewards that can really be earned.",
+  "No repeatable choice/hotspot grants a reward (no farming).",
+];
+
+/** The full help modal. Sections mirror the instruction manual so the terms
+ * match what the rest of Studio calls things. */
+export function StudioHelpModal({ onClose }: { onClose: () => void }) {
+  const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      className="fixed inset-0 z-[95] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Studio help"
+    >
+      <div
+        className="pop-in flex max-h-[88vh] w-full max-w-3xl flex-col border-2 border-gold/60 bg-noir-950 shadow-[0_0_60px_rgba(232,178,60,0.15)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gold/30 px-4 py-2">
+          <h3 className="font-pulp text-sm uppercase tracking-wide text-gold">
+            ? Studio Help — the field manual
+          </h3>
+          <button onClick={onClose} className="px-2 text-lg leading-none text-paper/60 hover:text-neon" aria-label="Close help">
+            ✕
+          </button>
+        </div>
+
+        <div className="space-y-2 overflow-y-auto p-4">
+          <p className="border border-cyan-neon/25 bg-cyan-neon/5 p-2 font-type text-[10px] leading-relaxed text-paper/70">
+            <b className="text-cyan-neon">The pipeline:</b> you build a case here → Studio autosaves the draft (~0.8s) →{" "}
+            <b>Validate</b> it → <b>▶ Play draft</b> to test → <b>Publish</b> so the newsstand serves that exact version →{" "}
+            <b>Export</b> a <code>.reel.json</code> to back it up or hand it to another author. When a case is opened, the
+            game loads the <b>published</b> copy first, else the live <b>draft</b>, else the built-in version.
+          </p>
+
+          <Section title="1 · The story graph (canvas)">
+            <p>
+              Each card is a scene. The handles on a card's right edge are its <b>exits</b> — drag one onto another card
+              to wire that choice/hotspot to a target scene. Dropping onto <b>“drag to add choice →”</b> creates a new
+              choice aimed at that scene and opens it for editing.
+            </p>
+            <p>
+              <b>Right-click</b> a card for <i>Edit / Duplicate / Copy / Paste / Set as start / Mark as ending / Delete</i>;
+              right-click empty canvas to add nodes, paste, or fit view. A quick-time choice's <b>(timed out)</b> branch
+              draws as its own edge — that's the “you hesitated” route.
+            </p>
+            <p>
+              Badges: <b>START</b> = entry scene (no inputs), <b>END</b> = ending (no outputs), plus CREDITS / CUTSCENE
+              node types. The red <b>⚠N</b> is that scene's validator issue count.
+            </p>
+          </Section>
+
+          <Section title="2 · The five-step authoring workflow">
+            <ol className="list-decimal space-y-1 pl-5">
+              <li><b className="text-gold">Case File</b> — objective, win/lose conditions, heat limit + bust scene for real stakes.</li>
+              <li><b className="text-gold">People</b> — the cast; tick “Show this met character on corkboard” for suspects; tune voices.</li>
+              <li><b className="text-gold">Items</b> — clues &amp; props; mark clues; set combining recipes. Every gate-required item must be granted somewhere.</li>
+              <li><b className="text-gold">Scenes</b> — prose, dialogue beats, hotspots, choices. Wire exits by dragging handles. Finish with a victory ending AND a game-over ending.</li>
+              <li><b className="text-gold">Test</b> — fake world state in the ▶ Test tab, then ▶ Play draft, fix red errors, Publish.</li>
+            </ol>
+            <p>The “Creator workflow” panel at the top of the inspector lights each step up as it's satisfied.</p>
+          </Section>
+
+          <Section title="3 · Gating & consequences (the engine's contract)">
+            <p>
+              A <b>gate</b> decides what's <i>available</i>; a <b>consequence</b> decides what <i>changes</i>. Gates live on
+              choices, hotspots and dialogue beats.
+            </p>
+            <p>
+              A gate passes when <b>every enabled clause</b> passes: requires items/flags held (ALL, or ANY with the ALL
+              switch off), excludes items/flags absent, min/max meters, min trust, and <i>Remembers</i> (memory tags).
+            </p>
+            <p>
+              Consequences: set/clear flags, add/remove items, meter deltas (clamped 0–10), trust deltas (clamped −5…+5).
+              A scene's <b>on-enter</b> consequences fire only on <i>first</i> entry, so rewards can't be farmed by looping.
+            </p>
+            <p>
+              State-changing choices and hotspots are <b>one-shot by default</b>. Only pure navigation is repeatable —
+              the validator warns about farmable rewards.
+            </p>
+          </Section>
+
+          <Section title="4 · Choices — replies, hidden, groups, timers, quick-time">
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>Reply</b> 💬 — answers in place, never navigates; pair it with a dialogue beat gated on the flag it sets.</li>
+              <li><b>Hidden</b> — invisible until its gate passes (no spoiler hint shown).</li>
+              <li><b>Exclusive group</b> — picking one resolves all choices sharing the group (“choose your approach”).</li>
+              <li><b>Timer</b> — the choice expires at 0 (recorded as expired).</li>
+              <li><b>⚡ Quick-time prompt</b> — a hard deadline: big banner, countdown ring, optional heartbeat + shaky cam below ~30% left. On expiry it routes to the <i>timed-out target</i> and applies <i>timed-out consequences</i> — a distinct “you hesitated” branch, not a silent loss.</li>
+              <li><b>Memory tag</b> — records the player's exact line; a beat can <i>recall</i> it later with <code>{"{said}"}</code>.</li>
+              <li><b>“X will remember that” card</b> — Telltale-style full-screen impact line after the pick.</li>
+            </ul>
+          </Section>
+
+          <Section title="5 · Dialogue beats">
+            <p>
+              Beats play in order after the prose. Speaker can be a character or <b>Narrator (V.O.)</b>. Order them with the
+              ▲/▼ buttons in each beat's title bar.
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>Replacement background</b> — an insert shot for just that beat, with its own transition + cinematic.</li>
+              <li><b>Voice MP3</b> — a recorded take that replaces text-to-speech for the line; <b>silent</b> = no narration at all.</li>
+              <li><b>Condition rule</b> — the beat only appears when the gate passes (re-evaluates live mid-scene).</li>
+              <li><b>Memories recalled</b> — tag → line; the line replaces the text when that memory exists. <code>{"{said}"}</code> echoes the player's words.</li>
+            </ul>
+          </Section>
+
+          <Section title="6 · Hotspots — actions on the scene art">
+            <p>
+              Drag on the preview to draw a zone (percent bounds). One action each: <b>go to scene</b>, <b>give item</b>,{" "}
+              <b>set flag</b>, <b>show text</b>, <b>meter change</b>, <b>open corkboard</b>, <b>use item</b> (consume then run).
+            </p>
+            <p>
+              Only <i>goToScene</i> / <i>useItem</i> need a target — a giveItem/setFlag hotspot legitimately stays in place
+              (that's how you author lockpicks, safes and ciphers). Gate a hotspot to lock it; the <b>custom fail
+              message</b> replaces the generic “locked up tighter…” hint.
+            </p>
+          </Section>
+
+          <Section title="7 · Meters, trust, perks & heat">
+            <p>
+              Four meters (0–10): <b className="text-neon">Charm</b>, <b className="text-crimson">Intimidate</b>,{" "}
+              <b className="text-cyan-neon">Deduce</b>, <b className="text-gold">Heat</b>. Trust is per character (−5…+5).
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>💋 <b>Velvet Tongue</b> — Charm 4+: positive trust gains get +1.</li>
+              <li>✊ <b>Iron Nerve</b> — Intimidate 4+: hard-nosed choices stop costing Heat.</li>
+              <li>🧠 <b>Sharp Eye</b> — Deduce 4+: hotspots shimmer; wrong board guesses draw no Heat.</li>
+              <li>🔥 <b>HEAT</b> — Heat 6+: trust gains halved; wrong board links cost 2.</li>
+            </ul>
+            <p>
+              With a <b>heat limit</b> + <b>bust scene</b> set in the Case File, landing on a scene at Heat ≥ limit triggers
+              the bust ending (“Too much heat. The city closes in.”). Solving every corkboard connection fires{" "}
+              <b>CASE CRACKED</b> and sets the <code>case_cracked</code> flag — a handy gate for the final accusation.
+            </p>
+            <p>
+              The “The Perk Range” case is a four-station proving ground for the perks; the “Quick-Time Demo” case
+              smoke-tests QTEs — pick either from the story selector and ▶ Play draft.
+            </p>
+          </Section>
+
+          <Section title="8 · Validator, Repair, Publish">
+            <p>
+              <span className="text-crimson">ERROR</span> blocks Publish and Play; gold <span className="text-gold">WARNING</span>{" "}
+              is advisory. Click an issue to fly to its scene. <b>Repair</b> auto-fixes dead ends, dangling links, phantom
+              gates, missing ending data, and one-shots farmable reward hotspots.
+            </p>
+            <p>Blank cases are guided drafts — Publish unlocks once a first scene exists and is marked as the start scene.</p>
+          </Section>
+
+          <Section title="9 · Keyboard shortcuts">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">Studio</div>
+                <ul className="space-y-1">
+                  {SHORTCUTS.map(([k, d]) => (
+                    <li key={k} className="flex items-baseline justify-between gap-2">
+                      <Key>{k}</Key>
+                      <span className="text-right">{d}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">In-game (player)</div>
+                <ul className="space-y-1">
+                  {PLAYER_KEYS.map(([k, d]) => (
+                    <li key={k} className="flex items-baseline justify-between gap-2">
+                      <Key>{k}</Key>
+                      <span className="text-right">{d}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Section>
+
+          <Section title="10 · Troubleshooting cheat sheet">
+            <ul className="space-y-1.5">
+              {TROUBLESHOOTING.map(([q, a]) => (
+                <li key={q}>
+                  <b className="text-paper/90">{q}</b>
+                  <br />
+                  <span className="text-paper/60">{a}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="border-t border-noir-700 pt-2">
+              Autosave fails on a full browser storage? Export the case, run <b>Storage</b> (reclaims stale backups), then
+              re-import. When in doubt: Export first, then Repair, then re-check the Validator.
+            </p>
+          </Section>
+
+          <Section title="11 · The softlock checklist (before you publish)">
+            <ul className="space-y-1">
+              {SOFTLOCK_CHECKLIST.map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span className="text-gold" aria-hidden>
+                    ☐
+                  </span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-noir-700 px-4 py-3">
+          <button
+            onClick={() => {
+              resetHelpNotes();
+              window.dispatchEvent(new Event("scarlet-studio-help-reset"));
+            }}
+            className="border border-cyan-neon/60 bg-cyan-neon/10 px-3 py-2 font-pulp text-[10px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/20"
+            title="Bring back every inline ? note you dismissed"
+          >
+            ↺ Restore all help notes
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch("Studio-Instruction-Manual.txt");
+                if (!res.ok) throw new Error();
+                const text = await res.text();
+                const blob = new Blob([text], { type: "text/plain" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "Studio-Instruction-Manual.txt";
+                a.click();
+                URL.revokeObjectURL(url);
+                setCopied("ok");
+              } catch {
+                setCopied("fail");
+              }
+            }}
+            className="border border-gold/60 bg-gold/10 px-3 py-2 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-gold/20"
+            title="Download the full detailed manual from the repo"
+          >
+            ⇩ Full manual
+          </button>
+          {copied === "ok" && <span className="font-type text-[10px] text-emerald-400">Manual downloaded.</span>}
+          {copied === "fail" && (
+            <span className="font-type text-[10px] text-paper/50">Manual file not reachable from the dev server — find it in the repo root.</span>
+          )}
+          <span className="ml-auto font-type text-[10px] text-paper/45">Esc closes this window.</span>
+        </div>
+      </div>
+    </div>
+  );
+}

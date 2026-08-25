@@ -1,0 +1,365 @@
+/**
+ * AI image generation for Studio.
+ *
+ * Commercial generators are plain HTTPS APIs: you POST a prompt with your API
+ * key and get an image (base64 JSON or binary) straight back. Local generators
+ * (AUTOMATIC1111 / Forge, ComfyUI) run on the user's own GPU and expose an HTTP
+ * API on localhost — no API key, but the server must be started with CORS
+ * enabled so the browser can call it.
+ *
+ * The requests happen from the player's browser (this is a static, single-file
+ * app — there is no backend), so API keys are stored in localStorage on this
+ * device only and sent directly to the chosen provider. Keys are never shared
+ * with anyone else, but anyone with access to this browser can read them.
+ */
+
+/** Where an image came from / how it's charged. */
+export type AiProviderId = "openai" | "stability" | "together" | "a1111" | "comfyui";
+
+export interface AiProviderSettings {
+  id: AiProviderId;
+  /** commercial providers only */
+  apiKey?: string;
+  /** local servers only — the base URL of the running generator */
+  baseUrl?: string;
+  /** model id / checkpoint name (provider specific) */
+  model?: string;
+  width?: number;
+  height?: number;
+  steps?: number;
+  cfgScale?: number;
+  sampler?: string;
+  scheduler?: string;
+  negativePrompt?: string;
+  /** Stability Stable-Image API uses aspect ratios instead of exact pixels */
+  aspectRatio?: string;
+}
+
+export interface AiImageSettings {
+  provider: AiProviderId;
+  providers: Partial<Record<AiProviderId, AiProviderSettings>>;
+}
+
+export const AI_PROVIDERS: {
+  id: AiProviderId;
+  label: string;
+  kind: "commercial" | "local";
+  needsKey: boolean;
+  blurb: string;
+}[] = [
+  {
+    id: "openai",
+    label: "OpenAI — DALL·E 3 / GPT Image",
+    kind: "commercial",
+    needsKey: true,
+    blurb: "Cloud. Polished, follows prompts tightly. Pay-per-image. Needs an OpenAI API key (platform.openai.com).",
+  },
+  {
+    id: "stability",
+    label: "Stability AI — Stable Image Core",
+    kind: "commercial",
+    needsKey: true,
+    blurb: "Cloud. Open-weight look, strong for moody/atmospheric art. Needs a Stability AI API key (platform.stability.ai).",
+  },
+  {
+    id: "together",
+    label: "Together AI — FLUX.1",
+    kind: "commercial",
+    needsKey: true,
+    blurb: "Cloud. Fast, cheap FLUX images (the schnell model has a generous free tier). Needs a Together AI API key (api.together.xyz).",
+  },
+  {
+    id: "a1111",
+    label: "Local — AUTOMATIC1111 / Forge WebUI",
+    kind: "local",
+    needsKey: false,
+    blurb: "Runs on your own GPU. No key, no per-image cost. Start it with: --api --cors-allow-origins=*",
+  },
+  {
+    id: "comfyui",
+    label: "Local — ComfyUI",
+    kind: "local",
+    needsKey: false,
+    blurb: "Runs on your own GPU. No key, no per-image cost. Start it with: --listen 0.0.0.0 --enable-cors-header '*'",
+  },
+];
+
+const STORAGE_KEY = "scarlet-reel-ai-images-v1";
+
+export function defaultAiSettings(): AiImageSettings {
+  return {
+    provider: "openai",
+    providers: {
+      openai: { id: "openai", model: "gpt-image-1", width: 1024, height: 1024 },
+      stability: { id: "stability", aspectRatio: "16:9" },
+      together: { id: "together", model: "black-forest-labs/FLUX.1-schnell-Free", width: 1024, height: 768 },
+      a1111: {
+        id: "a1111",
+        baseUrl: "http://127.0.0.1:7860",
+        width: 1024,
+        height: 768,
+        steps: 20,
+        cfgScale: 7,
+        sampler: "DPM++ 2M Karras",
+        negativePrompt: "blurry, low quality, deformed",
+      },
+      comfyui: {
+        id: "comfyui",
+        baseUrl: "http://127.0.0.1:8188",
+        width: 1024,
+        height: 768,
+        steps: 20,
+        cfgScale: 7,
+        sampler: "euler",
+        scheduler: "normal",
+        negativePrompt: "blurry, low quality, deformed",
+      },
+    },
+  };
+}
+
+export function loadAiSettings(): AiImageSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<AiImageSettings>;
+      const defaults = defaultAiSettings();
+      return {
+        provider: parsed.provider ?? defaults.provider,
+        providers: { ...defaults.providers, ...(parsed.providers ?? {}) },
+      };
+    }
+  } catch {
+    /* ignore — fall back to defaults */
+  }
+  return defaultAiSettings();
+}
+
+export function saveAiSettings(s: AiImageSettings): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export interface GenerateResult {
+  ok: boolean;
+  dataUrl?: string;
+  error?: string;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Could not read the returned image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Generate one image for the configured provider. Returns a PNG data URL. */
+export async function generateAiImage(settings: AiImageSettings, prompt: string): Promise<GenerateResult> {
+  const p = settings.providers[settings.provider];
+  if (!p) return { ok: false, error: "No provider selected." };
+  try {
+    switch (settings.provider) {
+      case "openai":
+        return await openaiGenerate(p, prompt);
+      case "stability":
+        return await stabilityGenerate(p, prompt);
+      case "together":
+        return await togetherGenerate(p, prompt);
+      case "a1111":
+        return await a1111Generate(p, prompt);
+      case "comfyui":
+        return await comfyGenerate(p, prompt);
+      default:
+        return { ok: false, error: "Unknown provider." };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+      return {
+        ok: false,
+        error:
+          "Couldn't reach the server. For local generators make sure it's running with CORS enabled (A1111: --cors-allow-origins=* · ComfyUI: --enable-cors-header '*').",
+      };
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+/* ------------------------------ commercial ------------------------------ */
+
+async function openaiGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+  if (!p.apiKey) return { ok: false, error: "Enter your OpenAI API key first." };
+  const size = `${p.width ?? 1024}x${p.height ?? 1024}`;
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+    body: JSON.stringify({
+      model: p.model || "gpt-image-1",
+      prompt,
+      n: 1,
+      size,
+      response_format: "b64_json",
+    }),
+  });
+  const text = await res.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    /* non-JSON error body */
+  }
+  if (!res.ok) {
+    return { ok: false, error: json?.error?.message || `OpenAI ${res.status}: ${text.slice(0, 200)}` };
+  }
+  const b64 = json?.data?.[0]?.b64_json;
+  if (!b64) return { ok: false, error: "OpenAI returned no image." };
+  return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
+}
+
+async function stabilityGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+  if (!p.apiKey) return { ok: false, error: "Enter your Stability AI API key first." };
+  const fd = new FormData();
+  fd.append("prompt", prompt);
+  fd.append("output_format", "png");
+  if (p.aspectRatio) fd.append("aspect_ratio", p.aspectRatio);
+  const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${p.apiKey}`, Accept: "image/*" },
+    body: fd,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text.slice(0, 300);
+    try {
+      const j = JSON.parse(text);
+      if (Array.isArray(j?.errors)) msg = j.errors.join(", ");
+      else if (j?.message) msg = j.message;
+    } catch {
+      /* keep raw text */
+    }
+    return { ok: false, error: `Stability ${res.status}: ${msg}` };
+  }
+  const blob = await res.blob();
+  return { ok: true, dataUrl: await blobToDataUrl(blob) };
+}
+
+async function togetherGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+  if (!p.apiKey) return { ok: false, error: "Enter your Together AI API key first." };
+  const res = await fetch("https://api.together.xyz/v1/images/generations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+    body: JSON.stringify({
+      model: p.model || "black-forest-labs/FLUX.1-schnell-Free",
+      prompt,
+      n: 1,
+      width: p.width ?? 1024,
+      height: p.height ?? 768,
+      steps: p.steps ?? 4,
+      response_format: "b64_json",
+    }),
+  });
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok) return { ok: false, error: json?.error?.message || `Together ${res.status}` };
+  const b64 = json?.data?.[0]?.b64_json;
+  if (!b64) return { ok: false, error: "Together returned no image." };
+  return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
+}
+
+/* -------------------------------- local -------------------------------- */
+
+async function a1111Generate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+  const base = (p.baseUrl || "http://127.0.0.1:7860").replace(/\/+$/, "");
+  const res = await fetch(`${base}/sdapi/v1/txt2img`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      negative_prompt: p.negativePrompt || "",
+      width: p.width ?? 1024,
+      height: p.height ?? 768,
+      steps: p.steps ?? 20,
+      cfg_scale: p.cfgScale ?? 7,
+      sampler_name: p.sampler || "DPM++ 2M Karras",
+      seed: -1,
+      n_iter: 1,
+      batch_size: 1,
+    }),
+  });
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok || !json) {
+    return { ok: false, error: `WebUI ${res.status}: ${json?.detail || json?.error || res.statusText}` };
+  }
+  const b64 = json?.images?.[0];
+  if (!b64) return { ok: false, error: "WebUI returned no image." };
+  return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
+}
+
+/** The canonical default ComfyUI txt2img workflow graph (API format). */
+function buildComfyWorkflow(prompt: string, p: AiProviderSettings): Record<string, unknown> {
+  const seed = Math.floor(Math.random() * 1e9);
+  return {
+    "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: p.model || "" } },
+    "2": { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["1", 1] } },
+    "3": { class_type: "CLIPTextEncode", inputs: { text: p.negativePrompt || "", clip: ["1", 1] } },
+    "4": { class_type: "EmptyLatentImage", inputs: { width: p.width ?? 1024, height: p.height ?? 768, batch_size: 1 } },
+    "5": {
+      class_type: "KSampler",
+      inputs: {
+        seed,
+        steps: p.steps ?? 20,
+        cfg: p.cfgScale ?? 7,
+        sampler_name: p.sampler || "euler",
+        scheduler: p.scheduler || "normal",
+        denoise: 1,
+        model: ["1", 0],
+        positive: ["2", 0],
+        negative: ["3", 0],
+        latent_image: ["4", 0],
+      },
+    },
+    "6": { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["1", 2] } },
+    "7": { class_type: "SaveImage", inputs: { images: ["6", 0], filename_prefix: "scarlet-reel" } },
+  };
+}
+
+async function comfyGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+  const base = (p.baseUrl || "http://127.0.0.1:8188").replace(/\/+$/, "");
+  const res = await fetch(`${base}/prompt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: buildComfyWorkflow(prompt, p) }),
+  });
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok || !json?.prompt_id) {
+    const detail = json?.node_errors ? JSON.stringify(json.node_errors).slice(0, 300) : res.statusText;
+    return { ok: false, error: `ComfyUI ${res.status}: ${json?.error?.message || detail}` };
+  }
+  const id = json.prompt_id;
+  // Poll the history queue until the image is written to the output folder.
+  for (let i = 0; i < 120; i++) {
+    await sleep(1500);
+    const hist: any = await fetch(`${base}/history/${id}`).then((r) => r.json()).catch(() => null);
+    const entry = hist?.[id];
+    if (entry?.status?.status_str === "error") return { ok: false, error: "ComfyUI reported an error (check the server console)." };
+    if (entry?.outputs) {
+      for (const out of Object.values<any>(entry.outputs)) {
+        const img = out?.images?.[0];
+        if (img) {
+          const imgRes = await fetch(
+            `${base}/view?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${img.type || "output"}`
+          );
+          if (!imgRes.ok) return { ok: false, error: `Couldn't fetch the finished image (${imgRes.status}).` };
+          return { ok: true, dataUrl: await blobToDataUrl(await imgRes.blob()) };
+        }
+      }
+    }
+  }
+  return { ok: false, error: "Timed out waiting for ComfyUI to finish." };
+}
