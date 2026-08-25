@@ -29,6 +29,7 @@ import {
   meetsGating,
   METER_LABELS,
   nextEpisode,
+  nextEpisodeForEnding,
   prettyFlagName,
   presentationConsequences,
   readSave,
@@ -6353,7 +6354,7 @@ type SeasonPhase =
   | { kind: "recap"; episode: Episode }
   | { kind: "titleCard"; episode: Episode }
   | { kind: "play"; episode: Episode; resumeSlot?: number; runKey: number }
-  | { kind: "nextTime"; from: Episode; to: Episode };
+  | { kind: "nextTime"; from: Episode; to: Episode; /** per-ending teaser lines (forked seasons) */ lines?: string[] };
 
 /**
  * The entry point the app plays a story through.
@@ -6540,6 +6541,7 @@ function SeasonPlayer({
           story={story}
           fromEpisode={phase.from}
           toEpisode={phase.to}
+          lines={phase.lines}
           onContinue={() => startEpisode(phase.to)}
           onSeasonScreen={openSeason}
         />
@@ -6549,10 +6551,12 @@ function SeasonPlayer({
 
   // phase.kind === "play"
   const episode = phase.episode;
-  const following = nextEpisode(story, episode.id);
   // A finale (or an ending explicitly flagged as season-ending) stops here
   // instead of teasing a chapter the story doesn't intend you to reach.
   const endingScene = finished ? story.scenes.find((s) => s.id === finished.progress.endingSceneId) : undefined;
+  // Forked seasons route "next" per ending: each fork's curtain teases its
+  // own continuation chapter, not the positional one.
+  const following = endingScene ? nextEpisodeForEnding(story, episode.id, endingScene.id) : nextEpisode(story, episode.id);
   const seasonOver = !following || !!endingScene?.endingData?.endsSeason;
 
   return (
@@ -6576,7 +6580,15 @@ function SeasonPlayer({
             progress={finished.progress}
             choiceHighlights={finished.highlights}
             hasNext={!seasonOver}
-            onNextTime={() => following && setPhase({ kind: "nextTime", from: episode, to: following })}
+            onNextTime={() =>
+              following &&
+              setPhase({
+                kind: "nextTime",
+                from: episode,
+                to: following,
+                lines: endingScene ? episode.nextTimeByEnding?.[endingScene.id] ?? episode.nextTimeLines : episode.nextTimeLines,
+              })
+            }
             onReplay={() => startEpisode(episode)}
             onSeasonScreen={openSeason}
             onExit={onExit}

@@ -359,14 +359,17 @@ export function NextTimeCard({
   toEpisode,
   onContinue,
   onSeasonScreen,
+  lines: linesProp,
 }: {
   story: Story;
   fromEpisode: Episode;
   toEpisode: Episode;
   onContinue: () => void;
   onSeasonScreen: () => void;
+  /** per-ending teaser lines (forked seasons); falls back to the episode's */
+  lines?: string[];
 }) {
-  const lines = fromEpisode.nextTimeLines ?? [];
+  const lines = linesProp ?? fromEpisode.nextTimeLines ?? [];
   const [shown, setShown] = useState(0);
   const image = toEpisode.titleCardImage ?? toEpisode.posterImage ?? story.scenes.find((s) => s.id === toEpisode.startSceneId)?.background;
 

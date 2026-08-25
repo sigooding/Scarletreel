@@ -20,6 +20,8 @@ import {
   effectiveChoiceGating,
   examineZoom,
   flagSetSources,
+  isEpisodeUnlocked,
+  nextEpisodeForEnding,
   heatBustTarget,
   DEFAULT_PRESS_REACTIONS,
   interrogationOutcome,
@@ -41,7 +43,7 @@ import {
 } from "../src/logic";
 import { scenesInAct } from "../src/game/routeGraph";
 import { NEON_DINER } from "../src/data/neonDiner";
-import type { Choice, GameSave, SceneNode, Story } from "../src/types";
+import type { Choice, EpisodeProgress, GameSave, SceneNode, Story } from "../src/types";
 
 let passed = 0;
 const failures: string[] = [];
@@ -314,6 +316,78 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   };
   const dup = validateStory(story).filter((i) => /ghost_item/.test(i.message));
   check("validator: bad hotspot gate reported exactly once", dup.length === 1, dup);
+}
+
+// --- forked seasons: per-ending unlock + per-ending "next time on…" ---
+{
+  const endScene = (id: string, title: string): SceneNode => ({
+    id,
+    title,
+    background: "",
+    prose: "",
+    isEnding: true,
+    endingData: { tier: "victory-silver", headline: title, recap: "R" },
+  });
+  const forkStory: Story = {
+    id: "tfork",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "e1a",
+    scenes: [
+      {
+        id: "e1a",
+        title: "A",
+        background: "",
+        prose: "",
+        choices: [
+          { id: "c1", text: "x", targetSceneId: "end_gold" },
+          { id: "c2", text: "y", targetSceneId: "end_alt" },
+        ],
+      },
+      endScene("end_gold", "G"),
+      endScene("end_alt", "A2"),
+      { id: "e2a", title: "2a", background: "", prose: "", choices: [{ id: "c3", text: "z", targetSceneId: "e2aend" }] },
+      endScene("e2aend", "2aE"),
+      { id: "e2b", title: "2b", background: "", prose: "", choices: [{ id: "c4", text: "z", targetSceneId: "e2bend" }] },
+      endScene("e2bend", "2bE"),
+      endScene("e3", "3"),
+    ],
+    items: [],
+    characters: [],
+    episodes: [
+      { id: "ep1", title: "E1", sceneIds: ["e1a", "end_gold", "end_alt"], startSceneId: "e1a", nextEpisodeByEnding: { end_alt: "e2b" } },
+      { id: "e2a", title: "E2A", sceneIds: ["e2a", "e2aend"], startSceneId: "e2a", unlockAfter: [{ episodeId: "ep1", endingSceneIds: ["end_gold"] }] },
+      { id: "e2b", title: "E2B", sceneIds: ["e2b", "e2bend"], startSceneId: "e2b", unlockAfter: [{ episodeId: "ep1", endingSceneIds: ["end_alt"] }] },
+      { id: "e3", title: "E3", sceneIds: ["e3"], startSceneId: "e3", unlockAfter: [{ episodeId: "e2a" }, { episodeId: "e2b" }] },
+    ],
+  };
+  const cleared = (episodeId: string, endingSceneId: string): EpisodeProgress => ({
+    episodeId,
+    endingSceneId,
+    endingHeadline: "H",
+    endingTier: "victory-silver",
+    completedAt: 1,
+    carry: { activeFlags: [], inventory: [], meters: { Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 0 }, characterTrust: {}, memories: {} },
+  });
+  check("unlockAfter: route chapters locked before their route", !isEpisodeUnlocked(forkStory, "e2a", {}) && !isEpisodeUnlocked(forkStory, "e2b", {}));
+  const afterGold = { ep1: cleared("ep1", "end_gold") };
+  const afterAlt = { ep1: cleared("ep1", "end_alt") };
+  check("unlockAfter: gold ending unlocks only the gold chapter", isEpisodeUnlocked(forkStory, "e2a", afterGold) && !isEpisodeUnlocked(forkStory, "e2b", afterGold));
+  check("unlockAfter: alt ending unlocks only the alt chapter", !isEpisodeUnlocked(forkStory, "e2a", afterAlt) && isEpisodeUnlocked(forkStory, "e2b", afterAlt));
+  check(
+    "unlockAfter (any-listed): final chapter unlocks from either route, not before",
+    isEpisodeUnlocked(forkStory, "e3", { ...afterGold, e2a: cleared("e2a", "e2aend") }) &&
+      isEpisodeUnlocked(forkStory, "e3", { ...afterAlt, e2b: cleared("e2b", "e2bend") }) &&
+      !isEpisodeUnlocked(forkStory, "e3", afterGold)
+  );
+  check(
+    "unlockAfter: already-cleared chapter stays replayable",
+    isEpisodeUnlocked(forkStory, "e2b", { ep1: cleared("ep1", "end_gold"), e2b: cleared("e2b", "e2bend") })
+  );
+  check("nextEpisodeForEnding: per-ending override wins", nextEpisodeForEnding(forkStory, "ep1", "end_alt")?.id === "e2b");
+  check("nextEpisodeForEnding: falls back to positional", nextEpisodeForEnding(forkStory, "ep1", "end_gold")?.id === "e2a");
+  check("nextEpisodeForEnding: unknown ending falls back", nextEpisodeForEnding(forkStory, "e2a", "nope")?.id === "e2b");
 }
 
 // Regression (A3): the bust contract must hold for ANY heat source — the

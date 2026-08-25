@@ -239,6 +239,18 @@ export function nextEpisode(story: Story, episodeId: string): Episode | undefine
   return idx >= 0 ? eps[idx + 1] : undefined;
 }
 
+/** The episode that follows a given ENDING of this episode: the per-ending
+ *  override (`nextEpisodeByEnding`) when the ending scene matches, else the
+ *  positional next. Forked seasons route each "next time on…" this way so a
+ *  fork's curtain teases its own continuation chapter. */
+export function nextEpisodeForEnding(story: Story, episodeId: string, endingSceneId: string): Episode | undefined {
+  const eps = seasonEpisodes(story);
+  const ep = eps.find((e) => e.id === episodeId);
+  const overrideId = ep?.nextEpisodeByEnding?.[endingSceneId];
+  if (overrideId) return eps.find((e) => e.id === overrideId);
+  return nextEpisode(story, episodeId);
+}
+
 /** Scenes that no episode claims. Surfaced by the validator (and the Studio
  * episode editor) so an author can't strand part of the graph. */
 export function unassignedScenes(story: Story): SceneNode[] {
@@ -298,6 +310,16 @@ export function isEpisodeUnlocked(story: Story, episodeId: string, progress = st
   if (idx <= 0) return true;
   if (eps[idx].unlockedByDefault) return true;
   if (progress[episodeId]) return true;
+  // Forked seasons: unlock is conditional on WHICH ending the route took,
+  // not on position. Any listed predecessor episode counts; when it names
+  // endings, the clear must be one of them.
+  const after = eps[idx].unlockAfter;
+  if (after) {
+    return after.some((a) => {
+      const prior = progress[a.episodeId];
+      return !!prior && (!a.endingSceneIds || a.endingSceneIds.includes(prior.endingSceneId));
+    });
+  }
   return !!progress[eps[idx - 1].id];
 }
 

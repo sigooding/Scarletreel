@@ -285,6 +285,20 @@ export interface Episode {
   nextTimeLines?: string[];
   /** playable from the season screen without clearing the previous episode */
   unlockedByDefault?: boolean;
+  /** Alternate-route seasons: when set, this episode is unlocked only if one
+   *  of the listed episodes was cleared — on one of its `endingSceneIds` when
+   *  given, on ANY of its endings when omitted. Replaces the positional
+   *  "previous episode cleared" rule for this episode. Already-cleared
+   *  (replayable) copies still unlock. This is what lets a forked season keep
+   *  each route's continuation chapter locked to the route that earned it. */
+  unlockAfter?: { episodeId: string; endingSceneIds?: string[] }[];
+  /** Per-ending "next time on…" routing: ending scene id → episode id.
+   *  Overrides the positional next episode for that ending, so each fork of a
+   *  season can point its curtain at its own continuation chapter. */
+  nextEpisodeByEnding?: Record<string, string>;
+  /** Per-ending "next time on…" teaser lines: ending scene id → lines.
+   *  Falls back to `nextTimeLines`. */
+  nextTimeByEnding?: Record<string, string[]>;
 }
 
 /** One line of a credits roll: a role label ("Directed by") and a name ("Sam Cole"). */

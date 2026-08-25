@@ -41,7 +41,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "22";
+const CONTENT_REVISION = "27";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -203,6 +203,34 @@ const REVISION_RESETS: Record<string, string[]> = {
   // Episodes One and Three got their own art (warehouse, the payphone
   // curtain, The Call in the strobes, two new season posters).
   "22": ["nobodys-witness-draft"],
+  // The Draft's Act One branched: four diamond-point choices (D1-A/D1-B/D2/D4)
+  // splitting the shared scenes, plus four alternate Act Two opening chapters
+  // with route-locked unlocks. Cached copies would keep playing the
+  // pre-branch straight line — retire this story's snapshot so the shipped
+  // branching graph wins.
+  "23": ["nobodys-witness-draft"],
+  // Retire again: the v2 rename ships, and a Studio tab left open on the old
+  // graph can re-save the stale draft over revision 23's retirement. A second
+  // pass guarantees the shipped branching copy wins on next load.
+  "24": ["nobodys-witness-draft"],
+  // The four bridges: Act Two split into EP2a (gold front half: laundromat +
+  // threeam) and EP2b (the shared road north, joined by every route). Part 1
+  // 'to be continued' curtains replaced by the bridge chapters; canonical
+  // downstream flag set (rosa_absent, on_payroll, refused_case, vera_held,
+  // david_already_dead, ...) replaces the interim flags.
+  "25": ["nobodys-witness-draft"],
+  // Act Three replaced with the Ending B version ("She Stays"): Parts 3, 4,
+  // 5, 6 rewritten — the mill lot confession, the cost (Rosa's warning
+  // that the leaving version is the good one), the trade (Solomon's
+  // "ability to leave" seed), and the diner ending where the bag goes back
+  // down. Parts 1, 2, 4b and the game-over are unchanged.
+  "26": ["nobodys-witness-draft"],
+  // Ending B demoted from replacement to ALTERNATE ROUTE: the gold Act
+  // Three (Ending A — Vera leaves, the cold coffee) is restored as the
+  // gold spine; the B back half (mill/cost/trade/finale) is a parallel
+  // spine forked at the end of Part 2 and re-forked after the shared Blue
+  // Cue via nwd_ending_a / nwd_ending_b.
+  "27": ["nobodys-witness-draft"],
 };
 
 function migrateLegacyStoryStorage() {
