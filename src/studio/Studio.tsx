@@ -2995,7 +2995,20 @@ function HotspotCanvas({
             style={{ left: `${h.bounds.x}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w}%`, height: `${h.bounds.h}%` }}
             title={h.label}
           >
-            {grantedItem ? (
+            {h.image ? (
+              <>
+                <img
+                  src={assetUrl(media(h.image) ?? h.image)}
+                  alt=""
+                  className={`pointer-events-none absolute inset-0 ${
+                    h.imageFit === "cover" ? "h-full w-full object-cover" : "m-auto max-h-full max-w-full object-contain"
+                  }`}
+                />
+                <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-noir-950/75 px-1 py-0.5 text-[7px]">
+                  {h.label}
+                </span>
+              </>
+            ) : grantedItem ? (
               grantedItem.iconUrl ? (
                 <img src={assetUrl(media(grantedItem.iconUrl) ?? grantedItem.iconUrl)} alt={grantedItem.name} className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full object-contain" />
               ) : (
@@ -6893,7 +6906,9 @@ function StudioInner({
                   text, meter change, open corkboard, or use item (consume it, then run the rest). Only{" "}
                   <b>go to scene</b> / <b>use item</b> need a target — a give-item or set-flag hotspot legitimately
                   stays in place (that's how you build safes and cipher puzzles). Add <b>gating</b> to lock it; the
-                  custom fail message replaces the generic “locked up tighter…” hint.
+                  custom fail message replaces the generic “locked up tighter…” hint. Give a zone an{" "}
+                  <b>object image</b> (a transparent PNG of a cup, a watch, a key) and it's drawn inside the zone —
+                  drag the zone to position and scale it, and it zooms with the scene under the examine camera.
                 </HelpNote>
                 <p className="font-type text-[11px] text-paper/60">
                   Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one.
@@ -7025,6 +7040,71 @@ function StudioInner({
                           ))}
                         </select>
                       </Field>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <Field label="Object image (transparent)">
+                        <ImagePicker
+                          value={h.image}
+                          onChange={(v) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.image = v;
+                            })
+                          }
+                          storyId={story.id}
+                          includeGradients={false}
+                          placeholder="Pick an object image…"
+                        />
+                        <div className="mt-1 flex gap-1">
+                          <MediaUploadButton
+                            storyId={story.id}
+                            accept="image/*"
+                            label="⇧ Upload PNG"
+                            onUploaded={(_url, assetId) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.image = `asset:${assetId}`;
+                              })
+                            }
+                          />
+                          {h.image && (
+                            <button
+                              onClick={() =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  const hs = s.hotspots!.find((x) => x.id === h.id)!;
+                                  hs.image = undefined;
+                                  hs.imageFit = undefined;
+                                })
+                              }
+                              className="border border-crimson/40 px-2 py-1 font-pulp text-[10px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                            >
+                              ✕ Remove
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                          Transparent PNG/WebP of the object — the zone's bounds are its frame, so drag the zone to
+                          position and scale it. It zooms with the scene and vanishes when the zone is used.
+                        </p>
+                      </Field>
+                      <div className="flex flex-col gap-1">
+                        <Field label="Image fit">
+                          <select
+                            className={inputCls}
+                            value={h.imageFit ?? "contain"}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.imageFit = e.target.value as "contain" | "cover";
+                              })
+                            }
+                          >
+                            <option value="contain">contain — whole object</option>
+                            <option value="cover">cover — fill the zone</option>
+                          </select>
+                        </Field>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Grants item">

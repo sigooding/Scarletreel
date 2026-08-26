@@ -364,6 +364,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     visit(sc.narrationAudioUrl);
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
+    sc.hotspots?.forEach((h) => visit(h.image));
     sc.dialogueBeats?.forEach((b) => {
       visit(b.audioUrl);
       visit(b.background);
@@ -453,6 +454,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
     }
+    sc.hotspots?.forEach((h) => apply(h, "image"));
     sc.dialogueBeats?.forEach((b) => {
       apply(b, "audioUrl");
       apply(b, "background");
@@ -564,6 +566,9 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
       sc.credits.montage = (
         await Promise.all(sc.credits.montage.map((m) => compact(m, "image", `${sc.title} montage`)))
       ).filter((m): m is string => !!m);
+    }
+    for (const h of sc.hotspots ?? []) {
+      h.image = await compact(h.image, "image", h.label || sc.title);
     }
     if (sc.cinematic?.foregroundImage) {
       sc.cinematic.foregroundImage = (await compact(sc.cinematic.foregroundImage, "image", sc.title)) || undefined;

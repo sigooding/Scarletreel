@@ -4639,6 +4639,41 @@ function CasePlayer({
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
               each time the player enters the scene (not only on first mount). */}
           <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
+          {/* Scene-object images: transparent cutouts (a cup, a watch, a key)
+              drawn inside their hotspot zones. They live inside the zoom
+              wrapper so the examine camera magnifies them with the plate,
+              and they follow the zone's visibility — hidden while the gate
+              is shut, gone for good once a one-shot zone is used (a
+              picked-up object leaves the scene). */}
+          {sceneReady &&
+            !scene.isEnding &&
+            (scene.hotspots ?? [])
+              .filter((hs) => !!hs.image && !hs.image.startsWith("gradient:"))
+              .filter((hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`))
+              .filter((hs) => meetsGating(hs.gating, state))
+              .map((hs) => (
+                <div
+                  key={`hsimg-${hs.id}`}
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: `${hs.bounds.x}%`,
+                    top: `${hs.bounds.y}%`,
+                    width: `${hs.bounds.w}%`,
+                    height: `${hs.bounds.h}%`,
+                  }}
+                >
+                  <img
+                    src={assetUrl(hs.image)}
+                    alt=""
+                    draggable={false}
+                    className={
+                      hs.imageFit === "cover"
+                        ? "absolute inset-0 h-full w-full object-cover"
+                        : "absolute inset-0 m-auto max-h-full max-w-full object-contain"
+                    }
+                  />
+                </div>
+              ))}
         </div>
       </div>
     );

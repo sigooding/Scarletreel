@@ -81,6 +81,18 @@ export interface Hotspot {
   /** when true and the action grants an item, that item's image/emoji is drawn
    * inside the hotspot zone so players can literally see the object to pick up */
   showItemImage?: boolean;
+  /** Scene-object image drawn inside the zone bounds — a cup, a watch, a key
+   *  on a hook. Author it as a transparent-background image (PNG/WebP) so
+   *  only the object is drawn over the background plate. The zone's bounds
+   *  are the frame: drag/resize the zone to position and scale the object.
+   *  It magnifies with the plate when the examine camera zooms in, and it
+   *  follows the zone's visibility — hidden while the gate is shut, and
+   *  gone for good once a one-shot zone is used (a picked-up object leaves
+   *  the scene). */
+  image?: string;
+  /** How the object image fits its zone: "contain" keeps the whole object
+   *  visible (default); "cover" fills the zone, cropping the overflow. */
+  imageFit?: "contain" | "cover";
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release
