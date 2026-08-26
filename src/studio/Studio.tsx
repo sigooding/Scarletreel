@@ -61,6 +61,15 @@ import { EpisodeEditor } from "./EpisodeEditor";
 import { ActEditor, ACT_TINTS } from "./ActEditor";
 import { HelpNote, StudioHelpModal } from "./StudioHelp";
 import { healLayout, tidyLayoutPositions } from "./canvas";
+import {
+  ELEVENLABS_MODELS,
+  convertConfirmMessage,
+  getElevenModel,
+  setElevenKey,
+  setElevenModel,
+  synthesizeElevenLabs,
+  getElevenKey,
+} from "./aiVoice";
 import { scenesInAct } from "../game/routeGraph";
 import { assetBackground, assetUrl } from "../assetPath";
 import {
@@ -2277,6 +2286,54 @@ function TalkingPreview({
   return <img src={assetUrl(resolved[i])} alt="" className="h-24 w-auto max-w-full object-contain" />;
 }
 
+/** Global ElevenLabs settings for the People tab. The API key lives in
+ *  localStorage only — never in the story data, saves, or exports. */
+function AiVoiceSettings() {
+  const [key, setKey] = useState(getElevenKey());
+  const [model, setModel] = useState(getElevenModel());
+  return (
+    <CollapsibleSection id="ai-voice-settings" title="🎙 AI Voice (ElevenLabs)" titleClass="text-neon" defaultOpen={false}>
+      <p className="font-type text-[9px] leading-relaxed text-paper/45">
+        Generate individual dialogue lines as MP3s from your ElevenLabs account — one line at a time, with a
+        credit-cost confirm before every conversion. Assign each character a voice ID below (copy it from the
+        ElevenLabs console — stock or cloned), then use the <b className="text-paper/70">🎙 Generate MP3</b> button on
+        any dialogue line in a scene's Beats tab.
+      </p>
+      <Field label="API key (xi-api-key…)">
+        <input
+          className={inputCls}
+          type="password"
+          value={key}
+          placeholder="Paste your ElevenLabs API key"
+          onChange={(e) => {
+            const v = e.target.value.trim();
+            setKey(v);
+            setElevenKey(v);
+          }}
+        />
+      </Field>
+      <Field label="Model">
+        <select
+          className={inputCls}
+          value={model}
+          onChange={(e) => {
+            setModel(e.target.value);
+            setElevenModel(e.target.value);
+          }}
+        >
+          {ELEVENLABS_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+      </Field>
+      <p className="font-type text-[8px] text-paper/35">
+        The key is stored in this browser's localStorage only — it is never written into the story, saves, or
+        exports. Match the model to your voices (v3 voices need Eleven v3).
+      </p>
+    </CollapsibleSection>
+  );
+}
+
 function CharacterEditor({
   story,
   onUpdate,
@@ -2287,9 +2344,11 @@ function CharacterEditor({
   media: (v?: string) => string | undefined;
 }) {
   const voices = useSpeechVoices();
+  const [aiTestBusy, setAiTestBusy] = useState<string | null>(null);
   return (
     <div className="space-y-2">
       <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">Characters (suspects/clues on board)</h3>
+      <AiVoiceSettings />
       {story.characters.map((c) => (
         <div key={c.id} className="flex gap-2 border border-noir-600 p-1.5">
           <div className="flex w-16 shrink-0 flex-col items-center gap-1">
@@ -2464,6 +2523,40 @@ function CharacterEditor({
                 ▶ Test voice
               </button>
               <p className="font-type text-[8px] text-paper/35">Tip: per-line MP3 voice files can be set on each dialogue beat (Beats tab).</p>
+            </div>
+            <div className="space-y-1 border border-noir-600/60 p-1.5">
+              <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">🎙 Voice (ElevenLabs AI)</div>
+              <input
+                className={inputCls}
+                placeholder="Voice ID — from the ElevenLabs console (stock or clone)"
+                value={c.elevenVoiceId ?? ""}
+                onChange={(e) => {
+                  const next = deepClone(story);
+                  const ch = next.characters.find((x) => x.id === c.id)!;
+                  ch.elevenVoiceId = e.target.value.trim() || undefined;
+                  onUpdate(next);
+                }}
+              />
+              <button
+                disabled={!c.elevenVoiceId || aiTestBusy === c.id}
+                onClick={async () => {
+                  if (!c.elevenVoiceId) return;
+                  const sample = `Well hello, detective. ${c.name || "Mystery voice"} speaking — do I sound right to you?`;
+                  if (!window.confirm(convertConfirmMessage(`${c.name} (sample line)`, c.elevenVoiceId, getElevenModel(), sample))) return;
+                  setAiTestBusy(c.id);
+                  try {
+                    const { dataUrl } = await synthesizeElevenLabs(sample, c.elevenVoiceId, getElevenModel());
+                    await new Audio(dataUrl).play();
+                  } catch (err) {
+                    window.alert((err as Error).message);
+                  } finally {
+                    setAiTestBusy(null);
+                  }
+                }}
+                className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+              >
+                {aiTestBusy === c.id ? "Converting sample…" : "▶ Test AI voice (spends credits)"}
+              </button>
             </div>
 
             <CollapsibleSection
@@ -3303,6 +3396,8 @@ function StudioInner({
   const future = useRef<Story[]>([]);
   const [, forceTick] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // beat id currently being synthesized by ElevenLabs (one line at a time)
+  const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
@@ -6773,6 +6868,70 @@ function StudioInner({
                           })}
                           placeholder="Or use uploaded audio..."
                         />
+                      </div>
+                      <div className="mt-1 flex gap-1">
+                        <button
+                          disabled={
+                            aiBusyBeat === b.id ||
+                            !!b.silent ||
+                            !b.text.trim() ||
+                            !!(b.recalls && Object.keys(b.recalls).length) ||
+                            !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                          }
+                          title={
+                            b.silent
+                              ? "Silent beat — no line to convert"
+                              : !b.text.trim()
+                                ? "Write the line first"
+                                : b.recalls && Object.keys(b.recalls).length
+                                  ? "This line recalls memories — its text changes by route, so it stays on TTS"
+                                  : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                                    ? "Assign this character's ElevenLabs voice ID in the People tab first"
+                                    : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
+                          }
+                          onClick={async () => {
+                            const ch = story.characters.find((x) => x.id === b.characterId);
+                            if (!ch?.elevenVoiceId) {
+                              window.alert("Assign this character's ElevenLabs voice ID in the People tab first.");
+                              return;
+                            }
+                            const line = b.text.trim();
+                            if (!line) return;
+                            if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
+                            setAiBusyBeat(b.id);
+                            try {
+                              const { dataUrl } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
+                              const result = await uploadDataUrlAsset(story.id, `voice-${b.characterId}-${b.id}`, "audio", dataUrl);
+                              if (!result.success || !result.assetId) throw new Error(result.error ?? "Upload to the media library failed.");
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${result.assetId}`;
+                              });
+                              void new Audio(dataUrl).play(); // audition the result straight away
+                            } catch (err) {
+                              window.alert((err as Error).message);
+                            } finally {
+                              setAiBusyBeat(null);
+                            }
+                          }}
+                          className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+                        >
+                          {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
+                        </button>
+                        {b.audioUrl && (
+                          <button
+                            onClick={() =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = undefined;
+                              })
+                            }
+                            title="Clear the MP3 — this line falls back to TTS"
+                            className="border border-crimson/40 px-2 py-1 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                          >
+                            ✕ TTS
+                          </button>
+                        )}
                       </div>
                     </Field>
                     <Field label="Line">

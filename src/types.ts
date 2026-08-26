@@ -764,6 +764,11 @@ export interface Character {
   trustMeter: number;
   /** optional Web Speech voice settings chosen in Studio */
   voice?: { voiceName?: string; pitch?: number; rate?: number };
+  /** ElevenLabs `voice_id` (a stock voice or a clone from the ElevenLabs
+   *  console) used to generate this character's dialogue lines as MP3s in
+   *  Studio. The API key itself is kept in the browser (localStorage),
+   *  never in the story data. */
+  elevenVoiceId?: string;
   /** Talking keyframes — sprite frames that auto-cycle as an on-scene portrait
    * while this character is the active speaker (a dialogue beat), the
    * VN / Ace-Attorney "animated while talking" look. Each entry is a url /
