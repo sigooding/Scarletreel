@@ -20,6 +20,8 @@ import {
   effectiveChoiceGating,
   examineZoom,
   flagSetSources,
+  isEpisodeUnlocked,
+  nextEpisodeForEnding,
   heatBustTarget,
   DEFAULT_PRESS_REACTIONS,
   interrogationOutcome,
@@ -39,9 +41,9 @@ import {
   writeSave,
   type GlobalState,
 } from "../src/logic";
-import { scenesInAct } from "../src/game/routeGraph";
+import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { NEON_DINER } from "../src/data/neonDiner";
-import type { Choice, GameSave, SceneNode, Story } from "../src/types";
+import type { Choice, EpisodeProgress, GameSave, JourneyStep, SceneNode, Story } from "../src/types";
 
 let passed = 0;
 const failures: string[] = [];
@@ -316,6 +318,78 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("validator: bad hotspot gate reported exactly once", dup.length === 1, dup);
 }
 
+// --- forked seasons: per-ending unlock + per-ending "next time on…" ---
+{
+  const endScene = (id: string, title: string): SceneNode => ({
+    id,
+    title,
+    background: "",
+    prose: "",
+    isEnding: true,
+    endingData: { tier: "victory-silver", headline: title, recap: "R" },
+  });
+  const forkStory: Story = {
+    id: "tfork",
+    title: "T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "e1a",
+    scenes: [
+      {
+        id: "e1a",
+        title: "A",
+        background: "",
+        prose: "",
+        choices: [
+          { id: "c1", text: "x", targetSceneId: "end_gold" },
+          { id: "c2", text: "y", targetSceneId: "end_alt" },
+        ],
+      },
+      endScene("end_gold", "G"),
+      endScene("end_alt", "A2"),
+      { id: "e2a", title: "2a", background: "", prose: "", choices: [{ id: "c3", text: "z", targetSceneId: "e2aend" }] },
+      endScene("e2aend", "2aE"),
+      { id: "e2b", title: "2b", background: "", prose: "", choices: [{ id: "c4", text: "z", targetSceneId: "e2bend" }] },
+      endScene("e2bend", "2bE"),
+      endScene("e3", "3"),
+    ],
+    items: [],
+    characters: [],
+    episodes: [
+      { id: "ep1", title: "E1", sceneIds: ["e1a", "end_gold", "end_alt"], startSceneId: "e1a", nextEpisodeByEnding: { end_alt: "e2b" } },
+      { id: "e2a", title: "E2A", sceneIds: ["e2a", "e2aend"], startSceneId: "e2a", unlockAfter: [{ episodeId: "ep1", endingSceneIds: ["end_gold"] }] },
+      { id: "e2b", title: "E2B", sceneIds: ["e2b", "e2bend"], startSceneId: "e2b", unlockAfter: [{ episodeId: "ep1", endingSceneIds: ["end_alt"] }] },
+      { id: "e3", title: "E3", sceneIds: ["e3"], startSceneId: "e3", unlockAfter: [{ episodeId: "e2a" }, { episodeId: "e2b" }] },
+    ],
+  };
+  const cleared = (episodeId: string, endingSceneId: string): EpisodeProgress => ({
+    episodeId,
+    endingSceneId,
+    endingHeadline: "H",
+    endingTier: "victory-silver",
+    completedAt: 1,
+    carry: { activeFlags: [], inventory: [], meters: { Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 0 }, characterTrust: {}, memories: {} },
+  });
+  check("unlockAfter: route chapters locked before their route", !isEpisodeUnlocked(forkStory, "e2a", {}) && !isEpisodeUnlocked(forkStory, "e2b", {}));
+  const afterGold = { ep1: cleared("ep1", "end_gold") };
+  const afterAlt = { ep1: cleared("ep1", "end_alt") };
+  check("unlockAfter: gold ending unlocks only the gold chapter", isEpisodeUnlocked(forkStory, "e2a", afterGold) && !isEpisodeUnlocked(forkStory, "e2b", afterGold));
+  check("unlockAfter: alt ending unlocks only the alt chapter", !isEpisodeUnlocked(forkStory, "e2a", afterAlt) && isEpisodeUnlocked(forkStory, "e2b", afterAlt));
+  check(
+    "unlockAfter (any-listed): final chapter unlocks from either route, not before",
+    isEpisodeUnlocked(forkStory, "e3", { ...afterGold, e2a: cleared("e2a", "e2aend") }) &&
+      isEpisodeUnlocked(forkStory, "e3", { ...afterAlt, e2b: cleared("e2b", "e2bend") }) &&
+      !isEpisodeUnlocked(forkStory, "e3", afterGold)
+  );
+  check(
+    "unlockAfter: already-cleared chapter stays replayable",
+    isEpisodeUnlocked(forkStory, "e2b", { ep1: cleared("ep1", "end_gold"), e2b: cleared("e2b", "e2bend") })
+  );
+  check("nextEpisodeForEnding: per-ending override wins", nextEpisodeForEnding(forkStory, "ep1", "end_alt")?.id === "e2b");
+  check("nextEpisodeForEnding: falls back to positional", nextEpisodeForEnding(forkStory, "ep1", "end_gold")?.id === "e2a");
+  check("nextEpisodeForEnding: unknown ending falls back", nextEpisodeForEnding(forkStory, "e2a", "nope")?.id === "e2b");
+}
+
 // Regression (A3): the bust contract must hold for ANY heat source — the
 // old entry-time-only check let mid-scene meter gains (replies, puzzles,
 // on-enter effects) pass the limit with the player still in the scene.
@@ -556,10 +630,11 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("gold: composure 1 after the soft press", composureRemaining(vinceScene, used) === 1);
   pick("nd_vince", "nd_v_threat");
   check("gold: composure zero after the third press", composureRemaining(vinceScene, used) === 0);
-  // Warm path: trust is 1 (+1 ask, +1 photo, -1 threat) ≥ crackTrust 0 → CRACK.
+  // Warm path: trust is 1 (+1 ask, +1 photo, -1 threat) ≥ crackTrust −1 → CRACK.
   check("gold: trust at zero is 1 (ask+photo-threat)", st.characterTrust.vince === 1, st.characterTrust);
   check("gold: warm path cracks (trust ≥ threshold)", interrogationOutcome(qv, st.characterTrust.vince) === "broke");
-  check("gold: cold trust would clamp", interrogationOutcome(qv, -1) === "clamped");
+  check("nd: threshold −1 — the plain-press warm path (ask, then press to zero at −1) cracks", interrogationOutcome(qv, -1) === "broke");
+  check("nd: pressing cold still clamps (−2)", interrogationOutcome(qv, -2) === "clamped");
   check("gold: crack/clamp flags are collected for the pickers", collectFlags(S).includes("vince_broke") && collectFlags(S).includes("vince_clamped"));
   check(
     "gold: memory-gated beat now visible",
@@ -638,6 +713,46 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("acts: Act One stops at the porch's destination", !act1.has("nd_street"), [...act1]);
   check("acts: Act Two owns street + accusation + endings", act2.has("nd_street") && act2.has("nd_accuse") && act2.has("nd_end_gold"), [...act2]);
   check("acts: heat-bust ending belongs to no act (trapdoor)", !act1.has("nd_end_folded") && !act2.has("nd_end_folded"));
+
+  // --- route map layering: loop-back navigation must not pump the ranks ---
+  // Act One is a hub-and-spoke act (booth/station/kitchen all return to the
+  // hall; freezer/back room return to the kitchen). Layering a graph with
+  // cycles never settles — the pre-fix fixed point ran to its cap and left
+  // the hall ranked 19 deep with every return edge drawn backwards.
+  {
+    const step = (sceneId: string, sceneTitle: string, choiceId: string, choiceText: string): JourneyStep => ({
+      sceneId,
+      sceneTitle,
+      choiceId,
+      choiceText,
+      attitudeTag: "Neutral",
+      options: [],
+      timedOut: false,
+      flagsSet: [],
+    });
+    const g = buildRouteGraph(
+      S,
+      "nd_act1",
+      [
+        step("nd_arrive", "The Hall", "nd_c_booth", "Booth four."),
+        step("nd_vince", "Booth Four", "nd_v_leave", "Leave the booth."),
+        step("nd_arrive", "The Hall", "nd_c_station", "The counter."),
+        step("nd_station", "Mabel's Station", "nd_s_back", "Back to the diner."),
+        step("nd_arrive", "The Hall", "nd_c_kitchen", "The kitchen."),
+        step("nd_kitchen", "The Kitchen", "nd_k_back", "Back to the hall."),
+        step("nd_arrive", "The Hall", "nd_c_porch", "Step out into the rain."),
+      ],
+      "nd_porch"
+    );
+    const depthOf = new Map(g.nodes.map((n) => [n.id, n.depth]));
+    check("map: loop-back act layers compactly (every scene at depth ≤ 3)", g.nodes.every((n) => n.depth <= 3), g.nodes.map((n) => `${n.id}:${n.depth}`));
+    check("map: the act's opener is ranked first and reads as taken", depthOf.get("nd_credits") === 0 && g.nodes.find((n) => n.id === "nd_credits")!.status === "taken");
+    check("map: the hall hub sits one rank in", depthOf.get("nd_arrive") === 1, depthOf.get("nd_arrive"));
+    const backs = g.edges.filter((e) => e.isBack);
+    check("map: every loop-back is flagged as a back edge (≥5)", backs.length >= 5, backs.length);
+    check("map: back edges point to a shallower rank", backs.every((e) => (depthOf.get(e.target) ?? 0) < (depthOf.get(e.source) ?? 0)), backs.map((e) => e.id));
+    check("map: every forward edge points strictly forward", g.edges.filter((e) => !e.isBack).every((e) => (depthOf.get(e.target) ?? 0) > (depthOf.get(e.source) ?? 0)), g.edges.filter((e) => !e.isBack).map((e) => e.id));
+  }
 
   // --- validator: exactly the one known trapdoor note, zero errors ---
   const issues = validateStory(S);
@@ -838,6 +953,37 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 }
 
 /* ================================================================== */
+/*  5. Voice ducking envelope (audio.ts — stepped ramp, real-time)     */
+/* ================================================================== */
+{
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const { audio } = await import("../src/audio");
+  let notified = 0;
+  audio.onDuckChange = () => notified++;
+  try {
+    audio.setVoiceDuckEnabled(true);
+    audio.duckFactor = 1;
+    audio.voiceStarted();
+    await sleep(700); // attack is 450ms
+    check("duck: dips toward the floor when voice starts", audio.duckFactor < 0.5, audio.duckFactor);
+    audio.voiceStarted(); // a second line begins — the floor must hold
+    await sleep(300);
+    check("duck: a new line holds the floor (no pump)", audio.duckFactor < 0.5, audio.duckFactor);
+    audio.voiceEnded();
+    await sleep(1100 + 900 + 400); // grace 1100ms + release 900ms + margin
+    check("duck: releases to full after a beat of silence", Math.abs(audio.duckFactor - 1) < 0.01, audio.duckFactor);
+    check("duck: envelope steps notified the game", notified > 5, notified);
+    audio.setVoiceDuckEnabled(false);
+    await sleep(300);
+    const level = audio.duckFactor;
+    audio.voiceStarted();
+    await sleep(700);
+    check("duck: disabled — voice never dips the music", Math.abs(audio.duckFactor - level) < 0.01, audio.duckFactor);
+    audio.setVoiceDuckEnabled(true);
+  } finally {
+    audio.onDuckChange = null;
+  }
+}
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {

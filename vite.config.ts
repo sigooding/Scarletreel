@@ -101,11 +101,15 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind all interfaces so the Arena live-preview proxy (outside the
+    // sandbox) can reach the server; localhost-only isn't previewable.
+    host: "0.0.0.0",
     // Accept the Arena live-preview host (e.g. <port>-<sandboxId>.e2b.app)
     // instead of rejecting it with a 403.
     allowedHosts: true,
   },
   preview: {
+    host: "0.0.0.0",
     allowedHosts: true,
   },
 });

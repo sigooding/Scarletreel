@@ -29,6 +29,7 @@ import {
   meetsGating,
   METER_LABELS,
   nextEpisode,
+  nextEpisodeForEnding,
   prettyFlagName,
   presentationConsequences,
   readSave,
@@ -2608,6 +2609,23 @@ function CasePlayer({
       /* storage unavailable — mute lasts the session */
     }
   }, [soundOn]);
+  // Sine-duck the scene music under dialogue/narration — on by default,
+  // survives the session like the mute.
+  const [duckOn, setDuckOn] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-duck") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    audio.setVoiceDuckEnabled(duckOn);
+    try {
+      localStorage.setItem("scarlet-reel-duck", duckOn ? "1" : "0");
+    } catch {
+      /* storage unavailable — duck lasts the session */
+    }
+  }, [duckOn]);
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicTrack, setMusicTrack] = useState<string | null>(null);
@@ -2898,7 +2916,9 @@ function CasePlayer({
       const a = reuse ?? new Audio(assetUrl(url));
       if (!reuse) a.loop = true;
       a.muted = !soundOnRef.current;
-      const target = audio.volumes.master * audio.volumes.music;
+      // The voice-duck envelope multiplies in here too, so a track that
+      // starts mid-dialogue comes in already ducked.
+      const target = audio.volumes.master * audio.volumes.music * audio.duckFactor;
       // Start silent and ramp in. A track adopted from the priming click may
       // already be audible, so it fades from wherever it actually is.
       a.volume = reuse ? a.volume : 0;
@@ -3016,6 +3036,7 @@ function CasePlayer({
     // every backtrack was a major source of progression farming.
     if (!revisit && !restoring) {
       scene.onEnterActions?.forEach((a) => {
+        if (a.conditionRule && !meetsGating(a.conditionRule, next)) return;
         next = applyConsequences(story, a.consequences, next);
       });
     }
@@ -3253,10 +3274,25 @@ function CasePlayer({
     // and the fade fight, producing an audible stutter. The ramp already
     // targets the live mixer value, so the new level lands when it settles.
     if (sceneAudioRef.current && !isFading(sceneAudioRef.current)) {
-      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music;
+      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
     }
     // Video cutscenes follow master only.
     if (bgVideoRef.current) bgVideoRef.current.volume = audio.volumes.master;
+  }, []);
+
+  // Sine-duck envelope: the scene music is a raw Audio element outside the
+  // WebAudio buses, so the stepped duck factor is re-applied to the live
+  // track as the half-sine ramp progresses (and on release).
+  useEffect(() => {
+    audio.onDuckChange = () => {
+      const a = sceneAudioRef.current;
+      if (a && !isFading(a)) {
+        a.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+      }
+    };
+    return () => {
+      audio.onDuckChange = null;
+    };
   }, []);
 
   const changeVolume = useCallback((ch: MixChannel, v: number) => {
@@ -3301,7 +3337,9 @@ function CasePlayer({
         .then(() => {
           setSoundBlocked(false);
           setMusicPlaying(true);
-          fadeAudio(a, audio.volumes.master * audio.volumes.music, MUSIC_FADE_MS);
+          // Keep the voice duck in the target — re-enabling sound mid-dialogue
+          // shouldn't slam the track up over a line that's still talking.
+          fadeAudio(a, audio.volumes.master * audio.volumes.music * audio.duckFactor, MUSIC_FADE_MS);
         })
         .catch(() => setSoundBlocked(true));
     }
@@ -3858,15 +3896,22 @@ function CasePlayer({
     };
   }, [scene, sceneId, hasValidAutoAdvance, overlay, menuOpen, interactive, hasUsableChoice, leaveFor]);
 
-  /** Append a decision to the ordered journey log. Captures the siblings that
-   * existed at this moment — including ones gated shut — because the whole
-   * point of the flowchart is showing the roads not taken. */
+  /** Append a decision to the ordered journey log. Captures the siblings
+   *  that existed at this moment — including ones gated shut — because the
+   *  whole point of the flowchart is showing the roads not taken.
+   *  Conversational replies count as siblings too: the question you didn't
+   *  ask is a road not taken as well, so an interrogation reads in the chart
+   *  as the escalation it was. One-shot replies already spent earlier in the
+   *  scene are shown locked — they were no longer on the table. */
   const recordJourney = useCallback(
-    (choice: Choice | null, opts?: { timedOut?: boolean }) => {
+    (choice: Choice | null, opts?: { timedOut?: boolean; used?: Set<string>; extraFlags?: string[] }) => {
       const liveScene = story.scenes.find((s) => s.id === sceneId);
       if (!liveScene) return;
       const st = stateRef.current;
-      const siblings = (liveScene.choices ?? []).filter((c) => !c.reply && c.targetSceneId);
+      const siblings = (liveScene.choices ?? []).filter(
+        (c) => c.reply || (c.targetSceneId !== undefined && c.targetSceneId !== "")
+      );
+      const used = opts?.used ?? usedChoices;
       const options = siblings
         // hidden choices that never unlocked were never really on the table
         .filter((c) => !(c.hidden && !meetsGating(effectiveChoiceGating(c), st)))
@@ -3875,7 +3920,8 @@ function CasePlayer({
           text: c.text,
           // a timed-out prompt was not chosen — the player let it lapse
           taken: !!choice && !opts?.timedOut && c.id === choice.id,
-          locked: !meetsGating(effectiveChoiceGating(c), st),
+          // gated shut, or a one-shot reply already spent in this scene
+          locked: !meetsGating(effectiveChoiceGating(c), st) || used.has(`${liveScene.id}:${c.id}`),
           attitudeTag: c.attitudeTag,
         }));
       const step: JourneyStep = {
@@ -3889,10 +3935,13 @@ function CasePlayer({
         timedOut: opts?.timedOut,
         trustChanges: choice?.consequences?.trustChanges,
         // Which flags this decision set — the route notes the flowchart and
-        // route map list with their Story.flagNotes.
+        // route map list with their Story.flagNotes. extraFlags carries flags
+        // the ENGINE applied on the player's behalf (the interrogation's
+        // break/clamp), which don't sit on the choice itself.
         flagsSet: [
           ...(choice?.consequences?.setFlags ?? []),
           ...(opts?.timedOut ? (choice?.timedOutConsequences?.setFlags ?? []) : []),
+          ...(opts?.extraFlags ?? []),
         ],
       };
       // Update the ref synchronously: the caller decides whether to raise a
@@ -3900,7 +3949,7 @@ function CasePlayer({
       journeyRef.current = [...journeyRef.current, step];
       setJourney(journeyRef.current);
     },
-    [story, sceneId]
+    [story, sceneId, usedChoices]
   );
 
   const pickChoice = useCallback(
@@ -3993,6 +4042,16 @@ function CasePlayer({
         if (choice.rememberLine || choice.memoryLog) {
           setEpisodeHighlights((h) => (h.includes(choice.text) ? h : [...h, choice.text].slice(-6)));
         }
+        // A reply that changes the world is a decision — the chart shows the
+        // booth's escalation (ask → press → press → break) as the road taken,
+        // with the answers not said as the roads not taken. Pure chit-chat
+        // (no memory, no consequences) stays out of the log.
+        if (choice.memoryLog || choice.rememberLine || choice.consequences) {
+          recordJourney(choice, {
+            used: usedChoices,
+            extraFlags: iqOutcome && q ? [iqOutcome === "broke" ? q.brokeFlag : q.clampFlag ?? ""].filter(Boolean) : undefined,
+          });
+        }
         return;
       }
       if (!choice.targetSceneId) {
@@ -4079,8 +4138,11 @@ function CasePlayer({
       leaveFor(choice.targetSceneId, liveScene?.partBreak);
     },
     // iqComposure is read for the live interrogation value — it must be a dep
-    // so the closure is never stale mid-interrogation.
-    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure]
+    // so the closure is never stale mid-interrogation. usedChoices must be
+    // one too: the reply branch builds the next used-set from it, and a stale
+    // copy dropped previously-spent replies, making one-shot replies
+    // re-pickable (a trust farm inside an interrogation).
+    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure, usedChoices]
   );
 
   const previousPerks = useRef<Perks>(getPerks(state));
@@ -4577,6 +4639,41 @@ function CasePlayer({
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
               each time the player enters the scene (not only on first mount). */}
           <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
+          {/* Scene-object images: transparent cutouts (a cup, a watch, a key)
+              drawn inside their hotspot zones. They live inside the zoom
+              wrapper so the examine camera magnifies them with the plate,
+              and they follow the zone's visibility — hidden while the gate
+              is shut, gone for good once a one-shot zone is used (a
+              picked-up object leaves the scene). */}
+          {sceneReady &&
+            !scene.isEnding &&
+            (scene.hotspots ?? [])
+              .filter((hs) => !!hs.image && !hs.image.startsWith("gradient:"))
+              .filter((hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`))
+              .filter((hs) => meetsGating(hs.gating, state))
+              .map((hs) => (
+                <div
+                  key={`hsimg-${hs.id}`}
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: `${hs.bounds.x}%`,
+                    top: `${hs.bounds.y}%`,
+                    width: `${hs.bounds.w}%`,
+                    height: `${hs.bounds.h}%`,
+                  }}
+                >
+                  <img
+                    src={assetUrl(hs.image)}
+                    alt=""
+                    draggable={false}
+                    className={
+                      hs.imageFit === "cover"
+                        ? "absolute inset-0 h-full w-full object-cover"
+                        : "absolute inset-0 m-auto max-h-full max-w-full object-contain"
+                    }
+                  />
+                </div>
+              ))}
         </div>
       </div>
     );
@@ -4794,7 +4891,7 @@ function CasePlayer({
             </span>
             {episode && (
               <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
-                {episodeLabel(episode.number ?? 1)} · {episode.title}
+                {episodeLabel(episode.number ?? 1, episode.numberSuffix)} · {episode.title}
               </span>
             )}
           </div>
@@ -5991,9 +6088,25 @@ function CasePlayer({
               />
               <span className="w-9 shrink-0 text-right font-type text-paper/50">{Math.round((volumes.music ?? 0.8) * 100)}%</span>
             </label>
+            <label className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <span className="w-16 shrink-0">Voice duck</span>
+              <button
+                onClick={() => {
+                  setDuckOn(!duckOn);
+                  audio.click();
+                }}
+                data-color={duckOn ? "cyan" : undefined}
+                data-active={duckOn || undefined}
+                className="hud-btn flex-1 px-2 py-1"
+              >
+                {duckOn ? "On — sine dip under voice" : "Off — music stays level"}
+              </button>
+            </label>
           </div>
           <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
-            Master scales everything · Scene music ducks just the soundtrack. Ambience, voice and effects stay in the newsstand's Sound Booth.
+            Master scales everything · Scene music ducks just the soundtrack. Voice duck dips the music on a
+            sine curve the moment dialogue or narration starts, and lets it back after a beat of silence.
+            Ambience, voice and effects stay in the newsstand's Sound Booth.
           </p>
         </div>
       )}
@@ -6224,7 +6337,7 @@ function CasePlayer({
 
       {overlay?.type === "save" && (
         <Modal
-          title={episode ? `Save — ${episodeLabel(episode.number ?? 1)}` : "Save — choose a slot"}
+          title={episode ? `Save — ${episodeLabel(episode.number ?? 1, episode.numberSuffix)}` : "Save — choose a slot"}
           onClose={() => {
             saveThenExitRef.current = false;
             setOverlay(null);
@@ -6353,7 +6466,7 @@ type SeasonPhase =
   | { kind: "recap"; episode: Episode }
   | { kind: "titleCard"; episode: Episode }
   | { kind: "play"; episode: Episode; resumeSlot?: number; runKey: number }
-  | { kind: "nextTime"; from: Episode; to: Episode };
+  | { kind: "nextTime"; from: Episode; to: Episode; /** per-ending teaser lines (forked seasons) */ lines?: string[] };
 
 /**
  * The entry point the app plays a story through.
@@ -6540,6 +6653,7 @@ function SeasonPlayer({
           story={story}
           fromEpisode={phase.from}
           toEpisode={phase.to}
+          lines={phase.lines}
           onContinue={() => startEpisode(phase.to)}
           onSeasonScreen={openSeason}
         />
@@ -6549,10 +6663,12 @@ function SeasonPlayer({
 
   // phase.kind === "play"
   const episode = phase.episode;
-  const following = nextEpisode(story, episode.id);
   // A finale (or an ending explicitly flagged as season-ending) stops here
   // instead of teasing a chapter the story doesn't intend you to reach.
   const endingScene = finished ? story.scenes.find((s) => s.id === finished.progress.endingSceneId) : undefined;
+  // Forked seasons route "next" per ending: each fork's curtain teases its
+  // own continuation chapter, not the positional one.
+  const following = endingScene ? nextEpisodeForEnding(story, episode.id, endingScene.id) : nextEpisode(story, episode.id);
   const seasonOver = !following || !!endingScene?.endingData?.endsSeason;
 
   return (
@@ -6576,7 +6692,15 @@ function SeasonPlayer({
             progress={finished.progress}
             choiceHighlights={finished.highlights}
             hasNext={!seasonOver}
-            onNextTime={() => following && setPhase({ kind: "nextTime", from: episode, to: following })}
+            onNextTime={() =>
+              following &&
+              setPhase({
+                kind: "nextTime",
+                from: episode,
+                to: following,
+                lines: endingScene ? episode.nextTimeByEnding?.[endingScene.id] ?? episode.nextTimeLines : episode.nextTimeLines,
+              })
+            }
             onReplay={() => startEpisode(episode)}
             onSeasonScreen={openSeason}
             onExit={onExit}

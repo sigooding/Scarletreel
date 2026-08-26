@@ -61,6 +61,15 @@ import { EpisodeEditor } from "./EpisodeEditor";
 import { ActEditor, ACT_TINTS } from "./ActEditor";
 import { HelpNote, StudioHelpModal } from "./StudioHelp";
 import { healLayout, tidyLayoutPositions } from "./canvas";
+import {
+  ELEVENLABS_MODELS,
+  convertConfirmMessage,
+  getElevenModel,
+  setElevenKey,
+  setElevenModel,
+  synthesizeElevenLabs,
+  getElevenKey,
+} from "./aiVoice";
 import { scenesInAct } from "../game/routeGraph";
 import { assetBackground, assetUrl } from "../assetPath";
 import {
@@ -181,6 +190,9 @@ type SceneNodeData = {
   isActStart?: boolean;
   /** true when more than one act's walk reaches this scene */
   actConflict?: boolean;
+  /** true when this scene is on the lit path from the start scene to the
+   *  selected one — the "where the story is" highlight */
+  onPath?: boolean;
   /** Raw background reference (asset: / path / gradient: / video:) — kept tiny
    * so ReactFlow node data stays serializable and cheap. Resolved to a real URL
    * at render time via the MediaResolverContext below. */
@@ -193,7 +205,7 @@ type SceneNodeData = {
 const MediaResolverContext = createContext<(v?: string) => string | undefined>(() => undefined);
 
 const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
-  const { scene, isStart, issueCount, backgroundRef, episodeNumber, episodeTitle, isEpisodeStart, actLabel, actTitle, actDot, isActStart, actConflict } = data as SceneNodeData;
+  const { scene, isStart, issueCount, backgroundRef, episodeNumber, episodeTitle, isEpisodeStart, actLabel, actTitle, actDot, isActStart, actConflict, onPath } = data as SceneNodeData;
   const resolveMedia = useContext(MediaResolverContext);
   const backgroundPreview = resolveMedia(backgroundRef) ?? backgroundRef;
   const isEnd = !!scene.isEnding;
@@ -202,11 +214,13 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
       ? "border-neon shadow-[0_0_15px_rgba(255,46,136,0.3)]"
       : scene.nodeType === "cutscene"
         ? "border-cyan-neon shadow-[0_0_15px_rgba(42,217,217,0.3)]"
-        : isStart
-          ? "border-gold/80"
-          : isEnd
-            ? "border-crimson/60"
-            : "border-noir-600";
+        : onPath
+          ? "border-gold/80 shadow-[0_0_14px_rgba(232,178,60,0.3)]"
+          : isStart
+            ? "border-gold/80"
+            : isEnd
+              ? "border-crimson/60"
+              : "border-noir-600";
 
   return (
     <div className={`scene-card w-56 border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}>
@@ -273,6 +287,12 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           </span>
           <span className="min-w-0 flex-1 truncate font-type text-[8px] text-paper/50">{actTitle}</span>
           {actConflict && <span className="shrink-0 text-[8px] text-crimson" title="Two acts reach this scene">⚠</span>}
+        </div>
+      )}
+      {scene.note && (
+        <div className="border-b border-gold/25 bg-gold/10 px-2 py-1" title={scene.note}>
+          <span className="font-pulp text-[8px] uppercase tracking-widest text-gold">📝 note · </span>
+          <span className="font-type text-[8px] leading-tight text-paper/70 line-clamp-2">{scene.note}</span>
         </div>
       )}
       <div className="px-2 py-1 text-[9px] text-paper/50">
@@ -2266,6 +2286,54 @@ function TalkingPreview({
   return <img src={assetUrl(resolved[i])} alt="" className="h-24 w-auto max-w-full object-contain" />;
 }
 
+/** Global ElevenLabs settings for the People tab. The API key lives in
+ *  localStorage only — never in the story data, saves, or exports. */
+function AiVoiceSettings() {
+  const [key, setKey] = useState(getElevenKey());
+  const [model, setModel] = useState(getElevenModel());
+  return (
+    <CollapsibleSection id="ai-voice-settings" title="🎙 AI Voice (ElevenLabs)" titleClass="text-neon" defaultOpen={false}>
+      <p className="font-type text-[9px] leading-relaxed text-paper/45">
+        Generate individual dialogue lines as MP3s from your ElevenLabs account — one line at a time, with a
+        credit-cost confirm before every conversion. Assign each character a voice ID below (copy it from the
+        ElevenLabs console — stock or cloned), then use the <b className="text-paper/70">🎙 Generate MP3</b> button on
+        any dialogue line in a scene's Beats tab.
+      </p>
+      <Field label="API key (xi-api-key…)">
+        <input
+          className={inputCls}
+          type="password"
+          value={key}
+          placeholder="Paste your ElevenLabs API key"
+          onChange={(e) => {
+            const v = e.target.value.trim();
+            setKey(v);
+            setElevenKey(v);
+          }}
+        />
+      </Field>
+      <Field label="Model">
+        <select
+          className={inputCls}
+          value={model}
+          onChange={(e) => {
+            setModel(e.target.value);
+            setElevenModel(e.target.value);
+          }}
+        >
+          {ELEVENLABS_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+      </Field>
+      <p className="font-type text-[8px] text-paper/35">
+        The key is stored in this browser's localStorage only — it is never written into the story, saves, or
+        exports. Match the model to your voices (v3 voices need Eleven v3).
+      </p>
+    </CollapsibleSection>
+  );
+}
+
 function CharacterEditor({
   story,
   onUpdate,
@@ -2276,9 +2344,11 @@ function CharacterEditor({
   media: (v?: string) => string | undefined;
 }) {
   const voices = useSpeechVoices();
+  const [aiTestBusy, setAiTestBusy] = useState<string | null>(null);
   return (
     <div className="space-y-2">
       <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">Characters (suspects/clues on board)</h3>
+      <AiVoiceSettings />
       {story.characters.map((c) => (
         <div key={c.id} className="flex gap-2 border border-noir-600 p-1.5">
           <div className="flex w-16 shrink-0 flex-col items-center gap-1">
@@ -2453,6 +2523,40 @@ function CharacterEditor({
                 ▶ Test voice
               </button>
               <p className="font-type text-[8px] text-paper/35">Tip: per-line MP3 voice files can be set on each dialogue beat (Beats tab).</p>
+            </div>
+            <div className="space-y-1 border border-noir-600/60 p-1.5">
+              <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">🎙 Voice (ElevenLabs AI)</div>
+              <input
+                className={inputCls}
+                placeholder="Voice ID — from the ElevenLabs console (stock or clone)"
+                value={c.elevenVoiceId ?? ""}
+                onChange={(e) => {
+                  const next = deepClone(story);
+                  const ch = next.characters.find((x) => x.id === c.id)!;
+                  ch.elevenVoiceId = e.target.value.trim() || undefined;
+                  onUpdate(next);
+                }}
+              />
+              <button
+                disabled={!c.elevenVoiceId || aiTestBusy === c.id}
+                onClick={async () => {
+                  if (!c.elevenVoiceId) return;
+                  const sample = `Well hello, detective. ${c.name || "Mystery voice"} speaking — do I sound right to you?`;
+                  if (!window.confirm(convertConfirmMessage(`${c.name} (sample line)`, c.elevenVoiceId, getElevenModel(), sample))) return;
+                  setAiTestBusy(c.id);
+                  try {
+                    const { dataUrl } = await synthesizeElevenLabs(sample, c.elevenVoiceId, getElevenModel());
+                    await new Audio(dataUrl).play();
+                  } catch (err) {
+                    window.alert((err as Error).message);
+                  } finally {
+                    setAiTestBusy(null);
+                  }
+                }}
+                className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+              >
+                {aiTestBusy === c.id ? "Converting sample…" : "▶ Test AI voice (spends credits)"}
+              </button>
             </div>
 
             <CollapsibleSection
@@ -2984,7 +3088,20 @@ function HotspotCanvas({
             style={{ left: `${h.bounds.x}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w}%`, height: `${h.bounds.h}%` }}
             title={h.label}
           >
-            {grantedItem ? (
+            {h.image ? (
+              <>
+                <img
+                  src={assetUrl(media(h.image) ?? h.image)}
+                  alt=""
+                  className={`pointer-events-none absolute inset-0 ${
+                    h.imageFit === "cover" ? "h-full w-full object-cover" : "m-auto max-h-full max-w-full object-contain"
+                  }`}
+                />
+                <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-noir-950/75 px-1 py-0.5 text-[7px]">
+                  {h.label}
+                </span>
+              </>
+            ) : grantedItem ? (
               grantedItem.iconUrl ? (
                 <img src={assetUrl(media(grantedItem.iconUrl) ?? grantedItem.iconUrl)} alt={grantedItem.name} className="pointer-events-none absolute inset-0 m-auto max-h-full max-w-full object-contain" />
               ) : (
@@ -3279,6 +3396,8 @@ function StudioInner({
   const future = useRef<Story[]>([]);
   const [, forceTick] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // beat id currently being synthesized by ElevenLabs (one line at a time)
+  const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
@@ -3739,6 +3858,48 @@ function StudioInner({
     return map;
   }, [story]);
 
+  // The road the story takes to reach the selected scene: a BFS from the
+  // start scene over the scene edges. Selecting a node lights that path so
+  // "where the story is" is visible at a glance — which branch feeds the
+  // scene, what it passes through — without tracing 68 cards by hand.
+  const pathToSelected = useMemo(() => {
+    if (!selectedId) return null;
+    if (selectedId === story.startSceneId)
+      return { scenes: new Set([story.startSceneId]), edges: new Set<string>() };
+    const adj = new Map<string, { edgeId: string; to: string }[]>();
+    storyEdges(story).forEach((e) => {
+      if (!story.scenes.some((s) => s.id === e.target)) return;
+      const list = adj.get(e.source) ?? [];
+      list.push({ edgeId: e.id, to: e.target });
+      adj.set(e.source, list);
+    });
+    const prev = new Map<string, { edgeId: string; from: string }>();
+    const seen = new Set([story.startSceneId]);
+    const queue = [story.startSceneId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (id === selectedId) break;
+      for (const { edgeId, to } of adj.get(id) ?? []) {
+        if (seen.has(to)) continue;
+        seen.add(to);
+        prev.set(to, { edgeId, from: id });
+        queue.push(to);
+      }
+    }
+    if (!prev.has(selectedId)) return null; // orphan — no road reaches it
+    const scenes = new Set<string>();
+    const edges = new Set<string>();
+    let cur: string | undefined = selectedId;
+    while (cur) {
+      scenes.add(cur);
+      const p = prev.get(cur);
+      if (!p) break;
+      edges.add(p.edgeId);
+      cur = p.from;
+    }
+    return { scenes, edges };
+  }, [story, selectedId]);
+
   const nodes: Node[] = useMemo(
     () =>
       story.scenes.map((sc) => ({
@@ -3759,35 +3920,42 @@ function StudioInner({
           actDot: sceneActs[sc.id]?.dot,
           isActStart: sceneActs[sc.id]?.isStart,
           actConflict: sceneActs[sc.id]?.conflict,
+          onPath: pathToSelected ? pathToSelected.scenes.has(sc.id) && sc.id !== selectedId : false,
         } satisfies SceneNodeData,
       })),
-    [story, selectedId, issueCountByScene, sceneEpisodes, sceneActs]
+    [story, selectedId, issueCountByScene, sceneEpisodes, sceneActs, pathToSelected]
   );
 
   const edges: Edge[] = useMemo(
     () =>
       storyEdges(story)
         .filter((e) => story.scenes.some((s) => s.id === e.target))
-        .map((e) => ({
-          id: e.id,
-          type: "removable",
-          source: e.source,
-          target: e.target,
-          sourceHandle:
-            e.kind === "choice"
-              ? `choice:${(e.ref as Choice).id}`
-              : e.kind === "hotspot"
-                ? `hotspot:${(e.ref as Hotspot).id}`
-                : "auto",
-          animated: e.kind === "hotspot" || e.kind === "auto",
-          style: {
-            stroke: ATTITUDE_STROKE[e.attitude] ?? "#8b8b9e",
-            strokeDasharray: e.kind === "hotspot" ? "5 4" : e.kind === "auto" ? "3 6" : undefined,
-          },
-          markerEnd: { type: MarkerType.ArrowClosed, color: ATTITUDE_STROKE[e.attitude] ?? "#8b8b9e" },
-          data: { sceneId: e.source, kind: e.kind, refId: e.kind === "choice" ? (e.ref as Choice).id : e.kind === "hotspot" ? (e.ref as Hotspot).id : "auto" },
-        })),
-    [story]
+        .map((e) => {
+          const onPath = pathToSelected?.edges.has(e.id) ?? false;
+          const stroke = onPath ? "#ffd166" : ATTITUDE_STROKE[e.attitude] ?? "#8b8b9e";
+          return {
+            id: e.id,
+            type: "removable",
+            source: e.source,
+            target: e.target,
+            sourceHandle:
+              e.kind === "choice"
+                ? `choice:${(e.ref as Choice).id}`
+                : e.kind === "hotspot"
+                  ? `hotspot:${(e.ref as Hotspot).id}`
+                  : "auto",
+            animated: e.kind === "hotspot" || e.kind === "auto",
+            style: {
+              stroke,
+              strokeWidth: onPath ? 2.5 : 1.5,
+              opacity: onPath ? 1 : 0.75,
+              strokeDasharray: e.kind === "hotspot" ? "5 4" : e.kind === "auto" ? "3 6" : undefined,
+            },
+            markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+            data: { sceneId: e.source, kind: e.kind, refId: e.kind === "choice" ? (e.ref as Choice).id : e.kind === "hotspot" ? (e.ref as Hotspot).id : "auto" },
+          };
+        }),
+    [story, pathToSelected]
   );
 
   const onNodesChange = useCallback(
@@ -4478,7 +4646,12 @@ function StudioInner({
             <MiniMap
               pannable
               zoomable
-              nodeColor={(n) => ((n.data as SceneNodeData).scene.isEnding ? "#e8b23c" : "#2b2b3f")}
+              // Endings keep gold; everything else takes its act's tint, so
+              // the minimap reads as the film's act structure at a glance.
+              nodeColor={(n) => {
+                const d = n.data as SceneNodeData;
+                return d.scene.isEnding ? "#e8b23c" : d.actDot ?? "#2b2b3f";
+              }}
               maskColor="rgba(7,7,12,0.75)"
               style={{ background: "#0c0c14" }}
             />
@@ -5934,6 +6107,15 @@ function StudioInner({
                   <input className={inputCls} value={scene.title} onChange={(e) => updateScene(scene.id, { title: e.target.value })} />
                 </Field>
 
+                <Field label="Note (shows on the canvas card)">
+                  <textarea
+                    className={`${inputCls} h-14 resize-y leading-snug`}
+                    placeholder="Author's sticky for this node — what it's for, what not to touch, where it sits in the story…"
+                    value={scene.note ?? ""}
+                    onChange={(e) => updateScene(scene.id, { note: e.target.value || undefined })}
+                  />
+                </Field>
+
                 <Field label="Background image / gradient">
                   {scene.background.startsWith("video:") ? (
                     <p className="border border-gold/30 bg-gold/5 px-2 py-1 font-type text-[10px] text-gold">
@@ -6687,6 +6869,70 @@ function StudioInner({
                           placeholder="Or use uploaded audio..."
                         />
                       </div>
+                      <div className="mt-1 flex gap-1">
+                        <button
+                          disabled={
+                            aiBusyBeat === b.id ||
+                            !!b.silent ||
+                            !b.text.trim() ||
+                            !!(b.recalls && Object.keys(b.recalls).length) ||
+                            !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                          }
+                          title={
+                            b.silent
+                              ? "Silent beat — no line to convert"
+                              : !b.text.trim()
+                                ? "Write the line first"
+                                : b.recalls && Object.keys(b.recalls).length
+                                  ? "This line recalls memories — its text changes by route, so it stays on TTS"
+                                  : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                                    ? "Assign this character's ElevenLabs voice ID in the People tab first"
+                                    : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
+                          }
+                          onClick={async () => {
+                            const ch = story.characters.find((x) => x.id === b.characterId);
+                            if (!ch?.elevenVoiceId) {
+                              window.alert("Assign this character's ElevenLabs voice ID in the People tab first.");
+                              return;
+                            }
+                            const line = b.text.trim();
+                            if (!line) return;
+                            if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
+                            setAiBusyBeat(b.id);
+                            try {
+                              const { dataUrl } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
+                              const result = await uploadDataUrlAsset(story.id, `voice-${b.characterId}-${b.id}`, "audio", dataUrl);
+                              if (!result.success || !result.assetId) throw new Error(result.error ?? "Upload to the media library failed.");
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${result.assetId}`;
+                              });
+                              void new Audio(dataUrl).play(); // audition the result straight away
+                            } catch (err) {
+                              window.alert((err as Error).message);
+                            } finally {
+                              setAiBusyBeat(null);
+                            }
+                          }}
+                          className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+                        >
+                          {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
+                        </button>
+                        {b.audioUrl && (
+                          <button
+                            onClick={() =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = undefined;
+                              })
+                            }
+                            title="Clear the MP3 — this line falls back to TTS"
+                            className="border border-crimson/40 px-2 py-1 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                          >
+                            ✕ TTS
+                          </button>
+                        )}
+                      </div>
                     </Field>
                     <Field label="Line">
                       <textarea
@@ -6819,7 +7065,9 @@ function StudioInner({
                   text, meter change, open corkboard, or use item (consume it, then run the rest). Only{" "}
                   <b>go to scene</b> / <b>use item</b> need a target — a give-item or set-flag hotspot legitimately
                   stays in place (that's how you build safes and cipher puzzles). Add <b>gating</b> to lock it; the
-                  custom fail message replaces the generic “locked up tighter…” hint.
+                  custom fail message replaces the generic “locked up tighter…” hint. Give a zone an{" "}
+                  <b>object image</b> (a transparent PNG of a cup, a watch, a key) and it's drawn inside the zone —
+                  drag the zone to position and scale it, and it zooms with the scene under the examine camera.
                 </HelpNote>
                 <p className="font-type text-[11px] text-paper/60">
                   Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one.
@@ -6951,6 +7199,71 @@ function StudioInner({
                           ))}
                         </select>
                       </Field>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <Field label="Object image (transparent)">
+                        <ImagePicker
+                          value={h.image}
+                          onChange={(v) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.image = v;
+                            })
+                          }
+                          storyId={story.id}
+                          includeGradients={false}
+                          placeholder="Pick an object image…"
+                        />
+                        <div className="mt-1 flex gap-1">
+                          <MediaUploadButton
+                            storyId={story.id}
+                            accept="image/*"
+                            label="⇧ Upload PNG"
+                            onUploaded={(_url, assetId) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.image = `asset:${assetId}`;
+                              })
+                            }
+                          />
+                          {h.image && (
+                            <button
+                              onClick={() =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  const hs = s.hotspots!.find((x) => x.id === h.id)!;
+                                  hs.image = undefined;
+                                  hs.imageFit = undefined;
+                                })
+                              }
+                              className="border border-crimson/40 px-2 py-1 font-pulp text-[10px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                            >
+                              ✕ Remove
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                          Transparent PNG/WebP of the object — the zone's bounds are its frame, so drag the zone to
+                          position and scale it. It zooms with the scene and vanishes when the zone is used.
+                        </p>
+                      </Field>
+                      <div className="flex flex-col gap-1">
+                        <Field label="Image fit">
+                          <select
+                            className={inputCls}
+                            value={h.imageFit ?? "contain"}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.imageFit = e.target.value as "contain" | "cover";
+                              })
+                            }
+                          >
+                            <option value="contain">contain — whole object</option>
+                            <option value="cover">cover — fill the zone</option>
+                          </select>
+                        </Field>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Grants item">

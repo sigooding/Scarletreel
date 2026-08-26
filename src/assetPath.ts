@@ -15,8 +15,10 @@
  * IndexedDB.
  */
 
-/** Vite's configured base, always with a trailing slash ("/" when at root). */
-const BASE = (import.meta.env.BASE_URL || "/").replace(/\/*$/, "/");
+/** Vite's configured base, always with a trailing slash ("/" when at root).
+ *  Optional-chained so the module also initialises under plain Node (the
+ *  engine test bundle), where `import.meta.env` doesn't exist. */
+const BASE = ((import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL || "/").replace(/\/*$/, "/");
 
 /** Prefix a root-absolute asset path with the deployment base path. */
 export function assetUrl(url: string): string;

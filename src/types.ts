@@ -81,6 +81,18 @@ export interface Hotspot {
   /** when true and the action grants an item, that item's image/emoji is drawn
    * inside the hotspot zone so players can literally see the object to pick up */
   showItemImage?: boolean;
+  /** Scene-object image drawn inside the zone bounds — a cup, a watch, a key
+   *  on a hook. Author it as a transparent-background image (PNG/WebP) so
+   *  only the object is drawn over the background plate. The zone's bounds
+   *  are the frame: drag/resize the zone to position and scale the object.
+   *  It magnifies with the plate when the examine camera zooms in, and it
+   *  follows the zone's visibility — hidden while the gate is shut, and
+   *  gone for good once a one-shot zone is used (a picked-up object leaves
+   *  the scene). */
+  image?: string;
+  /** How the object image fits its zone: "contain" keeps the whole object
+   *  visible (default); "cover" fills the zone, cropping the overflow. */
+  imageFit?: "contain" | "cover";
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release
@@ -98,7 +110,10 @@ export interface Hotspot {
 export interface Choice {
   id: string;
   text: string;
-  targetSceneId: string;
+  /** Where this choice navigates. Omitted for reply choices (reply: true),
+   * which answer in place without moving; the validator warns if a reply
+   * choice carries a target (it would navigate instead of replying). */
+  targetSceneId?: string;
   attitudeTag?: AttitudeTag;
   gating?: Gating;
   consequences?: Consequences;
@@ -259,6 +274,9 @@ export interface Episode {
   /** 1-based number shown on the title card ("Episode Two"). Defaults to its
    * position in the season. */
   number?: number;
+  /** Optional suffix after the number for sub-chapters ("Episode 2a"). Used
+   * when an act is split into several short episodes instead of one long one. */
+  numberSuffix?: string;
   title: string;
   /** small kicker above the title (default: the story title) */
   kicker?: string;
@@ -285,6 +303,20 @@ export interface Episode {
   nextTimeLines?: string[];
   /** playable from the season screen without clearing the previous episode */
   unlockedByDefault?: boolean;
+  /** Alternate-route seasons: when set, this episode is unlocked only if one
+   *  of the listed episodes was cleared — on one of its `endingSceneIds` when
+   *  given, on ANY of its endings when omitted. Replaces the positional
+   *  "previous episode cleared" rule for this episode. Already-cleared
+   *  (replayable) copies still unlock. This is what lets a forked season keep
+   *  each route's continuation chapter locked to the route that earned it. */
+  unlockAfter?: { episodeId: string; endingSceneIds?: string[] }[];
+  /** Per-ending "next time on…" routing: ending scene id → episode id.
+   *  Overrides the positional next episode for that ending, so each fork of a
+   *  season can point its curtain at its own continuation chapter. */
+  nextEpisodeByEnding?: Record<string, string>;
+  /** Per-ending "next time on…" teaser lines: ending scene id → lines.
+   *  Falls back to `nextTimeLines`. */
+  nextTimeByEnding?: Record<string, string[]>;
 }
 
 /** One line of a credits roll: a role label ("Directed by") and a name ("Sam Cole"). */
@@ -576,6 +608,10 @@ export interface CaseBriefing {
 
 export interface OnEnterAction {
   consequences?: Consequences;
+  /** Optional gate: the consequences apply only when the rule passes against
+   * the state at entry. Lets a scene fire a flag conditionally (e.g. a
+   * budget running out before a certain point) without a choice involved. */
+  conditionRule?: Gating;
 }
 
 /** Composure-pressure interrogation on the scene's suspect. Talking is the
@@ -622,6 +658,9 @@ export interface Interrogation {
 export interface SceneNode {
   id: string;
   title: string;
+  /** Author's sticky note for the Studio canvas — shown as a strip on the
+   * scene's node card. Studio metadata only; the game never renders it. */
+  note?: string;
   /** standard, credits (no HUD, big typography), or cutscene (no HUD, full-screen video) */
   nodeType?: "standard" | "credits" | "cutscene";
   /** Marks this scene as the END OF A PART. On leaving it, the game shows the
@@ -725,6 +764,11 @@ export interface Character {
   trustMeter: number;
   /** optional Web Speech voice settings chosen in Studio */
   voice?: { voiceName?: string; pitch?: number; rate?: number };
+  /** ElevenLabs `voice_id` (a stock voice or a clone from the ElevenLabs
+   *  console) used to generate this character's dialogue lines as MP3s in
+   *  Studio. The API key itself is kept in the browser (localStorage),
+   *  never in the story data. */
+  elevenVoiceId?: string;
   /** Talking keyframes — sprite frames that auto-cycle as an on-scene portrait
    * while this character is the active speaker (a dialogue beat), the
    * VN / Ace-Attorney "animated while talking" look. Each entry is a url /
