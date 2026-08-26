@@ -405,6 +405,96 @@ class AudioEngine {
     return { gain: out, stop: () => stops.forEach((fn) => fn()) };
   }
 
+  /* ------------------------- voice ducking -------------------------
+   * Sine-duck the scene music the moment dialogue or narration starts. The
+   * envelope is a half-sine (flat at both ends), so the soundtrack dips
+   * smoothly instead of cutting. While speech is active the floor holds;
+   * the release waits for a beat of silence, so a flowing dialogue scene
+   * doesn't pump the music between lines. The duck factor is exposed
+   * (duckFactor + onDuckChange) because the scene music is a raw
+   * HTMLAudioElement outside the WebAudio buses — the game multiplies it
+   * into the track's volume and re-applies it as the envelope steps. */
+
+  /** The option: when off, the music is never ducked. */
+  voiceDuckEnabled = true;
+  /** 1 = no duck; while ducked this sits at DUCK_FLOOR. The game multiplies
+   *  it into the scene-music element's volume. */
+  duckFactor = 1;
+  /** Notified on every envelope step so the game can re-apply the live
+   *  track's volume (the ramp is stepped, not a single scheduled curve). */
+  onDuckChange: ((f: number) => void) | null = null;
+  /** The floor: music sits at 35% of its volume under voice (~-9 dB). */
+  static readonly DUCK_FLOOR = 0.35;
+  private static readonly DUCK_ATTACK_MS = 450;
+  private static readonly DUCK_RELEASE_MS = 900;
+  /** Silence to hold before releasing, so line-to-line gaps don't pump. */
+  private static readonly DUCK_GRACE_MS = 1100;
+  private duckTimer: ReturnType<typeof setInterval> | null = null;
+  private duckReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  setVoiceDuckEnabled(on: boolean) {
+    if (this.voiceDuckEnabled === on) return;
+    this.voiceDuckEnabled = on;
+    if (!on) {
+      this.clearDuckRelease();
+      this.duckRamp(1, AudioEngine.DUCK_RELEASE_MS);
+    }
+  }
+
+  /** Voice just (re)started: dip to the floor on a half-sine attack. */
+  voiceStarted() {
+    if (!this.voiceDuckEnabled) return;
+    this.clearDuckRelease();
+    this.duckRamp(AudioEngine.DUCK_FLOOR, AudioEngine.DUCK_ATTACK_MS);
+  }
+
+  /** Voice ended (line finished / cancelled / dismissed): release to 1
+   *  after a grace of silence. A newer voiceStarted() cancels the pending
+   *  release, so consecutive lines hold the floor. */
+  voiceEnded() {
+    if (!this.voiceDuckEnabled) return;
+    this.clearDuckRelease();
+    this.duckReleaseTimer = setTimeout(() => {
+      this.duckReleaseTimer = null;
+      this.duckRamp(1, AudioEngine.DUCK_RELEASE_MS);
+    }, AudioEngine.DUCK_GRACE_MS);
+  }
+
+  private clearDuckRelease() {
+    if (this.duckReleaseTimer !== null) {
+      clearTimeout(this.duckReleaseTimer);
+      this.duckReleaseTimer = null;
+    }
+  }
+
+  /** Step a half-sine ramp of the duck factor — eased = sin(π/2 · p) is
+   *  flat at both ends — notifying onDuckChange at each step. */
+  private duckRamp(to: number, ms: number) {
+    if (this.duckTimer !== null) {
+      clearInterval(this.duckTimer);
+      this.duckTimer = null;
+    }
+    if (Math.abs(to - this.duckFactor) < 0.002) {
+      this.duckFactor = to;
+      this.onDuckChange?.(to);
+      return;
+    }
+    const from = this.duckFactor;
+    const start = Date.now();
+    const step = () => {
+      const p = Math.min(1, (Date.now() - start) / Math.max(1, ms));
+      const eased = Math.sin((p * Math.PI) / 2);
+      this.duckFactor = p >= 1 ? to : from + (to - from) * eased;
+      this.onDuckChange?.(this.duckFactor);
+      if (p >= 1) {
+        if (this.duckTimer !== null) clearInterval(this.duckTimer);
+        this.duckTimer = null;
+      }
+    };
+    step();
+    this.duckTimer = setInterval(step, 33);
+  }
+
   /* ------------------------- narration ------------------------- */
 
   speak(text: string, persona?: string, override?: { voiceName?: string; pitch?: number; rate?: number }) {
@@ -424,7 +514,15 @@ class AudioEngine {
     const chosen = override?.voiceName ? voices.find((v) => v.name === override.voiceName) : undefined;
     const pick = chosen ?? (persona && english.length ? english[personaHash % english.length] : narrator);
     if (pick) u.voice = pick;
+    // Duck the music for the life of this line. A cancel() from a newer
+    // line surfaces as a 'canceled' error — that line's own voiceStarted()
+    // already re-armed the duck, so only a natural end releases it.
+    u.onend = () => this.voiceEnded();
+    u.onerror = (e) => {
+      if (e.error !== "canceled") this.voiceEnded();
+    };
     window.speechSynthesis.speak(u);
+    this.voiceStarted();
   }
 
   /** Play a pre-recorded MP3 voice line (overrides TTS when set on a beat). */
@@ -456,6 +554,7 @@ class AudioEngine {
       .play()
       .then(() => {
         if (this.clip === el) this.clearPendingNarration();
+        this.voiceStarted();
       })
       .catch((err) => {
         const name = (err as DOMException | undefined)?.name;
@@ -471,22 +570,34 @@ class AudioEngine {
       });
   }
 
+  private clipEndHandler: (() => void) | null = null;
+
   playClip(url: string, prepared?: HTMLAudioElement): Promise<boolean> {
     this.stopSpeech();
     const a = prepared ?? new Audio(assetUrl(url));
     a.preload = "auto";
     a.volume = Math.min(1, this.volumes.voice * this.volumes.master);
     this.clip = a;
+    // Release the music duck when this clip finishes (the prepared element
+    // may be reused for a later clip — swap the handler, don't stack them).
+    if (this.clipEndHandler) a.removeEventListener("ended", this.clipEndHandler);
+    const endHandler = () => this.voiceEnded();
+    this.clipEndHandler = endHandler;
+    a.addEventListener("ended", endHandler);
     // Opening prose can be "primed" inside the user's Play click. If it is
     // already running by the time the scene mounts, adopt it instead of
     // restarting it — restarting would make the first words stutter or replay.
-    if (!a.paused && !a.ended) return Promise.resolve(true);
+    if (!a.paused && !a.ended) {
+      this.voiceStarted();
+      return Promise.resolve(true);
+    }
     if (a.ended) a.currentTime = 0;
     return a
       .play()
       .then(() => {
         // An earlier blocked attempt for this same clip is now obsolete.
         if (this.clip === a) this.clearPendingNarration();
+        this.voiceStarted();
         return true;
       })
       .catch((err) => {
@@ -517,6 +628,9 @@ class AudioEngine {
       this.clip.pause();
       this.clip = null;
     }
+    // Dismissed voice releases the music duck (after the grace, so a
+    // deliberate "next line" isn't followed by a dip/release flicker).
+    this.voiceEnded();
   }
 }
 

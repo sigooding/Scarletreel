@@ -2609,6 +2609,23 @@ function CasePlayer({
       /* storage unavailable — mute lasts the session */
     }
   }, [soundOn]);
+  // Sine-duck the scene music under dialogue/narration — on by default,
+  // survives the session like the mute.
+  const [duckOn, setDuckOn] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-duck") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    audio.setVoiceDuckEnabled(duckOn);
+    try {
+      localStorage.setItem("scarlet-reel-duck", duckOn ? "1" : "0");
+    } catch {
+      /* storage unavailable — duck lasts the session */
+    }
+  }, [duckOn]);
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicTrack, setMusicTrack] = useState<string | null>(null);
@@ -2899,7 +2916,9 @@ function CasePlayer({
       const a = reuse ?? new Audio(assetUrl(url));
       if (!reuse) a.loop = true;
       a.muted = !soundOnRef.current;
-      const target = audio.volumes.master * audio.volumes.music;
+      // The voice-duck envelope multiplies in here too, so a track that
+      // starts mid-dialogue comes in already ducked.
+      const target = audio.volumes.master * audio.volumes.music * audio.duckFactor;
       // Start silent and ramp in. A track adopted from the priming click may
       // already be audible, so it fades from wherever it actually is.
       a.volume = reuse ? a.volume : 0;
@@ -3255,10 +3274,25 @@ function CasePlayer({
     // and the fade fight, producing an audible stutter. The ramp already
     // targets the live mixer value, so the new level lands when it settles.
     if (sceneAudioRef.current && !isFading(sceneAudioRef.current)) {
-      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music;
+      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
     }
     // Video cutscenes follow master only.
     if (bgVideoRef.current) bgVideoRef.current.volume = audio.volumes.master;
+  }, []);
+
+  // Sine-duck envelope: the scene music is a raw Audio element outside the
+  // WebAudio buses, so the stepped duck factor is re-applied to the live
+  // track as the half-sine ramp progresses (and on release).
+  useEffect(() => {
+    audio.onDuckChange = () => {
+      const a = sceneAudioRef.current;
+      if (a && !isFading(a)) {
+        a.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+      }
+    };
+    return () => {
+      audio.onDuckChange = null;
+    };
   }, []);
 
   const changeVolume = useCallback((ch: MixChannel, v: number) => {
@@ -3303,7 +3337,9 @@ function CasePlayer({
         .then(() => {
           setSoundBlocked(false);
           setMusicPlaying(true);
-          fadeAudio(a, audio.volumes.master * audio.volumes.music, MUSIC_FADE_MS);
+          // Keep the voice duck in the target — re-enabling sound mid-dialogue
+          // shouldn't slam the track up over a line that's still talking.
+          fadeAudio(a, audio.volumes.master * audio.volumes.music * audio.duckFactor, MUSIC_FADE_MS);
         })
         .catch(() => setSoundBlocked(true));
     }
@@ -5993,9 +6029,25 @@ function CasePlayer({
               />
               <span className="w-9 shrink-0 text-right font-type text-paper/50">{Math.round((volumes.music ?? 0.8) * 100)}%</span>
             </label>
+            <label className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <span className="w-16 shrink-0">Voice duck</span>
+              <button
+                onClick={() => {
+                  setDuckOn(!duckOn);
+                  audio.click();
+                }}
+                data-color={duckOn ? "cyan" : undefined}
+                data-active={duckOn || undefined}
+                className="hud-btn flex-1 px-2 py-1"
+              >
+                {duckOn ? "On — sine dip under voice" : "Off — music stays level"}
+              </button>
+            </label>
           </div>
           <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
-            Master scales everything · Scene music ducks just the soundtrack. Ambience, voice and effects stay in the newsstand's Sound Booth.
+            Master scales everything · Scene music ducks just the soundtrack. Voice duck dips the music on a
+            sine curve the moment dialogue or narration starts, and lets it back after a beat of silence.
+            Ambience, voice and effects stay in the newsstand's Sound Booth.
           </p>
         </div>
       )}

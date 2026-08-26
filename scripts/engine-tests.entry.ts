@@ -912,6 +912,37 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 }
 
 /* ================================================================== */
+/*  5. Voice ducking envelope (audio.ts — stepped ramp, real-time)     */
+/* ================================================================== */
+{
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const { audio } = await import("../src/audio");
+  let notified = 0;
+  audio.onDuckChange = () => notified++;
+  try {
+    audio.setVoiceDuckEnabled(true);
+    audio.duckFactor = 1;
+    audio.voiceStarted();
+    await sleep(700); // attack is 450ms
+    check("duck: dips toward the floor when voice starts", audio.duckFactor < 0.5, audio.duckFactor);
+    audio.voiceStarted(); // a second line begins — the floor must hold
+    await sleep(300);
+    check("duck: a new line holds the floor (no pump)", audio.duckFactor < 0.5, audio.duckFactor);
+    audio.voiceEnded();
+    await sleep(1100 + 900 + 400); // grace 1100ms + release 900ms + margin
+    check("duck: releases to full after a beat of silence", Math.abs(audio.duckFactor - 1) < 0.01, audio.duckFactor);
+    check("duck: envelope steps notified the game", notified > 5, notified);
+    audio.setVoiceDuckEnabled(false);
+    await sleep(300);
+    const level = audio.duckFactor;
+    audio.voiceStarted();
+    await sleep(700);
+    check("duck: disabled — voice never dips the music", Math.abs(audio.duckFactor - level) < 0.01, audio.duckFactor);
+    audio.setVoiceDuckEnabled(true);
+  } finally {
+    audio.onDuckChange = null;
+  }
+}
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {
