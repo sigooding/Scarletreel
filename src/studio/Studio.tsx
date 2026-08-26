@@ -82,6 +82,7 @@ import {
 import { scenesInAct } from "../game/routeGraph";
 import { assetBackground, assetUrl } from "../assetPath";
 import {
+  bundleVoiceFileRefs,
   importStoryAssets,
   compactStoryMedia,
   uploadAsset,
@@ -4317,14 +4318,24 @@ function StudioInner({
   /* ---------- import / export / share ---------- */
   const exportJson = async () => {
     try {
-      const caseAssets = await loadStoryAssetsForExport(story);
-      const storyBundle: Story = { ...story, assets: caseAssets };
+      const [libraryAssets, bundled] = await Promise.all([
+        loadStoryAssetsForExport(story),
+        bundleVoiceFileRefs(story),
+      ]);
+      // Library rows (uploaded media, base64) plus the voice MP3s that were
+      // saved as files — so the export is self-contained either way.
+      const caseAssets = [...libraryAssets, ...bundled.assets];
+      const storyBundle: Story = { ...bundled.story, assets: caseAssets };
       const json = JSON.stringify(storyBundle, null, 2);
       setExportPayload(json);
+      const voicePart = bundled.assets.length ? ` (including ${bundled.assets.length} voice MP3 file${bundled.assets.length === 1 ? "" : "s"})` : "";
+      const missingPart = bundled.missing.length
+        ? ` WARNING: ${bundled.missing.length} voice file(s) referenced but not found on this machine are NOT in the export: ${bundled.missing.join(", ")}`
+        : "";
       say(
         caseAssets.length
-          ? `Bundled ${caseAssets.length} media asset(s) into the export. Use Download or Copy.`
-          : "Case bundled. Use Download or Copy — the JSON is yours."
+          ? `Bundled ${caseAssets.length} media asset(s)${voicePart} into the export. Use Download or Copy.${missingPart}`
+          : `Case bundled. Use Download or Copy — the JSON is yours.${missingPart}`
       );
     } catch {
       say("Failed to export case bundle.");

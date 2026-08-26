@@ -276,6 +276,33 @@ function registerVoiceIpc() {
     const target = targets[0];
     return { url: pathToFileURL(target).toString(), path: target };
   });
+
+  /** Read a voice MP3 back for self-contained exports. Packaged apps store
+   *  voice references as file:// URLs (userData), which the renderer cannot
+   *  fetch cross-origin — main reads it. The URL must resolve inside one of
+   *  the voices roots; anything else is refused. */
+  ipcMain.handle("scarlet-voice:read", async (_event, fileUrl) => {
+    const raw = String(fileUrl ?? "");
+    if (!raw.startsWith("file://")) throw new Error("Only file:// voice URLs can be read.");
+    let resolved;
+    try {
+      resolved = path.normalize(fileURLToPath(raw));
+    } catch {
+      throw new Error("Invalid voice file URL.");
+    }
+    if (!resolved.toLowerCase().endsWith(".mp3")) throw new Error("Voice files must be .mp3.");
+
+    const roots = [path.join(app.getPath("userData"), "game-media", "voices")];
+    if (!app.isPackaged) {
+      roots.push(path.join(app.getAppPath(), "public", "voices"));
+      roots.push(path.join(app.getAppPath(), "dist", "voices"));
+    }
+    const allowed = roots.some((root) => resolved.startsWith(root + path.sep));
+    if (!allowed) throw new Error("Voice file is outside the voices folder.");
+
+    const buffer = await fs.readFile(resolved);
+    return { base64: buffer.toString("base64"), size: buffer.length, name: path.basename(resolved) };
+  });
 }
 
 function registerWindowIpc() {

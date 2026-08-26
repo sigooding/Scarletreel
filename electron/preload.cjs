@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld("scarletReelDesktop", {
   saveVoice(payload) {
     return ipcRenderer.invoke("scarlet-voice:save", payload);
   },
+  /**
+   * Read a voice MP3 back (file:// URL from the packaged app's game-media
+   * folder) so exports can bundle it. Validated on the main side.
+   */
+  readVoice(fileUrl) {
+    return ipcRenderer.invoke("scarlet-voice:read", fileUrl);
+  },
   setFullscreen(enabled) {
     return ipcRenderer.invoke("scarlet-window:set-fullscreen", !!enabled);
   },
