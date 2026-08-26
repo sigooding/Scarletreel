@@ -2439,7 +2439,7 @@ function AiVoiceSettings() {
         </p>
       )}
       <p className="font-type text-[8px] text-paper/35">
-        The key is stored in this browser's localStorage only — it is never written into the story, saves, or
+        The key is stored in local browser/app storage only — it is never written into the story, saves, or
         exports. Match the model to your voices (v3 voices need Eleven v3).
       </p>
     </CollapsibleSection>
@@ -3536,10 +3536,12 @@ function StudioInner({
   const clipboardScene = useRef<SceneNode | null>(null);
   const [exportPayload, setExportPayload] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
-  // Save reminder: work lives in THIS browser (localStorage/IndexedDB), not in
-  // the repo or on GitHub — so remind the author to Export a .reel.json to
-  // keep a permanent, committable copy. Dismissible, but re-showable via the
+  // Save reminder: work autosaves to local storage only — this browser's
+  // storage on the web, the app's data folder in the compiled app. It never
+  // goes to the repo, GitHub or the cloud, so remind the author to Export a
+  // .reel.json as the permanent copy. Dismissible, but re-showable via the
   // toolbar 💾 button so it's always one click away.
+  const desktopApp = isDesktop();
   const [saveReminderDismissed, setSaveReminderDismissed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("scarlet-studio-savereminder-dismissed") === "1";
@@ -4505,7 +4507,11 @@ function StudioInner({
         <button
           onClick={showSaveReminder}
           className="btn-tool"
-          title="Your work lives in THIS browser — not the repo or GitHub. Shows the save reminder so you can Export a .reel.json to keep a copy."
+          title={
+            desktopApp
+              ? "Your work lives in this app's data folder — not the cloud or your repo. Shows the save reminder so you can Export a .reel.json to keep a copy."
+              : "Your work lives in THIS browser — not the repo or GitHub. Shows the save reminder so you can Export a .reel.json to keep a copy."
+          }
         >
           💾 Save
         </button>
@@ -4679,10 +4685,22 @@ function StudioInner({
             💾
           </span>
           <span className="min-w-0 flex-1 font-type text-[11px] leading-snug text-paper/85">
-            <b className="text-gold">Your work autosaves to this browser only</b> — it lives in this browser's storage,
-            not in your repo or on GitHub, and clearing the browser erases it.{" "}
-            <b className="text-gold">Export a .reel.json to keep a permanent copy</b>, then commit that file to your
-            repo to share it or version your work.
+            {desktopApp ? (
+              <>
+                <b className="text-gold">Your work autosaves to this app's data folder only</b> — it stays on this
+                machine (Windows: %APPDATA%\Scarlet Reel), not in the cloud or your repo, and reinstalling the app
+                or clearing its data erases it.{" "}
+                <b className="text-gold">Export a .reel.json to keep a permanent copy</b> — the export bundles all
+                media, including voice MP3s — and save that file somewhere safe.
+              </>
+            ) : (
+              <>
+                <b className="text-gold">Your work autosaves to this browser only</b> — it lives in this browser's
+                storage, not in your repo or on GitHub, and clearing the browser erases it.{" "}
+                <b className="text-gold">Export a .reel.json to keep a permanent copy</b>, then commit that file to
+                your repo to share it or version your work.
+              </>
+            )}
           </span>
           <button onClick={exportJson} className="btn-go shrink-0" title="Export this case as .reel.json">
             ⤓ Export .reel.json
@@ -5234,7 +5252,7 @@ function StudioInner({
                 <HelpNote id="media-tab" title="Media library">
                   Uploads are stored once per story and reused everywhere via the asset dropdowns (images in
                   background/foreground pickers, audio in music/narration/voice pickers, video in cutscenes). Drafts
-                  keep compact <code>asset:</code> references so big files don't blow the browser storage quota — the
+                  keep compact <code>asset:</code> references so big files don't blow the local storage quota — the
                   indicator tells you whether uploads will survive a reload.
                 </HelpNote>
                 <MediaLibrary storyId={story.id} />
