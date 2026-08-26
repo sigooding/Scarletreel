@@ -213,6 +213,15 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               Badges: <b>START</b> = entry scene (no inputs), <b>END</b> = ending (no outputs), plus CREDITS / CUTSCENE
               node types. The red <b>⚠N</b> is that scene's validator issue count.
             </p>
+            <p>
+              <b>Seeing where the story is:</b> click any card and the <b>gold path</b> from the start scene to it
+              lights up (thick gold edges, glowing cards) — the road the story takes to reach that scene. The
+              minimap colours every node by its act (endings stay gold), so the film's structure reads at a glance.
+            </p>
+            <p>
+              <b>📝 Notes:</b> the “Note” field in the inspector writes a sticky note straight onto the card (first two
+              lines shown, full text on hover). Studio metadata only — the game never renders it.
+            </p>
           </Section>
 
           <Section title="2 · The five-step authoring workflow">

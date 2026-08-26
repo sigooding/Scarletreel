@@ -646,6 +646,9 @@ export interface Interrogation {
 export interface SceneNode {
   id: string;
   title: string;
+  /** Author's sticky note for the Studio canvas — shown as a strip on the
+   * scene's node card. Studio metadata only; the game never renders it. */
+  note?: string;
   /** standard, credits (no HUD, big typography), or cutscene (no HUD, full-screen video) */
   nodeType?: "standard" | "credits" | "cutscene";
   /** Marks this scene as the END OF A PART. On leaving it, the game shows the

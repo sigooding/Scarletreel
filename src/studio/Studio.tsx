@@ -181,6 +181,9 @@ type SceneNodeData = {
   isActStart?: boolean;
   /** true when more than one act's walk reaches this scene */
   actConflict?: boolean;
+  /** true when this scene is on the lit path from the start scene to the
+   *  selected one — the "where the story is" highlight */
+  onPath?: boolean;
   /** Raw background reference (asset: / path / gradient: / video:) — kept tiny
    * so ReactFlow node data stays serializable and cheap. Resolved to a real URL
    * at render time via the MediaResolverContext below. */
@@ -193,7 +196,7 @@ type SceneNodeData = {
 const MediaResolverContext = createContext<(v?: string) => string | undefined>(() => undefined);
 
 const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
-  const { scene, isStart, issueCount, backgroundRef, episodeNumber, episodeTitle, isEpisodeStart, actLabel, actTitle, actDot, isActStart, actConflict } = data as SceneNodeData;
+  const { scene, isStart, issueCount, backgroundRef, episodeNumber, episodeTitle, isEpisodeStart, actLabel, actTitle, actDot, isActStart, actConflict, onPath } = data as SceneNodeData;
   const resolveMedia = useContext(MediaResolverContext);
   const backgroundPreview = resolveMedia(backgroundRef) ?? backgroundRef;
   const isEnd = !!scene.isEnding;
@@ -202,11 +205,13 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
       ? "border-neon shadow-[0_0_15px_rgba(255,46,136,0.3)]"
       : scene.nodeType === "cutscene"
         ? "border-cyan-neon shadow-[0_0_15px_rgba(42,217,217,0.3)]"
-        : isStart
-          ? "border-gold/80"
-          : isEnd
-            ? "border-crimson/60"
-            : "border-noir-600";
+        : onPath
+          ? "border-gold/80 shadow-[0_0_14px_rgba(232,178,60,0.3)]"
+          : isStart
+            ? "border-gold/80"
+            : isEnd
+              ? "border-crimson/60"
+              : "border-noir-600";
 
   return (
     <div className={`scene-card w-56 border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}>
@@ -273,6 +278,12 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           </span>
           <span className="min-w-0 flex-1 truncate font-type text-[8px] text-paper/50">{actTitle}</span>
           {actConflict && <span className="shrink-0 text-[8px] text-crimson" title="Two acts reach this scene">⚠</span>}
+        </div>
+      )}
+      {scene.note && (
+        <div className="border-b border-gold/25 bg-gold/10 px-2 py-1" title={scene.note}>
+          <span className="font-pulp text-[8px] uppercase tracking-widest text-gold">📝 note · </span>
+          <span className="font-type text-[8px] leading-tight text-paper/70 line-clamp-2">{scene.note}</span>
         </div>
       )}
       <div className="px-2 py-1 text-[9px] text-paper/50">
@@ -3739,6 +3750,48 @@ function StudioInner({
     return map;
   }, [story]);
 
+  // The road the story takes to reach the selected scene: a BFS from the
+  // start scene over the scene edges. Selecting a node lights that path so
+  // "where the story is" is visible at a glance — which branch feeds the
+  // scene, what it passes through — without tracing 68 cards by hand.
+  const pathToSelected = useMemo(() => {
+    if (!selectedId) return null;
+    if (selectedId === story.startSceneId)
+      return { scenes: new Set([story.startSceneId]), edges: new Set<string>() };
+    const adj = new Map<string, { edgeId: string; to: string }[]>();
+    storyEdges(story).forEach((e) => {
+      if (!story.scenes.some((s) => s.id === e.target)) return;
+      const list = adj.get(e.source) ?? [];
+      list.push({ edgeId: e.id, to: e.target });
+      adj.set(e.source, list);
+    });
+    const prev = new Map<string, { edgeId: string; from: string }>();
+    const seen = new Set([story.startSceneId]);
+    const queue = [story.startSceneId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (id === selectedId) break;
+      for (const { edgeId, to } of adj.get(id) ?? []) {
+        if (seen.has(to)) continue;
+        seen.add(to);
+        prev.set(to, { edgeId, from: id });
+        queue.push(to);
+      }
+    }
+    if (!prev.has(selectedId)) return null; // orphan — no road reaches it
+    const scenes = new Set<string>();
+    const edges = new Set<string>();
+    let cur: string | undefined = selectedId;
+    while (cur) {
+      scenes.add(cur);
+      const p = prev.get(cur);
+      if (!p) break;
+      edges.add(p.edgeId);
+      cur = p.from;
+    }
+    return { scenes, edges };
+  }, [story, selectedId]);
+
   const nodes: Node[] = useMemo(
     () =>
       story.scenes.map((sc) => ({
@@ -3759,35 +3812,42 @@ function StudioInner({
           actDot: sceneActs[sc.id]?.dot,
           isActStart: sceneActs[sc.id]?.isStart,
           actConflict: sceneActs[sc.id]?.conflict,
+          onPath: pathToSelected ? pathToSelected.scenes.has(sc.id) && sc.id !== selectedId : false,
         } satisfies SceneNodeData,
       })),
-    [story, selectedId, issueCountByScene, sceneEpisodes, sceneActs]
+    [story, selectedId, issueCountByScene, sceneEpisodes, sceneActs, pathToSelected]
   );
 
   const edges: Edge[] = useMemo(
     () =>
       storyEdges(story)
         .filter((e) => story.scenes.some((s) => s.id === e.target))
-        .map((e) => ({
-          id: e.id,
-          type: "removable",
-          source: e.source,
-          target: e.target,
-          sourceHandle:
-            e.kind === "choice"
-              ? `choice:${(e.ref as Choice).id}`
-              : e.kind === "hotspot"
-                ? `hotspot:${(e.ref as Hotspot).id}`
-                : "auto",
-          animated: e.kind === "hotspot" || e.kind === "auto",
-          style: {
-            stroke: ATTITUDE_STROKE[e.attitude] ?? "#8b8b9e",
-            strokeDasharray: e.kind === "hotspot" ? "5 4" : e.kind === "auto" ? "3 6" : undefined,
-          },
-          markerEnd: { type: MarkerType.ArrowClosed, color: ATTITUDE_STROKE[e.attitude] ?? "#8b8b9e" },
-          data: { sceneId: e.source, kind: e.kind, refId: e.kind === "choice" ? (e.ref as Choice).id : e.kind === "hotspot" ? (e.ref as Hotspot).id : "auto" },
-        })),
-    [story]
+        .map((e) => {
+          const onPath = pathToSelected?.edges.has(e.id) ?? false;
+          const stroke = onPath ? "#ffd166" : ATTITUDE_STROKE[e.attitude] ?? "#8b8b9e";
+          return {
+            id: e.id,
+            type: "removable",
+            source: e.source,
+            target: e.target,
+            sourceHandle:
+              e.kind === "choice"
+                ? `choice:${(e.ref as Choice).id}`
+                : e.kind === "hotspot"
+                  ? `hotspot:${(e.ref as Hotspot).id}`
+                  : "auto",
+            animated: e.kind === "hotspot" || e.kind === "auto",
+            style: {
+              stroke,
+              strokeWidth: onPath ? 2.5 : 1.5,
+              opacity: onPath ? 1 : 0.75,
+              strokeDasharray: e.kind === "hotspot" ? "5 4" : e.kind === "auto" ? "3 6" : undefined,
+            },
+            markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+            data: { sceneId: e.source, kind: e.kind, refId: e.kind === "choice" ? (e.ref as Choice).id : e.kind === "hotspot" ? (e.ref as Hotspot).id : "auto" },
+          };
+        }),
+    [story, pathToSelected]
   );
 
   const onNodesChange = useCallback(
@@ -4478,7 +4538,12 @@ function StudioInner({
             <MiniMap
               pannable
               zoomable
-              nodeColor={(n) => ((n.data as SceneNodeData).scene.isEnding ? "#e8b23c" : "#2b2b3f")}
+              // Endings keep gold; everything else takes its act's tint, so
+              // the minimap reads as the film's act structure at a glance.
+              nodeColor={(n) => {
+                const d = n.data as SceneNodeData;
+                return d.scene.isEnding ? "#e8b23c" : d.actDot ?? "#2b2b3f";
+              }}
               maskColor="rgba(7,7,12,0.75)"
               style={{ background: "#0c0c14" }}
             />
@@ -5932,6 +5997,15 @@ function StudioInner({
                 )}
                 <Field label="Title">
                   <input className={inputCls} value={scene.title} onChange={(e) => updateScene(scene.id, { title: e.target.value })} />
+                </Field>
+
+                <Field label="Note (shows on the canvas card)">
+                  <textarea
+                    className={`${inputCls} h-14 resize-y leading-snug`}
+                    placeholder="Author's sticky for this node — what it's for, what not to touch, where it sits in the story…"
+                    value={scene.note ?? ""}
+                    onChange={(e) => updateScene(scene.id, { note: e.target.value || undefined })}
+                  />
                 </Field>
 
                 <Field label="Background image / gradient">
