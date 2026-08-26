@@ -44,6 +44,23 @@ type DesktopMediaBridge = {
   isFullscreen?(): Promise<boolean>;
   setWindowSize?(width: number, height: number): Promise<{ width: number; height: number }>;
   quit?(): Promise<void>;
+  /* ---- player save files (real .sreel files in the user's saves folder) ---- */
+  savesDir?(): Promise<string>;
+  saveGameFile?(payload: {
+    storyId: string;
+    episodeId?: string;
+    slot: number;
+    saveJson: string;
+  }): Promise<{ path?: string }>;
+  listSaveFiles?(storyId: string): Promise<
+    Array<{ name: string; path: string; save: Record<string, unknown> }>
+  >;
+  exportSaveFile?(payload: { suggestedName: string; json: string }): Promise<{ canceled?: boolean; path?: string }>;
+  importSaveFile?(): Promise<{ canceled?: boolean; path?: string; json?: string }>;
+  openSavesDir?(): Promise<string>;
+  /** Native File menu events ("save" | "load" | "export-save" | "import-save" | "open-saves-dir").
+   *  Returns an unsubscribe function. */
+  onMenu?(cb: (action: string) => void): () => void;
 };
 
 declare global {

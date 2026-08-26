@@ -46,6 +46,15 @@ import {
   uid,
   writeSave,
 } from "../logic";
+import {
+  exportSaveFile,
+  importSaveFile,
+  onFileMenu,
+  openSavesDir,
+  saveFilesAvailable,
+  tailPath,
+  writeSaveFile,
+} from "./saveFiles";
 import { assetBackground, assetUrl } from "../assetPath";
 import {
   ActTitleCard,
@@ -3206,7 +3215,9 @@ function CasePlayer({
   useEffect(() => {
     if (!scene || scene.isEnding) return;
     const t = window.setTimeout(() => {
-      writeSave(AUTO_SLOT, buildSave());
+      const snapshot = buildSave();
+      writeSave(AUTO_SLOT, snapshot);
+      void writeSaveFile(AUTO_SLOT, snapshot); // desktop: keep the .sreel mirror current
       setCheckpointFlash(true);
     }, 400);
     return () => window.clearTimeout(t);
@@ -3220,12 +3231,16 @@ function CasePlayer({
   }, [checkpointFlash]);
 
   const doSave = useCallback(
-    (slot: number) => {
-      if (!writeSave(slot, buildSave())) {
+    async (slot: number) => {
+      const snapshot = buildSave();
+      if (!writeSave(slot, snapshot)) {
         pushToast("Save failed — browser storage unavailable.", "fail");
         audio.fail();
         return;
       }
+      // On the desktop shell, mirror to a real .sreel file so the save is a
+      // thing the player can find and keep, not just browser storage.
+      const filePath = await writeSaveFile(slot, snapshot);
       audio.success();
       if (saveThenExitRef.current) {
         saveThenExitRef.current = false;
@@ -3233,12 +3248,66 @@ function CasePlayer({
         onExit();
         return;
       }
-      pushToast(`Saved to slot ${slot}.`, "success");
+      pushToast(
+        filePath ? `Saved to slot ${slot} · ${tailPath(filePath)}` : `Saved to slot ${slot}.`,
+        "success"
+      );
       setSaves(readSaves(story.id, episodeId));
       setOverlay(null);
     },
     [buildSave, story, episodeId, onExit, pushToast]
   );
+
+  // Export the current state to a player-chosen .sreel file.
+  const doExportSave = useCallback(async () => {
+    const res = await exportSaveFile(buildSave());
+    if (res.canceled) return;
+    if (res.error) {
+      pushToast(res.error, "fail");
+      audio.fail();
+      return;
+    }
+    pushToast(`Save exported to ${res.path ? tailPath(res.path) : "your files"}.`, "success");
+  }, [buildSave, pushToast, audio]);
+
+  // Import a .sreel file the player picked and resume from it.
+  const doImportSave = useCallback(async () => {
+    const res = await importSaveFile();
+    if (res.canceled) return;
+    if (!res.save) {
+      pushToast(res.error ?? "That file couldn't be read as a save.", "fail");
+      audio.fail();
+      return;
+    }
+    if (res.save.storyId !== story.id) {
+      pushToast("That save is from a different story.", "fail");
+      audio.fail();
+      return;
+    }
+    restoreSave(res.save);
+    pushToast(`Loaded save from ${res.path ? tailPath(res.path) : "file"}.`, "success");
+    setOverlay(null);
+  }, [story.id, restoreSave, pushToast, audio]);
+
+  // Native File menu (Save/Load/Export/Import/Open Saves Folder).
+  useEffect(() => {
+    const off = onFileMenu((action) => {
+      if (action === "save") {
+        setSaves(readSaves(story.id, episodeId));
+        setOverlay({ type: "save" });
+      } else if (action === "load") {
+        setSaves(readSaves(story.id, episodeId));
+        setOverlay({ type: "load" });
+      } else if (action === "export-save") {
+        void doExportSave();
+      } else if (action === "import-save") {
+        void doImportSave();
+      } else if (action === "open-saves-dir") {
+        void openSavesDir();
+      }
+    });
+    return off;
+  }, [story.id, episodeId, doExportSave, doImportSave]);
 
   const doLoad = useCallback(
     (slot: number) => {
@@ -5959,6 +6028,15 @@ function CasePlayer({
                         </button>
                       ) : null;
                     })()}
+                    {saveFilesAvailable() && (
+                      <button
+                        onClick={() => void doExportSave()}
+                        title="Save this completed run as a .sreel file you can keep"
+                        className="border-2 border-gold/50 px-5 py-2 font-pulp text-xs uppercase tracking-widest text-gold hover:bg-gold/10"
+                      >
+                        📁 Export this playthrough
+                      </button>
+                    )}
                     <button
                       onClick={onExit}
                       className="border-2 border-paper/40 px-5 py-2 font-pulp text-xs uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
@@ -6359,7 +6437,7 @@ function CasePlayer({
                   </div>
                 </div>
                 <button
-                  onClick={() => doSave(slot)}
+                  onClick={() => void doSave(slot)}
                   className="shrink-0 border border-emerald-500/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-emerald-400 hover:bg-emerald-500/10"
                 >
                   {saveThenExitRef.current ? "Save & exit" : "Save here"}
@@ -6367,6 +6445,34 @@ function CasePlayer({
               </div>
             );
           })}
+          {saveFilesAvailable() && (
+            <div className="mt-3 border-t border-noir-600 pt-3">
+              <p className="mb-2 font-type text-[10px] leading-relaxed text-paper/50">
+                Slot saves are also written as real <b className="text-gold">.sreel</b> files in your saves
+                folder — export one to back it up or take it to another PC.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => void doExportSave()}
+                  className="border border-gold/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
+                >
+                  💾 Export save…
+                </button>
+                <button
+                  onClick={() => void doImportSave()}
+                  className="border border-cyan-neon/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                >
+                  📂 Import save…
+                </button>
+                <button
+                  onClick={() => void openSavesDir()}
+                  className="border border-paper/30 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
+                >
+                  📁 Open saves folder
+                </button>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 
