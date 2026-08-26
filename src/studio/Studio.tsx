@@ -70,6 +70,15 @@ import {
   synthesizeElevenLabs,
   getElevenKey,
 } from "./aiVoice";
+import {
+  clearVoiceFolder,
+  isDesktop,
+  linkVoiceFolder,
+  loadPersistedVoiceFolder,
+  requestVoiceFolderPermission,
+  saveGeneratedVoice,
+  voiceFolderSupported,
+} from "./voiceFiles";
 import { scenesInAct } from "../game/routeGraph";
 import { assetBackground, assetUrl } from "../assetPath";
 import {
@@ -2291,6 +2300,60 @@ function TalkingPreview({
 function AiVoiceSettings() {
   const [key, setKey] = useState(getElevenKey());
   const [model, setModel] = useState(getElevenModel());
+  const desktop = isDesktop();
+  const supported = voiceFolderSupported();
+  const [folderName, setFolderName] = useState<string | null>(null);
+  const [needsAuthorize, setNeedsAuthorize] = useState(false);
+
+  // On load, re-discover a previously linked voice folder and whether it still
+  // has write permission for this session.
+  useEffect(() => {
+    if (!supported) return;
+    let cancelled = false;
+    void (async () => {
+      const handle = await loadPersistedVoiceFolder();
+      if (cancelled || !handle) return;
+      const perm = await (handle.queryPermission?.({ mode: "readwrite" }) ?? "prompt");
+      if (cancelled) return;
+      if (perm === "granted") {
+        setFolderName(handle.name);
+        setNeedsAuthorize(false);
+      } else if (perm === "prompt") {
+        setFolderName(handle.name);
+        setNeedsAuthorize(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supported]);
+
+  const link = async () => {
+    try {
+      const handle = await linkVoiceFolder();
+      if (!handle) return;
+      setFolderName(handle.name);
+      setNeedsAuthorize(false);
+    } catch {
+      /* the author cancelled the folder picker — nothing to do */
+    }
+  };
+  const reauthorize = async () => {
+    const handle = await loadPersistedVoiceFolder();
+    if (!handle) {
+      setFolderName(null);
+      return;
+    }
+    const perm = await requestVoiceFolderPermission(handle);
+    if (perm === "granted") setNeedsAuthorize(false);
+    else window.alert("Voice-folder access wasn't authorised — MP3s will stay in the browser until it is. Use the browser prompt to allow it.");
+  };
+  const unlink = async () => {
+    await clearVoiceFolder();
+    setFolderName(null);
+    setNeedsAuthorize(false);
+  };
+
   return (
     <CollapsibleSection id="ai-voice-settings" title="🎙 AI Voice (ElevenLabs)" titleClass="text-neon" defaultOpen={false}>
       <p className="font-type text-[9px] leading-relaxed text-paper/45">
@@ -2326,6 +2389,54 @@ function AiVoiceSettings() {
           ))}
         </select>
       </Field>
+      {desktop ? (
+        <p className="font-type text-[8px] leading-relaxed text-paper/45">
+          <b className="text-neon">Where MP3s go:</b> saved automatically as real files —{" "}
+          <code className="text-gold">public/voices/&lt;person&gt;/&lt;scene&gt;/&lt;line&gt;.mp3</code> in this
+          checkout — so they're in the repo and you can git-commit them with the story.
+        </p>
+      ) : supported ? (
+        <div className="space-y-1.5">
+          <Field label="Voice folder — where the MP3 files are saved">
+            <div className="flex flex-wrap items-center gap-2">
+              {folderName ? (
+                <span className={needsAuthorize ? "text-gold" : "text-neon"}>
+                  📁 {folderName} {needsAuthorize ? "· needs re-authorise" : "· linked ✓"}
+                </span>
+              ) : (
+                <span className="text-paper/40">not linked — MP3s would stay in the browser only</span>
+              )}
+            </div>
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => void link()} className="btn-tool" title="Pick the repo's public/voices folder">
+              📁 {folderName ? "Re-link folder…" : "Link public/voices folder…"}
+            </button>
+            {folderName && needsAuthorize && (
+              <button onClick={() => void reauthorize()} className="btn-tool">
+                Authorise access
+              </button>
+            )}
+            {folderName && !needsAuthorize && (
+              <button onClick={() => void unlink()} className="btn-tool">
+                Unlink
+              </button>
+            )}
+          </div>
+          <p className="font-type text-[8px] leading-relaxed text-paper/35">
+            Pick your repo's <code className="text-paper/60">public/voices</code> folder (create it first if
+            missing). Each converted line is then written as a real file —{" "}
+            <code className="text-paper/60">&lt;person&gt;/&lt;scene&gt;/&lt;line&gt;.mp3</code> — so it's in the
+            repo and you can git-commit it. Without a linked folder the MP3 lives in this browser only.
+          </p>
+        </div>
+      ) : (
+        <p className="font-type text-[8px] leading-relaxed text-paper/45">
+          <b className="text-gold">Where MP3s go:</b> this browser can't write files into the repo, so converted
+          MP3s are kept in the browser's media library only (they export fine, but aren't in the repo). Use a
+          Chromium browser with folder access, or the desktop app, to save them as committable files.
+        </p>
+      )}
       <p className="font-type text-[8px] text-paper/35">
         The key is stored in this browser's localStorage only — it is never written into the story, saves, or
         exports. Match the model to your voices (v3 voices need Eleven v3).
@@ -3398,6 +3509,8 @@ function StudioInner({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // beat id currently being synthesized by ElevenLabs (one line at a time)
   const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
+  // where the most recent converted MP3 ended up (file path, or a warning)
+  const [aiNote, setAiNote] = useState<{ text: string; at: number } | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
@@ -6899,14 +7012,26 @@ function StudioInner({
                             if (!line) return;
                             if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
                             setAiBusyBeat(b.id);
+                            setAiNote(null);
                             try {
-                              const { dataUrl } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
-                              const result = await uploadDataUrlAsset(story.id, `voice-${b.characterId}-${b.id}`, "audio", dataUrl);
-                              if (!result.success || !result.assetId) throw new Error(result.error ?? "Upload to the media library failed.");
+                              const { dataUrl, blob } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
+                              // Save the MP3 as a real file (public/voices/<person>/<scene>/
+                              // on desktop, the linked folder in the browser) and point the
+                              // beat at wherever it actually landed.
+                              const saved = await saveGeneratedVoice({
+                                storyId: story.id,
+                                characterId: b.characterId,
+                                sceneId: scene.id,
+                                beatId: b.id,
+                                blob,
+                                dataUrl,
+                                assetName: `voice-${b.characterId}-${b.id}`,
+                              });
                               mutate((d) => {
                                 const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${result.assetId}`;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = saved.url;
                               });
+                              setAiNote({ text: saved.note, at: Date.now() });
                               void new Audio(dataUrl).play(); // audition the result straight away
                             } catch (err) {
                               window.alert((err as Error).message);
@@ -6918,6 +7043,11 @@ function StudioInner({
                         >
                           {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
                         </button>
+                        {aiNote && (
+                          <p className="font-type text-[8px] leading-snug text-gold/90" title={aiNote.text}>
+                            {aiNote.text}
+                          </p>
+                        )}
                         {b.audioUrl && (
                           <button
                             onClick={() =>

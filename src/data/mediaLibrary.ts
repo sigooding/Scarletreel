@@ -31,6 +31,15 @@ type DesktopMediaBridge = {
     type: AssetType;
     bytes: ArrayBuffer;
   }): Promise<{ url?: string; path?: string }>;
+  /** Copy a generated ElevenLabs voice line into the game folder's
+   *  `voices/<person>/<scene>/` tree. `relativePath` is validated on the
+   *  main side to stay inside that tree. */
+  saveVoice?(payload: {
+    relativePath: string;
+    bytes: ArrayBuffer;
+    name: string;
+    mimeType: string;
+  }): Promise<{ url?: string; path?: string }>;
   setFullscreen?(enabled: boolean): Promise<boolean>;
   isFullscreen?(): Promise<boolean>;
   setWindowSize?(width: number, height: number): Promise<{ width: number; height: number }>;

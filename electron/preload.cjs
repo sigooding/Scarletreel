@@ -8,6 +8,13 @@ contextBridge.exposeInMainWorld("scarletReelDesktop", {
   saveUpload(payload) {
     return ipcRenderer.invoke("scarlet-media:save-upload", payload);
   },
+  /**
+   * Copy a generated ElevenLabs voice line into the voices folder
+   * (voices/<person>/<scene>/<line>.mp3) so it is a real, committable file.
+   */
+  saveVoice(payload) {
+    return ipcRenderer.invoke("scarlet-voice:save", payload);
+  },
   setFullscreen(enabled) {
     return ipcRenderer.invoke("scarlet-window:set-fullscreen", !!enabled);
   },

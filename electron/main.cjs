@@ -121,6 +121,35 @@ function registerDesktopMediaIpc() {
   });
 }
 
+/** ElevenLabs voice files: strictly voices/<person>/<scene>/<line>.mp3 so the
+ *  renderer can never write outside the committed voice tree. */
+const VOICE_REL_PATH_RE = /^voices\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.mp3$/;
+
+function registerVoiceIpc() {
+  ipcMain.handle("scarlet-voice:save", async (_event, payload) => {
+    const relativePath = String(payload?.relativePath ?? "");
+    if (!VOICE_REL_PATH_RE.test(relativePath)) {
+      throw new Error(`Invalid voice path "${relativePath}" — expected voices/<person>/<scene>/<line>.mp3`);
+    }
+    const bytes = payload?.bytes;
+    const buffer = Buffer.from(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
+    if (!buffer.length) throw new Error("Voice file was empty.");
+
+    const targets = desktopUploadTargets(relativePath);
+    await Promise.all(targets.map(async (target) => {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, buffer);
+    }));
+
+    // Same two-mode behaviour as uploads: dev checkout gets the real repo
+    // files (public/ and dist/), a packaged app gets the userData folder.
+    const publicTarget = targets.find((target) => target.includes(`${path.sep}public${path.sep}`));
+    if (publicTarget) return { url: `/${relativePath.split(path.sep).join("/")}`, path: publicTarget };
+    const target = targets[0];
+    return { url: pathToFileURL(target).toString(), path: target };
+  });
+}
+
 function registerWindowIpc() {
   ipcMain.handle("scarlet-window:set-fullscreen", (event, enabled) => {
     const win = windowFromEvent(event);
@@ -231,6 +260,7 @@ if (!gotLock) {
   app.quit();
 } else {
   registerDesktopMediaIpc();
+  registerVoiceIpc();
   registerWindowIpc();
 
   // Windows opened by the web app (Studio playtests use window.open) are
