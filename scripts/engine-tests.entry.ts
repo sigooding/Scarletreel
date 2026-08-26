@@ -985,6 +985,147 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   }
 }
 
+/* ================================================================== */
+/*  6. Voice-file export round trip (mediaLibrary.ts — real code)      */
+/*                                                                     */
+/*  The .reel.json envelope never changed shape: it is still           */
+/*  `{ ...story, assets: MediaAsset[] }`. What changed is content —    */
+/*  voice lines saved as files (/voices/... or file://) are read off   */
+/*  disk and converted into ordinary asset:<id> rows, which the        */
+/*  UNCHANGED import path (importStoryAssets + compactStoryMedia)      */
+/*  already consumes. This section proves that round trip.             */
+/* ================================================================== */
+{
+  const http = await import("node:http");
+  const { bundleVoiceFileRefs, resolveMediaValue } = await import("../src/data/mediaLibrary");
+
+  // A tiny static server standing in for the dev server's public/ folder.
+  const mp3Bytes = "ID3fake-mp3-bytes-for-the-export-round-trip-test-1234";
+  const routes: Record<string, string> = {
+    "/voices/rosa/nwd_test/line.mp3": mp3Bytes,
+  };
+  const server = http.createServer((req, res) => {
+    const body = routes[req.url ?? ""];
+    if (body === undefined) {
+      res.writeHead(404).end("nope");
+      return;
+    }
+    res.writeHead(200, { "content-type": "audio/mpeg" }).end(body);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const addr = server.address();
+  const port = typeof addr === "object" && addr ? addr.port : 0;
+  const base = `http://127.0.0.1:${port}`;
+
+  // Node's fetch refuses root-relative URLs — point them at the server,
+  // exactly like the dev server serves public/ in a real browser.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: unknown, init?: unknown) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String(input);
+    return realFetch(url.startsWith("/") ? base + url : url, init as RequestInit | undefined);
+  }) as typeof fetch;
+
+  try {
+    const story = {
+      id: "export-roundtrip",
+      title: "Export Round Trip",
+      startSceneId: "s1",
+      scenes: [
+        {
+          id: "s1",
+          title: "The Diner",
+          background: "gradient:linear-gradient(#000,#111)",
+          dialogueBeats: [
+            { id: "b1", characterId: "rosa", text: "Hi.", audioUrl: "/voices/rosa/nwd_test/line.mp3" },
+            { id: "b2", characterId: "rosa", text: "Gone.", audioUrl: "/voices/rosa/nwd_test/absent.mp3" },
+            { id: "b3", characterId: "rosa", text: "No voice." },
+          ],
+        },
+      ],
+      characters: [{ id: "rosa", name: "Rosa" }],
+      items: [],
+    } as unknown as Story;
+
+    const { story: exported, assets, missing } = await bundleVoiceFileRefs(story);
+
+    // 1. The found file becomes an asset: reference + one bundled base64 row.
+    const refB1 = exported.scenes[0].dialogueBeats![0].audioUrl!;
+    check("voice export: file ref becomes an asset: ref", refB1.startsWith("asset:voice-"), refB1);
+    check("voice export: exactly one bundled asset row", assets.length === 1, assets.length);
+    const row = assets[0];
+    check(
+      "voice export: row carries a base64 mp3 payload",
+      !!row.dataUrl?.startsWith("data:audio/mpeg;base64,"),
+      row.dataUrl?.slice(0, 40)
+    );
+    const decoded = Buffer.from(row.dataUrl!.slice("data:audio/mpeg;base64,".length), "base64").toString("utf8");
+    check("voice export: payload decodes to the exact file bytes", decoded === mp3Bytes, decoded);
+
+    // 2. A referenced-but-missing file is named; its reference is untouched.
+    check(
+      "voice export: missing file is named in the report",
+      missing.length === 1 && missing[0] === "/voices/rosa/nwd_test/absent.mp3",
+      missing
+    );
+    check(
+      "voice export: missing ref left as-is",
+      exported.scenes[0].dialogueBeats![1].audioUrl === "/voices/rosa/nwd_test/absent.mp3"
+    );
+
+    // 3. The working story is never mutated by the export.
+    check(
+      "voice export: input story not mutated",
+      story.scenes[0].dialogueBeats![0].audioUrl === "/voices/rosa/nwd_test/line.mp3"
+    );
+
+    // 4. The UNCHANGED import path: importStoryAssets strips fileUrl (absent
+    //    on bundled rows) and stores the rest; the game then resolves the ref
+    //    through the same id->url map it builds at play time.
+    const importedRows = assets.map(({ fileUrl: _fileUrl, ...asset }) => ({
+      ...asset,
+      storyId: "someone-elses-story",
+    }));
+    const map: Record<string, string> = Object.fromEntries(
+      importedRows.map((a) => [a.id, (a as { fileUrl?: string }).fileUrl ?? a.dataUrl])
+    );
+    check(
+      "voice export→import: play-time resolver finds the voice",
+      resolveMediaValue(refB1, map) === row.dataUrl
+    );
+
+    // 5. A file:// ref (packaged-app reference) without the desktop bridge
+    //    is reported missing rather than silently dropped or crashed on.
+    const fileRefStory = JSON.parse(JSON.stringify(story)) as unknown as Story;
+    fileRefStory.scenes[0].dialogueBeats![0].audioUrl =
+      "file:///C:/Users/x/AppData/Roaming/Scarlet Reel/game-media/voices/rosa/nwd_test/line.mp3";
+    delete fileRefStory.scenes[0].dialogueBeats![1].audioUrl;
+    const fileOut = await bundleVoiceFileRefs(fileRefStory);
+    check(
+      "voice export: file:// ref without desktop bridge is reported missing",
+      fileOut.missing.length === 1 && fileOut.missing[0].startsWith("file://"),
+      fileOut.missing
+    );
+
+    // 6. An old-style export (asset: refs + library rows, no voice files)
+    //    passes through the new exporter byte-for-byte untouched.
+    const legacy = JSON.parse(JSON.stringify(story)) as unknown as Story;
+    legacy.scenes[0].dialogueBeats![0].audioUrl = "asset:17345-original";
+    delete legacy.scenes[0].dialogueBeats![1].audioUrl;
+    const legacyOut = await bundleVoiceFileRefs(legacy);
+    check(
+      "voice export: legacy asset: refs pass through untouched",
+      legacyOut.story.scenes[0].dialogueBeats![0].audioUrl === "asset:17345-original"
+    );
+    check(
+      "voice export: legacy export adds no rows and names no missing",
+      legacyOut.assets.length === 0 && legacyOut.missing.length === 0
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    server.close();
+  }
+}
+
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   for (const f of failures) console.log(`  ✖ ${f}`);

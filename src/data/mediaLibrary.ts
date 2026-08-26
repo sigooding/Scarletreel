@@ -723,6 +723,26 @@ export async function loadStoryAssetsForExport(story: Story): Promise<MediaAsset
   }
 }
 
+/** Blob → data URL. FileReader in the browser; a base64 fallback for
+ *  non-DOM runtimes (the engine tests exercise this under plain Node). */
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const mime = blob.type || "application/octet-stream";
+  if (typeof FileReader !== "undefined") {
+    return await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(fr.error ?? new Error("Could not read voice file."));
+      fr.readAsDataURL(blob);
+    });
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:${mime};base64,${btoa(bin)}`;
+}
+
 /** Read one voice-file reference as a base64 data URL: `/voices/...` public
  *  paths are fetched (dev server / static build), `file://` URLs go through
  *  the desktop bridge (packaged app). null when the file can't be read. */
@@ -732,13 +752,7 @@ async function readVoiceFileAsDataUrl(value: string): Promise<{ dataUrl: string;
       const res = await fetch(value);
       if (!res.ok) return null;
       const blob = await res.blob();
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onload = () => resolve(String(fr.result));
-        fr.onerror = () => reject(fr.error ?? new Error("Could not read voice file."));
-        fr.readAsDataURL(blob);
-      });
-      return { dataUrl, name: value.slice("/voices/".length) };
+      return { dataUrl: await blobToDataUrl(blob), name: value.slice("/voices/".length) };
     }
     if (value.startsWith("file://")) {
       const bridge = typeof window !== "undefined" ? window.scarletReelDesktop : undefined;
