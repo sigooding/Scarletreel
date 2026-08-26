@@ -96,6 +96,10 @@ RouteMapNode.displayName = "RouteMapNode";
 
 const RouteMapEdge = memo(
   ({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) => {
+    const isBack = (data as { isBack?: boolean })?.isBack;
+    // Loop-back edges point left, against the reading direction — a looser
+    // curve plus a dash keeps them reading as "returning" rather than as a
+    // branch that goes backwards.
     const [path] = getBezierPath({
       sourceX,
       sourceY,
@@ -103,7 +107,7 @@ const RouteMapEdge = memo(
       targetY,
       sourcePosition,
       targetPosition,
-      curvature: 0.32,
+      curvature: isBack ? 0.5 : 0.32,
     });
     const status = (data as { status?: RouteStatus })?.status ?? "missed";
     const attitude = (data as { attitude?: string })?.attitude ?? "Neutral";
@@ -117,7 +121,7 @@ const RouteMapEdge = memo(
         style={{
           stroke: taken ? ACCENT[attitude] ?? ACCENT.Neutral : "rgba(232,222,205,0.16)",
           strokeWidth: taken ? 2.4 : 1.2,
-          strokeDasharray: status === "locked" ? "3 5" : taken ? undefined : "5 6",
+          strokeDasharray: status === "locked" ? "3 5" : isBack ? "2 6" : taken ? undefined : "5 6",
           opacity: revealed ? 1 : 0,
           transition: "opacity 520ms ease",
         }}
@@ -209,6 +213,7 @@ function RouteMapInner({
         data: {
           status: e.status,
           attitude: e.attitude,
+          isBack: e.isBack ?? false,
           revealed: (depthOf.get(e.target) ?? 0) <= wave,
         },
         selectable: false,

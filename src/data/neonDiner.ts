@@ -48,12 +48,14 @@ import type { Story } from "../types";
  *     the item it needs.
  *
  *  INTERROGATION (composure pressure on the core loop)
- *   · Booth four runs an `interrogation` (composure 3, crack at trust ≥ 0).
+ *   · Booth four runs an `interrogation` (composure 3, crack at trust ≥ −1).
  *     The four attitude-tagged replies are the PRESSES (photo/press2/
  *     threat/press3); the neutral ask and silence don't chip.
  *   · WARM path: ask (+1 trust) then press to zero → CRACK — the broke beat
  *     plays, `vince_broke` sets (gate the payoff on it), trust/heat swing.
- *   · COLD path: press without warming → trust < 0 at zero → CLAMP — the
+ *     The three plain presses cost 2 trust between them, so the warm-up is
+ *     what carries the threshold.
+ *   · COLD path: press without warming → trust ≤ −2 at zero → CLAMP — the
  *     clamped beat plays, `vince_clamped` sets, heat +2 backfire.
  *   · Composure is DERIVED from the one-shot presses (usedChoices) —
  *     save-proof, ungrindable; the composure bar shows above the dialogue.
@@ -374,6 +376,7 @@ export const NEON_DINER: Story = {
     {
       id: "nd_vince",
       title: "Booth Four",
+      note: "Interrogation: composure 3, crack at trust ≥ −1. Warm first — the soft ask is +1 trust and carries the threshold. Pressing cold (no warm-up) clamps him and bounces +2 Heat. The photo press needs trust 1 and sets trusted_vince (the protect-Moreau ending).",
       background: "/img/bg-nd-interior.jpg",
       ambientAudio: "rain",
       cinematic: { mode: "zoom-hold", focalPoint: "72% 42%", zoomDuration: 8 },
@@ -503,7 +506,12 @@ export const NEON_DINER: Story = {
       interrogation: {
         characterId: "vince",
         composure: 3,
-        crackTrust: 0,
+        // -1, not 0: the three plain presses cost 2 trust between them
+        // (press3 −1, threat −1, press2 0), so "ask (+1) then press to zero"
+        // lands at −1 — the advertised warm path clamped at threshold 0.
+        // At −1 one warm-up cancels one harsh press (warm → CRACK) while
+        // pressing cold (no ask) still lands ≤ −2 (CLAMP, heat backfire).
+        crackTrust: -1,
         // Urgency: a 6s window before he steadies (hesitate and you lose a
         // point of composure), and his own escalating reactions as he's wound.
         steadySeconds: 6,
@@ -813,6 +821,7 @@ export const NEON_DINER: Story = {
     {
       id: "nd_porch",
       title: "The Porch",
+      note: "Leaving here runs the act-boundary interstitial: Act One route map → Act Two title card. (The part-break flowchart is suppressed at the boundary — the act map supersedes it.)",
       partBreak: "Part One — Last Order",
       background: "/img/bg-nd-street.jpg",
       ambientAudio: "rain",

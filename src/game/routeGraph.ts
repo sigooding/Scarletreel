@@ -38,6 +38,9 @@ export interface RouteEdge {
   label?: string;
   attitude: string;
   status: RouteStatus;
+  /** A loop-back edge (e.g. "Back to the hall") — kept for drawing, but
+   *  excluded from layering so cycles can't pump the ranks. */
+  isBack?: boolean;
 }
 
 export interface RouteGraph {
@@ -122,6 +125,8 @@ export function buildRouteGraph(
 
   const visited = new Set(journey.map((j) => j.sceneId));
   if (currentSceneId) visited.add(currentSceneId);
+  // The act's own opener was walked by definition — the player stood there.
+  visited.add(act.startSceneId);
 
   // Choice ids the player actually picked, so an edge can be marked taken
   // even when both branches lead to the same scene.
@@ -195,15 +200,93 @@ export function buildRouteGraph(
         }
       }
     }
+    // Scene-moving hotspots are walkable edges too — the act membership walk
+    // follows them, so the map must draw them, or the door scenes (the
+    // freezer, the back room) float unconnected and their return edges have
+    // no forward edge to pair with.
+    for (const h of scene.hotspots ?? []) {
+      const doorTarget = h.action.targetSceneId;
+      if (doorTarget && inAct.has(doorTarget)) {
+        const dKey = `${sceneId}->${doorTarget}:hs:${h.id}`;
+        if (!seenEdge.has(dKey)) {
+          seenEdge.add(dKey);
+          edges.push({
+            id: dKey,
+            source: sceneId,
+            target: doorTarget,
+            label: h.label.length > 34 ? `${h.label.slice(0, 32)}…` : h.label,
+            attitude: "Neutral",
+            status: visited.has(sceneId) && visited.has(doorTarget) ? "taken" : "missed",
+          });
+        }
+      }
+      // A pattern puzzle's scene targets are doors as well.
+      const puzzle = h.action.patternPuzzle;
+      for (const [target, tag] of [
+        [puzzle?.targetSceneId, "solved"],
+        [puzzle?.wrongTargetSceneId, "final miss"],
+      ] as [string | undefined, string][]) {
+        if (target && inAct.has(target)) {
+          const pKey = `${sceneId}->${target}:puzzle:${h.id}:${tag}`;
+          if (!seenEdge.has(pKey)) {
+            seenEdge.add(pKey);
+            edges.push({
+              id: pKey,
+              source: sceneId,
+              target: target,
+              label: `(${tag})`,
+              attitude: "Clever",
+              status: visited.has(sceneId) && visited.has(target) ? "taken" : "missed",
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /* ---- back-edges: a DFS from the act's opener flags the edges that close
+     a loop ("Leave the booth" back to the hall). Layering on a graph with
+     cycles never settles — the fixed point below used to run to its cap and
+     leave the act's hub scene ranked nineteen ranks deep, with every return
+     edge drawn backwards through the map. Keep the back-edges for drawing,
+     but rank the DAG they're removed from. */
+  const backEdges = new Set<string>();
+  {
+    const adj = new Map<string, string[]>();
+    for (const e of edges) {
+      if (e.source === e.target) continue;
+      if (!adj.has(e.source)) adj.set(e.source, []);
+      adj.get(e.source)!.push(e.target);
+    }
+    const onStack = new Set<string>();
+    const done = new Set<string>();
+    const dfs = (id: string) => {
+      onStack.add(id);
+      for (const to of adj.get(id) ?? []) {
+        if (onStack.has(to)) {
+          // to is an ancestor of id: every edge id->to closes a cycle.
+          for (const e of edges) if (e.source === id && e.target === to) backEdges.add(e.id);
+        } else if (!done.has(to)) {
+          dfs(to);
+        }
+      }
+      onStack.delete(id);
+      done.add(id);
+    };
+    dfs(act.startSceneId);
+    for (const id of inAct) if (!done.has(id)) dfs(id);
+    for (const e of edges) e.isBack = backEdges.has(e.id);
   }
 
   /* ---- layering: a node sits one rank below its DEEPEST parent ----
-     Longest-path layering keeps every edge pointing forward, so a branch
-     that rejoins the spine later doesn't get drawn backwards. */
+     Longest-path layering keeps every forward edge pointing right, so a
+     branch that rejoins the spine later doesn't get drawn backwards.
+     Back-edges are excluded from the parents (see above), so the fixed
+     point actually converges on acts with loop-back navigation. */
   const parents = new Map<string, string[]>();
   for (const id of inAct) parents.set(id, []);
   for (const e of edges) {
-    if (e.source === e.target) continue;
+    if (e.source === e.target || e.isBack) continue;
     parents.get(e.target)?.push(e.source);
   }
 

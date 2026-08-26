@@ -41,9 +41,9 @@ import {
   writeSave,
   type GlobalState,
 } from "../src/logic";
-import { scenesInAct } from "../src/game/routeGraph";
+import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { NEON_DINER } from "../src/data/neonDiner";
-import type { Choice, EpisodeProgress, GameSave, SceneNode, Story } from "../src/types";
+import type { Choice, EpisodeProgress, GameSave, JourneyStep, SceneNode, Story } from "../src/types";
 
 let passed = 0;
 const failures: string[] = [];
@@ -630,10 +630,11 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("gold: composure 1 after the soft press", composureRemaining(vinceScene, used) === 1);
   pick("nd_vince", "nd_v_threat");
   check("gold: composure zero after the third press", composureRemaining(vinceScene, used) === 0);
-  // Warm path: trust is 1 (+1 ask, +1 photo, -1 threat) ≥ crackTrust 0 → CRACK.
+  // Warm path: trust is 1 (+1 ask, +1 photo, -1 threat) ≥ crackTrust −1 → CRACK.
   check("gold: trust at zero is 1 (ask+photo-threat)", st.characterTrust.vince === 1, st.characterTrust);
   check("gold: warm path cracks (trust ≥ threshold)", interrogationOutcome(qv, st.characterTrust.vince) === "broke");
-  check("gold: cold trust would clamp", interrogationOutcome(qv, -1) === "clamped");
+  check("nd: threshold −1 — the plain-press warm path (ask, then press to zero at −1) cracks", interrogationOutcome(qv, -1) === "broke");
+  check("nd: pressing cold still clamps (−2)", interrogationOutcome(qv, -2) === "clamped");
   check("gold: crack/clamp flags are collected for the pickers", collectFlags(S).includes("vince_broke") && collectFlags(S).includes("vince_clamped"));
   check(
     "gold: memory-gated beat now visible",
@@ -712,6 +713,46 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("acts: Act One stops at the porch's destination", !act1.has("nd_street"), [...act1]);
   check("acts: Act Two owns street + accusation + endings", act2.has("nd_street") && act2.has("nd_accuse") && act2.has("nd_end_gold"), [...act2]);
   check("acts: heat-bust ending belongs to no act (trapdoor)", !act1.has("nd_end_folded") && !act2.has("nd_end_folded"));
+
+  // --- route map layering: loop-back navigation must not pump the ranks ---
+  // Act One is a hub-and-spoke act (booth/station/kitchen all return to the
+  // hall; freezer/back room return to the kitchen). Layering a graph with
+  // cycles never settles — the pre-fix fixed point ran to its cap and left
+  // the hall ranked 19 deep with every return edge drawn backwards.
+  {
+    const step = (sceneId: string, sceneTitle: string, choiceId: string, choiceText: string): JourneyStep => ({
+      sceneId,
+      sceneTitle,
+      choiceId,
+      choiceText,
+      attitudeTag: "Neutral",
+      options: [],
+      timedOut: false,
+      flagsSet: [],
+    });
+    const g = buildRouteGraph(
+      S,
+      "nd_act1",
+      [
+        step("nd_arrive", "The Hall", "nd_c_booth", "Booth four."),
+        step("nd_vince", "Booth Four", "nd_v_leave", "Leave the booth."),
+        step("nd_arrive", "The Hall", "nd_c_station", "The counter."),
+        step("nd_station", "Mabel's Station", "nd_s_back", "Back to the diner."),
+        step("nd_arrive", "The Hall", "nd_c_kitchen", "The kitchen."),
+        step("nd_kitchen", "The Kitchen", "nd_k_back", "Back to the hall."),
+        step("nd_arrive", "The Hall", "nd_c_porch", "Step out into the rain."),
+      ],
+      "nd_porch"
+    );
+    const depthOf = new Map(g.nodes.map((n) => [n.id, n.depth]));
+    check("map: loop-back act layers compactly (every scene at depth ≤ 3)", g.nodes.every((n) => n.depth <= 3), g.nodes.map((n) => `${n.id}:${n.depth}`));
+    check("map: the act's opener is ranked first and reads as taken", depthOf.get("nd_credits") === 0 && g.nodes.find((n) => n.id === "nd_credits")!.status === "taken");
+    check("map: the hall hub sits one rank in", depthOf.get("nd_arrive") === 1, depthOf.get("nd_arrive"));
+    const backs = g.edges.filter((e) => e.isBack);
+    check("map: every loop-back is flagged as a back edge (≥5)", backs.length >= 5, backs.length);
+    check("map: back edges point to a shallower rank", backs.every((e) => (depthOf.get(e.target) ?? 0) < (depthOf.get(e.source) ?? 0)), backs.map((e) => e.id));
+    check("map: every forward edge points strictly forward", g.edges.filter((e) => !e.isBack).every((e) => (depthOf.get(e.target) ?? 0) > (depthOf.get(e.source) ?? 0)), g.edges.filter((e) => !e.isBack).map((e) => e.id));
+  }
 
   // --- validator: exactly the one known trapdoor note, zero errors ---
   const issues = validateStory(S);

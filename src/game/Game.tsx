@@ -3896,15 +3896,22 @@ function CasePlayer({
     };
   }, [scene, sceneId, hasValidAutoAdvance, overlay, menuOpen, interactive, hasUsableChoice, leaveFor]);
 
-  /** Append a decision to the ordered journey log. Captures the siblings that
-   * existed at this moment — including ones gated shut — because the whole
-   * point of the flowchart is showing the roads not taken. */
+  /** Append a decision to the ordered journey log. Captures the siblings
+   *  that existed at this moment — including ones gated shut — because the
+   *  whole point of the flowchart is showing the roads not taken.
+   *  Conversational replies count as siblings too: the question you didn't
+   *  ask is a road not taken as well, so an interrogation reads in the chart
+   *  as the escalation it was. One-shot replies already spent earlier in the
+   *  scene are shown locked — they were no longer on the table. */
   const recordJourney = useCallback(
-    (choice: Choice | null, opts?: { timedOut?: boolean }) => {
+    (choice: Choice | null, opts?: { timedOut?: boolean; used?: Set<string>; extraFlags?: string[] }) => {
       const liveScene = story.scenes.find((s) => s.id === sceneId);
       if (!liveScene) return;
       const st = stateRef.current;
-      const siblings = (liveScene.choices ?? []).filter((c) => !c.reply && c.targetSceneId);
+      const siblings = (liveScene.choices ?? []).filter(
+        (c) => c.reply || (c.targetSceneId !== undefined && c.targetSceneId !== "")
+      );
+      const used = opts?.used ?? usedChoices;
       const options = siblings
         // hidden choices that never unlocked were never really on the table
         .filter((c) => !(c.hidden && !meetsGating(effectiveChoiceGating(c), st)))
@@ -3913,7 +3920,8 @@ function CasePlayer({
           text: c.text,
           // a timed-out prompt was not chosen — the player let it lapse
           taken: !!choice && !opts?.timedOut && c.id === choice.id,
-          locked: !meetsGating(effectiveChoiceGating(c), st),
+          // gated shut, or a one-shot reply already spent in this scene
+          locked: !meetsGating(effectiveChoiceGating(c), st) || used.has(`${liveScene.id}:${c.id}`),
           attitudeTag: c.attitudeTag,
         }));
       const step: JourneyStep = {
@@ -3927,10 +3935,13 @@ function CasePlayer({
         timedOut: opts?.timedOut,
         trustChanges: choice?.consequences?.trustChanges,
         // Which flags this decision set — the route notes the flowchart and
-        // route map list with their Story.flagNotes.
+        // route map list with their Story.flagNotes. extraFlags carries flags
+        // the ENGINE applied on the player's behalf (the interrogation's
+        // break/clamp), which don't sit on the choice itself.
         flagsSet: [
           ...(choice?.consequences?.setFlags ?? []),
           ...(opts?.timedOut ? (choice?.timedOutConsequences?.setFlags ?? []) : []),
+          ...(opts?.extraFlags ?? []),
         ],
       };
       // Update the ref synchronously: the caller decides whether to raise a
@@ -3938,7 +3949,7 @@ function CasePlayer({
       journeyRef.current = [...journeyRef.current, step];
       setJourney(journeyRef.current);
     },
-    [story, sceneId]
+    [story, sceneId, usedChoices]
   );
 
   const pickChoice = useCallback(
@@ -4031,6 +4042,16 @@ function CasePlayer({
         if (choice.rememberLine || choice.memoryLog) {
           setEpisodeHighlights((h) => (h.includes(choice.text) ? h : [...h, choice.text].slice(-6)));
         }
+        // A reply that changes the world is a decision — the chart shows the
+        // booth's escalation (ask → press → press → break) as the road taken,
+        // with the answers not said as the roads not taken. Pure chit-chat
+        // (no memory, no consequences) stays out of the log.
+        if (choice.memoryLog || choice.rememberLine || choice.consequences) {
+          recordJourney(choice, {
+            used: usedChoices,
+            extraFlags: iqOutcome && q ? [iqOutcome === "broke" ? q.brokeFlag : q.clampFlag ?? ""].filter(Boolean) : undefined,
+          });
+        }
         return;
       }
       if (!choice.targetSceneId) {
@@ -4117,8 +4138,11 @@ function CasePlayer({
       leaveFor(choice.targetSceneId, liveScene?.partBreak);
     },
     // iqComposure is read for the live interrogation value — it must be a dep
-    // so the closure is never stale mid-interrogation.
-    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure]
+    // so the closure is never stale mid-interrogation. usedChoices must be
+    // one too: the reply branch builds the next used-set from it, and a stale
+    // copy dropped previously-spent replies, making one-shot replies
+    // re-pickable (a trust farm inside an interrogation).
+    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure, usedChoices]
   );
 
   const previousPerks = useRef<Perks>(getPerks(state));
