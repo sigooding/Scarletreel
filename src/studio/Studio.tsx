@@ -4553,6 +4553,115 @@ function StudioInner({
     }
   };
 
+  /* ---------- duplicate the whole story ----------
+   * Makes an independent, editable copy of the CURRENT story (the built-in,
+   * a custom case, or a draft): new story id and title, regenerated scene +
+   * beat + hotspot ids remapped across every internal reference (choices,
+   * hotspots, puzzles, acts, episodes, auto-advance, part breaks, start
+   * scene) so the graph wires up identically, and the canvas layout is
+   * offset so the copy doesn't stack on the original. Saved as a custom
+   * story so the built-ins are never modified. */
+  const duplicateStory = async () => {
+    const src = deepClone(story);
+    const newStoryId = `case_${uid()}`;
+    const sceneIdMap = new Map<string, string>();
+    src.scenes.forEach((s) => {
+      // Keep end/credits-style ids readable-ish but unique.
+      sceneIdMap.set(s.id, `${s.id}_copy_${uid().slice(0, 5)}`);
+    });
+    const remap = (id?: string) => (id ? sceneIdMap.get(id) ?? id : id);
+
+    const copy: Story = {
+      ...src,
+      id: newStoryId,
+      title: `${src.title.replace(/\s*\(copy\).*$/, "")} (copy)`,
+      startSceneId: remap(src.startSceneId) ?? "",
+      layout: Object.fromEntries(
+        Object.entries(src.layout ?? {}).map(([id, pos]) => [
+          remap(id) ?? id,
+          { x: pos.x + 80, y: pos.y + 90 },
+        ])
+      ),
+      scenes: src.scenes.map((s) => ({
+        ...s,
+        id: remap(s.id) as string,
+        autoAdvanceTargetSceneId: remap(s.autoAdvanceTargetSceneId),
+        choices: s.choices?.map((ch) => ({
+          ...ch,
+          id: `c_${uid()}`,
+          targetSceneId: remap(ch.targetSceneId),
+          timedOutTargetSceneId: remap(ch.timedOutTargetSceneId),
+        })),
+        hotspots: s.hotspots?.map((h) => ({
+          ...h,
+          id: `hs_${uid()}`,
+          action: {
+            ...h.action,
+            targetSceneId: remap(h.action.targetSceneId),
+            patternPuzzle: h.action.patternPuzzle
+              ? {
+                  ...h.action.patternPuzzle,
+                  targetSceneId: remap(h.action.patternPuzzle.targetSceneId),
+                  wrongTargetSceneId: remap(h.action.patternPuzzle.wrongTargetSceneId),
+                }
+              : undefined,
+          },
+        })),
+        dialogueBeats: s.dialogueBeats?.map((b) => ({
+          ...b,
+          id: `b_${uid()}`,
+          afterBeatTargetSceneId: remap(b.afterBeatTargetSceneId),
+        })),
+        onEnterActions: s.onEnterActions,
+      })),
+      acts: src.acts?.map((a) => ({ ...a, id: `act_${uid()}`, startSceneId: remap(a.startSceneId) ?? a.startSceneId })),
+      // Episodes are rebuilt with new ids below where the episode-id map exists.
+      episodes: src.episodes?.map((e) => ({
+        ...e,
+        id: `ep_${uid()}`,
+        startSceneId: remap(e.startSceneId) ?? e.startSceneId,
+        sceneIds: e.sceneIds.map((id) => remap(id) ?? id),
+      })),
+      briefing: src.briefing
+        ? { ...src.briefing, heatFailSceneId: remap(src.briefing.heatFailSceneId) }
+        : src.briefing,
+      deduction: src.deduction,
+      // Custom copies don't carry bundled media; asset:/ url references
+      // resolve against the shared media library, which already holds them.
+      assets: undefined,
+    };
+    // Re-point episode unlock references to the new episode ids.
+    if (copy.episodes && src.episodes) {
+      const epMap = new Map<string, string>();
+      src.episodes.forEach((e, i) => epMap.set(e.id, copy.episodes![i].id));
+      copy.episodes = copy.episodes.map((e, i) => ({
+        ...e,
+        unlockAfter: src.episodes![i].unlockAfter?.map((u) => ({
+          ...u,
+          episodeId: epMap.get(u.episodeId) ?? u.episodeId,
+        })),
+        nextEpisodeByEnding: e.nextEpisodeByEnding
+          ? Object.fromEntries(Object.entries(e.nextEpisodeByEnding).map(([k, v]) => [k, epMap.get(v) ?? v]))
+          : undefined,
+      }));
+    }
+    const compact = await compactStoryMedia(copy);
+    if (!onCreateStory(compact)) {
+      say("Could not duplicate — browser storage may be full.");
+      audio.fail();
+      return;
+    }
+    past.current = [];
+    future.current = [];
+    setStory(compact);
+    setSelectedId(null);
+    setSelectedHotspot(null);
+    setFocusedChoiceId(null);
+    localStorage.setItem("scarlet-studio-last-story", compact.id);
+    say(`Duplicated "${src.title}" as "${compact.title}" — a fully independent copy.`);
+    audio.success();
+  };
+
   const importJson = async (file: File) => {
     try {
       const text = await file.text();
@@ -4631,6 +4740,13 @@ function StudioInner({
           title="Start a brand-new empty case"
         >
           ＋ New Story
+        </button>
+        <button
+          onClick={() => { void duplicateStory(); }}
+          className="btn-tool"
+          title="Duplicate this whole case into a brand-new, independent story (every scene, beat, hotspot and wire copied with fresh ids)"
+        >
+          ⧉ Duplicate Story
         </button>
         <button onClick={() => addScene(80 + Math.random() * 200, 80 + Math.random() * 200)} className="btn-tool" title="Add standard game scene">
           ＋ Scene
@@ -7121,6 +7237,78 @@ function StudioInner({
                       />
                       🔇 Silent beat — no narration (text only)
                     </label>
+                    {/* ---- after this beat: route to another scene ---- */}
+                    <div className="border border-cyan-neon/30 bg-cyan-neon/5 p-2 space-y-1.5">
+                      <Field label="🎬 After this beat — cut to scene (insert shot ends the scene)">
+                        <select
+                          className={inputCls}
+                          value={b.afterBeatTargetSceneId ?? ""}
+                          onChange={(e) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              const beat = s.dialogueBeats!.find((x) => x.id === b.id)!;
+                              beat.afterBeatTargetSceneId = e.target.value || undefined;
+                              if (e.target.value && beat.afterBeatMode === undefined) {
+                                beat.afterBeatMode = "auto";
+                                beat.afterBeatDelaySeconds = 1.6;
+                              }
+                            })
+                          }
+                        >
+                          <option value="">— stay in this scene after the beat —</option>
+                          {story.scenes
+                            .filter((s) => s.id !== scene.id)
+                            .map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.isEnding ? "🏁 " : "🎞 "}
+                                {s.title}
+                              </option>
+                            ))}
+                        </select>
+                      </Field>
+                      {b.afterBeatTargetSceneId && (
+                        <>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            When this beat (the LAST visible line) is dismissed, the game cuts straight to that scene —
+                            this insert background fades directly into the next, with no flash back to the scene plate.
+                            Put it on the scene's final beat.
+                          </p>
+                          <Field label="When to cut">
+                            <select
+                              className={inputCls}
+                              value={b.afterBeatMode ?? "auto"}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.afterBeatMode = e.target.value as "auto" | "continue";
+                                })
+                              }
+                            >
+                              <option value="auto">⏱ Auto — hold on a timer, then cut</option>
+                              <option value="continue">▸ Continue button / Space — the player cuts</option>
+                            </select>
+                          </Field>
+                          {(b.afterBeatMode ?? "auto") === "auto" && (
+                            <Field label={`Hold ${b.afterBeatDelaySeconds ?? 1.6}s after the line finishes (the timer guarantees the beat is read)`}>
+                              <input
+                                type="range"
+                                min={0.5}
+                                max={12}
+                                step={0.5}
+                                className="w-full accent-cyan-400"
+                                value={b.afterBeatDelaySeconds ?? 1.6}
+                                onChange={(e) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.dialogueBeats!.find((x) => x.id === b.id)!.afterBeatDelaySeconds = Number(e.target.value);
+                                  })
+                                }
+                              />
+                            </Field>
+                          )}
+                        </>
+                      )}
+                    </div>
                     {b.characterId !== "narrator" && story.characters.some((ch) => ch.id === b.characterId) && (
                       <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
                         <input

@@ -293,6 +293,31 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
             </p>
           </Section>
 
+          <Section title="5c · Insert shots that end a scene (after-beat routing) & duplicating stories">
+            <p>
+              By default a beat's <b>replacement background</b> plays for that one line and the picture reverts to the scene plate
+              when the dialogue ends. If you want an insert shot to <b>lead somewhere</b> — a cutscene built from beats, an
+              ending card, or just a straight cut with no flash back to the scene image — give the beat an <b>“After this beat — cut to scene”</b>:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>Where:</b> on the beat in the Dialogue tab. It only fires on the <b>LAST visible beat</b> of the scene — put it on your final line (the validator warns if you don't).</li>
+              <li><b>⏱ Auto</b> — after the line finishes typing, hold for the timer (default 1.6s) then cut automatically. <b>This is the timer that guarantees the beat is read</b> before the scene changes; a live “⏱ cut in Ns” shows. It pauses while the menu is open.</li>
+              <li><b>▸ Continue</b> — no timer: the ▸ Continue pill / Space advances straight into the next scene, so the player controls the cut.</li>
+              <li>The insert background fades <b>directly</b> into the next scene — it never reverts to the scene plate. Part-break charts, act cards, endings and music crossfades all work normally through the route.</li>
+            </ul>
+            <p>
+              <b>Recommended workflow for a cutscene from stills:</b> make one short scene per shot (or per line), give each its
+              background/grade, and chain them with after-beat routes — that's more flexible than cramming one scene, because each
+              link can branch, chart and end independently. If the scene also has auto-advance, the beat route wins while a beat is
+              live — no timer conflict.
+            </p>
+            <p>
+              <b>⧉ Duplicate Story</b> (toolbar) copies the whole current case into a brand-new, independent story — every scene, beat,
+              hotspot, choice and wire gets fresh ids so nothing collides, the title gets “(copy)”, and the canvas is offset. Use it to
+              branch from an existing case or to experiment without touching the original; built-ins are copied, never edited in place.
+            </p>
+          </Section>
+
           <Section title="6 · Hotspots — actions on the scene art">
             <p>
               Drag on the preview to draw a zone (percent bounds). One action each: <b>go to scene</b>, <b>give item</b>,{" "}

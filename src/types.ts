@@ -206,6 +206,26 @@ export interface DialogueBeat {
    * the `{said}` placeholder to echo the player's exact words. When several
    * memories are present, the first matching tag in insertion order wins. */
   recalls?: Record<string, string>;
+
+  /* ---- AFTER THIS BEAT: route to another scene ----
+   * Normally a beat's replacement background reverts to the scene plate when
+   * the dialogue finishes (before the scene's choices appear). These fields
+   * instead send the player to another scene the moment this beat DONE is
+   * dismissed — so the insert shot crossfades straight into the next scene,
+   * with no cut back to the scene's own background. This is the clean way to
+   * chain insert shots / build cutscenes out of beats. Only meaningful on a
+   * beat that is visible at the end of a scene's beat queue (a following beat
+   * merely routes when its turn ends; the LAST visible beat performs it). */
+  /** Scene to go to when this beat is dismissed. Ignored on every beat except
+   * the last visible one in the queue (later beats take over). */
+  afterBeatTargetSceneId?: string;
+  /** "auto" (default): routes itself after `afterBeatDelaySeconds` once the
+   * line has finished typing. "continue": waits for the player's ▸ Continue
+   * / Space press — good when you want them to read it before it cuts. */
+  afterBeatMode?: "auto" | "continue";
+  /** Hold time (seconds) between the finished line and the auto-route
+   * (default 1.6). Ignored in "continue" mode. */
+  afterBeatDelaySeconds?: number;
 }
 
 export interface EndingData {

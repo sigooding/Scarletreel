@@ -317,31 +317,40 @@ export const DEMO_SCENE_CRAFT: Story = {
       ],
     },
 
-    /* ── SCENE 5 — MUSIC + AUTO-ADVANCE CUTSCENE-LIKE BEAT ─────────── */
+    /* ── SCENE 5 — MUSIC + TWO WAYS TO CUT (auto-advance vs after-beat) ─ */
     {
       id: "ds_examine",
-      title: "Take Four — Sound & Pacing",
+      title: "Take Four — Sound & The Cut",
       note:
-        "STEP 5 — SOUND & PACING. ① Audio tab: Music mode = TRACK with musicUrl /Soundtrack.mp3 and musicFadeSeconds 2.4 — a true crossfade from the drone into the music; mode INHERIT keeps the previous track, NONE goes silent. " +
-        "② This scene has NO choices. Set Auto-advance target → ds_cutscene with a delay: after the prose + beats finish, the game routes itself — the cut is the pacing. autoAdvanceHideTimer keeps the countdown off-screen. " +
-        "③ A recorded narration MP3 can replace the speech-synth voice on any scene (narrationAudioUrl), and per-beat MP3s override individual lines.",
+        "STEP 5 — SOUND, PACING & THE TWO WAYS TO CUT. ① Audio tab: Music mode = TRACK with musicUrl /Soundtrack.mp3 and musicFadeSeconds 2.4 — a true crossfade; INHERIT keeps the old track, NONE goes silent. " +
+        "② SCENE AUTO-ADVANCE (Scene tab): set an auto-advance target + delay and the scene routes itself after prose+beats when there are NO choices — the hands-off cut, used here on the TIMED line. " +
+        "③ AFTER-BEAT ROUTING (Dialogue tab, on a beat): 'After this beat — cut to scene' fires when the LAST beat is dismissed — the insert background fades STRAIGHT into the next scene with no flash back to the scene plate. Pick ⏱ Auto (a timer guarantees the line is read) or ▸ Continue (Space/button cuts). The ▸-button line below uses it, so the beat's picture holds until YOU cut. The beat route always wins while a beat is live, so the two timers never conflict.",
       background: "/img/bg-dressing.jpg",
       musicUrl: "/Soundtrack.mp3",
       musicMode: "track",
       musicFadeSeconds: 2.4,
       transition: "fade",
       transitionSpeed: 1.2,
-      autoAdvanceTargetSceneId: "ds_cutscene",
-      autoAdvanceDelaySeconds: 9,
-      autoAdvanceHideTimer: true,
       prose:
-        "The projector wakes with a mechanical clatter. The drone of the safehouse crossfades into the score — two seconds of overlap, the old track sinking under the new. You don't choose to cut. The reel does it for you, nine seconds after the last line lands.",
+        "The projector wakes with a mechanical clatter. The drone of the safehouse crossfades into the score — two seconds of overlap, the old track sinking under the new. The Projectionist lets the first line breathe, then points at the screen: this one cuts itself, and the next one waits for you.",
       dialogueBeats: [
         {
           id: "ds_ex_1",
           characterId: "ds_instructor",
           expression: "in the light",
-          text: "Three music modes: inherit keeps the previous track, track crossfades to a new MP3, none kills the sound entirely. Fade seconds is your dissolve. And no choices here — auto-advance is the director saying 'we move on now.'",
+          text: "Three music modes: inherit keeps the previous track, track crossfades to a new MP3, none kills the sound. Fade seconds is your dissolve. A scene with no choices can auto-advance on a timer — the director saying 'we move on now.'",
+        },
+        {
+          id: "ds_ex_2",
+          characterId: "ds_instructor",
+          expression: "hand on the reel",
+          text: "But say a beat has its OWN insert shot and you want to cut from THAT picture, straight to the next scene — no cut back to this room. That's an after-beat route. This line holds on my insert background until you press Continue, and then the cut is clean.",
+          afterBeatTargetSceneId: "ds_cutscene",
+          afterBeatMode: "continue",
+          background: "/img/bg-folder-closeup.jpg",
+          backgroundTransition: "crossfade",
+          backgroundTransitionSpeed: 1,
+          cinematic: { mode: "zoom-hold", focalPoint: "50% 40%", zoomDuration: 7 },
         },
       ],
       hotspots: [],

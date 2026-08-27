@@ -2854,6 +2854,9 @@ function CasePlayer({
   const musicSrcRef = useRef<string | null>(null);
   const bgVideoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  // Stable ref to leaveFor so earlier callbacks (advanceBeat) can call it
+  // without a forward dependency on its useCallback declaration.
+  const leaveForRef = useRef<((dest: string, breakTitle?: string) => void) | null>(null);
   const narrationTimerRef = useRef<number | null>(null);
   const primedNarrationRef = useRef<PrimedAudio | null>(primedNarration ?? null);
   const craftHintShown = useRef(false);
@@ -3711,6 +3714,34 @@ function CasePlayer({
     ? resolveBeatText(currentBeat, state.memories, state.activeFlags, story.flagNotes)
     : "";
 
+  /* ---- after-beat routing: an insert shot that ends the scene ----
+   * A beat can carry afterBeatTargetSceneId so that when the LAST visible
+   * beat finishes, instead of reverting to the scene plate and showing the
+   * choices, the player routes straight to another scene — the replacement
+   * background crossfades into the new scene with no cut back to the plate.
+   * Mode: "auto" routes on a timer once the line is done; "continue" waits
+   * for the ▸ Continue / Space press. */
+  const beatRouteTarget = useMemo(() => {
+    // The route fires only from the LAST visible beat of the queue — the one
+    // the player dismisses when the dialogue runs out. (An earlier beat with
+    // routing is simply overridden by whichever beat is actually last; the
+    // validator warns if a non-final beat carries one so it's not a surprise.)
+    const last = visibleBeats[visibleBeats.length - 1];
+    return last?.afterBeatTargetSceneId ?? null;
+  }, [visibleBeats]);
+  const routingBeat = visibleBeats.length ? visibleBeats[visibleBeats.length - 1] : null;
+  const beatRouteValid = !!beatRouteTarget && story.scenes.some((s) => s.id === beatRouteTarget);
+  const beatRouteMode = routingBeat?.afterBeatMode === "continue" ? "continue" : "auto";
+  const beatRouteDelay = Math.max(0, Math.min(600, routingBeat?.afterBeatDelaySeconds ?? 1.6));
+  // Routing is live once the player is ON the final beat and that line has
+  // finished typing (so the timer counts from when they've read it).
+  const beatRouteReady =
+    beatRouteValid &&
+    !!currentBeat &&
+    currentBeat === routingBeat &&
+    beatDone;
+  const [beatRouteRemaining, setBeatRouteRemaining] = useState(0);
+
   /* -------- dialogue log --------
    * Every spoken line of the run — prose and beats, with speakers — is
    * appended as it plays, so the L key / menu button can show exactly what
@@ -3748,10 +3779,21 @@ function CasePlayer({
       setBeatDone(true);
       return;
     }
+    // Last beat with an after-beat route: dismissing it cuts straight to the
+    // next scene, so the insert background never reverts to the plate.
+    if (currentBeat === routingBeat && beatRouteValid) {
+      audio.click();
+      setBeatRouteRemaining(0);
+      audio.stopSpeech();
+      // leaveFor is declared below as a useCallback; it's stable enough that
+      // the ref indirection avoids a TDZ reference at render time.
+      leaveForRef.current?.(beatRouteTarget as string, scene?.partBreak);
+      return;
+    }
     audio.click();
     setBeatDone(false);
     setBeatIdx((i) => i + 1);
-  }, [inBeats, beatDone]);
+  }, [inBeats, beatDone, currentBeat, routingBeat, beatRouteValid, beatRouteTarget, scene?.partBreak]);
 
   // Rewind the scene's dialogue only — never into a previous scene. From the
   // choices it returns to the final line (shown instantly); from a beat it steps
@@ -3859,6 +3901,10 @@ function CasePlayer({
         }
         return;
       }
+      // On the routing beat, the after-beat timer owns the cut — don't
+      // advance the queue (which would revert the insert background) and
+      // let the beat-route timer fire the leave.
+      if (currentBeat === routingBeat && beatRouteValid) return;
       const t = window.setTimeout(() => {
         setBeatDone(false);
         setBeatIdx((i) => i + 1);
@@ -4111,6 +4157,10 @@ function CasePlayer({
     },
     [actOpenedBy, hasChartableSteps, goToScene, story]
   );
+  // Keep the ref pointed at the latest leaveFor for advanceBeat to call.
+  useEffect(() => {
+    leaveForRef.current = leaveFor;
+  }, [leaveFor]);
 
   /* -------- scene auto-advance --------
    * For pure cinematic / prose-only nodes: once the setup, dialogue and any
@@ -4147,6 +4197,41 @@ function CasePlayer({
       window.clearTimeout(t);
     };
   }, [scene, sceneId, hasValidAutoAdvance, overlay, menuOpen, interactive, hasUsableChoice, leaveFor]);
+
+  /* -------- after-beat auto route (insert shot that ends the scene) --------
+   * AUTO mode: once the final beat has finished typing (and no menu/overlay is
+   * up), hold for beatRouteDelay so the player can read it, then route to the
+   * beat's target. The timer pauses under a menu/overlay exactly like the
+   * scene auto-advance timer. CONTINUE mode waits for advanceBeat() (the ▸
+   * Continue pill / Space), so no timer runs here. While this is pending the
+   * replacement background stays on screen — no revert to the plate. */
+  useEffect(() => {
+    if (!beatRouteReady || beatRouteMode !== "auto") {
+      setBeatRouteRemaining(0);
+      return;
+    }
+    if (overlay || menuOpen || holdActive) {
+      return; // paused; resume on close
+    }
+    const target = beatRouteTarget as string;
+    const delay = Math.max(0, beatRouteDelay);
+    setBeatRouteRemaining(delay);
+    const go = () => {
+      setBeatRouteRemaining(0);
+      audio.stopSpeech();
+      leaveFor(target, scene?.partBreak);
+    };
+    if (delay <= 0) {
+      const t = window.setTimeout(go, 0);
+      return () => window.clearTimeout(t);
+    }
+    const tick = window.setInterval(() => setBeatRouteRemaining((s) => Math.max(0, s - 1)), 1000);
+    const t = window.setTimeout(go, delay * 1000);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(t);
+    };
+  }, [beatRouteReady, beatRouteMode, beatRouteTarget, beatRouteDelay, overlay, menuOpen, holdActive, leaveFor, scene?.partBreak]);
 
   /** Append a decision to the ordered journey log. Captures the siblings
    *  that existed at this moment — including ones gated shut — because the
@@ -5994,7 +6079,13 @@ function CasePlayer({
                     }}
                     className="beat-ctl beat-ctl-primary"
                   >
-                    {beatDone ? "▸ continue · space" : "▸▸ skip"}
+                    {!beatDone
+                      ? "▸▸ skip"
+                      : beatRouteReady && beatRouteMode === "continue"
+                        ? "▸ Continue · space"
+                        : beatRouteReady && beatRouteMode === "auto"
+                          ? `▸ continue now · ${beatRouteRemaining > 0 ? `auto in ${beatRouteRemaining}s` : "cut…"}`
+                          : "▸ continue · space"}
                   </button>
                   <button
                     onClick={(e) => {
@@ -6108,6 +6199,14 @@ function CasePlayer({
                 })}
               </div>
             </>
+          )}
+
+          {beatRouteReady && beatRouteMode === "auto" && beatRouteRemaining > 0 && (
+            <div className="mt-2 border border-cyan-neon/40 bg-noir-950/90 px-3 py-1.5 text-center">
+              <p className="font-pulp text-[10px] uppercase tracking-widest text-cyan-neon">
+                ⏱ Cut to the next scene in {beatRouteRemaining}s
+              </p>
+            </div>
           )}
 
           {interactive && !scene.isEnding && !hasUsableChoice && hasValidAutoAdvance && !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0 && (
