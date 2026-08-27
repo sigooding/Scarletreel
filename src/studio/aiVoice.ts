@@ -55,6 +55,8 @@ export function setElevenModel(id: string): void {
 
 export interface SynthesisResult {
   dataUrl: string;
+  /** The raw MP3 — written to disk as a real voice file (see voiceFiles.ts). */
+  blob: Blob;
   bytes: number;
   chars: number;
 }
@@ -107,7 +109,7 @@ export async function synthesizeElevenLabs(text: string, voiceId: string, model:
     fr.onerror = () => reject(fr.error);
     fr.readAsDataURL(blob);
   });
-  return { dataUrl, bytes: blob.size, chars: text.length };
+  return { dataUrl, blob, bytes: blob.size, chars: text.length };
 }
 
 /** The confirm copy — the credit cost is always on the table before any

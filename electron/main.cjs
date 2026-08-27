@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require("electron");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
@@ -121,6 +121,190 @@ function registerDesktopMediaIpc() {
   });
 }
 
+/* ------------------------- player save files --------------------------
+ * Every slot save is mirrored to a real .sreel file under the user's saves
+ * folder (%APPDATA%/Scarlet Reel/saves on Windows), so a player can see
+ * their progress on disk, back it up, and export/import it as a file. */
+
+function savesRoot() {
+  return path.join(app.getPath("userData"), "saves");
+}
+
+function registerSavesIpc() {
+  ipcMain.handle("scarlet-saves:dir", () => savesRoot());
+
+  ipcMain.handle("scarlet-saves:write", async (_event, payload) => {
+    const storyId = slugPart(payload?.storyId, "story");
+    const slot = Number(payload?.slot);
+    if (!Number.isInteger(slot) || slot < 0) throw new Error("Invalid save slot.");
+    const saveJson = typeof payload?.saveJson === "string" ? payload.saveJson : "";
+    const parsed = JSON.parse(saveJson || "null");
+    if (!parsed || typeof parsed !== "object" || !parsed.storyId || !parsed.sceneId) {
+      throw new Error("Save payload is not a valid Scarlet Reel save.");
+    }
+    const dir = payload?.episodeId
+      ? path.join(savesRoot(), storyId, slugPart(payload.episodeId, "episode"))
+      : path.join(savesRoot(), storyId);
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, `slot-${slot}.sreel`);
+    await fs.writeFile(file, saveJson, "utf8");
+    return { path: file };
+  });
+
+  ipcMain.handle("scarlet-saves:list", async (_event, storyIdRaw) => {
+    const base = path.join(savesRoot(), slugPart(storyIdRaw, "story"));
+    if (!fsSync.existsSync(base)) return [];
+    const out = [];
+    const walk = async (dir) => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(full);
+        else if (entry.name.endsWith(".sreel")) {
+          try {
+            const parsed = JSON.parse(await fs.readFile(full, "utf8"));
+            if (parsed && typeof parsed === "object" && parsed.sceneId) {
+              out.push({ name: entry.name, path: full, save: parsed });
+            }
+          } catch {
+            /* skip unreadable/corrupt files */
+          }
+        }
+      }
+    };
+    await walk(base);
+    return out.sort((a, b) => (b.save.savedAt ?? 0) - (a.save.savedAt ?? 0));
+  });
+
+  ipcMain.handle("scarlet-saves:export", async (event, payload) => {
+    const json = String(payload?.json ?? "");
+    if (!json) throw new Error("Nothing to export.");
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const suggested = String(payload?.suggestedName || "scarlet-reel-save.sreel").replace(/[\\/:*?"<>|]/g, "_");
+    const res = await dialog.showSaveDialog(win ?? undefined, {
+      title: "Export save",
+      defaultPath: path.join(app.getPath("documents"), suggested),
+      filters: [
+        { name: "Scarlet Reel save", extensions: ["sreel"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || !res.filePath) return { canceled: true };
+    await fs.writeFile(res.filePath, json, "utf8");
+    return { canceled: false, path: res.filePath };
+  });
+
+  ipcMain.handle("scarlet-saves:import", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const res = await dialog.showOpenDialog(win ?? undefined, {
+      title: "Import save",
+      properties: ["openFile"],
+      filters: [
+        { name: "Scarlet Reel save", extensions: ["sreel", "json"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || !res.filePaths[0]) return { canceled: true };
+    const json = await fs.readFile(res.filePaths[0], "utf8");
+    return { canceled: false, path: res.filePaths[0], json };
+  });
+
+  ipcMain.handle("scarlet-saves:open-dir", async () => {
+    const dir = savesRoot();
+    await fs.mkdir(dir, { recursive: true });
+    await shell.openPath(dir);
+    return dir;
+  });
+}
+
+/** The native File menu (Save/Load/Export/Import/Open Saves Folder/Quit).
+ *  Items send an action string to every window; the game listens via
+ *  scarletReelDesktop.onMenu. */
+function registerAppMenu() {
+  const send = (action) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("scarlet-menu", action);
+    }
+  };
+  const template = [
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
+    {
+      label: "File",
+      submenu: [
+        { label: "Save Game", accelerator: "CmdOrCtrl+S", click: () => send("save") },
+        { label: "Load Game…", accelerator: "CmdOrCtrl+O", click: () => send("load") },
+        { type: "separator" },
+        { label: "Export Save…", click: () => send("export-save") },
+        { label: "Import Save…", click: () => send("import-save") },
+        { label: "Open Saves Folder", click: () => send("open-saves-dir") },
+        { type: "separator" },
+        process.platform === "darwin"
+          ? { role: "quit" }
+          : { label: "Quit", accelerator: "CmdOrCtrl+Q", click: () => app.quit() },
+      ],
+    },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** ElevenLabs voice files: strictly voices/<person>/<scene>/<line>.mp3 so the
+ *  renderer can never write outside the committed voice tree. */
+const VOICE_REL_PATH_RE = /^voices\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.mp3$/;
+
+function registerVoiceIpc() {
+  ipcMain.handle("scarlet-voice:save", async (_event, payload) => {
+    const relativePath = String(payload?.relativePath ?? "");
+    if (!VOICE_REL_PATH_RE.test(relativePath)) {
+      throw new Error(`Invalid voice path "${relativePath}" — expected voices/<person>/<scene>/<line>.mp3`);
+    }
+    const bytes = payload?.bytes;
+    const buffer = Buffer.from(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
+    if (!buffer.length) throw new Error("Voice file was empty.");
+
+    const targets = desktopUploadTargets(relativePath);
+    await Promise.all(targets.map(async (target) => {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, buffer);
+    }));
+
+    // Same two-mode behaviour as uploads: dev checkout gets the real repo
+    // files (public/ and dist/), a packaged app gets the userData folder.
+    const publicTarget = targets.find((target) => target.includes(`${path.sep}public${path.sep}`));
+    if (publicTarget) return { url: `/${relativePath.split(path.sep).join("/")}`, path: publicTarget };
+    const target = targets[0];
+    return { url: pathToFileURL(target).toString(), path: target };
+  });
+
+  /** Read a voice MP3 back for self-contained exports. Packaged apps store
+   *  voice references as file:// URLs (userData), which the renderer cannot
+   *  fetch cross-origin — main reads it. The URL must resolve inside one of
+   *  the voices roots; anything else is refused. */
+  ipcMain.handle("scarlet-voice:read", async (_event, fileUrl) => {
+    const raw = String(fileUrl ?? "");
+    if (!raw.startsWith("file://")) throw new Error("Only file:// voice URLs can be read.");
+    let resolved;
+    try {
+      resolved = path.normalize(fileURLToPath(raw));
+    } catch {
+      throw new Error("Invalid voice file URL.");
+    }
+    if (!resolved.toLowerCase().endsWith(".mp3")) throw new Error("Voice files must be .mp3.");
+
+    const roots = [path.join(app.getPath("userData"), "game-media", "voices")];
+    if (!app.isPackaged) {
+      roots.push(path.join(app.getAppPath(), "public", "voices"));
+      roots.push(path.join(app.getAppPath(), "dist", "voices"));
+    }
+    const allowed = roots.some((root) => resolved.startsWith(root + path.sep));
+    if (!allowed) throw new Error("Voice file is outside the voices folder.");
+
+    const buffer = await fs.readFile(resolved);
+    return { base64: buffer.toString("base64"), size: buffer.length, name: path.basename(resolved) };
+  });
+}
+
 function registerWindowIpc() {
   ipcMain.handle("scarlet-window:set-fullscreen", (event, enabled) => {
     const win = windowFromEvent(event);
@@ -167,12 +351,12 @@ function configureWindow(win) {
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isInternalUrl(url)) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          title: APP_NAME,
-          backgroundColor: "#05050a",
-          autoHideMenuBar: true,
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        title: APP_NAME,
+        backgroundColor: "#05050a",
+        autoHideMenuBar: false,
           width: 1440,
           height: 900,
           minWidth: 1024,
@@ -203,7 +387,7 @@ function createWindow(url = "") {
   const win = new BrowserWindow({
     title: APP_NAME,
     backgroundColor: "#05050a",
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     width: 1440,
     height: 900,
     minWidth: 1024,
@@ -231,7 +415,10 @@ if (!gotLock) {
   app.quit();
 } else {
   registerDesktopMediaIpc();
+  registerVoiceIpc();
+  registerSavesIpc();
   registerWindowIpc();
+  registerAppMenu();
 
   // Windows opened by the web app (Studio playtests use window.open) are
   // created by Electron, not by createWindow(), so apply the same security,

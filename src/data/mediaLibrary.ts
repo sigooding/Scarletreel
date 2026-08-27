@@ -31,10 +31,39 @@ type DesktopMediaBridge = {
     type: AssetType;
     bytes: ArrayBuffer;
   }): Promise<{ url?: string; path?: string }>;
+  /** Copy a generated ElevenLabs voice line into the game folder's
+   *  `voices/<person>/<scene>/` tree. `relativePath` is validated on the
+   *  main side to stay inside that tree. */
+  saveVoice?(payload: {
+    relativePath: string;
+    bytes: ArrayBuffer;
+    name: string;
+    mimeType: string;
+  }): Promise<{ url?: string; path?: string }>;
+  /** Read a voice MP3 back (packaged apps reference them by file:// URL).
+   *  `fileUrl` is validated on the main side to stay inside the voices tree. */
+  readVoice?(fileUrl: string): Promise<{ base64: string; size: number; name: string }>;
   setFullscreen?(enabled: boolean): Promise<boolean>;
   isFullscreen?(): Promise<boolean>;
   setWindowSize?(width: number, height: number): Promise<{ width: number; height: number }>;
   quit?(): Promise<void>;
+  /* ---- player save files (real .sreel files in the user's saves folder) ---- */
+  savesDir?(): Promise<string>;
+  saveGameFile?(payload: {
+    storyId: string;
+    episodeId?: string;
+    slot: number;
+    saveJson: string;
+  }): Promise<{ path?: string }>;
+  listSaveFiles?(storyId: string): Promise<
+    Array<{ name: string; path: string; save: Record<string, unknown> }>
+  >;
+  exportSaveFile?(payload: { suggestedName: string; json: string }): Promise<{ canceled?: boolean; path?: string }>;
+  importSaveFile?(): Promise<{ canceled?: boolean; path?: string; json?: string }>;
+  openSavesDir?(): Promise<string>;
+  /** Native File menu events ("save" | "load" | "export-save" | "import-save" | "open-saves-dir").
+   *  Returns an unsubscribe function. */
+  onMenu?(cb: (action: string) => void): () => void;
 };
 
 declare global {
@@ -692,6 +721,163 @@ export async function loadStoryAssetsForExport(story: Story): Promise<MediaAsset
   } catch {
     return loadAssets(story.id);
   }
+}
+
+/** Blob → data URL. FileReader in the browser; a base64 fallback for
+ *  non-DOM runtimes (the engine tests exercise this under plain Node). */
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  const mime = blob.type || "application/octet-stream";
+  if (typeof FileReader !== "undefined") {
+    return await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(fr.error ?? new Error("Could not read voice file."));
+      fr.readAsDataURL(blob);
+    });
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:${mime};base64,${btoa(bin)}`;
+}
+
+/** Read one voice-file reference as a base64 data URL: `/voices/...` public
+ *  paths are fetched (dev server / static build), `file://` URLs go through
+ *  the desktop bridge (packaged app). null when the file can't be read. */
+async function readVoiceFileAsDataUrl(value: string): Promise<{ dataUrl: string; name: string } | null> {
+  try {
+    if (value.startsWith("/voices/")) {
+      const res = await fetch(value);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return { dataUrl: await blobToDataUrl(blob), name: value.slice("/voices/".length) };
+    }
+    if (value.startsWith("file://")) {
+      const bridge = typeof window !== "undefined" ? window.scarletReelDesktop : undefined;
+      if (!bridge?.readVoice) return null;
+      const res = await bridge.readVoice(value);
+      if (!res?.base64) return null;
+      return { dataUrl: "data:audio/mpeg;base64," + res.base64, name: res.name || "voice.mp3" };
+    }
+  } catch (err) {
+    console.warn("[media] Could not read voice file for export.", err);
+  }
+  return null;
+}
+
+/**
+ * Make an export self-contained for file-based voice lines. Every reference
+ * to a voice MP3 stored as a real file (a `/voices/<person>/<scene>/<line>.mp3`
+ * path in dev/browser, or a `file://` URL in a packaged app) is read off disk
+ * and converted into a bundled `asset:<id>` row carrying the base64 payload —
+ * the same shape as uploaded media, so the import path needs no changes.
+ *
+ * Returns a new story (input untouched) plus the bundled assets; `missing`
+ * lists referenced files that could not be read, so the export UI can warn
+ * instead of silently shipping a silent line.
+ *
+ * (Field walk mirrors resolveStoryMedia above — keep the lists in sync.)
+ */
+export async function bundleVoiceFileRefs(
+  story: Story
+): Promise<{ story: Story; assets: MediaAsset[]; missing: string[] }> {
+  const next: Story = JSON.parse(JSON.stringify(story));
+  const assets: MediaAsset[] = [];
+  const missing: string[] = [];
+  const byRef = new Map<string, string>();
+
+  // A string in, a string out (same value or an asset: ref) — the generic
+  // keeps required-string fields (background, coverImage…) satisfied.
+  const bundleValue = async <T extends string | undefined>(value: T): Promise<T> => {
+    if (!value || (!value.startsWith("/voices/") && !value.startsWith("file://"))) return value;
+    let id = byRef.get(value);
+    if (!id) {
+      const read = await readVoiceFileAsDataUrl(value);
+      if (!read) {
+        if (!missing.includes(value)) missing.push(value);
+        return value; // leave the reference as-is; the export UI warns about it
+      }
+      id = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      assets.push({
+        id,
+        name: read.name,
+        type: "audio",
+        dataUrl: read.dataUrl,
+        size: Math.max(0, Math.round(((read.dataUrl.length - read.dataUrl.indexOf(",") - 1) * 3) / 4)),
+        uploadedAt: Date.now(),
+      });
+      byRef.set(value, id);
+    }
+    return `asset:${id}` as T;
+  };
+
+  const apply = async (obj: unknown, key: string) => {
+    if (!obj || typeof obj !== "object") return;
+    const record = obj as Record<string, unknown>;
+    const v = record[key];
+    if (typeof v === "string") record[key] = await bundleValue(v);
+  };
+  const applyCinematic = async (c?: CinematicSettings) => {
+    if (!c) return;
+    c.foregroundImage = await bundleValue(c.foregroundImage);
+    if (c.foregroundAnimation?.frames?.length) {
+      c.foregroundAnimation.frames = (
+        await Promise.all(c.foregroundAnimation.frames.map((f) => bundleValue(f)))
+      ).filter((f): f is string => !!f);
+    }
+  };
+
+  for (const sc of next.scenes) {
+    sc.background = await bundleValue(sc.background);
+    sc.musicUrl = await bundleValue(sc.musicUrl);
+    sc.sceneAudioUrl = await bundleValue(sc.sceneAudioUrl);
+    sc.narrationAudioUrl = await bundleValue(sc.narrationAudioUrl);
+    if (sc.credits?.montage?.length) {
+      sc.credits.montage = (
+        await Promise.all(sc.credits.montage.map((m) => bundleValue(m)))
+      ).filter((m): m is string => !!m);
+    }
+    for (const h of sc.hotspots ?? []) {
+      h.image = await bundleValue(h.image);
+    }
+    await applyCinematic(sc.cinematic);
+    for (const b of sc.dialogueBeats ?? []) {
+      b.audioUrl = await bundleValue(b.audioUrl);
+      b.background = await bundleValue(b.background);
+      await applyCinematic(b.cinematic);
+    }
+  }
+  for (const it of next.items) {
+    it.iconUrl = await bundleValue(it.iconUrl);
+  }
+  for (const c of next.characters) {
+    c.avatarUrl = await bundleValue(c.avatarUrl);
+    if (c.talkingFrames?.length) {
+      c.talkingFrames = (
+        await Promise.all(c.talkingFrames.map((f) => bundleValue(f)))
+      ).filter((f): f is string => !!f);
+    }
+    c.talkingRest = await bundleValue(c.talkingRest);
+  }
+  for (const a of next.acts ?? []) {
+    a.titleCardImage = await bundleValue(a.titleCardImage);
+  }
+  for (const ep of next.episodes ?? []) {
+    ep.titleCardImage = await bundleValue(ep.titleCardImage);
+    ep.posterImage = await bundleValue(ep.posterImage);
+    ep.titleCardMusicUrl = await bundleValue(ep.titleCardMusicUrl);
+    if (ep.recapLines?.length) {
+      for (const line of ep.recapLines) line.image = await bundleValue(line.image);
+    }
+  }
+  next.coverImage = await bundleValue(next.coverImage);
+  if (next.dialogueBox) {
+    await apply(next.dialogueBox, "backgroundImage");
+  }
+
+  return { story: next, assets, missing };
 }
 
 /** React hook: whether IndexedDB (file storage) is available in this browser.

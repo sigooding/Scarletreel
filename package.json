@@ -12,6 +12,7 @@
     "preflight": "node scripts/preflight.mjs",
     "desktop:preview": "npm run build && electron .",
     "desktop:dev": "npm run build && electron .",
+    "desktop:dev-live": "node scripts/desktop-dev.mjs",
     "desktop:pack": "npm run build && electron-builder --dir",
     "desktop:dist": "npm run build && electron-builder",
     "desktop:preview:fullscreen": "npm run build && electron . --fullscreen"

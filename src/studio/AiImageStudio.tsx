@@ -134,7 +134,7 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
             onChange={(e) => setCfg({ apiKey: e.target.value })}
             autoComplete="off"
           />
-          <p className="mt-1 font-type text-[8px] text-paper/35">Stored locally in this browser only, and sent only to {meta.label.split(" — ")[0]}.</p>
+          <p className="mt-1 font-type text-[8px] text-paper/35">Stored locally on this device only, and sent only to {meta.label.split(" — ")[0]}.</p>
         </Field>
       )}
 
