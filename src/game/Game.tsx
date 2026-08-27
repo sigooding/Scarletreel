@@ -3871,13 +3871,12 @@ function CasePlayer({
   const beatRouteValid = !!beatRouteTarget && story.scenes.some((s) => s.id === beatRouteTarget);
   const beatRouteMode = routingBeat?.afterBeatMode === "continue" ? "continue" : "auto";
   const beatRouteDelay = Math.max(0, Math.min(600, routingBeat?.afterBeatDelaySeconds ?? 1.6));
-  // Routing is live once the player is ON the final beat and that line has
-  // finished typing (so the timer counts from when they've read it).
-  const beatRouteReady =
-    beatRouteValid &&
-    !!currentBeat &&
-    currentBeat === routingBeat &&
-    beatDone;
+  // The player is ON the final beat that routes into another scene — used to
+  // suppress skip/back/timer chrome over the insert even while typing.
+  const onRoutingBeat = beatRouteValid && !!currentBeat && currentBeat === routingBeat;
+  // Routing is live once that line has finished typing (the timer counts from
+  // when they've read it).
+  const beatRouteReady = onRoutingBeat && beatDone;
   // Auto beat-route countdown (timer only; the HUD is hidden for the cut).
   const [, setBeatRouteRemaining] = useState(0);
 
@@ -6206,10 +6205,11 @@ function CasePlayer({
                   </span>
                 </p>
                 {/* When the last beat routes into another scene, the cut is
-                    the beat's point — hide skip/back/controls (and the timer
-                    HUD) so the insert plays clean. Auto mode shows nothing
-                    and cuts on its timer; continue mode shows one button. */}
-                {beatRouteReady && beatRouteMode === "auto" ? null : beatRouteReady && beatRouteMode === "continue" ? (
+                    the beat's point — over the whole routing beat (even while
+                    typing) hide skip/back/timer controls so the insert plays
+                    clean. Auto mode shows nothing and cuts on its timer;
+                    continue mode shows only a Continue button. */}
+                {onRoutingBeat && beatRouteMode === "auto" ? null : onRoutingBeat && beatRouteMode === "continue" ? (
                   <div className="mt-2 flex justify-center">
                     <button
                       onClick={(e) => {
@@ -6218,7 +6218,7 @@ function CasePlayer({
                       }}
                       className="beat-ctl beat-ctl-primary"
                     >
-                      ▸ Continue · space
+                      {beatDone ? "▸ Continue · space" : "▸ Continue · space"}
                     </button>
                   </div>
                 ) : (
