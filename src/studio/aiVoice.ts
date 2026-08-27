@@ -63,8 +63,16 @@ export interface SynthesisResult {
 
 /** Synthesize one line with ElevenLabs and return it as a data URL ready
  *  for the media-library upload. Throws an Error with a readable message
- *  for every failure mode (bad key, credits, rate limit, voice/model). */
-export async function synthesizeElevenLabs(text: string, voiceId: string, model: string): Promise<SynthesisResult> {
+ *  for every failure mode (bad key, credits, rate limit, voice/model).
+ *  Pass `context` (the lines immediately around this one, with speaker
+ *  labels) for ElevenLabs' conversational context — it reads the prior
+ *  turn so the delivery responds to it naturally instead of in isolation. */
+export async function synthesizeElevenLabs(
+  text: string,
+  voiceId: string,
+  model: string,
+  context?: { previousText?: string; nextText?: string }
+): Promise<SynthesisResult> {
   const key = getElevenKey();
   if (!key) throw new Error("No ElevenLabs API key set — add it in the AI Voice section of the People tab first.");
   let res: Response;
@@ -79,7 +87,11 @@ export async function synthesizeElevenLabs(text: string, voiceId: string, model:
       body: JSON.stringify({
         text,
         model_id: model,
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.25, use_speaker_boost: true },
+        // Conversational context: the surrounding turns help the model pace
+        // and intone the line as a reply rather than an isolated read.
+        ...(context?.previousText ? { previous_text: context.previousText.slice(-1000) } : {}),
+        ...(context?.nextText ? { next_text: context.nextText.slice(-400) } : {}),
       }),
     });
   } catch {

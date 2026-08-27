@@ -278,13 +278,14 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               <li><b>Memories recalled</b> — tag → line; the line replaces the text when that memory exists. <code>{"{said}"}</code> echoes the player's words.</li>
             </ul>
             <p>
-              <b>🎙 Batch voice (ElevenLabs)</b> — on the Beats tab: <b>▶ This scene</b> converts every convertible beat in
-              the open scene, <b>▶▶ Whole case</b> walks the whole story. Each line is synthesized <b>separately</b> in its
-              speaker's assigned voice (set the character's <b>ElevenLabs voice ID</b> in the Characters tab first) and saved as
-              its own correctly-named MP3 — desktop saves to <code>public/voices/&lt;person&gt;/&lt;scene&gt;/</code>, browser saves
-              via the linked voice folder or media library. A confirmation shows the total character count (credits) up front,
-              and when MP3s already exist you choose to regenerate all or only fill the gaps. Silent beats, beats whose text
-              changes with memory recalls, and characters without a voice ID are skipped by design.
+              <b>🎙 Batch voice — this scene (ElevenLabs)</b> — on the Beats tab, pick a <b>voice model</b> and press <b>▶
+              Generate this scene's voices</b>. It converts the whole <i>conversation in that scene</i>: each line is synthesized
+              <b> separately</b> in its speaker's assigned voice (set the character's <b>ElevenLabs voice ID</b> in the Characters
+              tab first), reads the surrounding lines as <b>conversational context</b> so delivery responds naturally to the
+              previous speaker, and each finished MP3 is <b>applied to its beat automatically</b> (no manual wiring). Desktop saves
+              to <code>public/voices/&lt;person&gt;/&lt;scene&gt;/</code>; browser saves via the linked voice folder or media library.
+              The confirmation shows total characters (credits) up front; when MP3s exist you choose regenerate-all or fill-the-gaps.
+              Do one conversation/scene at a time — silent beats, memory-recall lines, and characters without a voice ID are skipped.
             </p>
           </Section>
 
