@@ -2941,6 +2941,8 @@ function CasePlayer({
   const highlightsRef = useRef<string[]>([]);
   highlightsRef.current = episodeHighlights;
   const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Per-scene music level for the currently-playing track (1 = default).
+  const musicLevelRef = useRef<number>(1);
   // Elements currently fading out. They are detached from sceneAudioRef the
   // moment the fade starts, so the incoming track can be wired up immediately
   // and the two overlap into a crossfade rather than a gap.
@@ -3222,8 +3224,12 @@ function CasePlayer({
       if (!reuse) a.loop = true;
       a.muted = !soundOnRef.current;
       // The voice-duck envelope multiplies in here too, so a track that
-      // starts mid-dialogue comes in already ducked.
-      const target = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+      // starts mid-dialogue comes in already ducked. A per-scene music level
+      // lets the author start this track louder/lower than the player's
+      // default music volume.
+      const trackLevel = scene.musicLevel !== undefined && scene.musicLevel >= 0 ? scene.musicLevel : 1;
+      musicLevelRef.current = trackLevel;
+      const target = audio.volumes.master * audio.volumes.music * trackLevel * audio.duckFactor;
       // Start silent and ramp in. A track adopted from the priming click may
       // already be audible, so it fades from wherever it actually is.
       a.volume = reuse ? a.volume : 0;
@@ -3277,6 +3283,7 @@ function CasePlayer({
     if (musicMode === "none") {
       // "No music" is a cue too: ramp the soundtrack out instead of dropping
       // it, so entering a silent scene lands rather than lurches.
+      musicLevelRef.current = 1;
       if (sceneAudioRef.current) {
         const outgoing = sceneAudioRef.current;
         outgoing.onplaying = null;
@@ -3639,7 +3646,7 @@ function CasePlayer({
     // and the fade fight, producing an audible stutter. The ramp already
     // targets the live mixer value, so the new level lands when it settles.
     if (sceneAudioRef.current && !isFading(sceneAudioRef.current)) {
-      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music * (musicLevelRef.current ?? 1) * audio.duckFactor;
     }
     // Video cutscenes follow master only.
     if (bgVideoRef.current) bgVideoRef.current.volume = audio.volumes.master;
@@ -3647,12 +3654,14 @@ function CasePlayer({
 
   // Sine-duck envelope: the scene music is a raw Audio element outside the
   // WebAudio buses, so the stepped duck factor is re-applied to the live
-  // track as the half-sine ramp progresses (and on release).
+  // track as the half-sine ramp progresses (and on release). The per-scene
+  // music level for the *current* track multiplies in too.
   useEffect(() => {
     audio.onDuckChange = () => {
       const a = sceneAudioRef.current;
       if (a && !isFading(a)) {
-        a.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+        const level = musicLevelRef.current ?? 1;
+        a.volume = audio.volumes.master * audio.volumes.music * level * audio.duckFactor;
       }
     };
     return () => {
@@ -3704,7 +3713,7 @@ function CasePlayer({
           setMusicPlaying(true);
           // Keep the voice duck in the target — re-enabling sound mid-dialogue
           // shouldn't slam the track up over a line that's still talking.
-          fadeAudio(a, audio.volumes.master * audio.volumes.music * audio.duckFactor, MUSIC_FADE_MS);
+          fadeAudio(a, audio.volumes.master * audio.volumes.music * (musicLevelRef.current ?? 1) * audio.duckFactor, MUSIC_FADE_MS);
         })
         .catch(() => setSoundBlocked(true));
     }

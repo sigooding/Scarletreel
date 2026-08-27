@@ -792,6 +792,12 @@ export interface SceneNode {
    *  Applies to both the outgoing track and the incoming one, so a switch is
    *  a true crossfade. Defaults to 1.4s. 0 = hard cut (the old behaviour). */
   musicFadeSeconds?: number;
+  /** Default level for this scene's music, 0–1 (a multiplier on the music
+   *  channel). Lets a scene start a track louder (a title theme) or lower
+   *  (ambient bed under dialogue) independent of the player's music volume.
+   *  Only applied when this scene starts a track (musicMode "track"); a
+   *  "continue"/"none" scene doesn't retune an already-playing track. */
+  musicLevel?: number;
   /** one-shot recorded prose narration, used instead of Web Speech */
   narrationAudioUrl?: string;
   /** scene-level narration override; defaults to true */

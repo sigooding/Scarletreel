@@ -6480,6 +6480,21 @@ function StudioInner({
                     <p className="mt-1 font-type text-[9px] text-paper/40">
                       This track loops until another scene chooses a different track or a scene with <b className="text-crimson">No music</b> is reached.
                     </p>
+                    <Field label={`Music level (${Math.round((scene.musicLevel ?? 1) * 100)}%) — loudness of THIS track`}>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={1.6}
+                        step={0.05}
+                        className="w-full accent-gold"
+                        value={scene.musicLevel ?? 1}
+                        onChange={(e) => updateScene(scene.id, { musicLevel: parseFloat(e.target.value) })}
+                      />
+                      <p className="mt-1 font-type text-[9px] text-paper/40">
+                        Default starting volume for this scene's track — e.g. lower it for an ambient bed under dialogue, raise it for a title theme.
+                        Stacks with the player's own music volume; 100% is the normal level.
+                      </p>
+                    </Field>
                   </Field>
                 )}
                 {scene.musicMode === "none" && (
