@@ -141,51 +141,53 @@ export function convertConfirmMessage(charName: string, voiceId: string, model: 
 }
 
 /* ------------------------------------------------------------------ *
- *  ElevenLabs v3 audio tags — non-speech cues inserted into the line.
- *  Bracketed tags like [laughs] / [coughs] are a v3 feature; v2 and
- *  turbo read them literally, so they're offered when the v3 model is
- *  selected. Inserted at the cursor (or appended) by the beat editor.
+ *  ElevenLabs non-speech audio tags.
+ *  v3 acts out bracketed cues such as [laughs]; v2.5/turbo do NOT and
+ *  would read the brackets aloud. Each tag is marked for which models
+ *  it works on, and the UI offers them accordingly and sorts them.
  * ------------------------------------------------------------------ */
 export interface AudioTag {
   tag: string;
   label: string;
   hint: string;
+  /** "v3" cues are only performed by the v3 model; "all" (plain voice
+   *  direction such as whispering) is passed through for every model. */
+  worksOn: "v3" | "all";
+  group: string;
 }
 
-/** Curated, commonly-working v3 tags grouped by kind. The API supports
- *  many natural-language sound labels too — these are the reliable ones. */
-export const ELEVENLABS_AUDIO_TAGS: { group: string; tags: AudioTag[] }[] = [
-  {
-    group: "Reactions",
-    tags: [
-      { tag: "[laughs]", label: "laugh", hint: "a short laugh" },
-      { tag: "[chuckles]", label: "chuckle", hint: "a quiet chuckle" },
-      { tag: "[sighs]", label: "sigh", hint: "an exhale" },
-      { tag: "[gulps]", label: "gulp", hint: "a nervous swallow" },
-      { tag: "[gasps]", label: "gasp", hint: "a sharp intake of breath" },
-      { tag: "[groans]", label: "groan", hint: "a weary/annoyed groan" },
-      { tag: "[grunts]", label: "grunt", hint: "a short grunt" },
-    ],
-  },
-  {
-    group: "Physical / throat",
-    tags: [
-      { tag: "[coughs]", label: "cough", hint: "a dry cough" },
-      { tag: "[clears throat]", label: "clear throat", hint: "throat-clearing" },
-      { tag: "[sneezes]", label: "sneeze", hint: "a sneeze" },
-      { tag: "[yawns]", label: "yawn", hint: "a tired yawn" },
-    ],
-  },
-  {
-    group: "Mouth / emotion",
-    tags: [
-      { tag: "[whispers]", label: "whisper", hint: "drop to a whisper" },
-      { tag: "[mumbles]", label: "mumble", hint: "muffled/mumbled" },
-      { tag: "[laughs]", label: "laughing line", hint: "tag around laughing speech" },
-      { tag: "[pauses]", label: "beat pause", hint: "a held beat" },
-    ],
-  },
+/** Curated, known-supported non-speech cues for ElevenLabs v3, sorted by
+ *  group then label. The API is tolerant of other natural-language sound
+ *  labels too, but these are the reliable, commonly-documented ones. */
+export const ELEVENLABS_AUDIO_TAGS: AudioTag[] = [
+  // Emotional / vocal reactions
+  { group: "Reactions", tag: "[chuckles]", label: "chuckle", hint: "a quiet, amused chuckle", worksOn: "v3" },
+  { group: "Reactions", tag: "[laughs]", label: "laugh", hint: "a short laugh", worksOn: "v3" },
+  { group: "Reactions", tag: "[sighs]", label: "sigh", hint: "an exhale of relief/tiredness", worksOn: "v3" },
+  { group: "Reactions", tag: "[groans]", label: "groan", hint: "a weary or annoyed groan", worksOn: "v3" },
+  { group: "Reactions", tag: "[grunts]", label: "grunt", hint: "a short, effortful grunt", worksOn: "v3" },
+  { group: "Reactions", tag: "[gasps]", label: "gasp", hint: "a sharp intake of breath / surprise", worksOn: "v3" },
+  { group: "Reactions", tag: "[gulps]", label: "gulp", hint: "a nervous swallow", worksOn: "v3" },
+  { group: "Reactions", tag: "[yawns]", label: "yawn", hint: "a tired yawn", worksOn: "v3" },
+  // Physical / throat
+  { group: "Physical", tag: "[coughs]", label: "cough", hint: "a dry cough", worksOn: "v3" },
+  { group: "Physical", tag: "[clears throat]", label: "clear throat", hint: "throat-clearing before speaking", worksOn: "v3" },
+  { group: "Physical", tag: "[sneezes]", label: "sneeze", hint: "a sneeze", worksOn: "v3" },
+  { group: "Physical", tag: "[pauses]", label: "pause / beat", hint: "a held beat before continuing", worksOn: "v3" },
+  // Voice delivery — ordinary spoken direction, works on every model
+  { group: "Delivery", tag: "[whispers]", label: "whisper", hint: "drop to a whisper", worksOn: "all" },
+  { group: "Delivery", tag: "[mumbles]", label: "mumble", hint: "muffled / under-breath", worksOn: "all" },
 ];
+
+/** Sorted, model-appropriate tags for the picker. v3 gets everything;
+ *  older models get only the voice-delivery cues (and a note). */
+export function audioTagsForModel(model: string): AudioTag[] {
+  const v3 = modelSupportsAudioTags(model);
+  return ELEVENLABS_AUDIO_TAGS
+    .filter((t) => v3 || t.worksOn === "all")
+    .slice()
+    .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+}
 
 /** Model ids that understand bracketed audio tags (v3 family). */
 export function modelSupportsAudioTags(model: string): boolean {

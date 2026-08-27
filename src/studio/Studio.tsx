@@ -70,7 +70,7 @@ import { ActEditor, ACT_TINTS } from "./ActEditor";
 import { HelpNote, StudioHelpModal } from "./StudioHelp";
 import { healLayout, tidyLayoutPositions } from "./canvas";
 import {
-  ELEVENLABS_AUDIO_TAGS,
+  audioTagsForModel,
   ELEVENLABS_MODELS,
   convertConfirmMessage,
   getElevenKey,
@@ -445,6 +445,56 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/** Local-state text area that only commits to the story on blur / Enter /
+ *  unmount. Keeping text in component state means typing doesn't re-render
+ *  the inspector or clone the whole story on every keystroke — which was
+ *  causing the beat line to drop focus / reject typing mid-edit. */
+function CommitTextArea({
+  value,
+  onCommit,
+  className,
+  rows = 4,
+  placeholder,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  className?: string;
+  rows?: number;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(value);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  // Re-sync only when the external value changes AND we're not focused (e.g.
+  // after an undo, duplicate, or sound-tag insertion elsewhere).
+  useEffect(() => {
+    if (ref.current && document.activeElement === ref.current) return;
+    setText(value);
+  }, [value]);
+  const commit = () => {
+    if (text !== value) onCommit(text);
+  };
+  return (
+    <textarea
+      ref={ref}
+      className={className}
+      rows={rows}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      // Commit on Enter? For dialogue we keep newlines natural, so Enter is a
+      // line break; save happens on blur. Keep a Ctrl/Cmd+Enter to save early.
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          commit();
+          ref.current?.blur();
+        }
+      }}
+    />
+  );
+}
+
 const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
 
@@ -475,6 +525,8 @@ function CollapsibleSection({
   titleClass = "text-cyan-neon",
   className = "border border-noir-600/70 bg-noir-900/40",
   headerRight,
+  controlledOpen,
+  onToggle,
 }: {
   id: string;
   title: React.ReactNode;
@@ -484,8 +536,11 @@ function CollapsibleSection({
   titleClass?: string;
   className?: string;
   headerRight?: React.ReactNode;
+  /** when supplied, open state is owned by the parent (no localStorage) */
+  controlledOpen?: boolean;
+  onToggle?: (next: boolean) => void;
 }) {
-  const [open, setOpen] = useState<boolean>(() => {
+  const [localOpen, setLocalOpen] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem(sectionStateKey(id));
       if (raw === "0") return false;
@@ -495,16 +550,20 @@ function CollapsibleSection({
     }
     return defaultOpen;
   });
-  const toggle = () =>
-    setOpen((o) => {
-      const next = !o;
-      try {
-        localStorage.setItem(sectionStateKey(id), next ? "1" : "0");
-      } catch {
-        /* storage unavailable — state still toggles for this session */
-      }
-      return next;
-    });
+  const open = controlledOpen !== undefined ? controlledOpen : localOpen;
+  const toggle = () => {
+    const next = !open;
+    if (controlledOpen !== undefined) {
+      onToggle?.(next);
+      return;
+    }
+    setLocalOpen(next);
+    try {
+      localStorage.setItem(sectionStateKey(id), next ? "1" : "0");
+    } catch {
+      /* storage unavailable — state still toggles for this session */
+    }
+  };
   return (
     <div className={className}>
       <div className="flex w-full items-center justify-between gap-2 px-2 py-1.5 hover:bg-noir-800/60">
@@ -3803,6 +3862,11 @@ function StudioInner({
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
+  // Which beats are expanded in the Beats tab. New beats start open; an
+  // explicit per-beat id set lets users minimise beats they've finished and
+  // have a "collapse all" so the list doesn't get long.
+  const [expandedBeats, setExpandedBeats] = useState<Set<string>>(() => new Set());
+  const [beatsUserToggled, setBeatsUserToggled] = useState<Set<string>>(() => new Set());
   const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
   const [globalTitleTheme, setGlobalTitleThemeState] = useState<TitleTheme>(() => {
     // Read the title settings on boot from the same key
@@ -7390,10 +7454,34 @@ function StudioInner({
               <>
                 <HelpNote id="beats-tab" title="Beats">
                   Beats play <b>in order</b> after the scene prose — reorder them with the ▲/▼ buttons in each beat's
-                  title bar. A beat's <b>condition rule</b> hides it until a gate passes (pair it with a 💬 reply choice's
-                  flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a different line when the player
-                  made a specific earlier choice (<code>{"{said}"}</code> echoes their exact words).
+                  title bar. Click a beat's <b>▾/▸</b> header to minimise it, or use the buttons below to fold everything
+                  away and find beats in long lists. A beat's <b>condition rule</b> hides it until a gate passes (pair it
+                  with a 💬 reply choice's flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a
+                  different line when the player made a specific earlier choice (<code>{"{said}"}</code> echoes their words).
                 </HelpNote>
+
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
+                    onClick={() => {
+                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
+                      setExpandedBeats(new Set());
+                    }}
+                  >
+                    ▸ Collapse all
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
+                    onClick={() => {
+                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
+                      setExpandedBeats(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
+                    }}
+                  >
+                    ▾ Expand all
+                  </button>
+                </div>
 
                 {/* Batch ElevenLabs voice generation for THIS scene — every
                     eligible line converted separately, each in its speaker's
@@ -7456,6 +7544,13 @@ function StudioInner({
                       ? "Narrator"
                       : story.characters.find((c) => c.id === b.characterId)?.name ?? "Narrator";
                   const snippet = b.text.replace(/\s+/g, " ").trim().slice(0, 30);
+                  // Open if the user has opened it OR it's a brand-new beat the
+                  // author just added (default open) OR the focused beat. Beat
+                  // collapse persists across edits via the user-toggled set.
+                  const isOpen =
+                    beatsUserToggled.has(b.id)
+                      ? expandedBeats.has(b.id)
+                      : true;
                   return (
                     <CollapsibleSection
                       key={b.id}
@@ -7463,6 +7558,15 @@ function StudioInner({
                       title={<span>💬 Beat {i + 1} · {speakerName}{snippet ? ` — ${snippet}` : ""}</span>}
                       titleClass="text-gold"
                       defaultOpen={focusedBeatId === b.id}
+                      controlledOpen={isOpen}
+                      onToggle={(next) => {
+                        setBeatsUserToggled((prev) => new Set(prev).add(b.id));
+                        setExpandedBeats((prev) => {
+                          const s2 = new Set(prev);
+                          if (next) s2.add(b.id); else s2.delete(b.id);
+                          return s2;
+                        });
+                      }}
                       headerRight={
                         <span className="flex items-center gap-1">
                           <button
@@ -7908,30 +8012,31 @@ function StudioInner({
                         )}
                       </div>
                     </Field>
-                    <Field label="Line">
-                      <textarea
+                    <Field label="Line (click to type — saves when you click away)">
+                      <CommitTextArea
                         className={`${inputCls} h-16 font-type`}
                         value={b.text}
-                        onChange={(e) =>
-                          mutate((d) => {
+                        onCommit={(next) =>
+                          mutateLatest((d) => {
                             const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = e.target.value;
+                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = next;
                           })
                         }
                       />
-                      {/* ElevenLabs v3 audio tags (laugh/cough/…) — inserted into
-                          the line. Bracketed cues only render with v3; other models
-                          speak the brackets, so we gate the panel on v3. */}
-                      {modelSupportsAudioTags(getElevenModel()) && b.characterId !== "narrator" && (
-                        <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
-                          <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
-                            🎙 Insert sound (ElevenLabs v3)
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {ELEVENLABS_AUDIO_TAGS.flatMap((g) => g.tags)
-                              // de-duplicate by tag
-                              .filter((t, _i, arr) => arr.findIndex((x) => x.tag === t.tag) === _i)
-                              .map((t) => (
+                      {/* Audio tags — v3 performs sound cues (laugh/cough);
+                          older models get only voice-delivery direction like
+                          whisper, with a note. */}
+                      {b.characterId !== "narrator" && (() => {
+                        const tags = audioTagsForModel(getElevenModel());
+                        const v3 = modelSupportsAudioTags(getElevenModel());
+                        if (!tags.length) return null;
+                        return (
+                          <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
+                            <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
+                              🎙 Insert cue · {v3 ? "sound + delivery" : "delivery only"}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {tags.map((t) => (
                                 <button
                                   key={t.tag}
                                   type="button"
@@ -7949,13 +8054,17 @@ function StudioInner({
                                   {t.label}
                                 </button>
                               ))}
+                            </div>
+                            <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                              {v3 ? (
+                                <>Bracketed cues like <b>[laughs]</b> are performed by the v3 voice — place them where the sound happens.</>
+                              ) : (
+                                <>This model only handles delivery cues like <b>[whispers]</b>. Switch to <b>Eleven v3</b> for performed sounds ([laughs], [coughs]…) — other models read the brackets aloud.</>
+                              )}
+                            </p>
                           </div>
-                          <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
-                            Bracketed cues like <b>[laughs]</b> are performed by the voice (v3 only). Place them where the
-                            sound happens. v2/turbo read them as text.
-                          </p>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </Field>
                     {/* Memory recall substitutions — the NPC echoes a specific
                         earlier choice instead of a generic line. */}
