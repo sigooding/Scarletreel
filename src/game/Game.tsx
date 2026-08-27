@@ -83,6 +83,7 @@ import type {
   Episode,
   EpisodeProgress,
   ForegroundAnimation,
+  ForegroundExtra,
   GameSave,
   GlobalState,
   Hotspot,
@@ -693,6 +694,113 @@ export function ForegroundLayer({
         anim={anim}
       />
     </div>
+  );
+}
+
+/** ADDITIONAL foreground images (the stacked extras). Each is an independent
+ * character/prop/frame placed on top of the plate (behind the primary
+ * foreground subject). Sizing is frame-relative: the image sits in a box
+ * anchored at (x, y), scaled by `scale` (fraction of the frame height), and —
+ * when parallax depth is on — shifts with the pointer by its own `depth`. */
+function ForegroundExtraImage({
+  extra,
+  resolve,
+}: {
+  extra: ForegroundExtra;
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const r = resolve ?? ((v?: string) => v);
+  const src = assetUrl(r(extra.image));
+  if (!src) return null;
+  const x = clamp(extra.x ?? 50, 0, 100);
+  const y = clamp(extra.y ?? 50, 0, 100);
+  const scale = Math.max(0.05, extra.scale ?? 1);
+  const fit = extra.fit ?? "contain";
+  const { ax, ay } = parseAnchor(extra.anchor ?? "50% 100%");
+  const zoom = extra.zoom !== undefined && extra.zoom !== 1 ? extra.zoom : undefined;
+  const zoomDur = Math.max(1, extra.zoomDuration ?? 8);
+  // Anchor-position box, translated by its anchor point.
+  // Box: fit modes fill the frame (subject spans the whole plate);
+  // "contain"/"native" sit in a height-fractioned box that hugs the image
+  // ratio, so e.g. a character at scale 0.8 occupies 80% of frame height.
+  const boxStyle: React.CSSProperties = {
+    left: `${x}%`,
+    top: `${y}%`,
+    width: fit === "cover" || fit === "fill" ? "100%" : "auto",
+    height: fit === "cover" || fit === "fill" ? "100%" : `${(scale * 100).toFixed(1)}%`,
+    aspectRatio: fit === "cover" || fit === "fill" ? undefined : "auto",
+    transform: `translate(${(-ax).toFixed(2)}%, ${(-ay).toFixed(2)}%)`,
+    transformOrigin: `${ax}% ${ay}%`,
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+  };
+  const flipScale = extra.flip ? -1 : 1;
+  if (src.startsWith("gradient:")) {
+    return <div className="absolute" style={{ ...boxStyle, background: src.slice(9) }} aria-hidden />;
+  }
+  return (
+    <div className="absolute" style={boxStyle} aria-hidden>
+      <img
+        src={src}
+        alt=""
+        draggable={false}
+        className={`select-none ${
+          fit === "cover"
+            ? "h-full w-full object-cover"
+            : fit === "fill"
+              ? "h-full w-full"
+              : "h-auto w-auto max-h-full max-w-full object-contain"
+        } ${zoom ? "fg-zoom" : ""}`}
+        style={{
+          transformOrigin: `${ax}% ${ay}%`,
+          transform: zoom ? undefined : `scaleX(${flipScale})`,
+          height: fit === "cover" || fit === "fill" ? "100%" : undefined,
+          width: fit === "cover" || fit === "fill" ? "100%" : undefined,
+          ...(zoom
+            ? ({
+                "--fg-base": String(flipScale),
+                "--fg-zoom": String(zoom),
+                "--fg-zoom-dur": `${zoomDur}s`,
+              } as React.CSSProperties)
+            : {}),
+        }}
+      />
+    </div>
+  );
+}
+
+/** The stack of additional foreground images for a cinematic. Renders in the
+ * SAME parallax-fg wrapper as the primary foreground; each extra independently
+ * shifts by its depth when parallax is on. */
+export function ForegroundExtras({
+  cinematic,
+  resolve,
+}: {
+  cinematic?: CinematicSettings;
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const extras = cinematic?.foregroundExtras ?? [];
+  if (!extras.length) return null;
+  // When parallax is on, each extra wraps in a parallax-mid plane so it
+  // shifts by its own depth; otherwise it renders as a plain layer.
+  const parallaxOn = (cinematic?.parallaxDepth ?? 0) > 0;
+  return (
+    <>
+      {extras.map((e, i) => {
+        const el = <ForegroundExtraImage key={i} extra={e} resolve={resolve} />;
+        if (!parallaxOn || (e.depth ?? 0) <= 0) return el;
+        return (
+          <div
+            key={`par-${i}`}
+            className="parallax-mid absolute inset-0"
+            style={{ "--plane-shift": `${(4 + (e.depth ?? 0.5) * 26).toFixed(1)}px` } as React.CSSProperties}
+          >
+            {el}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -1882,6 +1990,7 @@ function BeatBackground({
             </div>
             {pOn && <ParallaxMidLayers cinematic={l.cinematic} />}
             <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+              <ForegroundExtras cinematic={l.cinematic} />
               <ForegroundLayer cinematic={l.cinematic} />
             </div>
             {!l.exiting && transitionName === "fade-black" && (
@@ -4991,6 +5100,9 @@ function CasePlayer({
           <ParallaxMidLayers key={`par-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
         )}
         <div className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}>
+          {/* Additional stacked foreground images (extras) — render BELOW the
+              primary subject so the main foregroundImage stays on top. */}
+          <ForegroundExtras key={`fge-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
               each time the player enters the scene (not only on first mount). */}
           <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />

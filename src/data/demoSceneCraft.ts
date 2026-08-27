@@ -226,7 +226,8 @@ export const DEMO_SCENE_CRAFT: Story = {
       note:
         "STEP 5 — PARALLAX DEPTH. Cinematic panel → '🌆 Parallax depth'. " +
         "① The DEPTH slider (0 = off) turns on cursor-follow parallax: move your mouse and the plate drifts a little, while the foreground subject drifts MORE — a diorama. A gentle idle sway plays when the mouse is still (and it stands down under reduced-motion). " +
-        "② Add MID-GROUND DEPTH PLANES: transparent PNG cutouts (a window frame, a crowd, a fog bank) between the plate and the subject. Each plane's own DEPTH % sets how fast it shifts — far planes barely move, near planes move almost like the foreground. Upload a cutout, or drop in the gradient 'fog plane' as a cheap depth layer.",
+        "② Add MID-GROUND DEPTH PLANES: transparent PNG cutouts (a window frame, a crowd, a fog bank) between the plate and the subject. Each plane's own DEPTH % sets how fast it shifts — far planes barely move, near planes move almost like the foreground. Upload a cutout, or drop in the gradient 'fog plane' as a cheap depth layer. " +
+        "③ STACK MULTIPLE FOREGROUND IMAGES: the '🧍 Foreground overlay' section is the single MAIN subject (also the talking-sprite/vertigo anchor); '👥 Additional foreground images' adds any number of EXTRA characters/props/frames — each with its own X/Y position, scale, fit, flip and parallax depth. Here two cutouts stand on opposite sides of the room and drift at different speeds.",
       background: "/img/bg-club.jpg",
       ambientAudio: "jazz",
       particles: "smoke",
@@ -235,9 +236,24 @@ export const DEMO_SCENE_CRAFT: Story = {
       cinematic: {
         mode: "pan",
         parallaxDepth: 0.6,
+        // Primary subject: a dark vignette stand-in at the front (the "booth"
+        // silhouette) — this is the single main foreground anchor.
         foregroundImage: "gradient:radial-gradient(circle at 50% 70%, rgba(20,12,24,0.85) 0%, rgba(0,0,0,0) 55%)",
         foregroundFit: "cover",
         foregroundY: 20,
+        // EXTRA foreground subjects stacked behind it: two cutouts on opposite
+        // sides of the frame, each with its own position, scale, mirror and
+        // parallax depth — the "multiple characters in one shot" look.
+        foregroundExtras: [
+          {
+            image: "/img/ch-marlene.png",
+            x: 26, y: 78, scale: 0.62, fit: "contain", anchor: "50% 100%", flip: false, depth: 0.75,
+          },
+          {
+            image: "/img/ch-rocco.png",
+            x: 74, y: 80, scale: 0.7, fit: "contain", anchor: "50% 100%", flip: true, depth: 0.9,
+          },
+        ],
         parallaxLayers: [
           { image: "gradient:linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(8,10,18,0.5) 100%)", depth: 0.3 },
         ],

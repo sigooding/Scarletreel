@@ -416,6 +416,33 @@ export interface CreditsSettings {
   gateWeave?: "off" | "subtle" | "worn" | "projector";
 }
 
+/** An ADDITIONAL foreground image layered on top of the plate (and the primary
+ * `foregroundImage` subject). Unlike the single primary foreground — which is
+ * the vertigo/talking-sprite anchor and cycles keyframes — these are static
+ * (or zooming) decorations/characters you can stack as many of as you like,
+ * each independently positioned, scaled, flipped and parallaxed. */
+export interface ForegroundExtra {
+  /** image url / `gradient:` / `asset:` reference */
+  image: string;
+  /** how the image fits its box (default contain) */
+  fit?: "contain" | "cover" | "fill" | "native";
+  /** image scale (default 1) */
+  scale?: number;
+  /** anchor position as % of the frame (default 50 / 50) */
+  x?: number;
+  y?: number;
+  /** point ON the image pinned at x/y, CSS background-position style (default "50% 100%" — feet on the floor) */
+  anchor?: string;
+  /** mirror horizontally, so two subjects can face each other */
+  flip?: boolean;
+  /** parallax depth 0 (far)→1 (near); only moves when parallaxDepth is on. */
+  depth?: number;
+  /** optional animated push-in zoom (1 = none) */
+  zoom?: number;
+  /** seconds the foreground zoom takes (default 8) */
+  zoomDuration?: number;
+}
+
 /** A mid-ground parallax depth plane (see CinematicSettings.parallaxLayers). */
 export interface ParallaxLayer {
   /** image url / `gradient:` / `asset:` reference — transparent cutouts work best */
@@ -505,6 +532,12 @@ export interface CinematicSettings {
    * several poses. When set, its `frames` replace the single foregroundImage
    * (every frame shares the same scale / fit / position). */
   foregroundAnimation?: ForegroundAnimation;
+  /** ADDITIONAL foreground images stacked on top of the plate (and behind
+   * the primary foregroundImage subject). Unlike the single primary
+   * foreground (the vertigo / talking-sprite anchor), these are independently
+   * positioned, scaled, flipped and parallaxed extras — add as many as you
+   * like for multiple characters / props / frames in one shot. */
+  foregroundExtras?: ForegroundExtra[];
   /** drift distance for the slow "pan" mode as % of image width (default 0 —
    * keeps the gentle push-in only) */
   panDistance?: number;

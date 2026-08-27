@@ -35,7 +35,7 @@ import {
   resolveLensFlare,
   resolveLights,
 } from "../cinematic";
-import { cinematicLayer, CinematicOverlays, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
+import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
 import {
   characterOpinion,
   clamp,
@@ -104,6 +104,7 @@ import type {
   CursorKind,
   ForegroundAnimation,
   ForegroundAnimationMode,
+  ForegroundExtra,
   Gating,
   GlobalState,
   Hotspot,
@@ -560,7 +561,8 @@ function CinematicPreview({
         </div>
       </div>
       {pOn && <ParallaxMidLayers cinematic={cinematic} resolve={media} />}
-      <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"}>
+        <ForegroundExtras cinematic={cinematic} resolve={media} />
         <ForegroundLayer cinematic={cinematic} resolve={media} />
       </div>
       <span className="pointer-events-none absolute bottom-1 right-1 z-[5] rounded bg-noir-950/70 px-1 py-0.5 font-pulp text-[7px] uppercase tracking-widest text-gold/70">
@@ -1605,6 +1607,103 @@ function CinematicControls({
         )}
       </CollapsibleSection>
 
+      {/* ---- additional foreground images (stacked extras) ---- */}
+      <CollapsibleSection id="cin-foreground-extras" title="👥 Additional foreground images" titleClass="text-neon">
+        <p className="font-type text-[9px] text-paper/40">
+          Layer more characters, props or frames on top of the plate, each independently positioned, scaled and
+          mirrored. They render just behind the primary foreground above and parallax by their own depth.
+        </p>
+        {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
+          const update = (patch: Partial<ForegroundExtra>) => {
+            const n = [...(c.foregroundExtras ?? [])];
+            n[i] = { ...extra, ...patch };
+            set({ foregroundExtras: n });
+          };
+          const remove = () => set({ foregroundExtras: (c.foregroundExtras ?? []).filter((_: ForegroundExtra, j: number) => j !== i) });
+          return (
+          <div key={i} className="space-y-1.5 border border-neon/20 bg-neon/5 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-pulp text-[9px] uppercase tracking-widest text-neon">Image {i + 1}{!extra.image ? " — choose an image" : ""}</span>
+              <button
+                className="shrink-0 border border-crimson/50 px-2 py-0.5 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                onClick={remove}
+              >
+                ✕
+              </button>
+            </div>
+            <AssetDropdown
+              storyId={storyId}
+              assetType="image"
+              returnReference
+              value={extra.image || undefined}
+              placeholder="Pick a transparent image…"
+              onChange={(url) => update({ image: url ?? "" })}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Field label={`Position X ${extra.x ?? 50}% · Y ${extra.y ?? 80}%`}>
+                <div className="space-y-1">
+                  <input type="range" min={0} max={100} step={1} value={extra.x ?? 50} className="w-full accent-pink-500"
+                    onChange={(e) => update({ x: Number(e.target.value) })} />
+                  <input type="range" min={0} max={100} step={1} value={extra.y ?? 80} className="w-full accent-pink-500"
+                    onChange={(e) => update({ y: Number(e.target.value) })} />
+                </div>
+              </Field>
+              <Field label={`Scale ${(extra.scale ?? 1).toFixed(2)}×`}>
+                <input type="range" min={0.2} max={2.5} step={0.05} value={extra.scale ?? 1} className="w-full accent-pink-500"
+                  onChange={(e) => update({ scale: Number(e.target.value) })} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Fit">
+                <select className={inputCls} value={extra.fit ?? "contain"} onChange={(e) => update({ fit: e.target.value as never })}>
+                  <option value="contain">Contain (whole fits)</option>
+                  <option value="cover">Cover (fill frame)</option>
+                  <option value="fill">Fill (stretch)</option>
+                  <option value="native">Native size</option>
+                </select>
+              </Field>
+              <Field label={`Parallax depth ${Math.round((extra.depth ?? 0) * 100)}%`}>
+                <input type="range" min={0} max={1} step={0.05} value={extra.depth ?? 0} className="w-full accent-cyan-400"
+                  onChange={(e) => update({ depth: Number(e.target.value) || undefined })} />
+              </Field>
+            </div>
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <input type="checkbox" checked={!!extra.flip} onChange={(e) => update({ flip: e.target.checked || undefined })} />
+              ↔ Flip horizontally (face the other way)
+            </label>
+          </div>
+          );
+        })}
+        <div className="flex gap-2">
+          <button
+            className="flex-1 border border-neon/50 py-1.5 font-pulp text-[9px] uppercase tracking-widest text-neon hover:bg-neon/10"
+            onClick={() =>
+              set({
+                foregroundExtras: [
+                  ...(c.foregroundExtras ?? []),
+                  { image: "", x: 50, y: 80, scale: 1, fit: "contain", anchor: "50% 100%", depth: 0.6 },
+                ],
+              })
+            }
+          >
+            ＋ Add foreground image
+          </button>
+          <MediaUploadButton
+            storyId={storyId}
+            accept="image/*"
+            label="⤒ Upload new"
+            onUploaded={(_url, assetId) =>
+              set({
+                foregroundExtras: [
+                  ...(c.foregroundExtras ?? []),
+                  { image: `asset:${assetId}`, x: 50, y: 80, scale: 1, fit: "contain", anchor: "50% 100%", depth: 0.6 },
+                ],
+              })
+            }
+          />
+        </div>
+      </CollapsibleSection>
+
       <CollapsibleSection id="cin-lighting" title="💡 Lighting" titleClass="text-gold">
         <Field label="Image dimming (0 = full brightness, 1 = fully dark)">
           <div className="flex items-center gap-2">
@@ -2460,7 +2559,7 @@ function TalkingPreview({
   return <img src={assetUrl(resolved[i])} alt="" className="h-24 w-auto max-w-full object-contain" />;
 }
 
-/** Global ElevenLabs settings for the People tab. The API key lives in
+/** Global ElevenLabs settings for the Characters tab. The API key lives in
  *  localStorage only — never in the story data, saves, or exports. */
 function AiVoiceSettings() {
   const [key, setKey] = useState(getElevenKey());
@@ -3574,7 +3673,7 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
             })}
           </div>
         ) : (
-          <p className="font-type text-[10px] text-paper/40">No characters yet — add some in the People tab to see relationship opinions.</p>
+          <p className="font-type text-[10px] text-paper/40">No characters yet — add some in the Characters tab to see relationship opinions.</p>
         )}
       </div>
     </div>
@@ -5323,21 +5422,21 @@ function StudioInner({
               >
                 {{
                   scene: "Scene",
-                  beats: "Dialogue",
+                  beats: "Beats",
                   hotspots: "Hotspots",
                   choices: "Choices",
                   test: "▶ Test",
-                  characters: "People",
+                  characters: "Characters",
                   audio: "Audio",
                   items: "Items",
                   flags: "🏷 Flags",
-                  briefing: "🗂 Win/Lose",
+                  briefing: "🎯 Game Objective",
                   acts: "🎭 Acts",
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
                   dialogueBox: "💬 Dialogue Box",
-                  globalTitle: "🎼 Theme Options",
+                  globalTitle: "🎼 Newsstand Theme",
                 }[t]}
               </button>
             ))}
@@ -5349,7 +5448,7 @@ function StudioInner({
                   1. Case File<br />{story.briefing?.objective ? "✓" : "required"}
                 </button>
                 <button onClick={() => setTab("characters")} className={`border p-1 ${story.characters.length ? "border-emerald-500/40 text-emerald-400" : "border-crimson/50 text-crimson"}`}>
-                  2. People<br />{story.characters.length} total
+                  2. Characters<br />{story.characters.length} total
                 </button>
                 <button onClick={() => setTab("items")} className="border border-gold/35 p-1 text-gold">
                   3. Items<br />{story.items.length} total
@@ -5434,7 +5533,7 @@ function StudioInner({
             )}
             {tab === "characters" && (
               <>
-                <HelpNote id="people-tab" title="People">
+                <HelpNote id="characters-tab" title="Characters">
                   Characters voice their dialogue beats (pick a Web Speech voice and audition it with <b>Test voice</b>)
                   and carry a trust score (−5…+5) that gates and consequences can move. Tick{" "}
                   <b>Show this met character on corkboard</b> to make a suspect appear on the deduction board once the
@@ -6695,7 +6794,7 @@ function StudioInner({
                   </Field>
                   {!(scene.dialogueBeats ?? []).some((b) => b.background) && (
                     <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[9px] text-paper/55">
-                      Add a <b className="text-cyan-neon">replacement background image</b> to a beat in the Dialogue tab to give it its own cinematic settings here.
+                      Add a <b className="text-cyan-neon">replacement background image</b> to a beat in the Beats tab to give it its own cinematic settings here.
                     </p>
                   )}
                   <CinematicControls
@@ -7023,7 +7122,7 @@ function StudioInner({
 
             {scene && tab === "beats" && (
               <>
-                <HelpNote id="beats-tab" title="Dialogue beats">
+                <HelpNote id="beats-tab" title="Beats">
                   Beats play <b>in order</b> after the scene prose — reorder them with the ▲/▼ buttons in each beat's
                   title bar. A beat's <b>condition rule</b> hides it until a gate passes (pair it with a 💬 reply choice's
                   flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a different line when the player
@@ -7323,7 +7422,7 @@ function StudioInner({
                         />
                         🗣 Talking animation — {b.useCharacterAnimation !== false ? "animate" : "resting pose"} while they speak
                         {!(story.characters.find((ch) => ch.id === b.characterId)?.talkingFrames?.length) && (
-                          <span className="text-paper/35 normal-case">(set frames in People tab first)</span>
+                          <span className="text-paper/35 normal-case">(set frames in the Characters tab first)</span>
                         )}
                       </label>
                     )}
@@ -7380,13 +7479,13 @@ function StudioInner({
                                 : b.recalls && Object.keys(b.recalls).length
                                   ? "This line recalls memories — its text changes by route, so it stays on TTS"
                                   : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
-                                    ? "Assign this character's ElevenLabs voice ID in the People tab first"
+                                    ? "Assign this character's ElevenLabs voice ID in the Characters tab first"
                                     : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
                           }
                           onClick={async () => {
                             const ch = story.characters.find((x) => x.id === b.characterId);
                             if (!ch?.elevenVoiceId) {
-                              window.alert("Assign this character's ElevenLabs voice ID in the People tab first.");
+                              window.alert("Assign this character's ElevenLabs voice ID in the Characters tab first.");
                               return;
                             }
                             const line = b.text.trim();
