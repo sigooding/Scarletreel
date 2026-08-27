@@ -20,6 +20,7 @@ import {
   createInitialState,
   currentEpisode,
   effectiveChoiceGating,
+  episodeOfScene,
   examineZoom,
   interrogationOutcome,
   isPressingReply,
@@ -2716,6 +2717,9 @@ function CasePlayer({
   episodeEndPanel?: React.ReactNode;
   /** open the season / episode-list screen */
   onOpenSeason?: () => void;
+  /** Studio playtest: a direct from-scene run (fresh state, no save/resume
+   *  chrome) — the case-closes panel offers an Exit instead of resume. */
+  playtestMode?: boolean;
   onExit: () => void;
 }) {
   const [state, setState] = useState<GlobalState>(() => initialState ?? createInitialState(story));
@@ -7034,6 +7038,7 @@ export function GamePlayer({
   primedMusic,
   primedNarration,
   onExit,
+  playFromSceneId,
 }: {
   story: Story;
   typeSpeed: number;
@@ -7044,6 +7049,10 @@ export function GamePlayer({
   primedMusic?: PrimedAudio | null;
   primedNarration?: PrimedAudio | null;
   onExit: () => void;
+  /** Studio "Play from here": start the game directly at this scene.
+   *  For episodic stories it launches the owning episode straight into
+   *  the scene, skipping the season screen / recap / title card. */
+  playFromSceneId?: string;
 }) {
   const episodic = isEpisodic(story);
 
@@ -7057,9 +7066,34 @@ export function GamePlayer({
         resumeSlot={resumeSlot}
         primedMusic={primedMusic}
         primedNarration={primedNarration}
+        startSceneId={playFromSceneId}
         onExit={onExit}
       />
     );
+  }
+
+  // Studio playtest for an episodic story: open the episode that owns the
+  // scene directly, at that scene, with carried-over state but no save/resume
+  // chrome (fresh world state, like a normal playtest).
+  if (playFromSceneId) {
+    const owner = episodeOfScene(story, playFromSceneId);
+    if (owner) {
+      return (
+        <CasePlayer
+          key={`playtest-${owner.id}`}
+          story={story}
+          typeSpeed={typeSpeed}
+          isNewGamePlus={isNewGamePlus}
+          primedMusic={primedMusic}
+          primedNarration={primedNarration}
+          episode={owner}
+          initialState={carryOverState(story, owner.id)}
+          startSceneId={playFromSceneId}
+          playtestMode
+          onExit={onExit}
+        />
+      );
+    }
   }
 
   return (

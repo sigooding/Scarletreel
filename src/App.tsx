@@ -17,6 +17,9 @@ type Mode =
       story: Story;
       resumeSlot?: number;
       resumeEpisodeId?: string;
+      /** Studio "Play from here": open directly at this scene (episodic
+       *  playtest launches the owning episode straight into it). */
+      playFromSceneId?: string;
       primedMusic?: PrimedAudio | null;
       primedNarration?: PrimedAudio | null;
     }
@@ -466,14 +469,15 @@ export default function App() {
           const payload = JSON.parse(raw) as { story?: Story } | Story | null;
           const wrapped = payload && typeof payload === "object" && "story" in payload ? payload : null;
           const story = (wrapped ? wrapped.story : payload) as Story | null | undefined;
-          if (story?.id && story.startSceneId && Array.isArray(story.scenes)) {
+          const fromSceneId = (wrapped && (wrapped as { fromSceneId?: string }).fromSceneId) || undefined;
+          if (story?.id && Array.isArray(story.scenes)) {
             // React StrictMode runs mount effects twice in dev. Do not remove the
             // handoff before the async media resolver finishes, or the second
             // effect sees an empty token and the new tab falls back to the
             // newsstand. Duplicate resolves are harmless; both land on the same
             // play mode, and the token is cleared only after a successful handoff.
             void resolveStoryMedia(story).then((resolved) => {
-              setMode({ kind: "play", story: resolved, primedMusic: null });
+              setMode({ kind: "play", story: resolved, primedMusic: null, playFromSceneId: fromSceneId });
               localStorage.removeItem(key);
               window.history.replaceState(null, "", `${location.pathname}${location.search}`);
             });
@@ -547,7 +551,7 @@ export default function App() {
     }
   }, []);
 
-  const play = useCallback((story: Story, resumeSlot?: number, resumeEpisodeId?: string) => {
+  const play = useCallback((story: Story, resumeSlot?: number, resumeEpisodeId?: string, playFromSceneId?: string) => {
     audio.unlock();
     audio.stopSpeech();
     // The persisted story stores compact `asset:<id>` references instead of
@@ -585,7 +589,7 @@ export default function App() {
       }
     }
     resolveStoryMedia(story)
-      .then((resolved) => setMode({ kind: "play", story: resolved, resumeSlot, resumeEpisodeId, primedMusic, primedNarration }))
+      .then((resolved) => setMode({ kind: "play", story: resolved, resumeSlot, resumeEpisodeId, playFromSceneId, primedMusic, primedNarration }))
       .catch((err) => {
         // Never leave the primed opening audio playing over the newsstand if
         // media resolution fails before the player mounts.
@@ -673,7 +677,7 @@ export default function App() {
     say("If this tab stays open, close it in your browser to quit.");
   }, []);
 
-  const openStudioPlayWindow = useCallback((story: Story): boolean => {
+  const openStudioPlayWindow = useCallback((story: Story, fromSceneId?: string): boolean => {
     const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const key = studioPlayKey(token);
     // The playtest runs in a separate document, so an <audio> element primed
@@ -684,13 +688,14 @@ export default function App() {
     // narration; if a strict browser rejects the opening autoplay, the engine
     // retries the clip on the player's first real gesture.
     try {
-      localStorage.setItem(key, JSON.stringify({ story, createdAt: Date.now() }));
+      localStorage.setItem(key, JSON.stringify({ story, fromSceneId: fromSceneId ?? story.startSceneId, createdAt: Date.now() }));
     } catch {
       return false;
     }
 
     const baseUrl = location.href.split("#")[0];
-    const child = window.open(`${baseUrl}${STUDIO_PLAY_HASH}${encodeURIComponent(token)}`, "_blank");
+    const sceneQ = fromSceneId ? `&scene=${encodeURIComponent(fromSceneId)}` : "";
+    const child = window.open(`${baseUrl}${STUDIO_PLAY_HASH}${encodeURIComponent(token)}${sceneQ}`, "_blank");
     if (!child) {
       localStorage.removeItem(key);
       return false;
@@ -751,6 +756,7 @@ export default function App() {
           isNewGamePlus={endingsFound(mode.story) > 0}
           resumeSlot={mode.resumeSlot}
           resumeEpisodeId={mode.resumeEpisodeId}
+          playFromSceneId={mode.playFromSceneId}
           primedMusic={mode.primedMusic}
           primedNarration={mode.primedNarration}
           onExit={() => setMode({ kind: "menu" })}
@@ -761,12 +767,12 @@ export default function App() {
         <Studio
           baseStories={stories}
           onExit={() => setMode({ kind: "menu" })}
-          onPlay={(s) => {
-            if (openStudioPlayWindow(s)) {
+          onPlay={(s, opts) => {
+            if (openStudioPlayWindow(s, opts?.fromSceneId)) {
               say("Playtest opened in a new window.");
             } else {
               say("Pop-up blocked or storage full — opening playtest here instead.");
-              play(s);
+              play(s, undefined, undefined, opts?.fromSceneId);
             }
           }}
           onPublish={(published) => {

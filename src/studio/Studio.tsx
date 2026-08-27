@@ -3773,7 +3773,7 @@ function StudioInner({
 }: {
   baseStories: Story[];
   onExit: () => void;
-  onPlay: (story: Story) => void;
+  onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
@@ -5552,7 +5552,7 @@ function StudioInner({
                   ✎ Edit scene
                 </button>
                 <button role="menuitem" className="block w-full px-4 py-1.5 text-left text-xs text-neon hover:bg-noir-700"
-                  onClick={() => { const c = deepClone(story); c.startSceneId = target.id; onPlay(c); setNodeMenu(null); }}
+                  onClick={() => { onPlay(deepClone(story), { fromSceneId: target.id }); setNodeMenu(null); }}
                   title="Launch the game starting at this scene (fresh state)">
                   ▶ Play from here
                 </button>
@@ -7185,7 +7185,7 @@ function StudioInner({
                 </Field>
                 {scene && (
                   <button
-                    onClick={() => { const c = deepClone(story); c.startSceneId = scene.id; onPlay(c); }}
+                    onClick={() => { onPlay(deepClone(story), { fromSceneId: scene.id }); }}
                     className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10"
                     title="Launch the game starting at this scene (fresh world state, does not change your start scene)"
                   >
@@ -9273,7 +9273,7 @@ import type { TitleTheme } from "../types";
 export function Studio(props: {
   baseStories: Story[];
   onExit: () => void;
-  onPlay: (story: Story) => void;
+  onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
