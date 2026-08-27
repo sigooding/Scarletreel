@@ -318,6 +318,20 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
             </p>
           </Section>
 
+          <Section title="5d · In-game theme (HUD colours, fonts & text size)">
+            <p>
+              The <b>🎮 In-Game Theme</b> tab styles the whole case, story-wide:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>HUD colour scheme</b> — one-click palettes (Classic Noir, Neon Rain, Sepia Pulp, Midnight Teal, Venetian Red, Ghost Green) that re-tint the accents, nameplates, meters and choice focus; or set <b>custom accent/danger</b> colours by hand. The stage uses CSS variables so the whole game subtree follows instantly.</li>
+              <li><b>Body font</b> — the prose/dialogue reading face (Newsreader, Playfair, Josefin Sans, Cinzel, Bebas, Alfa Slab); <b>heading font</b> — nameplates and HUD labels.</li>
+              <li><b>Reading text size</b> — 80%–140% scale; the reserved line height scales with it so the panel stays stable.</li>
+              <li><b>Minimal HUD</b> — fades the scene-label/lead readouts until you hover, for a cleaner frame.</li>
+              <li>The <b>Dialogue panel</b> section still sets the backdrop image, opacity, tint, blur and bordered card look.</li>
+            </ul>
+            <p>The tab preview updates live for colours, fonts and size — set it once and every scene matches.</p>
+          </Section>
+
           <Section title="6 · Hotspots — actions on the scene art">
             <p>
               Drag on the preview to draw a zone (percent bounds). One action each: <b>go to scene</b>, <b>give item</b>,{" "}

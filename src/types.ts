@@ -977,7 +977,42 @@ export interface DialogueBoxTheme {
   /** Draw a hairline border + shadow around the panel so it reads as a
    * physical card rather than a gradient. Default false. */
   bordered?: boolean;
+
+  /* ------------------------------------------------------------------ *
+   *  In-game text type / size
+   * ------------------------------------------------------------------ */
+  /** Typeface for body prose + dialogue lines (the big reading text). */
+  bodyFont?: "type" | "pulp" | "poster" | "elegant" | "epic" | "modern";
+  /** Typeface for headings — nameplates, HUD labels, scene titles. */
+  headingFont?: "pulp" | "poster" | "epic" | "ui" | "elegant" | "type";
+  /** Body text size scale, 0.8–1.4 (1 = default). Scales the reading text
+   * and the line reservation proportionally. */
+  textScale?: number;
+
+  /* ------------------------------------------------------------------ *
+   *  HUD / accent theme
+   * ------------------------------------------------------------------ */
+  /** Named HUD colour scheme, applied story-wide. "classic" keeps the
+   * default noir palette; the rest re-tint gold/neon/cyan/crimson accents. */
+  hudTheme?: HudThemeId;
+  /** Custom primary accent (hex), overrides the scheme's accent/gold for
+   * nameplates, highlights and the choice focus. Used when set. */
+  accentColor?: string;
+  /** Custom danger/heat colour (hex), overrides crimson (bad gates, HEAT). */
+  dangerColor?: string;
+  /** Hide the small ⏱ countdown / autosave style readouts and similar HUD
+   * chrome for a cleaner, more cinematic frame. */
+  minimalHud?: boolean;
 }
+
+/** Named in-game HUD colour schemes (see HUD_THEMES in src/cinematic.ts). */
+export type HudThemeId =
+  | "classic"
+  | "neon-noir"
+  | "sepia-pulp"
+  | "midnight-teal"
+  | "venetian-red"
+  | "ghost-green";
 
 /** Global config for the main title / landing page */
 export interface TitleTheme {

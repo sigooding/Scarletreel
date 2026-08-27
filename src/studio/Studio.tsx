@@ -23,10 +23,15 @@ import {
 } from "@xyflow/react";
 import { audio } from "../audio";
 import {
+  BODY_FONTS,
   defaultLensFlare,
   defaultLight,
   GRADE_PRESETS,
   GRADE_PRESET_LIST,
+  HEADING_FONTS,
+  HUD_THEMES,
+  HUD_THEME_LIST,
+  inGameThemeVars,
   LENS_FLARE_PRESETS,
   lightPoints,
   lightStyle,
@@ -5435,7 +5440,7 @@ function StudioInner({
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
-                  dialogueBox: "💬 Dialogue Box",
+                  dialogueBox: "🎮 In-Game Theme",
                   globalTitle: "🎼 Newsstand Theme",
                 }[t]}
               </button>
@@ -5646,11 +5651,88 @@ function StudioInner({
               const opacity = dbox.backgroundOpacity ?? 0.85;
               return (
                 <div className="space-y-2">
-                  <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">💬 Dialogue box</h3>
+                  <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎮 In-game theme</h3>
                   <p className="font-type text-[9px] leading-relaxed text-paper/45">
-                    The panel at the bottom of the frame. These settings apply to the whole story so
-                    the reading surface stays consistent between scenes.
+                    Story-wide look: the dialogue panel, the reading text type &amp; size, and the HUD accent colours.
+                    Everything here applies to the whole case so the reading surface and HUD stay consistent scene to scene.
                   </p>
+
+                  {/* ---- HUD colour scheme ---- */}
+                  <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5" style={inGameThemeVars(dbox)}>
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎨 HUD colour scheme</div>
+                    <select
+                      className={inputCls}
+                      value={dbox.hudTheme ?? "classic"}
+                      onChange={(e) => setBox({ hudTheme: (e.target.value || "classic") as never })}
+                    >
+                      {HUD_THEME_LIST.map((h) => (
+                        <option key={h.id} value={h.id}>{h.badge} {h.name} — {h.tagline}</option>
+                      ))}
+                    </select>
+                    <p className="font-type text-[9px] leading-snug text-paper/45">
+                      {HUD_THEMES[dbox.hudTheme ?? "classic"]?.tagline}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="Custom accent">
+                        <input type="color" className={`${inputCls} h-8 p-0.5`}
+                          value={dbox.accentColor ?? HUD_THEMES[dbox.hudTheme ?? "classic"].colors.gold}
+                          onChange={(e) => setBox({ accentColor: e.target.value })} />
+                      </Field>
+                      <Field label="Custom danger">
+                        <input type="color" className={`${inputCls} h-8 p-0.5`}
+                          value={dbox.dangerColor ?? HUD_THEMES[dbox.hudTheme ?? "classic"].colors.crimson}
+                          onChange={(e) => setBox({ dangerColor: e.target.value })} />
+                      </Field>
+                    </div>
+                    {(dbox.accentColor || dbox.dangerColor) && (
+                      <button
+                        className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
+                        onClick={() => setBox({ accentColor: undefined, dangerColor: undefined })}
+                      >
+                        ⟲ Use the scheme colours
+                      </button>
+                    )}
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.minimalHud}
+                        onChange={(e) => setBox({ minimalHud: e.target.checked || undefined })} />
+                      <span>Minimal HUD
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          Fades scene-label/lead readouts until you hover — a cleaner, more cinematic frame.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* ---- text type & size ---- */}
+                  <div className="border border-neon/30 bg-neon/5 p-2 space-y-1.5" style={inGameThemeVars(dbox)}>
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-neon">📝 Text type &amp; size</div>
+                    <Field label="Body font (prose & dialogue)">
+                      <select className={inputCls} value={dbox.bodyFont ?? "type"}
+                        onChange={(e) => setBox({ bodyFont: e.target.value as never })}>
+                        {BODY_FONTS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Heading font (nameplates, HUD labels)">
+                      <select className={inputCls} value={dbox.headingFont ?? "pulp"}
+                        onChange={(e) => setBox({ headingFont: e.target.value as never })}>
+                        {HEADING_FONTS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={`Reading text size ${Math.round((dbox.textScale ?? 1) * 100)}%`}>
+                      <input type="range" min={0.8} max={1.4} step={0.05}
+                        className="w-full accent-pink-500"
+                        value={dbox.textScale ?? 1}
+                        onChange={(e) => setBox({ textScale: Number(e.target.value) })} />
+                      <p className="mt-1 font-type text-[9px] text-paper/45">
+                        Resizes the prose/dialogue text and the reserved line height so the panel stays stable.
+                      </p>
+                    </Field>
+                  </div>
+
+                  <div className="border border-paper/15 p-2 space-y-1.5">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/70">🗨 Dialogue panel</div>
+
 
                   <Field label={`Reserve ${reserve === 0 ? "no" : reserve} line${reserve === 1 ? "" : "s"} of space`}>
                     <input
@@ -5728,22 +5810,28 @@ function StudioInner({
                     </Field>
                   </div>
 
-                  <label className="flex items-center gap-2 font-type text-[10px] text-paper/70">
-                    <input
-                      type="checkbox"
-                      checked={!!dbox.bordered}
-                      onChange={(e) => setBox({ bordered: e.target.checked })}
-                    />
-                    Draw a border + drop shadow (reads as a card rather than a gradient)
-                  </label>
+                    <label className="flex items-center gap-2 font-type text-[10px] text-paper/70">
+                      <input
+                        type="checkbox"
+                        checked={!!dbox.bordered}
+                        onChange={(e) => setBox({ bordered: e.target.checked })}
+                      />
+                      Draw a border + drop shadow (reads as a card rather than a gradient)
+                    </label>
+                  </div>
 
                   {/* Live preview of the panel against a stand-in scene. */}
                   <div className="mt-2">
-                    <p className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-paper/40">Preview</p>
+                    <p className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-paper/40">Preview — reflects HUD colours, fonts &amp; size</p>
                     <div
-                      className="relative h-32 w-full overflow-hidden border border-noir-600"
-                      style={{ background: "linear-gradient(135deg,#1b2b3a,#432038 60%,#0b0d12)" }}
+                      className="relative h-40 w-full overflow-hidden border border-noir-600"
+                      style={{ ...inGameThemeVars(dbox), background: "linear-gradient(135deg,#1b2b3a,#432038 60%,#0b0d12)" }}
                     >
+                      {/* a faux HUD label so the accent/heading font is visible */}
+                      <div className="absolute left-2 top-2 flex items-center gap-2">
+                        <span className="h-2.5 w-[3px] bg-gold" aria-hidden />
+                        <span className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎙 Narrator</span>
+                      </div>
                       <div className="absolute inset-x-0 bottom-0 p-2">
                         <div
                           className={`relative p-2 ${dbox.bordered ? "border border-paper/15 shadow-2xl shadow-black/60" : ""}`}
@@ -5756,8 +5844,8 @@ function StudioInner({
                           }}
                         >
                           <p
-                            className="font-pulp text-[11px] leading-snug text-paper"
-                            style={{ minHeight: reserve > 0 ? `${(reserve * 1.375).toFixed(3)}em` : undefined }}
+                            className="ingame-prose font-type text-paper"
+                            style={{ ["--ingame-text-scale" as string]: String(dbox.textScale ?? 1), minHeight: reserve > 0 ? `${(reserve * 1.375 * (dbox.textScale ?? 1)).toFixed(3)}em` : undefined }}
                           >
                             The rain hadn't let up since Tuesday.
                           </p>
@@ -5765,7 +5853,7 @@ function StudioInner({
                       </div>
                     </div>
                     <p className="mt-1 font-type text-[9px] text-paper/35">
-                      The grey block shows the height the panel holds even before the text fills it.
+                      Try a HUD scheme, swap the body font, or move the text-size slider — the preview updates live.
                     </p>
                   </div>
                 </div>

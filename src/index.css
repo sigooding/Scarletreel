@@ -1961,3 +1961,39 @@ body,
     transform: none !important;
   }
 }
+
+/* ---------- in-game text size scale (set via --ingame-text-scale) ----------
+ * The reading prose normally uses fixed rem sizes (text-xl/2xl cinematic,
+ * text-sm/base classic subtitles). Consume the scale variable here so the
+ * author's text-size choice resizes both modes in lock-step. */
+.ingame-prose {
+  font-size: calc(1.18rem * var(--ingame-text-scale, 1));
+  line-height: 1.45;
+}
+@media (min-width: 768px) {
+  .ingame-prose {
+    font-size: calc(1.42rem * var(--ingame-text-scale, 1));
+  }
+}
+.ingame-prose-classic {
+  font-size: calc(0.92rem * var(--ingame-text-scale, 1));
+  line-height: 1.65;
+}
+@media (min-width: 768px) {
+  .ingame-prose-classic {
+    font-size: calc(1.02rem * var(--ingame-text-scale, 1));
+  }
+}
+
+/* Minimal HUD: hide the secondary chrome (menu text labels collapse, the
+ * scene/lead readouts and auto-advance countdowns fade) for a cleaner frame.
+ * Core controls (menu button, choices) remain. */
+.ingame-minimal-hud .hud-chrome,
+.ingame-minimal-hud .hud-lead {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.ingame-minimal-hud:hover .hud-chrome,
+.ingame-minimal-hud:hover .hud-lead {
+  opacity: 1;
+}

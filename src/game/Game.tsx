@@ -3,6 +3,7 @@ import { audio, type MixChannel } from "../audio";
 import {
   calculateGhostElements,
   GRADE_PRESETS,
+  inGameThemeVars,
   lensFlareStyle,
   lightStyle,
   parallaxStyle,
@@ -301,7 +302,8 @@ const PROSE_LINE_EM = 1.375;
 function reservedProseHeight(theme: DialogueBoxTheme | undefined): string | undefined {
   const lines = theme?.reserveLines ?? DEFAULT_RESERVE_LINES;
   if (lines <= 0) return undefined;
-  return `${(lines * PROSE_LINE_EM).toFixed(3)}em`;
+  const scale = theme?.textScale ?? 1;
+  return `${(lines * PROSE_LINE_EM * scale).toFixed(3)}em`;
 }
 
 /** Backdrop layer for the narrative panel. Sits behind the panel's content
@@ -5149,8 +5151,11 @@ function CasePlayer({
   return (
     <div
       ref={stageRef}
-      className="fx-grain fx-vignette relative h-full w-full overflow-hidden bg-noir-950 select-none"
-      style={parallaxStyle(parallaxOn ? parallaxCinematic : undefined)}
+      className={`fx-grain fx-vignette relative h-full w-full overflow-hidden bg-noir-950 select-none ${dialogueTheme?.minimalHud ? "ingame-minimal-hud" : ""}`}
+      style={{
+        ...parallaxStyle(parallaxOn ? parallaxCinematic : undefined),
+        ...inGameThemeVars(dialogueTheme),
+      }}
       onPointerDown={() => {
         audio.unlock();
         retryMusic();
@@ -6055,8 +6060,8 @@ function CasePlayer({
                   <p
                     className={`relative max-w-2xl leading-snug text-paper [text-shadow:_0_1px_2px_rgba(0,0,0,0.95),_0_0_10px_rgba(0,0,0,0.7)] ${
                       classicSubtitles
-                        ? "font-type text-sm md:text-base leading-relaxed"
-                        : "font-type font-medium text-xl md:text-2xl tracking-wide"
+                        ? "ingame-prose-classic font-type"
+                        : "ingame-prose font-type font-medium tracking-wide"
                     }`}
                     // Hold the full height from the first character so the
                     // controls above don't ride up as the line types in. The
@@ -6145,8 +6150,8 @@ function CasePlayer({
                 <p
                   className={`relative max-w-2xl leading-snug text-paper [text-shadow:_0_1px_2px_rgba(0,0,0,0.95),_0_0_10px_rgba(0,0,0,0.7)] ${
                     classicSubtitles
-                      ? "font-type text-sm md:text-base leading-relaxed text-left"
-                      : "font-type font-medium text-xl md:text-2xl tracking-wide"
+                      ? "ingame-prose-classic font-type text-left"
+                      : "ingame-prose font-type font-medium tracking-wide"
                   }`}
                   style={{ minHeight: reservedProse }}
                 >

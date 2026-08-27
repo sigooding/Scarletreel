@@ -41,7 +41,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "32";
+const CONTENT_REVISION = "33";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -253,6 +253,10 @@ const REVISION_RESETS: Record<string, string[]> = {
   // and multiple stacked foreground images; refresh the Scene Craft demo
   // snapshot so the new foreground extras appear.
   "32": ["demo-scene-craft-lab"],
+  // r33: the In-Game Theme tab (HUD palettes, fonts, text size) reads the
+  // same dialogueBox field, so existing snapshots keep working — no reset
+  // required. Listed for migration bookkeeping only.
+  "33": [],
 };
 
 function migrateLegacyStoryStorage() {
