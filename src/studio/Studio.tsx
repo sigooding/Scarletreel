@@ -7519,7 +7519,7 @@ function StudioInner({
                         />
                       </Field>
                     </div>
-                    <Field label="🖼 Replacement background image (shown only while this beat plays)">
+                    <Field label="🖼 Replacement background image (persists over later beats by default — see options below)">
                       <div className="flex gap-1">
                         <input
                           className={inputCls}
@@ -7618,7 +7618,49 @@ function StudioInner({
                           </Field>
                         </div>
                       )}
+                      <div className="mt-1 space-y-1 border border-gold/20 bg-gold/5 p-1.5">
+                        <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={b.backgroundHold !== false}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const beat = d.scenes.find((x) => x.id === scene.id)!.dialogueBeats!.find((x) => x.id === b.id)!;
+                                beat.backgroundHold = e.target.checked ? undefined : false;
+                              })
+                            }
+                          />
+                          <span>
+                            📌 Keep image on later beats
+                            <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                              On by default — this insert stays up while later beats talk over it, until another beat
+                              sets a new image. Turn OFF to show it only during this beat, then snap back to the scene.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
                     </Field>
+                    {/* On any beat: end a held insert and return to the scene plate. */}
+                    <label className="flex items-start gap-2 border border-cyan-neon/25 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/70">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={!!b.backgroundRevert}
+                        onChange={(e) =>
+                          mutate((d) => {
+                            const beat = d.scenes.find((x) => x.id === scene.id)!.dialogueBeats!.find((x) => x.id === b.id)!;
+                            beat.backgroundRevert = e.target.checked || undefined;
+                          })
+                        }
+                      />
+                      <span>
+                        🔙 End insert shot here — return to the scene image
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          Drops a held replacement background when this beat begins (use on a beat with no image of its own).
+                        </span>
+                      </span>
+                    </label>
                     <label className="flex items-center gap-2 border border-neon/20 bg-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
                       <input
                         type="checkbox"

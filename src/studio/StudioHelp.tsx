@@ -272,7 +272,7 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               ▲/▼ buttons in each beat's title bar.
             </p>
             <ul className="list-disc space-y-1 pl-5">
-              <li><b>Replacement background</b> — an insert shot for just that beat, with its own transition + cinematic.</li>
+              <li><b>Replacement background</b> — an insert shot with its own transition + cinematic. By default it <b>persists over later beats</b> (characters keep talking over it) until another beat sets a new image. Turn <b>“Keep image on later beats”</b> OFF to show it only for that beat; use <b>“🔙 End insert shot here”</b> on a later beat to drop back to the scene's own image.</li>
               <li><b>Voice MP3</b> — a recorded take that replaces text-to-speech for the line; <b>silent</b> = no narration at all.</li>
               <li><b>Condition rule</b> — the beat only appears when the gate passes (re-evaluates live mid-scene).</li>
               <li><b>Memories recalled</b> — tag → line; the line replaces the text when that memory exists. <code>{"{said}"}</code> echoes the player's words.</li>

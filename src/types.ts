@@ -183,8 +183,10 @@ export interface DialogueBeat {
   conditionRule?: Gating;
 
   /** Optional replacement background image (url / gradient: / asset:) shown
-   * while this beat plays. Reverts to the scene's default background when the
-   * next beat starts (or the dialogue finishes). */
+   * for this beat. By default a replacement image PERSISTS through later
+   * beats (they stay on it until another beat sets a new image or a beat
+   * ends the insert). Set `backgroundHold` to false to show it for THIS beat
+   * only and revert to the scene plate as soon as the next beat starts. */
   background?: string;
   /** Cinematic camera/lighting applied to this beat's replacement background. */
   cinematic?: CinematicSettings;
@@ -192,6 +194,13 @@ export interface DialogueBeat {
   backgroundTransition?: "cut" | "fade" | "crossfade" | "fade-black" | "slide-left" | "slide-right" | "iris-in";
   /** Duration of the background transition in seconds (default 0.5). */
   backgroundTransitionSpeed?: number;
+  /** Keep this beat's replacement background up for the beats that follow
+   * (default true — persists). Set false to revert to the scene plate on the
+   * very next beat. */
+  backgroundHold?: boolean;
+  /** End any currently-held insert shot: drop back to the scene's own plate
+   * when this beat begins. Use on a beat with no background of its own. */
+  backgroundRevert?: boolean;
 
   /** optional MP3 voice line — plays instead of Web Speech TTS */
   audioUrl?: string;

@@ -80,6 +80,7 @@ import type {
   CinematicSettings,
   CreditsLine,
   CreditsSettings,
+  DialogueBeat,
   DialogueBoxTheme,
   Episode,
   EpisodeProgress,
@@ -3819,6 +3820,28 @@ function CasePlayer({
   const interactive = sceneReady && !inBeats;
   const hasValidAutoAdvance = !!scene?.autoAdvanceTargetSceneId && story.scenes.some((candidate) => candidate.id === scene.autoAdvanceTargetSceneId);
   const currentBeat = inBeats ? visibleBeats[beatIdx] : null;
+  /* The insert shot to actually display on the current beat. A beat's own
+   * replacement image PERSISTS by default: it stays up through later beats
+   * (the characters keep talking over it) until another beat sets a new
+   * image or any beat ends the insert. backgroundHold=false makes an image
+   * last only its own beat; backgroundRevert=true drops back to the scene
+   * plate. We walk the visible beats up to and including the current one to
+   * find the active held insert. */
+  const heldInsert = useMemo(() => {
+    if (!inBeats) return null;
+    let held: DialogueBeat | null = null;
+    for (let i = 0; i <= beatIdx && i < visibleBeats.length; i += 1) {
+      const b = visibleBeats[i];
+      if (b.backgroundRevert) {
+        held = null; // explicit drop back to the scene plate
+      } else if (b.background) {
+        held = b; // this beat sets (or replaces) the held insert
+      } else if (held && held.backgroundHold === false) {
+        held = null; // a one-beat-only insert expires on the next beat
+      }
+    }
+    return held;
+  }, [inBeats, beatIdx, visibleBeats]);
   // Effective text with memory recall substitution — an NPC echoing what you
   // said, not just a flag-gated generic line.
   const currentBeatText = currentBeat
@@ -5175,9 +5198,9 @@ function CasePlayer({
         buildSingleBg()
       )}
       <BeatBackground
-        beat={inBeats ? currentBeat : null}
-        transitionName={currentBeat?.backgroundTransition ?? "fade"}
-        transitionSpeed={currentBeat?.backgroundTransitionSpeed ?? 0.5}
+        beat={inBeats ? heldInsert : null}
+        transitionName={heldInsert?.backgroundTransition ?? "fade"}
+        transitionSpeed={heldInsert?.backgroundTransitionSpeed ?? 0.5}
       />
 
       {/* Characters on stage — the active speaker cycles their talking frames;
