@@ -3780,6 +3780,12 @@ function StudioInner({
   const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
   // where the most recent converted MP3 ended up (file path, or a warning)
   const [aiNote, setAiNote] = useState<{ text: string; at: number } | null>(null);
+  // Batch voice generation state — converts every eligible beat (per scene
+  // or the whole story) one character's voice at a time, saving each as its
+  // own correctly-attributed MP3.
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+  const [batchDone, setBatchDone] = useState<string | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
@@ -4763,6 +4769,116 @@ function StudioInner({
     setFocusedChoiceId(null);
     localStorage.setItem("scarlet-studio-last-story", compact.id);
     say(`Duplicated "${src.title}" as "${compact.title}" — a fully independent copy.`);
+    audio.success();
+  };
+
+  /* ---------- batch ElevenLabs voice generation ----------
+   * Converts every eligible beat to a per-character MP3. A beat is eligible
+   * when it has text, isn't silent, doesn't carry a route-changing memory
+   * recall (its text varies, so it stays on TTS), and its speaker has an
+   * ElevenLabs voice id. Each line is billed/synthesized separately and
+   * saved through the SAME pipeline as the single Generate button, so the
+   * file lands in public/voices/<person>/<scene>/ on desktop (or the linked
+   * folder / media library in browser) with the correct character's voice
+   * on the correct line. `scope` limits the run to one scene or the whole
+   * case; already-voiced beats can be optionally skipped. */
+  const batchGenerateVoices = async (scopeSceneId?: string) => {
+    const key = getElevenKey();
+    if (!key) {
+      window.alert("Add your ElevenLabs API key first — Characters tab → 🎙 AI Voice (ElevenLabs).");
+      setTab("characters");
+      return;
+    }
+    const model = getElevenModel();
+    // Collect every eligible beat across the requested scenes.
+    type Job = { sceneId: string; sceneTitle: string; beatId: string; characterId: string; characterName: string; line: string; hasAudio: boolean };
+    const jobs: Job[] = [];
+    const sceneIds = scopeSceneId ? [scopeSceneId] : story.scenes.map((s) => s.id);
+    for (const sc of story.scenes) {
+      if (!sceneIds.includes(sc.id)) continue;
+      for (const b of sc.dialogueBeats ?? []) {
+        const ch = story.characters.find((x) => x.id === b.characterId);
+        const line = b.text?.trim();
+        if (!line || b.silent) continue;
+        if (b.recalls && Object.keys(b.recalls).length) continue; // route-dependent text stays on TTS
+        if (!ch?.elevenVoiceId) continue; // speaker has no assigned voice
+        jobs.push({
+          sceneId: sc.id,
+          sceneTitle: sc.title,
+          beatId: b.id,
+          characterId: b.characterId,
+          characterName: ch.name,
+          line,
+          hasAudio: !!b.audioUrl,
+        });
+      }
+    }
+    const existing = jobs.filter((j) => j.hasAudio).length;
+    const totalChars = jobs.reduce((n, j) => n + j.line.length, 0);
+    const scopeScenes = new Set(jobs.map((job) => job.sceneId)).size;
+    // When existing MP3s are present: OK regenerates ALL, Cancel fills only
+    // the gaps. When none exist: OK proceeds, Cancel aborts.
+    let onlyMissing = false;
+    if (existing > 0) {
+      onlyMissing = !window.confirm(
+        `${jobs.length} line(s) found across ${scopeScenes} scene(s).\n\n` +
+          `This spends ~${totalChars} characters of ElevenLabs credits.\n\n` +
+          `${existing} line(s) already have an MP3.\n\nOK = regenerate ALL lines (including existing).\nCancel = only generate lines that don't have an MP3 yet.`
+      );
+    } else {
+      const go = window.confirm(
+        `Generate ElevenLabs MP3s for ${jobs.length} line(s) across ${scopeScenes} scene(s)?\n\n` +
+          `This spends ~${totalChars} characters of ElevenLabs credits. Each line uses its speaker's assigned voice and saves as its own correctly-named MP3.`
+      );
+      if (!go) return;
+    }
+    const queue = jobs.filter((job) => (onlyMissing ? !job.hasAudio : true));
+    if (!queue.length) {
+      setBatchDone("Nothing to generate — every line already has an MP3.");
+      return;
+    }
+    setBatchBusy(true);
+    setBatchDone(null);
+    let ok = 0;
+    let failed = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < queue.length; i += 1) {
+      const job = queue[i];
+      setBatchProgress({ done: i, total: queue.length, label: `${job.characterName} — ${job.sceneTitle}` });
+      try {
+        const { dataUrl, blob } = await synthesizeElevenLabs(job.line, story.characters.find((x) => x.id === job.characterId)!.elevenVoiceId!, model);
+        const saved = await saveGeneratedVoice({
+          storyId: story.id,
+          characterId: job.characterId,
+          sceneId: job.sceneId,
+          beatId: job.beatId,
+          blob,
+          dataUrl,
+          assetName: `voice-${job.characterId}-${job.beatId}`,
+        });
+        mutate((d) => {
+          const s = d.scenes.find((x) => x.id === job.sceneId)!;
+          const b = s.dialogueBeats!.find((x) => x.id === job.beatId)!;
+          b.audioUrl = saved.url;
+        });
+        ok += 1;
+      } catch (err) {
+        failed += 1;
+        failures.push(`${job.characterName}: ${(err as Error).message}`);
+        // Stop early on an auth/credit failure — retrying every line just
+        // burns the same error. Rate limits back off and continue.
+        const msg = (err as Error).message || "";
+        if (msg.includes("401") || msg.includes("refused") || msg.includes("422")) break;
+      }
+    }
+    setBatchProgress(null);
+    setBatchBusy(false);
+    const summary =
+      `Batch voice generation finished — ${ok} MP3${ok === 1 ? "" : "s"} saved` +
+      (failed ? `, ${failed} failed.` : ".") +
+      (failures.length ? `\n\n${failures.slice(0, 4).join("\n")}` : "");
+    setBatchDone(summary);
+    say(`Batch voices: ${ok} saved${failed ? `, ${failed} failed` : ""}.`);
     audio.success();
   };
 
@@ -7216,6 +7332,48 @@ function StudioInner({
                   flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a different line when the player
                   made a specific earlier choice (<code>{"{said}"}</code> echoes their exact words).
                 </HelpNote>
+
+                {/* Batch ElevenLabs voice generation for this scene — every
+                    eligible line converted separately, each in its speaker's
+                    assigned voice and saved as its own correctly-named MP3. */}
+                <div className="space-y-1.5 border border-neon/30 bg-neon/5 p-2">
+                  <div className="font-pulp text-[9px] uppercase tracking-widest text-neon">
+                    🎙 Batch voice (ElevenLabs)
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      disabled={batchBusy}
+                      onClick={() => { void batchGenerateVoices(scene.id); }}
+                      className="flex-1 border border-neon/50 py-1.5 font-pulp text-[9px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+                      title="Generate MP3s for every convertible beat in THIS scene, one voice per character. Spends ElevenLabs credits — you'll be asked to confirm."
+                    >
+                      {batchBusy ? "Converting…" : "▶ This scene"}
+                    </button>
+                    <button
+                      disabled={batchBusy}
+                      onClick={() => { void batchGenerateVoices(); }}
+                      className="flex-1 border border-gold/50 py-1.5 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10 disabled:opacity-40"
+                      title="Generate MP3s for every convertible beat across the WHOLE case. Spends ElevenLabs credits — you'll be asked to confirm."
+                    >
+                      {batchBusy ? "Converting…" : "▶▶ Whole case"}
+                    </button>
+                  </div>
+                  {batchProgress && (
+                    <p className="font-type text-[9px] leading-snug text-gold">
+                      {batchProgress.done + 1} / {batchProgress.total} · {batchProgress.label}
+                    </p>
+                  )}
+                  {batchDone && (
+                    <p className="whitespace-pre-line border border-paper/15 bg-noir-950/60 p-1.5 font-type text-[9px] leading-snug text-paper/70">
+                      {batchDone}
+                    </p>
+                  )}
+                  <p className="font-type text-[9px] leading-snug text-paper/45">
+                    Each line is synthesized <b>separately</b> in that character's assigned voice and saved as its own MP3
+                    (skips silent beats, recall-substituted lines and speakers without a voice ID). Set voices in the
+                    Characters tab first.
+                  </p>
+                </div>
                 {(scene.dialogueBeats ?? []).map((b, i) => {
                   const speakerName =
                     b.characterId === "narrator"
