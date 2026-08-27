@@ -4811,19 +4811,30 @@ function StudioInner({
       if (!line || b.silent) continue;
       if (b.recalls && Object.keys(b.recalls).length) continue; // route-dependent text stays on TTS
       if (!ch?.elevenVoiceId) continue; // speaker has no assigned voice
+      // Label each turn with its speaker so ElevenLabs knows WHO is in the
+      // exchange (e.g. a Vera/Jack back-and-forth) and voices the line as a
+      // reply to the correct character rather than an isolated read.
       const spoken = (idx: number) => {
         const bb = beats[idx];
         if (!bb || !bb.text.trim()) return "";
-        const who = bb.characterId === "narrator" ? "Narrator" : story.characters.find((c) => c.id === bb.characterId)?.name ?? "Speaker";
+        if (bb.characterId === "narrator") return `(Narration) ${bb.text.trim()}`;
+        const who = story.characters.find((c) => c.id === bb.characterId)?.name ?? "Speaker";
         return `${who}: ${bb.text.trim()}`;
       };
+      // Full preceding conversation in the scene (the API truncates to its
+      // own context limit); next line is just the immediate follow-up.
+      const prev = beats
+        .slice(0, bi)
+        .map((_bb, k) => spoken(k))
+        .filter(Boolean)
+        .join("\n");
       jobs.push({
         beatId: b.id,
         characterId: b.characterId,
         characterName: ch.name,
         line,
         hasAudio: !!b.audioUrl,
-        prev: [bi - 2, bi - 1].filter((k) => k >= 0).map(spoken).join("\n"),
+        prev,
         next: bi + 1 < beats.length ? spoken(bi + 1) : "",
       });
     }
