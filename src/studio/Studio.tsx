@@ -527,6 +527,13 @@ function CollapsibleSection({
   headerRight,
   controlledOpen,
   onToggle,
+  draggable,
+  dragOver,
+  onDragStartHandle,
+  onDragEnterHandle,
+  onDragOverHandle,
+  onDropHandle,
+  onDragEndHandle,
 }: {
   id: string;
   title: React.ReactNode;
@@ -539,6 +546,14 @@ function CollapsibleSection({
   /** when supplied, open state is owned by the parent (no localStorage) */
   controlledOpen?: boolean;
   onToggle?: (next: boolean) => void;
+  /** enable drag-to-reorder: true while a drag is over this card */
+  draggable?: boolean;
+  dragOver?: boolean;
+  onDragStartHandle?: (e: React.DragEvent) => void;
+  onDragEnterHandle?: (e: React.DragEvent) => void;
+  onDragOverHandle?: (e: React.DragEvent) => void;
+  onDropHandle?: (e: React.DragEvent) => void;
+  onDragEndHandle?: (e: React.DragEvent) => void;
 }) {
   const [localOpen, setLocalOpen] = useState<boolean>(() => {
     try {
@@ -565,8 +580,32 @@ function CollapsibleSection({
     }
   };
   return (
-    <div className={className}>
+    <div
+      className={`${className} ${dragOver ? "ring-2 ring-gold bg-gold/10" : ""}`}
+      onDragEnter={onDragEnterHandle}
+      onDragOver={onDragOverHandle}
+      onDrop={onDropHandle}
+    >
       <div className="flex w-full items-center justify-between gap-2 px-2 py-1.5 hover:bg-noir-800/60">
+        {draggable && (
+          <span
+            draggable
+            onDragStart={onDragStartHandle}
+            onDragEnd={onDragEndHandle}
+            title="Drag to reorder"
+            className="flex cursor-grab touch-none select-none items-center text-paper/35 hover:text-gold active:cursor-grabbing"
+            aria-label="Drag to reorder"
+          >
+            <svg width="8" height="14" viewBox="0 0 8 14" aria-hidden>
+              <circle cx="2" cy="2.5" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="2.5" r="1.3" fill="currentColor" />
+              <circle cx="2" cy="7" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="7" r="1.3" fill="currentColor" />
+              <circle cx="2" cy="11.5" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="11.5" r="1.3" fill="currentColor" />
+            </svg>
+          </span>
+        )}
         <button
           type="button"
           onClick={toggle}
@@ -3867,6 +3906,24 @@ function StudioInner({
   // have a "collapse all" so the list doesn't get long.
   const [expandedBeats, setExpandedBeats] = useState<Set<string>>(() => new Set());
   const [beatsUserToggled, setBeatsUserToggled] = useState<Set<string>>(() => new Set());
+  // Drag-and-drop beat reordering: the beat id being dragged and the one
+  // currently dragged over.
+  const [dragBeatId, setDragBeatId] = useState<string | null>(null);
+  const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null);
+  // Move a beat to before/after the target index within the selected scene.
+  const reorderBeat = (dragId: string, targetId: string) => {
+    if (dragId === targetId) return;
+    mutate((draft) => {
+      const sc = draft.scenes.find((x) => x.id === selectedId) ?? draft.scenes[0];
+      const beats = sc.dialogueBeats;
+      if (!beats) return;
+      const from = beats.findIndex((x) => x.id === dragId);
+      const to = beats.findIndex((x) => x.id === targetId);
+      if (from < 0 || to < 0) return;
+      const [moved] = beats.splice(from, 1);
+      beats.splice(to, 0, moved);
+    });
+  };
   const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
   const [globalTitleTheme, setGlobalTitleThemeState] = useState<TitleTheme>(() => {
     // Read the title settings on boot from the same key
@@ -7453,9 +7510,9 @@ function StudioInner({
             {scene && tab === "beats" && (
               <>
                 <HelpNote id="beats-tab" title="Beats">
-                  Beats play <b>in order</b> after the scene prose — reorder them with the ▲/▼ buttons in each beat's
-                  title bar. Click a beat's <b>▾/▸</b> header to minimise it, or use the buttons below to fold everything
-                  away and find beats in long lists. A beat's <b>condition rule</b> hides it until a gate passes (pair it
+                  Beats play <b>in order</b> after the scene prose — <b>drag the ⠿ grip</b> on a beat's title bar to reorder
+                  them (or use the ▲/▼ buttons). Click a beat's <b>▾/▸</b> header to minimise it, or use the buttons below to
+                  fold everything away and find beats in long lists. A beat's <b>condition rule</b> hides it until a gate passes (pair it
                   with a 💬 reply choice's flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a
                   different line when the player made a specific earlier choice (<code>{"{said}"}</code> echoes their words).
                 </HelpNote>
@@ -7566,6 +7623,32 @@ function StudioInner({
                           if (next) s2.add(b.id); else s2.delete(b.id);
                           return s2;
                         });
+                      }}
+                      draggable
+                      dragOver={dragOverBeatId === b.id && dragBeatId !== b.id}
+                      onDragStartHandle={(e) => {
+                        setDragBeatId(b.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", b.id);
+                      }}
+                      onDragEnterHandle={(e) => {
+                        e.preventDefault();
+                        if (dragBeatId && dragBeatId !== b.id) setDragOverBeatId(b.id);
+                      }}
+                      onDragOverHandle={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDropHandle={(e) => {
+                        e.preventDefault();
+                        const dropped = e.dataTransfer.getData("text/plain") || dragBeatId;
+                        if (dropped) reorderBeat(dropped, b.id);
+                        setDragBeatId(null);
+                        setDragOverBeatId(null);
+                      }}
+                      onDragEndHandle={() => {
+                        setDragBeatId(null);
+                        setDragOverBeatId(null);
                       }}
                       headerRight={
                         <span className="flex items-center gap-1">
