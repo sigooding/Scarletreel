@@ -6581,6 +6581,18 @@ function StudioInner({
                       </p>
                     </Field>
                 )}
+                {/* A beat-level auto route already ends this scene: the scene
+                    timer is redundant (and could fight it), so hide it and tell
+                    the author where to edit instead. */}
+                {(scene.dialogueBeats ?? []).some((beat) => beat.afterBeatTargetSceneId && (beat.afterBeatMode ?? "auto") === "auto") ? (
+                  <div className="space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">⏱ Auto-advance</div>
+                    <p className="font-type text-[9px] leading-snug text-paper/50">
+                      A final beat on this scene is set to <b>auto-continue to another scene</b>, so the scene-level
+                      auto-advance timer is hidden (the beat cut is the timer). Edit it on that beat in the Beats tab.
+                    </p>
+                  </div>
+                ) : (
                 <div className="space-y-2 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
                   <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">⏱ Auto-advance when no choices are available</div>
                   <Field label="Target scene">
@@ -6636,6 +6648,7 @@ function StudioInner({
                     </p>
                   </Field>
                 </div>
+                )}
                 {scene.nodeType === "credits" && (
                   <div className="space-y-2 border border-gold/40 bg-gold/5 p-2">
                     <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Credits intro</div>

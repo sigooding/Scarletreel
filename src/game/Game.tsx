@@ -3878,7 +3878,8 @@ function CasePlayer({
     !!currentBeat &&
     currentBeat === routingBeat &&
     beatDone;
-  const [beatRouteRemaining, setBeatRouteRemaining] = useState(0);
+  // Auto beat-route countdown (timer only; the HUD is hidden for the cut).
+  const [, setBeatRouteRemaining] = useState(0);
 
   /* -------- dialogue log --------
    * Every spoken line of the run — prose and beats, with speakers — is
@@ -6204,44 +6205,56 @@ function CasePlayer({
                     )}
                   </span>
                 </p>
-                <div className="mt-2 flex items-center gap-1.5">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      goBack();
-                    }}
-                    disabled={!canRewind}
-                    className="beat-ctl"
-                    title="Rewind one line (←)"
-                  >
-                    ◂ back
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      advanceBeat();
-                    }}
-                    className="beat-ctl beat-ctl-primary"
-                  >
-                    {!beatDone
-                      ? "▸▸ skip"
-                      : beatRouteReady && beatRouteMode === "continue"
-                        ? "▸ Continue · space"
-                        : beatRouteReady && beatRouteMode === "auto"
-                          ? `▸ continue now · ${beatRouteRemaining > 0 ? `auto in ${beatRouteRemaining}s` : "cut…"}`
-                          : "▸ continue · space"}
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      speakLine(currentBeat, currentBeatText);
-                    }}
-                    className="beat-ctl"
-                    title="Speak the line"
-                  >
-                    🎤
-                  </button>
-                </div>
+                {/* When the last beat routes into another scene, the cut is
+                    the beat's point — hide skip/back/controls (and the timer
+                    HUD) so the insert plays clean. Auto mode shows nothing
+                    and cuts on its timer; continue mode shows one button. */}
+                {beatRouteReady && beatRouteMode === "auto" ? null : beatRouteReady && beatRouteMode === "continue" ? (
+                  <div className="mt-2 flex justify-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        advanceBeat();
+                      }}
+                      className="beat-ctl beat-ctl-primary"
+                    >
+                      ▸ Continue · space
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        goBack();
+                      }}
+                      disabled={!canRewind}
+                      className="beat-ctl"
+                      title="Rewind one line (←)"
+                    >
+                      ◂ back
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        advanceBeat();
+                      }}
+                      className="beat-ctl beat-ctl-primary"
+                    >
+                      {!beatDone ? "▸▸ skip" : "▸ continue · space"}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        speakLine(currentBeat, currentBeatText);
+                      }}
+                      className="beat-ctl"
+                      title="Speak the line"
+                    >
+                      🎤
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -6345,13 +6358,8 @@ function CasePlayer({
             </>
           )}
 
-          {beatRouteReady && beatRouteMode === "auto" && beatRouteRemaining > 0 && (
-            <div className="mt-2 border border-cyan-neon/40 bg-noir-950/90 px-3 py-1.5 text-center">
-              <p className="font-pulp text-[10px] uppercase tracking-widest text-cyan-neon">
-                ⏱ Cut to the next scene in {beatRouteRemaining}s
-              </p>
-            </div>
-          )}
+          {/* Auto beat-route timer is intentionally hidden for a clean
+              cinematic cut. (Continue mode keeps its single button above.) */}
 
           {interactive && !scene.isEnding && !hasUsableChoice && hasValidAutoAdvance && !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0 && (
             <div className="mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
