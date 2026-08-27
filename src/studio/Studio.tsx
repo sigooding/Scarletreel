@@ -70,13 +70,15 @@ import { ActEditor, ACT_TINTS } from "./ActEditor";
 import { HelpNote, StudioHelpModal } from "./StudioHelp";
 import { healLayout, tidyLayoutPositions } from "./canvas";
 import {
+  ELEVENLABS_AUDIO_TAGS,
   ELEVENLABS_MODELS,
   convertConfirmMessage,
+  getElevenKey,
   getElevenModel,
+  modelSupportsAudioTags,
   setElevenKey,
   setElevenModel,
   synthesizeElevenLabs,
-  getElevenKey,
 } from "./aiVoice";
 import {
   clearVoiceFolder,
@@ -245,7 +247,19 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
     <div className={`scene-card w-56 border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}>
       {!isStart && <Handle type="target" position={Position.Left} style={{ background: "#8b8b9e" }} />}
       <div className="flex items-center justify-between gap-1 border-b border-noir-600 px-2 py-1">
-        <span className="font-pulp text-[10px] uppercase tracking-wider text-gold truncate">
+        <span
+          className="min-w-0 flex-1 cursor-text truncate font-pulp text-[10px] uppercase tracking-wider text-gold hover:text-paper"
+          title="Click to rename this scene"
+          onClick={(e) => {
+            e.stopPropagation();
+            const next = window.prompt("Scene name", scene.title);
+            if (next && next.trim() && next.trim() !== scene.title) {
+              window.dispatchEvent(
+                new CustomEvent("scarlet-rename-scene", { detail: { sceneId: scene.id, title: next } })
+              );
+            }
+          }}
+        >
           {scene.nodeType === "credits" && "🎬 CREDITS · "}
           {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
           {isStart && "★ START · "}
@@ -4421,6 +4435,16 @@ function StudioInner({
       const sceneId = (e as CustomEvent<string>).detail;
       if (sceneId) deleteScene(sceneId);
     };
+    const onRenameCustom = (e: Event) => {
+      const detail = (e as CustomEvent<{ sceneId: string; title: string }>).detail;
+      if (!detail?.sceneId) return;
+      const title = detail.title.trim();
+      if (!title) return;
+      mutate((draft) => {
+        const sc = draft.scenes.find((s) => s.id === detail.sceneId);
+        if (sc) sc.title = title;
+      });
+    };
     const onDeleteEdge = (e: Event) => {
       const edgeId = (e as CustomEvent<string>).detail;
       const edge = edges.find((edge) => edge.id === edgeId);
@@ -4445,10 +4469,12 @@ function StudioInner({
     window.addEventListener("keydown", onKey);
     window.addEventListener("scarlet-delete-scene", onDeleteCustom as EventListener);
     window.addEventListener("scarlet-delete-edge", onDeleteEdge as EventListener);
+    window.addEventListener("scarlet-rename-scene", onRenameCustom as EventListener);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scarlet-delete-scene", onDeleteCustom as EventListener);
       window.removeEventListener("scarlet-delete-edge", onDeleteEdge as EventListener);
+      window.removeEventListener("scarlet-rename-scene", onRenameCustom as EventListener);
     };
   }, [undo, redo, edges, mutate, deleteScene]);
 
@@ -7893,6 +7919,43 @@ function StudioInner({
                           })
                         }
                       />
+                      {/* ElevenLabs v3 audio tags (laugh/cough/…) — inserted into
+                          the line. Bracketed cues only render with v3; other models
+                          speak the brackets, so we gate the panel on v3. */}
+                      {modelSupportsAudioTags(getElevenModel()) && b.characterId !== "narrator" && (
+                        <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
+                          <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
+                            🎙 Insert sound (ElevenLabs v3)
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {ELEVENLABS_AUDIO_TAGS.flatMap((g) => g.tags)
+                              // de-duplicate by tag
+                              .filter((t, _i, arr) => arr.findIndex((x) => x.tag === t.tag) === _i)
+                              .map((t) => (
+                                <button
+                                  key={t.tag}
+                                  type="button"
+                                  title={t.hint}
+                                  onClick={() =>
+                                    mutate((d) => {
+                                      const beat = d.scenes
+                                        .find((x) => x.id === scene.id)!
+                                        .dialogueBeats!.find((x) => x.id === b.id)!;
+                                      beat.text = `${beat.text ? beat.text.replace(/\s*$/, "") + " " : ""}${t.tag} `;
+                                    })
+                                  }
+                                  className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-wide text-neon hover:bg-neon/15"
+                                >
+                                  {t.label}
+                                </button>
+                              ))}
+                          </div>
+                          <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                            Bracketed cues like <b>[laughs]</b> are performed by the voice (v3 only). Place them where the
+                            sound happens. v2/turbo read them as text.
+                          </p>
+                        </div>
+                      )}
                     </Field>
                     {/* Memory recall substitutions — the NPC echoes a specific
                         earlier choice instead of a generic line. */}

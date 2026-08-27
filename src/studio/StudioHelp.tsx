@@ -286,6 +286,9 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               to <code>public/voices/&lt;person&gt;/&lt;scene&gt;/</code>; browser saves via the linked voice folder or media library.
               The confirmation shows total characters (credits) up front; when MP3s exist you choose regenerate-all or fill-the-gaps.
               Do one conversation/scene at a time — silent beats, memory-recall lines, and characters without a voice ID are skipped.
+              On the <b>Eleven v3</b> model, use the <b>🎙 Insert sound</b> chips under a line to add performed cues like
+              <code>[laughs]</code>, <code>[coughs]</code>, <code>[sighs]</code> — v3 acts them out (v2/turbo would read the
+              brackets aloud, so the chips only appear when v3 is selected).
             </p>
           </Section>
 

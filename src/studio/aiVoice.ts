@@ -139,3 +139,55 @@ export function convertConfirmMessage(charName: string, voiceId: string, model: 
     "Convert this line?",
   ].join("\n");
 }
+
+/* ------------------------------------------------------------------ *
+ *  ElevenLabs v3 audio tags — non-speech cues inserted into the line.
+ *  Bracketed tags like [laughs] / [coughs] are a v3 feature; v2 and
+ *  turbo read them literally, so they're offered when the v3 model is
+ *  selected. Inserted at the cursor (or appended) by the beat editor.
+ * ------------------------------------------------------------------ */
+export interface AudioTag {
+  tag: string;
+  label: string;
+  hint: string;
+}
+
+/** Curated, commonly-working v3 tags grouped by kind. The API supports
+ *  many natural-language sound labels too — these are the reliable ones. */
+export const ELEVENLABS_AUDIO_TAGS: { group: string; tags: AudioTag[] }[] = [
+  {
+    group: "Reactions",
+    tags: [
+      { tag: "[laughs]", label: "laugh", hint: "a short laugh" },
+      { tag: "[chuckles]", label: "chuckle", hint: "a quiet chuckle" },
+      { tag: "[sighs]", label: "sigh", hint: "an exhale" },
+      { tag: "[gulps]", label: "gulp", hint: "a nervous swallow" },
+      { tag: "[gasps]", label: "gasp", hint: "a sharp intake of breath" },
+      { tag: "[groans]", label: "groan", hint: "a weary/annoyed groan" },
+      { tag: "[grunts]", label: "grunt", hint: "a short grunt" },
+    ],
+  },
+  {
+    group: "Physical / throat",
+    tags: [
+      { tag: "[coughs]", label: "cough", hint: "a dry cough" },
+      { tag: "[clears throat]", label: "clear throat", hint: "throat-clearing" },
+      { tag: "[sneezes]", label: "sneeze", hint: "a sneeze" },
+      { tag: "[yawns]", label: "yawn", hint: "a tired yawn" },
+    ],
+  },
+  {
+    group: "Mouth / emotion",
+    tags: [
+      { tag: "[whispers]", label: "whisper", hint: "drop to a whisper" },
+      { tag: "[mumbles]", label: "mumble", hint: "muffled/mumbled" },
+      { tag: "[laughs]", label: "laughing line", hint: "tag around laughing speech" },
+      { tag: "[pauses]", label: "beat pause", hint: "a held beat" },
+    ],
+  },
+];
+
+/** Model ids that understand bracketed audio tags (v3 family). */
+export function modelSupportsAudioTags(model: string): boolean {
+  return model === "eleven_v3" || /v3/.test(model);
+}
