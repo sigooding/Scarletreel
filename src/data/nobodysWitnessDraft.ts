@@ -4852,7 +4852,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     {
       id: "nwd_sn_p1",
       title: "Act Three, Part 1 — What He Did With It",
-      background: "/img/nw2/ep2/car-48.jpg",
+      background: "/img/nwd/ep2/car-48.jpg",
       ambientAudio: "rain",
       particles: "rain",
       transition: "fade",

@@ -311,6 +311,14 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               The “The Perk Range” case is a four-station proving ground for the perks; the “Quick-Time Demo” case
               smoke-tests QTEs — pick either from the story selector and ▶ Play draft.
             </p>
+            <p>
+              <b>New? Learn by example.</b> The three <b>“Demo Lab”</b> cases on the newsstand —
+              <b> Conversation</b> (dialogue, replies, memory recalls, present-item),
+              <b> Scene Craft</b> (credits, cameras, lights, examine, music, auto-advance) and
+              <b> Branching Reel</b> (consequences, gating, QTEs, acts, heat) — are step-by-step teaching reels.
+              Open any of them here in Studio: every scene card carries a 📝 <b>note</b> strip that explains exactly how
+              the scene was built, click by click. Read the note, press ▶ Play, then copy the move in your own case.
+            </p>
           </Section>
 
           <Section title="8 · Validator, Repair, Publish">

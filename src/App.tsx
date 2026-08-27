@@ -41,7 +41,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "28";
+const CONTENT_REVISION = "29";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -238,6 +238,11 @@ const REVISION_RESETS: Record<string, string[]> = {
   // and B), and Endings C ("A Stopped Watch") and D ("Ten Past Nine")
   // arrive verbatim.
   "28": ["nobodys-witness-draft"],
+  // r29: three step-by-step "Demo Lab" teaching cases join the catalogue
+  // (Conversation / Scene Craft / Branching Reel), and the draft's
+  // nwd_sn_p1 background typo (/img/nw2/ -> /img/nwd/) is fixed — retire the
+  // draft snapshot so the corrected asset path reaches cached copies.
+  "29": ["nobodys-witness-draft"],
 };
 
 function migrateLegacyStoryStorage() {
