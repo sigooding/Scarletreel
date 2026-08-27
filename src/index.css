@@ -752,8 +752,8 @@ body,
  * subject is rendered as a sibling layer, so it stays sharp while the world
  * zooms and blurs behind it. */
 @keyframes cin-dolly-zoom {
-  0%   { transform: scale(var(--cin-dolly-zoom-from, 1)); filter: blur(0px); }
-  100% { transform: scale(var(--cin-dolly-zoom-to, 1.35)); filter: blur(var(--cin-dolly-zoom-blur, 0px)); }
+  0%   { transform: scale(var(--cin-dolly-zoom-from, 1)); filter: var(--cin-grade-filter-clean); }
+  100% { transform: scale(var(--cin-dolly-zoom-to, 1.35)); filter: var(--cin-grade-filter); }
 }
 .cin-dolly-zoom {
   animation: cin-dolly-zoom var(--cin-dolly-zoom-dur, 8s) ease-in-out infinite alternate;
@@ -1817,4 +1817,147 @@ body,
 /* colored button variants (kept in CSS so they win over the base ticket) */
 .hud-frame-crimson { --hud-line: rgb(226 59 78 / 0.7); --hud-ink: rgb(226 59 78 / 0.3); }
 
+}
+
+/* ---------- cinematic colour grades ----------
+ * Grade filters live on the plate itself so they grade the moving image.
+ * dolly-zoom keyframes own `filter` for the blur, so those classes bake the
+ * grade filter in via a blur-aware variant; every other mode sets it inline
+ * from React (see cinematicLayer). */
+.cin-grade-nolan-imax { filter: saturate(0.82) contrast(1.18) brightness(0.97) hue-rotate(-8deg); }
+.cin-grade-tarantino-35mm { filter: saturate(1.35) contrast(1.28) brightness(1.02) sepia(0.12) hue-rotate(-6deg); }
+.cin-grade-spielberg-golden { filter: saturate(1.14) contrast(1.05) brightness(1.06) sepia(0.2) hue-rotate(-4deg); }
+.cin-grade-noir-1940s { filter: grayscale(1) contrast(1.35) brightness(0.92); }
+
+/* The split-tone wash: a div laid over the plate (grade wash), so it also
+ * covers video cutscene backgrounds which can't take CSS filters. */
+.grade-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: var(--grade-wash-op, 0.85);
+  mix-blend-mode: var(--grade-wash-blend, soft-light);
+  transition: opacity 1s ease;
+}
+
+/* ---------- film stock emulation ---------- */
+/* Weave + flicker on the wrapper; grain/scratches are pseudo-elements so no
+ * extra DOM is needed in the no-grade case. */
+.film-grade {
+  animation: film-gate-weave var(--film-weave-dur, 3.4s) ease-in-out infinite alternate,
+    film-flicker var(--film-flicker-dur, 0.38s) steps(2, end) infinite;
+  will-change: transform, opacity;
+}
+@keyframes film-gate-weave {
+  0%   { transform: translate(0.4px, -0.3px); }
+  50%  { transform: translate(-0.5px, 0.3px); }
+  100% { transform: translate(0.3px, 0.4px); }
+}
+@keyframes film-flicker {
+  0%   { opacity: 1; }
+  40%  { opacity: calc(1 - var(--film-flicker-amp, 0.05)); }
+  60%  { opacity: 1; }
+  100% { opacity: calc(1 - var(--film-flicker-amp, 0.05) * 0.6); }
+}
+/* Halation bloom: warm light bleed around highlights, like a print's silver
+ * halide glow. Painted once over the grade. */
+.film-grade::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: calc(var(--film-strength, 0.7) * 0.22);
+  background: radial-gradient(ellipse at 50% 110%, rgba(255, 226, 170, 0.5) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% -10%, rgba(255, 244, 214, 0.28) 0%, transparent 60%);
+  mix-blend-mode: screen;
+}
+/* Moving grain: denser and looser than the global ambient grain. */
+.film-grade::after {
+  content: "";
+  position: absolute;
+  inset: -60%;
+  pointer-events: none;
+  z-index: 4;
+  opacity: calc(var(--film-strength, 0.7) * 0.16);
+  background-image: repeating-radial-gradient(
+    circle at 21% 37%,
+    rgba(255, 255, 255, 0.95) 0 0.7px,
+    transparent 1px 2.4px
+  );
+  animation: film-grain-jitter 0.5s steps(3) infinite;
+}
+@keyframes film-grain-jitter {
+  0%   { transform: translate(0, 0); }
+  33%  { transform: translate(-2.4%, 1.6%); }
+  66%  { transform: translate(2.2%, -1.4%); }
+  100% { transform: translate(-1%, 2%); }
+}
+/* Occasional scratch/dust pass. */
+.film-scratches {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  opacity: calc(var(--film-strength, 0.7) * 0.5);
+  background:
+    linear-gradient(90deg, transparent 0 18%, rgba(255,255,255,0.05) 18.4%, transparent 18.9%),
+    linear-gradient(90deg, transparent 0 71%, rgba(255,255,255,0.04) 71.3%, transparent 71.7%),
+    radial-gradient(circle at 34% 28%, rgba(255,255,255,0.10) 0 0.5px, transparent 1.2px),
+    radial-gradient(circle at 62% 64%, rgba(255,255,255,0.08) 0 0.6px, transparent 1.4px);
+  background-repeat: no-repeat;
+  animation: film-scratch-flicker 7s steps(1) infinite;
+}
+@keyframes film-scratch-flicker {
+  0%, 88% { opacity: 0; }
+  89%, 90% { opacity: calc(var(--film-strength, 0.7) * 0.5); }
+  91%, 96% { opacity: 0; }
+  97%, 98% { opacity: calc(var(--film-strength, 0.7) * 0.35); }
+  99%, 100% { opacity: 0; }
+}
+
+/* ---------- pointer parallax depth ---------- */
+/* The tracker sets --par-x / --par-y on the stage root as -1..1 offsets.
+ * Each plane reads its own travel distance (plate slowest, subject fastest). */
+.parallax-plate {
+  transform: translate3d(calc(var(--par-x, 0) * var(--par-bg, 0px) * -1), calc(var(--par-y, 0) * var(--par-bg, 0px) * -1), 0) scale(1.09);
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+.parallax-mid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  transform: translate3d(calc(var(--par-x, 0) * var(--plane-shift, 10px) * -0.6), calc(var(--par-y, 0) * var(--plane-shift, 10px) * -0.6), 0) scale(1.06);
+  transition: transform 0.22s ease-out;
+  will-change: transform;
+}
+.parallax-fg {
+  transform: translate3d(calc(var(--par-x, 0) * var(--par-fg, 0px)), calc(var(--par-y, 0) * var(--par-fg, 0px)), 0);
+  transition: transform 0.18s ease-out;
+  will-change: transform;
+}
+/* Idle sway when no pointer has moved (also covers touch devices). The
+ * --par-bg scale factor comes from parallaxStyle, which the STAGE root sets;
+ * children inherit custom properties. */
+@keyframes parallax-idle {
+  0%, 100% { translate: 0 0; }
+  50% { translate: calc(var(--par-bg, 0px) * 0.22) calc(var(--par-bg, 0px) * -0.12); }
+}
+.parallax-idle { animation: parallax-idle 9s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .film-grade,
+  .film-grade::after,
+  .film-scratches,
+  .parallax-plate,
+  .parallax-mid,
+  .parallax-fg,
+  .parallax-idle {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
 }

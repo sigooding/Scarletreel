@@ -41,7 +41,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "29";
+const CONTENT_REVISION = "30";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -243,6 +243,9 @@ const REVISION_RESETS: Record<string, string[]> = {
   // nwd_sn_p1 background typo (/img/nw2/ -> /img/nwd/) is fixed — retire the
   // draft snapshot so the corrected asset path reaches cached copies.
   "29": ["nobodys-witness-draft"],
+  // r30: Scene Craft demo gains the color-grade/film-stock take and the
+  // parallax-depth take; retire its snapshot so the new scenes appear.
+  "30": ["demo-scene-craft-lab"],
 };
 
 function migrateLegacyStoryStorage() {

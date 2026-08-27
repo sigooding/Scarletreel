@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type {
   CinematicSettings,
+  GradePresetId,
   LensFlareGhostTier,
   LensFlarePreset,
   LensFlareSettings,
@@ -564,5 +565,101 @@ export function lensFlareStyle(flare: ResolvedLensFlare): CSSProperties {
     "--flare-pulse-amp": String(flare.pulseAmount * 0.5),
     "--ghost-dx": `${(50 - flare.x) * flare.reactivity}px`,
     "--ghost-dy": `${(50 - flare.y) * flare.reactivity}px`,
+  } as CSSProperties;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Colour grades & film stock                                         */
+/* ------------------------------------------------------------------ */
+
+export interface GradePreset {
+  id: GradePresetId;
+  name: string;
+  tagline: string;
+  badge: string;
+  /** CSS filter chain applied to the graded plate. */
+  filter: string;
+  /** optional CSS filter merged into the dolly-zoom animation (its keyframes
+   * own `filter` for the blur, so it needs the grade baked in). */
+  filterWithBlur?: string;
+  /** split-tone wash laid over the graded plate, CSS background. */
+  tint: string;
+  /** wash opacity 0–1. */
+  tintOpacity: number;
+  /** blend mode for the wash. */
+  tintBlend: string;
+}
+
+export const GRADE_PRESETS: Record<GradePresetId, GradePreset> = {
+  "nolan-imax": {
+    id: "nolan-imax",
+    name: "Nolan — IMAX Cool",
+    tagline: "Cold desaturated teal shadows, crisp contrast, faint steel highlights — the Inception / Dark Knight plate.",
+    badge: "❄️ Cool Blockbuster",
+    filter: "saturate(0.82) contrast(1.18) brightness(0.97) hue-rotate(-8deg)",
+    filterWithBlur: "saturate(0.82) contrast(1.18) brightness(0.97) hue-rotate(-8deg) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "linear-gradient(180deg, rgba(34, 86, 110, 0.28) 0%, rgba(0,0,0,0) 45%, rgba(12, 24, 40, 0.34) 100%)",
+    tintOpacity: 0.85,
+    tintBlend: "soft-light",
+  },
+  "tarantino-35mm": {
+    id: "tarantino-35mm",
+    name: "Tarantino — Warm 35mm",
+    tagline: "Hot reds, teal-green shadows, bleach-bypass punch — the Pulp Fiction / Kill Bill print.",
+    badge: "🩸 Warm Grindhouse",
+    filter: "saturate(1.35) contrast(1.28) brightness(1.02) sepia(0.12) hue-rotate(-6deg)",
+    filterWithBlur: "saturate(1.35) contrast(1.28) brightness(1.02) sepia(0.12) hue-rotate(-6deg) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "linear-gradient(180deg, rgba(122, 26, 20, 0.3) 0%, rgba(0,0,0,0) 40%, rgba(18, 64, 60, 0.32) 100%)",
+    tintOpacity: 0.8,
+    tintBlend: "overlay",
+  },
+  "spielberg-golden": {
+    id: "spielberg-golden",
+    name: "Spielberg — Golden Hour",
+    tagline: "Warm amber highlights, gentle bloom, open midtones — the magic-hour adventure print.",
+    badge: "🌅 Golden Hour",
+    filter: "saturate(1.14) contrast(1.05) brightness(1.06) sepia(0.2) hue-rotate(-4deg)",
+    filterWithBlur: "saturate(1.14) contrast(1.05) brightness(1.06) sepia(0.2) hue-rotate(-4deg) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "radial-gradient(ellipse at 50% 108%, rgba(244, 178, 82, 0.38) 0%, rgba(0,0,0,0) 55%), linear-gradient(180deg, rgba(120, 86, 30, 0.16) 0%, rgba(0,0,0,0) 50%)",
+    tintOpacity: 0.9,
+    tintBlend: "soft-light",
+  },
+  "noir-1940s": {
+    id: "noir-1940s",
+    name: "1940s Noir — Black & White",
+    tagline: "High-contrast silver-grain monochrome, crushed shadows, hard whites — the classic pulp thriller print.",
+    badge: "🎞 Classic Noir",
+    filter: "grayscale(1) contrast(1.35) brightness(0.92)",
+    filterWithBlur: "grayscale(1) contrast(1.35) brightness(0.92) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "linear-gradient(180deg, rgba(0, 0, 0, 0.22) 0%, rgba(0,0,0,0) 35%, rgba(0, 0, 0, 0.42) 100%)",
+    tintOpacity: 1,
+    tintBlend: "multiply",
+  },
+};
+
+export const GRADE_PRESET_LIST: GradePreset[] = [
+  GRADE_PRESETS["nolan-imax"],
+  GRADE_PRESETS["tarantino-35mm"],
+  GRADE_PRESETS["spielberg-golden"],
+  GRADE_PRESETS["noir-1940s"],
+];
+
+/** Clamp helper for parallax/film strengths. */
+export const clampUnit = (v: number | undefined, fallback: number) =>
+  v === undefined ? fallback : Math.min(1, Math.max(0, v));
+
+/** CSS custom properties driving parallax layers. Shift values are in px (at
+ * the reference frame) and come from the GamePlayer/preview pointer tracker. */
+export function parallaxStyle(c: CinematicSettings | undefined): CSSProperties {
+  const depth = clampUnit(c?.parallaxDepth, 0);
+  if (depth <= 0) return {};
+  return {
+    "--par-depth": String(depth),
+    "--par-bg": `${(depth * 14).toFixed(1)}px`,
+    "--par-fg": `${(depth * 30).toFixed(1)}px`,
   } as CSSProperties;
 }

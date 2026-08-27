@@ -396,6 +396,28 @@ export interface CreditsSettings {
   gateWeave?: "off" | "subtle" | "worn" | "projector";
 }
 
+/** A mid-ground parallax depth plane (see CinematicSettings.parallaxLayers). */
+export interface ParallaxLayer {
+  /** image url / `gradient:` / `asset:` reference — transparent cutouts work best */
+  image: string;
+  /** 0 (far plane, shifts the least) → 1 (near plane, shifts like the foreground) */
+  depth: number;
+  /** how the image fits its plane (same semantics as foregroundFit) */
+  fit?: "contain" | "cover" | "fill" | "native";
+  /** plane scale (default 1) */
+  scale?: number;
+  /** anchor position, % of frame (default 50 / 50) */
+  x?: number;
+  y?: number;
+}
+
+/** Named colour grade presets (see GRADE_PRESETS in src/cinematic.ts). */
+export type GradePresetId =
+  | "nolan-imax"
+  | "tarantino-35mm"
+  | "spielberg-golden"
+  | "noir-1940s";
+
 /** Cinematic camera/lighting settings applied to an image (scene background
  * or a dialogue beat's replacement background). */
 export interface CinematicSettings {
@@ -476,6 +498,29 @@ export interface CinematicSettings {
   lensFlare?: LensFlareSettings;
   /** multiple lens flare sources (when multiple distinct flares are authored) */
   flares?: LensFlareSettings[];
+
+  /** Cinematic COLOR GRADE applied to the background plate: a named
+   * director/stock look (see GRADE_PRESETS in src/cinematic.ts). Grades work
+   * on ANY camera mode — they are a CSS filter + split-tone wash layered over
+   * the moving plate, not a camera move. */
+  colorGrade?: GradePresetId;
+  /** Film-stock emulation: animated 35mm grain (stronger than the global
+   * grain), gate weave, a soft halation bloom around highlights, light
+   * flicker and the occasional dust/scratch pass. Sits ABOVE the grade so it
+   * reads as the physical print of the graded image. */
+  filmGrade?: boolean;
+  /** Strength of the film-stock treatment, 0–1 (default 0.7). */
+  filmGradeStrength?: number;
+
+  /** Mouse/pointer PARALLAX depth: the camera subtly follows the cursor, and
+   * the layers drift against each other (background slowest, foreground
+   * fastest) for a diorama feel. 0/off–1 strong; default 0.35 when set.
+   * Falls back to a gentle idle sway on devices with no pointer. */
+  parallaxDepth?: number;
+  /** Extra mid-ground depth planes between plate and subject. Each plane is a
+   * transparent cutout that parallaxes at its own rate; `depth` 0 (far) → 1
+   * (near) drives its shift. Great for window frames, crowds, fog banks. */
+  parallaxLayers?: ParallaxLayer[];
 
   /** @deprecated legacy single light — merged into `lights` on next edit. */
   lightSource?: string;

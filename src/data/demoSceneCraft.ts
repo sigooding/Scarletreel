@@ -12,6 +12,9 @@ import type { Story } from "../types";
  *   · Cinematic camera modes — pan / zoom-hold / shake / dolly / dolly-zoom,
  *     focal point, dim, animated light glows
  *   · Foreground overlays — a fixed subject layer while the world moves
+ *   · Color grade presets (Nolan IMAX cool / Tarantino warm 35mm /
+ *     Spielberg golden hour / 1940s noir B&W) + film-stock emulation
+ *   · Parallax depth — cursor-follow camera + mid-ground depth planes
  *   · Particles (rain/smoke) & letterbox bars
  *   · Scene transitions & music behaviour (inherit / track / none, crossfade)
  *   · EXAMINE hold-to-inspect hotspots (camera zoom + hold meter)
@@ -28,10 +31,12 @@ export const DEMO_SCENE_CRAFT: Story = {
     ds_title: { x: 0, y: 200 },
     ds_flat: { x: 360, y: 80 },
     ds_camera: { x: 360, y: 300 },
-    ds_light: { x: 720, y: 80 },
-    ds_examine: { x: 720, y: 320 },
-    ds_cutscene: { x: 1080, y: 140 },
-  ds_leave: { x: 1080, y: 380 },
+    ds_grade: { x: 720, y: 60 },
+    ds_parallax: { x: 720, y: 300 },
+    ds_light: { x: 1080, y: 80 },
+    ds_examine: { x: 1080, y: 320 },
+    ds_cutscene: { x: 1440, y: 140 },
+    ds_leave: { x: 360, y: 500 },
   },
   briefing: {
     objective: "Walk the reel: title card, camera moves, lighting, hold-to-examine, and an auto-advancing cut.",
@@ -174,7 +179,82 @@ export const DEMO_SCENE_CRAFT: Story = {
       ],
       hotspots: [],
       choices: [
-        { id: "ds_cam_light", text: "Next take — paint with light.", targetSceneId: "ds_light", attitudeTag: "Neutral" },
+        { id: "ds_cam_grade", text: "Next take — grade the picture.", targetSceneId: "ds_grade", attitudeTag: "Neutral" },
+      ],
+    },
+
+    /* ── SCENE 4 — COLOR GRADES & FILM STOCK ───────────────────────── */
+    {
+      id: "ds_grade",
+      title: "Take Three — The Grade",
+      note:
+        "STEP 4 — COLOR GRADE & FILM STOCK. Cinematic panel → '🎨 Color grade & film stock'. " +
+        "① The GRADE dropdown is a one-click director look: Nolan = cold desaturated teal/steel IMAX; Tarantino = hot warm 35mm with punchy contrast; Spielberg = amber golden-hour glow; 1940s Noir = high-contrast black & white. Each is a CSS filter chain + a split-tone wash, so it works on EVERY camera mode and on insert-shot beats. " +
+        "② Tick '🎞 Film grade' for a 35mm PRINT: animated grain (heavier than the ambient grain), gate weave (the frame wobbles like a projected print), highlight halation bloom, light flicker and occasional scratches — with a strength slider. The film layer sits ON TOP of the grade, like the physical print of the graded image. " +
+        "▶ Play this scene, then switch the grade in Studio and watch the same plate become four different films.",
+      background: "/img/bg-vault.jpg",
+      ambientAudio: "tension",
+      letterbox: true,
+      transition: "fade",
+      transitionSpeed: 0.8,
+      cinematic: {
+        mode: "static",
+        colorGrade: "noir-1940s",
+        filmGrade: true,
+        filmGradeStrength: 0.8,
+      },
+      prose:
+        "The Projectionist threads four different prints of the same vault. On screen it's black and white, silver grain swirling in the projector beam, shadows crushed to velvet. 'Same photograph,' she says. 'Four cinematographers. Pick the one that tells your lie — and whether it runs through celluloid.'",
+      dialogueBeats: [
+        {
+          id: "ds_grade_1",
+          characterId: "ds_instructor",
+          expression: "holding film strips",
+          text: "The grade is the cheapest magic in the booth. Nolan cools everything to steel and teal, Tarantino pushes the reds and bleach-bypass contrast, Spielberg pours golden hour over the whole frame, and classic noir drains every colour for stark monochrome. Film grade adds the physical print: grain that moves, weave, flicker, scratches.",
+        },
+      ],
+      hotspots: [],
+      choices: [
+        { id: "ds_grade_par", text: "Next take — depth you can move in.", targetSceneId: "ds_parallax", attitudeTag: "Neutral" },
+      ],
+    },
+
+    /* ── SCENE 5 — PARALLAX DEPTH ──────────────────────────────────── */
+    {
+      id: "ds_parallax",
+      title: "Take Four — Parallax Depth",
+      note:
+        "STEP 5 — PARALLAX DEPTH. Cinematic panel → '🌆 Parallax depth'. " +
+        "① The DEPTH slider (0 = off) turns on cursor-follow parallax: move your mouse and the plate drifts a little, while the foreground subject drifts MORE — a diorama. A gentle idle sway plays when the mouse is still (and it stands down under reduced-motion). " +
+        "② Add MID-GROUND DEPTH PLANES: transparent PNG cutouts (a window frame, a crowd, a fog bank) between the plate and the subject. Each plane's own DEPTH % sets how fast it shifts — far planes barely move, near planes move almost like the foreground. Upload a cutout, or drop in the gradient 'fog plane' as a cheap depth layer.",
+      background: "/img/bg-club.jpg",
+      ambientAudio: "jazz",
+      particles: "smoke",
+      transition: "fade",
+      transitionSpeed: 0.8,
+      cinematic: {
+        mode: "pan",
+        parallaxDepth: 0.6,
+        foregroundImage: "gradient:radial-gradient(circle at 50% 70%, rgba(20,12,24,0.85) 0%, rgba(0,0,0,0) 55%)",
+        foregroundFit: "cover",
+        foregroundY: 20,
+        parallaxLayers: [
+          { image: "gradient:linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(8,10,18,0.5) 100%)", depth: 0.3 },
+        ],
+      },
+      prose:
+        "The club goes deep — a haze of smoke at the back, a dark silhouette of a booth at the front. Move your cursor across the frame: the room leans with you, the smoke slides slow, the booth slides fast, and suddenly a flat painting has air between its layers.",
+      dialogueBeats: [
+        {
+          id: "ds_par_1",
+          characterId: "ds_instructor",
+          expression: "lens to eye",
+          text: "Parallax is depth from motion. The plate shifts a few pixels, the mid-planes more, the foreground most — your eye reads the difference as distance. Transparent cutouts make the best planes; a gradient fog makes the cheapest one. Move your mouse over the preview in Studio, it's live there too.",
+        },
+      ],
+      hotspots: [],
+      choices: [
+        { id: "ds_par_light", text: "Next take — paint with light.", targetSceneId: "ds_light", attitudeTag: "Neutral" },
       ],
     },
 
@@ -298,7 +378,7 @@ export const DEMO_SCENE_CRAFT: Story = {
         tier: "victory-gold",
         headline: "THAT'S A WRAP",
         recap:
-          "You walked the Scene-Craft reel: credits title sequence, static plate, dolly camera with a pinned foreground, animated lights with lens flare, a hold-to-examine discovery, crossfaded music, and auto-advance pacing.",
+          "You walked the Scene-Craft reel: credits title sequence, static plate, dolly camera with a pinned foreground, a Nolan/Tarantino/Spielberg/noir color grade plus 35mm film-stock emulation, cursor parallax with depth planes, animated lights with lens flare, a hold-to-examine discovery, crossfaded music, and auto-advance pacing.",
       },
     },
 

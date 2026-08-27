@@ -279,6 +279,20 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
             </ul>
           </Section>
 
+          <Section title="5b · Color grade, film stock & parallax">
+            <p>
+              In the Cinematic Image Controls (Scene tab):
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>🎨 Color grade</b> — one-click director looks on any camera mode (and on a beat's replacement background): <b>Nolan IMAX</b> (cold desaturated steel/teal), <b>Tarantino 35mm</b> (hot warm bleach-bypass), <b>Spielberg golden hour</b> (amber magic hour), <b>1940s Noir</b> (high-contrast black &amp; white). It is a filter + split-tone wash, so video cutscenes still get the wash.</li>
+              <li><b>🎞 Film grade</b> — 35mm print emulation: moving grain, gate weave, highlight halation bloom, flicker and occasional scratches, with a strength slider. Sits above the color grade like the physical print.</li>
+              <li><b>🌆 Parallax depth</b> — the camera subtly follows the cursor; the plate drifts slowest, the foreground fastest. <b>Mid-ground planes</b> (transparent cutouts or a gradient fog layer) shift by their own depth % for a diorama feel. Idle sway plays when the mouse is still; reduced-motion users get a locked frame. Try it live on the camera preview — it responds to your mouse.</li>
+            </ul>
+            <p>
+              See them in action in <b>Demo Lab: Scene Craft</b> — “Take Three — The Grade” and “Take Four — Parallax Depth” — each with a 📝 step-by-step note.
+            </p>
+          </Section>
+
           <Section title="6 · Hotspots — actions on the scene art">
             <p>
               Drag on the preview to draw a zone (percent bounds). One action each: <b>go to scene</b>, <b>give item</b>,{" "}

@@ -25,14 +25,17 @@ import { audio } from "../audio";
 import {
   defaultLensFlare,
   defaultLight,
+  GRADE_PRESETS,
+  GRADE_PRESET_LIST,
   LENS_FLARE_PRESETS,
   lightPoints,
   lightStyle,
+  parallaxStyle,
   parseGlowColor,
   resolveLensFlare,
   resolveLights,
 } from "../cinematic";
-import { cinematicLayer, ForegroundLayer, LensFlareLayer, parseAnchor } from "../game/Game";
+import { cinematicLayer, CinematicOverlays, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
 import {
   characterOpinion,
   clamp,
@@ -524,17 +527,46 @@ function CinematicPreview({
     );
   }
   const { className, style } = cinematicLayer(cinematic, url);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const pOn = (cinematic?.parallaxDepth ?? 0) > 0;
+  // Pointer parallax in the preview — write the same --par-x / --par-y vars the
+  // game uses so the preview is live and truthful.
+  const onPreviewMove = (e: React.PointerEvent) => {
+    const el = previewRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--par-x", (((e.clientX - r.left) / r.width) * 2 - 1).toFixed(3));
+    el.style.setProperty("--par-y", (((e.clientY - r.top) / r.height) * 2 - 1).toFixed(3));
+  };
+  const onPreviewLeave = () => {
+    previewRef.current?.style.removeProperty("--par-x");
+    previewRef.current?.style.removeProperty("--par-y");
+  };
   return (
-    <div className="relative aspect-video w-full overflow-hidden border border-gold/30 bg-noir-950">
-      <div className={`absolute inset-0 ${className}`} style={style}>
-        {resolveLights(cinematic).map((l, i) => (
-          <div key={i} className="cin-light" style={lightStyle(l)} />
-        ))}
-        <LensFlareLayer cinematic={cinematic} />
+    <div
+      ref={previewRef}
+      onPointerMove={pOn ? onPreviewMove : undefined}
+      onPointerLeave={pOn ? onPreviewLeave : undefined}
+      className="relative aspect-video w-full overflow-hidden border border-gold/30 bg-noir-950"
+      style={pOn ? parallaxStyle(cinematic) : undefined}
+    >
+      <div className={`absolute inset-0 ${pOn ? "parallax-plate" : ""}`} style={pOn ? parallaxStyle(cinematic) : undefined}>
+        <div className={`absolute inset-0 ${className}`} style={style}>
+          {resolveLights(cinematic).map((l, i) => (
+            <div key={i} className="cin-light" style={lightStyle(l)} />
+          ))}
+          <LensFlareLayer cinematic={cinematic} />
+          <CinematicOverlays cinematic={cinematic} />
+        </div>
       </div>
-      <ForegroundLayer cinematic={cinematic} resolve={media} />
+      {pOn && <ParallaxMidLayers cinematic={cinematic} resolve={media} />}
+      <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+        <ForegroundLayer cinematic={cinematic} resolve={media} />
+      </div>
       <span className="pointer-events-none absolute bottom-1 right-1 z-[5] rounded bg-noir-950/70 px-1 py-0.5 font-pulp text-[7px] uppercase tracking-widest text-gold/70">
         {cinematic?.mode ?? "pan"}
+        {cinematic?.colorGrade ? ` · ${GRADE_PRESETS[cinematic.colorGrade]?.name?.split(" — ")[0] ?? ""}` : ""}
+        {pOn ? " · parallax" : ""}
       </span>
     </div>
   );
@@ -1075,6 +1107,138 @@ function CinematicControls({
           )}
           </>
         )}
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-grade" title="🎨 Color grade & film stock" titleClass="text-neon">
+        <Field label="Director / stock grade">
+          <select
+            className={inputCls}
+            value={c.colorGrade ?? ""}
+            onChange={(e) => set({ colorGrade: (e.target.value || undefined) as CinematicSettings["colorGrade"] })}
+          >
+            <option value="">— no grade (straight plate) —</option>
+            {GRADE_PRESET_LIST.map((g) => (
+              <option key={g.id} value={g.id}>{g.badge} {g.name}</option>
+            ))}
+          </select>
+        </Field>
+        {c.colorGrade && (
+          <p className="border border-neon/20 bg-neon/5 p-2 font-type text-[9px] leading-snug text-paper/55">
+            <b className="text-neon">{GRADE_PRESETS[c.colorGrade]?.name}</b> — {GRADE_PRESETS[c.colorGrade]?.tagline}{" "}
+            The grade works on every camera mode and on insert-shot beat backgrounds.
+          </p>
+        )}
+        <label className="flex items-start gap-2 border border-gold/25 bg-gold/5 px-2 py-1.5 text-[10px] uppercase tracking-wider text-paper/70">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={!!c.filmGrade}
+            onChange={(e) => set({ filmGrade: e.target.checked || undefined })}
+          />
+          <span>
+            🎞 Film grade — 35mm print emulation
+            <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+              Animated grain (heavier than the ambient grain), gate weave, highlight halation bloom, light flicker and the
+              occasional scratch/dust pass. Sits above the color grade like the physical print of the graded image.
+            </span>
+          </span>
+        </label>
+        {c.filmGrade && (
+          <Field label={`Film strength ${Math.round((c.filmGradeStrength ?? 0.7) * 100)}%`}>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0.15}
+                max={1}
+                step={0.05}
+                value={c.filmGradeStrength ?? 0.7}
+                className="flex-1 accent-pink-500"
+                onChange={(e) => set({ filmGradeStrength: Number(e.target.value) })}
+              />
+              <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round((c.filmGradeStrength ?? 0.7) * 100)}%</span>
+            </div>
+          </Field>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-parallax" title="🌆 Parallax depth" titleClass="text-cyan-neon">
+        <Field label={`Depth ${Math.round((c.parallaxDepth ?? 0) * 100)}%`}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={c.parallaxDepth ?? 0}
+              className="flex-1 accent-cyan-400"
+              onChange={(e) => set({ parallaxDepth: Number(e.target.value) || undefined })}
+            />
+            <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round((c.parallaxDepth ?? 0) * 100)}%</span>
+          </div>
+        </Field>
+        <p className="font-type text-[9px] leading-snug text-paper/45">
+          The camera subtly follows the cursor — the plate drifts slowest, mid planes and the foreground subject faster,
+          like a diorama. A gentle idle sway plays when the mouse is still. Move your mouse over the live preview above to
+          feel it.
+        </p>
+        <Field label="Mid-ground depth planes (transparent cutouts)">
+          {(c.parallaxLayers ?? []).map((layer, i) => (
+            <div key={i} className="mb-2 space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <AssetDropdown
+                  assetType="image"
+                  value={layer.image}
+                  returnReference
+                  storyId={storyId}
+                  placeholder="Pick a transparent plane image…"
+                  onChange={(v) => {
+                    const layers = [...(c.parallaxLayers ?? [])];
+                    layers[i] = { ...layer, image: v ?? "" };
+                    set({ parallaxLayers: layers.filter((l) => l.image) });
+                  }}
+                />
+                <button
+                  className="shrink-0 border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                  onClick={() => set({ parallaxLayers: (c.parallaxLayers ?? []).filter((_, j) => j !== i) })}
+                >
+                  ✕
+                </button>
+              </div>
+              <Field label={`Depth ${Math.round(layer.depth * 100)}% (0=far / 1=near)`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={layer.depth}
+                  className="w-full accent-cyan-400"
+                  onChange={(e) => {
+                    const layers = [...(c.parallaxLayers ?? [])];
+                    layers[i] = { ...layer, depth: Number(e.target.value) };
+                    set({ parallaxLayers: layers });
+                  }}
+                />
+              </Field>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <MediaUploadButton
+              accept="image/*"
+              storyId={storyId}
+              label="⤒ Upload plane"
+              onUploaded={(_url, assetId) =>
+                set({ parallaxLayers: [...(c.parallaxLayers ?? []), { image: `asset:${assetId}`, depth: 0.5 }] })
+              }
+            />
+            <button
+              className="shrink border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+              onClick={() => set({ parallaxLayers: [...(c.parallaxLayers ?? []), { image: "gradient:linear-gradient(180deg, rgba(10,12,20,0) 40%, rgba(10,12,20,0.55) 100%)", depth: 0.35 }] })}
+              title="Add a gradient fog plane (uses the picker above to swap for an image)"
+            >
+              ＋ Fog plane
+            </button>
+          </div>
+        </Field>
       </CollapsibleSection>
 
       <CollapsibleSection id="cin-foreground" title="🧍 Foreground overlay">

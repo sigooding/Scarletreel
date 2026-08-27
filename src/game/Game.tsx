@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audio, type MixChannel } from "../audio";
 import {
   calculateGhostElements,
+  GRADE_PRESETS,
   lensFlareStyle,
   lightStyle,
+  parallaxStyle,
   resolveLensFlares,
   resolveLights,
   type ResolvedLensFlare,
@@ -335,6 +337,53 @@ function bgStyle(bg: string): React.CSSProperties {
   return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
 }
 
+/** Grade + film-stock + parallax classes for a cinematic plate. The colour
+ * grade is a class only for non-dolly-zoom modes (the dolly-zoom keyframes
+ * own `filter` for the blur, so its grade filter is baked into the keyframes
+ * via --cin-grade-filter); the film treatment and parallax wrapper are plain
+ * classes that work with any mode. */
+function cinematicGradeClasses(c: CinematicSettings | undefined): string {
+  const out: string[] = [];
+  const grade = c?.colorGrade ? GRADE_PRESETS[c.colorGrade] : undefined;
+  const film = !!c?.filmGrade;
+  if (grade && (c?.mode ?? "pan") !== "dolly-zoom") out.push(`cin-grade-${grade.id}`);
+  if (film) out.push("film-grade");
+  return out.join(" ");
+}
+
+/** The split-tone wash + scratch layer that sit ABOVE a graded/filmed plate
+ * (also the only grade treatment video cutscenes can show — a video frame
+ * can't take a CSS filter). Render inside the same relative container as the
+ * plate so it covers it exactly. */
+export function CinematicOverlays({ cinematic }: { cinematic?: CinematicSettings }) {
+  const grade = cinematic?.colorGrade ? GRADE_PRESETS[cinematic.colorGrade] : undefined;
+  const film = !!cinematic?.filmGrade;
+  if (!grade && !film) return null;
+  const strength = Math.max(0, Math.min(1, cinematic?.filmGradeStrength ?? 0.7));
+  return (
+    <>
+      {grade && (
+        <div
+          className="grade-wash"
+          aria-hidden
+          style={{
+            background: grade.tint,
+            "--grade-wash-op": grade.tintOpacity,
+            "--grade-wash-blend": grade.tintBlend,
+          } as React.CSSProperties}
+        />
+      )}
+      {film && (
+        <div
+          className="film-scratches"
+          aria-hidden
+          style={{ "--film-strength": strength } as React.CSSProperties}
+        />
+      )}
+    </>
+  );
+}
+
 /** Build the CSS class + variables that apply cinematic camera motion and
  * dimming to an image layer. Used for the scene background and per-beat
  * replacement backgrounds. Light glows are separate layers (see LightGlow). */
@@ -376,6 +425,23 @@ export function cinematicLayer(c: CinematicSettings | undefined, url: string): {
     "--cin-dolly-zoom-to": `${zoomDir === "pull" ? 1 : zoomAmount}`,
     "--cin-dolly-zoom-blur": `${Math.max(0, c?.dollyZoomBlur ?? 0)}px`,
     "--cin-dolly-zoom-dur": `${Math.max(1, c?.dollyZoomDuration ?? 8)}s`,
+    // Colour grade: dolly-zoom keyframes own `filter` (the blur), so the grade
+    // filter is baked into the keyframe variable; other modes take a class.
+    ...(mode === "dolly-zoom"
+      ? {
+          // Keyframes consume these; defaults keep the blur-only behaviour.
+          "--cin-grade-filter": c?.colorGrade
+            ? (GRADE_PRESETS[c.colorGrade]?.filterWithBlur ?? GRADE_PRESETS[c.colorGrade]?.filter ?? `blur(${Math.max(0, c?.dollyZoomBlur ?? 0)}px)`)
+            : `blur(${Math.max(0, c?.dollyZoomBlur ?? 0)}px)`,
+          "--cin-grade-filter-clean": c?.colorGrade ? (GRADE_PRESETS[c.colorGrade]?.filter ?? "none") : "none",
+        }
+      : {}),
+    // Film-stock strength (drives grain/halation/scratch opacity).
+    ...(c?.filmGrade
+      ? {
+          "--film-strength": String(Math.max(0, Math.min(1, c.filmGradeStrength ?? 0.7))),
+        }
+      : {}),
   } as React.CSSProperties;
   // Dolly needs the image larger than the frame so it has room to travel —
   // pin the height and let the width overflow instead of cropping to cover.
@@ -400,10 +466,113 @@ export function cinematicLayer(c: CinematicSettings | undefined, url: string): {
                   : "cin-dolly-zoom"
               : "cin-static",
     (c?.dimAmount ?? 0) > 0 ? "cin-dim" : "",
+    cinematicGradeClasses(c),
   ]
     .filter(Boolean)
     .join(" ");
   return { className, style };
+}
+
+/* ------------------------------------------------------------------ */
+/*  parallax depth planes                                             */
+/* ------------------------------------------------------------------ */
+
+/** Tracks the pointer over the stage and writes --par-x / --par-y
+ * (range -1..1) onto the root element so parallax layers can shift. Honors
+ * reduced-motion (no vars set → layers stay centred). The values are written
+ * as CSS custom properties directly to avoid a React re-render per frame. */
+function useParallaxTracker(rootRef: React.RefObject<HTMLElement | null>, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const el = rootRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onMove = (e: PointerEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const r = el.getBoundingClientRect();
+        const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+        const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
+        el.style.setProperty("--par-x", nx.toFixed(3));
+        el.style.setProperty("--par-y", ny.toFixed(3));
+        el.classList.add("parallax-active");
+      });
+    };
+    const onLeave = () => {
+      el.style.removeProperty("--par-x");
+      el.style.removeProperty("--par-y");
+      el.classList.remove("parallax-active");
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerleave", onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerleave", onLeave);
+    };
+  }, [rootRef, enabled]);
+}
+
+/** True when the currently-shown plate should parallax (scene plate, or an
+ * insert-shot beat background carrying its own parallax settings). */
+function hasParallax(c: CinematicSettings | undefined): boolean {
+  return (c?.parallaxDepth ?? 0) > 0;
+}
+
+
+/** Extra mid-ground depth planes (window frames, fog banks, crowds) that
+ * parallax between the plate and the foreground subject. Each plane shifts
+ * against --par-x/--par-y by its own depth (far planes slow, near planes
+ * fast). Only rendered when parallax depth is enabled on the cinematic. */
+export function ParallaxMidLayers({
+  cinematic,
+  resolve,
+}: {
+  cinematic?: CinematicSettings;
+  /** Studio-preview asset resolver; the game passes nothing. */
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const depth = cinematic?.parallaxDepth ?? 0;
+  const layers = cinematic?.parallaxLayers ?? [];
+  if (!(depth > 0) || !layers.length) return null;
+  const r = resolve ?? ((v?: string) => v);
+  const planeVars = (depth: number): React.CSSProperties =>
+    ({ "--plane-shift": `${(6 + depth * 22).toFixed(1)}px` } as React.CSSProperties);
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[1]">
+      {layers.map((layer, i) => {
+        const src = assetUrl(r(layer.image));
+        if (!src) return null;
+        if (src.startsWith("gradient:")) {
+          return (
+            <div
+              key={i}
+              className="parallax-mid absolute inset-0"
+              style={{ ...planeVars(layer.depth), background: src.slice(9) }}
+              aria-hidden
+            />
+          );
+        }
+        const scale = Math.max(0.05, layer.scale ?? 1);
+        const fit = layer.fit ?? "cover";
+        return (
+          <div key={i} className="parallax-mid absolute inset-0" style={planeVars(layer.depth)} aria-hidden>
+            <img
+              src={src}
+              alt=""
+              draggable={false}
+              className="absolute inset-0 h-full w-full"
+              style={{
+                objectFit: fit === "native" ? undefined : fit,
+                transform: `scale(${scale})`,
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /** Parse a CSS background-position style anchor ("50% 20%", "center bottom",
@@ -1697,17 +1866,24 @@ function BeatBackground({
       {layers.map((l) => {
         const { className: cinClass, style: cinStyle } = cinematicLayer(l.cinematic, l.background);
         const animClass = l.exiting ? "beatbg-out" : `beatbg-in-${transitionName}`;
+        const pOn = hasParallax(l.cinematic);
         return (
           <div
             key={l.key}
             className={`absolute inset-0 z-[2] ${animClass}`}
             style={{ "--beatbg-speed": `${speed}s` } as React.CSSProperties}
           >
-            <div className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
-              <LightGlow cinematic={l.cinematic} />
-              <LensFlareLayer cinematic={l.cinematic} />
+            <div className={`absolute inset-0 ${pOn ? "parallax-plate" : ""}`} style={pOn ? parallaxStyle(l.cinematic) : undefined}>
+              <div className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
+                <LightGlow cinematic={l.cinematic} />
+                <LensFlareLayer cinematic={l.cinematic} />
+                <CinematicOverlays cinematic={l.cinematic} />
+              </div>
             </div>
-            <ForegroundLayer cinematic={l.cinematic} />
+            {pOn && <ParallaxMidLayers cinematic={l.cinematic} />}
+            <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+              <ForegroundLayer cinematic={l.cinematic} />
+            </div>
             {!l.exiting && transitionName === "fade-black" && (
               <div className="beatbg-black absolute inset-0 z-[3] bg-black" style={{ "--beatbg-speed": `${speed}s` } as React.CSSProperties} />
             )}
@@ -2677,6 +2853,7 @@ function CasePlayer({
   }, []);
   const musicSrcRef = useRef<string | null>(null);
   const bgVideoRef = useRef<HTMLVideoElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const narrationTimerRef = useRef<number | null>(null);
   const primedNarrationRef = useRef<PrimedAudio | null>(primedNarration ?? null);
   const craftHintShown = useRef(false);
@@ -3790,6 +3967,12 @@ function CasePlayer({
   // scene already has a base cinematic (otherwise the swap does nothing on a
   // scene with no cinematic configured).
   const bgCinematic = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+  // Parallax follows the pointer across the stage; enabled when the plate or
+  // the currently showing insert-shot beat carries depth settings.
+  const beatCinematic = inBeats ? currentBeat?.cinematic : undefined;
+  const parallaxOn = hasParallax(bgCinematic) || hasParallax(beatCinematic);
+  const parallaxCinematic = hasParallax(beatCinematic) ? beatCinematic : bgCinematic;
+  useParallaxTracker(stageRef, parallaxOn);
 
   // Keep the latest closure values for the timer's interval callback so it never
   // reads a stale `scene`, `availableChoices`, or `choiceClocks` (which is what
@@ -4683,9 +4866,13 @@ function CasePlayer({
       transformOrigin: b ? `${b.x + b.w / 2}% ${b.y + b.h / 2}%` : "50% 50%",
       transition: "transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1)",
     };
+    const plateParallax = hasParallax(bgCinematic) && !b;
     return (
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute inset-0 will-change-transform" style={examineStyle}>
+        <div
+          className={`absolute inset-0 will-change-transform ${plateParallax ? "parallax-plate parallax-idle" : ""}`}
+          style={{ ...examineStyle, ...(plateParallax ? parallaxStyle(bgCinematic) : {}) }}
+        >
           {resolvedBackground.startsWith("video:") ? (
             <>
               <video
@@ -4698,13 +4885,27 @@ function CasePlayer({
               />
               <LightGlow cinematic={bgCinematic} />
               <LensFlareLayer cinematic={bgCinematic} />
+              <CinematicOverlays cinematic={bgCinematic} />
             </>
           ) : (
-            <div key={`${sceneId}-${entrySeq}`} className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
+            <div
+              key={`${sceneId}-${entrySeq}`}
+              className={`absolute inset-0 ${cinClass}`}
+              style={cinStyle}
+            >
               <LightGlow cinematic={bgCinematic} />
               <LensFlareLayer cinematic={bgCinematic} />
+              <CinematicOverlays cinematic={bgCinematic} />
             </div>
           )}
+          {/* Mid-ground parallax depth planes — between plate and subject.
+              Parallax layers aren't magnified by the examine zoom (they sit
+              OUTSIDE the zoom wrapper): drawn after it, above it. */}
+        </div>
+        {hasParallax(bgCinematic) && (
+          <ParallaxMidLayers key={`par-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
+        )}
+        <div className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}>
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
               each time the player enters the scene (not only on first mount). */}
           <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
@@ -4750,7 +4951,9 @@ function CasePlayer({
 
   return (
     <div
+      ref={stageRef}
       className="fx-grain fx-vignette relative h-full w-full overflow-hidden bg-noir-950 select-none"
+      style={parallaxStyle(parallaxOn ? parallaxCinematic : undefined)}
       onPointerDown={() => {
         audio.unlock();
         retryMusic();
