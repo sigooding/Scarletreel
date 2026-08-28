@@ -4038,11 +4038,10 @@ function StudioInner({
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
-  // Which beats are expanded in the Beats tab. New beats start open; an
-  // explicit per-beat id set lets users minimise beats they've finished and
-  // have a "collapse all" so the list doesn't get long.
-  const [expandedBeats, setExpandedBeats] = useState<Set<string>>(() => new Set());
-  const [beatsUserToggled, setBeatsUserToggled] = useState<Set<string>>(() => new Set());
+  // Which single beat is maximised in the Beats tab. Beats default to
+  // minimised and at most one is open at a time: expanding a beat collapses
+  // whichever was open before (accordion). Adding a beat opens just that one.
+  const [expandedBeatId, setExpandedBeatId] = useState<string | null>(null);
   // Drag-and-drop beat reordering: the beat id being dragged and the one
   // currently dragged over.
   const [dragBeatId, setDragBeatId] = useState<string | null>(null);
@@ -7891,22 +7890,9 @@ function StudioInner({
                   <button
                     type="button"
                     className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
-                    onClick={() => {
-                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
-                      setExpandedBeats(new Set());
-                    }}
+                    onClick={() => setExpandedBeatId(null)}
                   >
                     ▸ Collapse all
-                  </button>
-                  <button
-                    type="button"
-                    className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
-                    onClick={() => {
-                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
-                      setExpandedBeats(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
-                    }}
-                  >
-                    ▾ Expand all
                   </button>
                 </div>
 
@@ -7999,13 +7985,10 @@ function StudioInner({
                       ? "Narrator"
                       : story.characters.find((c) => c.id === b.characterId)?.name ?? "Narrator";
                   const snippet = b.text.replace(/\s+/g, " ").trim().slice(0, 30);
-                  // Open if the user has opened it OR it's a brand-new beat the
-                  // author just added (default open) OR the focused beat. Beat
-                  // collapse persists across edits via the user-toggled set.
-                  const isOpen =
-                    beatsUserToggled.has(b.id)
-                      ? expandedBeats.has(b.id)
-                      : true;
+                  // Accordion: a beat is open only when it is the single
+                  // expanded one. Everything else stays minimised, so a long
+                  // list reads as a compact stack of title bars.
+                  const isOpen = expandedBeatId === b.id;
                   return (
                     <CollapsibleSection
                       key={b.id}
@@ -8014,14 +7997,7 @@ function StudioInner({
                       titleClass="text-gold"
                       defaultOpen={focusedBeatId === b.id}
                       controlledOpen={isOpen}
-                      onToggle={(next) => {
-                        setBeatsUserToggled((prev) => new Set(prev).add(b.id));
-                        setExpandedBeats((prev) => {
-                          const s2 = new Set(prev);
-                          if (next) s2.add(b.id); else s2.delete(b.id);
-                          return s2;
-                        });
-                      }}
+                      onToggle={(next) => setExpandedBeatId(next ? b.id : null)}
                       draggable
                       dragOver={dragOverBeatId === b.id && dragBeatId !== b.id}
                       onDragStartHandle={(e) => {
@@ -8649,6 +8625,9 @@ function StudioInner({
                         text: "New line of smoky dialogue...",
                       });
                     });
+                    // The fresh beat becomes the one maximised card (and folds
+                    // whatever was open), so the author lands straight in it.
+                    setExpandedBeatId(id);
                     setFocusedBeatId(id);
                     window.setTimeout(() => setFocusedBeatId(null), 1600);
                   }}
