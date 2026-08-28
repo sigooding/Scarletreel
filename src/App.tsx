@@ -45,7 +45,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "34";
+const CONTENT_REVISION = "35";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -264,6 +264,12 @@ const REVISION_RESETS: Record<string, string[]> = {
   // r34: batch ElevenLabs voice generation in the Beats tab — no data
   // migration needed (no story shape change); bump only for bookkeeping.
   "34": [],
+  // r35: the Draft was regenerated from the studio export
+  // (nobodys-witness-draft.reel.json) and now ships its media as real files
+  // under public/uploads. A cached Studio snapshot — still holding IndexedDB
+  // `asset:` refs and the pre-update graph — would otherwise shadow the
+  // shipped story, so retire it.
+  "35": ["nobodys-witness-draft"],
 };
 
 function migrateLegacyStoryStorage() {
