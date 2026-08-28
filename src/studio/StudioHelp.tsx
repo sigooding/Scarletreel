@@ -272,11 +272,132 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               ▲/▼ buttons in each beat's title bar.
             </p>
             <ul className="list-disc space-y-1 pl-5">
-              <li><b>Replacement background</b> — an insert shot for just that beat, with its own transition + cinematic.</li>
+              <li><b>Replacement background</b> — an insert shot with its own transition + cinematic. By default it <b>persists over later beats</b> (characters keep talking over it) until another beat sets a new image. Turn <b>“Keep image on later beats”</b> OFF to show it only for that beat; use <b>“🔙 End insert shot here”</b> on a later beat to drop back to the scene's own image.</li>
               <li><b>Voice MP3</b> — a recorded take that replaces text-to-speech for the line; <b>silent</b> = no narration at all.</li>
               <li><b>Condition rule</b> — the beat only appears when the gate passes (re-evaluates live mid-scene).</li>
               <li><b>Memories recalled</b> — tag → line; the line replaces the text when that memory exists. <code>{"{said}"}</code> echoes the player's words.</li>
             </ul>
+            <p>
+              <b>🎙 Batch voice — this scene (ElevenLabs)</b> — on the Beats tab, pick a <b>voice model</b> and press <b>▶
+              Generate this scene's voices</b>. It converts the whole <i>conversation in that scene</i>: each line is synthesized
+              <b> separately</b> in its speaker's assigned voice (set the character's <b>ElevenLabs voice ID</b> in the Characters
+              tab first), reads the surrounding lines as <b>conversational context</b> so delivery responds naturally to the
+              previous speaker, and each finished MP3 is <b>applied to its beat automatically</b> (no manual wiring). Desktop saves
+              to <code>public/voices/&lt;person&gt;/&lt;scene&gt;/</code>; browser saves via the linked voice folder or media library.
+              A live <b>≈ credits estimate</b> shows above the button for the chosen model, and clicking opens a <b>cost warning
+              that asks you to confirm twice</b> (large batches require typing GENERATE) before any credit is spent; when MP3s exist
+              you choose regenerate-all or fill-the-gaps.
+              Do one conversation/scene at a time — silent beats, memory-recall lines, and characters without a voice ID are skipped.
+              On the <b>Eleven v3</b> model, use the <b>🎙 Insert sound</b> chips under a line to add performed cues like
+              <code>[laughs]</code>, <code>[coughs]</code>, <code>[sighs]</code> — v3 acts them out (v2/turbo would read the
+              brackets aloud, so the chips only appear when v3 is selected).
+            </p>
+          </Section>
+
+          <Section title="5b · Color grade, film stock & parallax">
+            <p>
+              In the Cinematic Image Controls (Scene tab):
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>🎨 Color grade</b> — one-click director looks on any camera mode (and on a beat's replacement background): <b>Nolan IMAX</b> (cold desaturated steel/teal), <b>Tarantino 35mm</b> (hot warm bleach-bypass), <b>Spielberg golden hour</b> (amber magic hour), <b>1940s Noir</b> (high-contrast black &amp; white). It is a filter + split-tone wash, so video cutscenes still get the wash.</li>
+              <li><b>🎞 Film grade</b> — 35mm print emulation: moving grain, gate weave, highlight halation bloom, flicker and occasional scratches, with a strength slider. Sits above the color grade like the physical print.</li>
+              <li><b>🌆 Parallax depth</b> — the camera subtly follows the cursor; the plate drifts slowest, the foreground fastest. <b>Mid-ground planes</b> (transparent cutouts or a gradient fog layer) shift by their own depth % for a diorama feel. Idle sway plays when the mouse is still; reduced-motion users get a locked frame. Try it live on the camera preview — it responds to your mouse.</li>
+            </ul>
+            <p>
+              See them in action in <b>Demo Lab: Scene Craft</b> — “Take Three — The Grade” and “Take Four — Parallax Depth” — each with a 📝 step-by-step note.
+            </p>
+          </Section>
+
+          <Section title="5c · Insert shots that end a scene (after-beat routing) & duplicating stories">
+            <p>
+              By default a beat's <b>replacement background</b> plays for that one line and the picture reverts to the scene plate
+              when the dialogue ends. If you want an insert shot to <b>lead somewhere</b> — a cutscene built from beats, an
+              ending card, or just a straight cut with no flash back to the scene image — give the beat an <b>“After this beat — cut to scene”</b>:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>Where:</b> on the beat in the Dialogue tab. It only fires on the <b>LAST visible beat</b> of the scene — put it on your final line (the validator warns if you don't).</li>
+              <li><b>⏱ Auto</b> — after the line finishes typing, hold for the timer (default 1.6s) then cut automatically. <b>This is the timer that guarantees the beat is read</b> before the scene changes; a live “⏱ cut in Ns” shows. It pauses while the menu is open.</li>
+              <li><b>▸ Continue</b> — no timer: the ▸ Continue pill / Space advances straight into the next scene, so the player controls the cut.</li>
+              <li>The insert background fades <b>directly</b> into the next scene — it never reverts to the scene plate. Part-break charts, act cards, endings and music crossfades all work normally through the route.</li>
+            </ul>
+            <p>
+              <b>Recommended workflow for a cutscene from stills:</b> make one short scene per shot (or per line), give each its
+              background/grade, and chain them with after-beat routes — that's more flexible than cramming one scene, because each
+              link can branch, chart and end independently. If the scene also has auto-advance, the beat route wins while a beat is
+              live — no timer conflict.
+            </p>
+            <p>
+              <b>⧉ Duplicate Story</b> (toolbar) copies the whole current case into a brand-new, independent story — every scene, beat,
+              hotspot, choice and wire gets fresh ids so nothing collides, the title gets “(copy)”, and the canvas is offset. Use it to
+              branch from an existing case or to experiment without touching the original; built-ins are copied, never edited in place.
+            </p>
+          </Section>
+
+          <Section title="5d · In-game theme (HUD colours, fonts & text size)">
+            <p>
+              The <b>🎮 In-Game Theme</b> tab styles the whole case, story-wide:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>HUD colour scheme</b> — one-click palettes (Classic Noir, Neon Rain, Sepia Pulp, Midnight Teal, Venetian Red, Ghost Green) that re-tint the accents, nameplates, meters and choice focus; or set <b>custom accent/danger</b> colours by hand. The stage uses CSS variables so the whole game subtree follows instantly.</li>
+              <li><b>Body font</b> — the prose/dialogue reading face (Newsreader, Playfair, Josefin Sans, Cinzel, Bebas, Alfa Slab); <b>heading font</b> — nameplates and HUD labels.</li>
+              <li><b>Reading text size</b> — 80%–140% scale; the reserved line height scales with it so the panel stays stable.</li>
+              <li><b>Minimal HUD</b> — fades the scene-label/lead readouts until you hover, for a cleaner frame.</li>
+              <li>The <b>Dialogue panel</b> section still sets the backdrop image, opacity, tint, blur and bordered card look.</li>
+            </ul>
+            <p>The tab preview updates live for colours, fonts and size — set it once and every scene matches.</p>
+          </Section>
+
+          <Section title="5b · Color grade, film stock & parallax">
+            <p>
+              In the Cinematic Image Controls (Scene tab):
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>🎨 Color grade</b> — one-click director looks on any camera mode (and on a beat's replacement background): <b>Nolan IMAX</b> (cold desaturated steel/teal), <b>Tarantino 35mm</b> (hot warm bleach-bypass), <b>Spielberg golden hour</b> (amber magic hour), <b>1940s Noir</b> (high-contrast black &amp; white). It is a filter + split-tone wash, so video cutscenes still get the wash.</li>
+              <li><b>🎞 Film grade</b> — 35mm print emulation: moving grain, gate weave, highlight halation bloom, flicker and occasional scratches, with a strength slider. Sits above the color grade like the physical print.</li>
+              <li><b>🌆 Parallax depth</b> — the camera subtly follows the cursor; the plate drifts slowest, the foreground fastest. <b>Mid-ground planes</b> (transparent cutouts or a gradient fog layer) shift by their own depth % for a diorama feel. Idle sway plays when the mouse is still; reduced-motion users get a locked frame. Try it live on the camera preview — it responds to your mouse.</li>
+            </ul>
+            <p>
+              See them in action in <b>Demo Lab: Scene Craft</b> — “Take Three — The Grade” and “Take Four — Parallax Depth” — each with a 📝 step-by-step note.
+            </p>
+          </Section>
+
+          <Section title="5c · Insert shots that end a scene (after-beat routing) & duplicating stories">
+            <p>
+              By default a beat's <b>replacement background</b> plays for that one line and the picture reverts to the scene plate
+              when the dialogue ends. If you want an insert shot to <b>lead somewhere</b> — a cutscene built from beats, an
+              ending card, or just a straight cut with no flash back to the scene image — give the beat an <b>“After this beat — cut to scene”</b>:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>Where:</b> on the beat in the Dialogue tab. It only fires on the <b>LAST visible beat</b> of the scene — put it on your final line (the validator warns if you don't).</li>
+              <li><b>⏱ Auto</b> — after the line finishes typing, hold for the timer (default 1.6s) then cut automatically. <b>This is the timer that guarantees the beat is read</b> before the scene changes; a live “⏱ cut in Ns” shows. It pauses while the menu is open.</li>
+              <li><b>▸ Continue</b> — no timer: the ▸ Continue pill / Space advances straight into the next scene, so the player controls the cut.</li>
+              <li>The insert background fades <b>directly</b> into the next scene — it never reverts to the scene plate. Part-break charts, act cards, endings and music crossfades all work normally through the route.</li>
+            </ul>
+            <p>
+              <b>Recommended workflow for a cutscene from stills:</b> make one short scene per shot (or per line), give each its
+              background/grade, and chain them with after-beat routes — that's more flexible than cramming one scene, because each
+              link can branch, chart and end independently. If the scene also has auto-advance, the beat route wins while a beat is
+              live — no timer conflict.
+            </p>
+            <p>
+              <b>⧉ Duplicate Story</b> (toolbar) copies the whole current case into a brand-new, independent story — every scene, beat,
+              hotspot, choice and wire gets fresh ids so nothing collides, the title gets “(copy)”, and the canvas is offset. Use it to
+              branch from an existing case or to experiment without touching the original; built-ins are copied, never edited in place.
+            </p>
+          </Section>
+
+          <Section title="5d · In-game theme (HUD colours, fonts & text size)">
+            <p>
+              The <b>🎮 In-Game Theme</b> tab styles the whole case, story-wide:
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li><b>HUD colour scheme</b> — one-click palettes (Classic Noir, Neon Rain, Sepia Pulp, Midnight Teal, Venetian Red, Ghost Green) that re-tint the accents, nameplates, meters and choice focus; or set <b>custom accent/danger</b> colours by hand. The stage uses CSS variables so the whole game subtree follows instantly.</li>
+              <li><b>Body font</b> — the prose/dialogue reading face (Newsreader, Playfair, Josefin Sans, Cinzel, Bebas, Alfa Slab); <b>heading font</b> — nameplates and HUD labels.</li>
+              <li><b>Reading text size</b> — 80%–140% scale; the reserved line height scales with it so the panel stays stable.</li>
+              <li><b>Minimal HUD</b> — fades the scene-label/lead readouts until you hover, for a cleaner frame.</li>
+              <li>The <b>Dialogue panel</b> section still sets the backdrop image, opacity, tint, blur and bordered card look.</li>
+            </ul>
+            <p>The tab preview updates live for colours, fonts and size — set it once and every scene matches.</p>
           </Section>
 
           <Section title="6 · Hotspots — actions on the scene art">
@@ -310,6 +431,14 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
             <p>
               The “The Perk Range” case is a four-station proving ground for the perks; the “Quick-Time Demo” case
               smoke-tests QTEs — pick either from the story selector and ▶ Play draft.
+            </p>
+            <p>
+              <b>New? Learn by example.</b> The three <b>“Demo Lab”</b> cases on the newsstand —
+              <b> Conversation</b> (dialogue, replies, memory recalls, present-item),
+              <b> Scene Craft</b> (credits, cameras, lights, examine, music, auto-advance) and
+              <b> Branching Reel</b> (consequences, gating, QTEs, acts, heat) — are step-by-step teaching reels.
+              Open any of them here in Studio: every scene card carries a 📝 <b>note</b> strip that explains exactly how
+              the scene was built, click by click. Read the note, press ▶ Play, then copy the move in your own case.
             </p>
           </Section>
 

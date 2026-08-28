@@ -498,6 +498,21 @@ export function storyEdges(story: Story): StoryEdge[] {
         label: `⏱ auto ${sc.autoAdvanceDelaySeconds ?? 0}s`,
         attitude: "Neutral",
       });
+    // An after-beat route is a real scene edge too: an insert-shot beat that
+    // ends the scene and cuts straight to another scene. Track it so the
+    // validator sees the target as reachable and the canvas can draw it.
+    sc.dialogueBeats?.forEach((b) => {
+      if (b.afterBeatTargetSceneId)
+        edges.push({
+          id: `e-${sc.id}-b-${b.id}`,
+          source: sc.id,
+          target: b.afterBeatTargetSceneId,
+          kind: "auto",
+          ref: sc,
+          label: `🎬 after beat${b.afterBeatMode === "continue" ? " (▸)" : " (auto)"}`,
+          attitude: "Neutral",
+        });
+    });
     sc.choices?.forEach((ch) => {
       if (ch.targetSceneId)
         edges.push({
@@ -941,6 +956,9 @@ export function validateStory(story: Story): ValidationIssue[] {
         (!!hotspot.action.patternPuzzle && (!!hotspot.action.patternPuzzle.targetSceneId || !!hotspot.action.patternPuzzle.wrongTargetSceneId));
       const hasOpenExit = [
         !!sc.autoAdvanceTargetSceneId,
+        // An after-beat route cuts automatically when the last beat finishes —
+        // it's never gated (the beat may be, but the route itself is open).
+        (sc.dialogueBeats ?? []).some((b) => !!b.afterBeatTargetSceneId),
         // A choice that presents an item is effectively gated (you must hold
         // the item), even when it carries no authored gate of its own.
         ...(sc.choices ?? []).map((choice) => !effectiveChoiceGating(choice)),
@@ -1031,6 +1049,18 @@ export function validateStory(story: Story): ValidationIssue[] {
         if (!recallKeys.has(tag))
           issues.push({ severity: "warning", sceneId: sc.id, message: `Beat "…${beat.text.slice(0, 18)}…" is gated on memory/flag "${tag}" but no choice sets that memoryLog tag and no such flag exists.` });
       });
+    });
+    // After-beat routes only fire on the LAST visible beat. Flag a route that
+    // is authored on a beat followed by another (ungated) beat so it doesn't
+    // silently never run — and only when it points somewhere valid (a bad id
+    // is already a dangling-link error).
+    sc.dialogueBeats?.forEach((beat, i, beats) => {
+      if (!beat.afterBeatTargetSceneId) return;
+      if (!ids.has(beat.afterBeatTargetSceneId)) return; // dangling link error covers it
+      const laterUngated = beats.slice(i + 1).some((b) => !b.conditionRule);
+      if (laterUngated) {
+        issues.push({ severity: "warning", sceneId: sc.id, message: `Beat "…${beat.text.slice(0, 18)}…" routes to a scene after it, but a later beat follows — only the LAST visible beat's route fires. Move the route to the final beat.` });
+      }
     });
     // Interrogation audit: the suspect must be a real character, the crack
     // beat must speak (a valid character or narrator), and the scene needs at

@@ -63,8 +63,19 @@ export interface SynthesisResult {
 
 /** Synthesize one line with ElevenLabs and return it as a data URL ready
  *  for the media-library upload. Throws an Error with a readable message
- *  for every failure mode (bad key, credits, rate limit, voice/model). */
-export async function synthesizeElevenLabs(text: string, voiceId: string, model: string): Promise<SynthesisResult> {
+ *  for every failure mode (bad key, credits, rate limit, voice/model).
+ *  Pass `context` (the lines immediately around this one, with speaker
+ *  labels) for ElevenLabs' conversational context — it reads the prior
+ *  turn so the delivery responds to it naturally instead of in isolation. */
+export async function synthesizeElevenLabs(
+  text: string,
+  voiceId: string,
+  model: string,
+  _context?: { previousText?: string; nextText?: string }
+): Promise<SynthesisResult> {
+  // Note: conversational `previous_text`/`next_text` is intentionally NOT sent
+  // — those fields belong to the Conversational-Agents API and make the TTS
+  // endpoint return 422. Natural delivery comes from v3's acting + sound cues.
   const key = getElevenKey();
   if (!key) throw new Error("No ElevenLabs API key set — add it in the AI Voice section of the People tab first.");
   let res: Response;
@@ -79,7 +90,10 @@ export async function synthesizeElevenLabs(text: string, voiceId: string, model:
       body: JSON.stringify({
         text,
         model_id: model,
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.25, use_speaker_boost: true },
+        // NOTE: previous_text/next_text are Conversational-Agents-API params and
+        // are NOT accepted by the text-to-speech endpoint — sending them made it
+        // return 422. Natural delivery comes from v3's acting + sound-tag cues.
       }),
     });
   } catch {
@@ -126,4 +140,85 @@ export function convertConfirmMessage(charName: string, voiceId: string, model: 
     "",
     "Convert this line?",
   ].join("\n");
+}
+
+/* ------------------------------------------------------------------ *
+ *  ElevenLabs non-speech audio tags.
+ *  v3 acts out bracketed cues such as [laughs]; v2.5/turbo do NOT and
+ *  would read the brackets aloud. Each tag is marked for which models
+ *  it works on, and the UI offers them accordingly and sorts them.
+ * ------------------------------------------------------------------ */
+export interface AudioTag {
+  tag: string;
+  label: string;
+  hint: string;
+  /** "v3" cues are only performed by the v3 model; "all" (plain voice
+   *  direction such as whispering) is passed through for every model. */
+  worksOn: "v3" | "all";
+  group: string;
+}
+
+/** Curated, known-supported non-speech cues for ElevenLabs v3, sorted by
+ *  group then label. The API is tolerant of other natural-language sound
+ *  labels too, but these are the reliable, commonly-documented ones. */
+export const ELEVENLABS_AUDIO_TAGS: AudioTag[] = [
+  // Emotional / vocal reactions
+  { group: "Reactions", tag: "[chuckles]", label: "chuckle", hint: "a quiet, amused chuckle", worksOn: "v3" },
+  { group: "Reactions", tag: "[laughs]", label: "laugh", hint: "a short laugh", worksOn: "v3" },
+  { group: "Reactions", tag: "[sighs]", label: "sigh", hint: "an exhale of relief/tiredness", worksOn: "v3" },
+  { group: "Reactions", tag: "[groans]", label: "groan", hint: "a weary or annoyed groan", worksOn: "v3" },
+  { group: "Reactions", tag: "[grunts]", label: "grunt", hint: "a short, effortful grunt", worksOn: "v3" },
+  { group: "Reactions", tag: "[gasps]", label: "gasp", hint: "a sharp intake of breath / surprise", worksOn: "v3" },
+  { group: "Reactions", tag: "[gulps]", label: "gulp", hint: "a nervous swallow", worksOn: "v3" },
+  { group: "Reactions", tag: "[yawns]", label: "yawn", hint: "a tired yawn", worksOn: "v3" },
+  // Physical / throat
+  { group: "Physical", tag: "[coughs]", label: "cough", hint: "a dry cough", worksOn: "v3" },
+  { group: "Physical", tag: "[clears throat]", label: "clear throat", hint: "throat-clearing before speaking", worksOn: "v3" },
+  { group: "Physical", tag: "[sneezes]", label: "sneeze", hint: "a sneeze", worksOn: "v3" },
+  { group: "Physical", tag: "[pauses]", label: "pause / beat", hint: "a held beat before continuing", worksOn: "v3" },
+  // Voice delivery — ordinary spoken direction, works on every model
+  { group: "Delivery", tag: "[whispers]", label: "whisper", hint: "drop to a whisper", worksOn: "all" },
+  { group: "Delivery", tag: "[mumbles]", label: "mumble", hint: "muffled / under-breath", worksOn: "all" },
+];
+
+/** Sorted, model-appropriate tags for the picker. v3 gets everything;
+ *  older models get only the voice-delivery cues (and a note). */
+export function audioTagsForModel(model: string): AudioTag[] {
+  const v3 = modelSupportsAudioTags(model);
+  return ELEVENLABS_AUDIO_TAGS
+    .filter((t) => v3 || t.worksOn === "all")
+    .slice()
+    .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+}
+
+/** Model ids that understand bracketed audio tags (v3 family). */
+export function modelSupportsAudioTags(model: string): boolean {
+  return model === "eleven_v3" || /v3/.test(model);
+}
+
+/* ------------------------------------------------------------------ *
+ *  Cost estimation (pre-flight warning before a batch spend).
+ *  Credits per character by model; v3 = 0.30/char. List USD/1k is
+ *  approximate and depends on the account tier/plan grant.
+ * ------------------------------------------------------------------ */
+export const ELEVENLABS_CREDITS_PER_CHAR: Record<string, number> = {
+  eleven_v3: 0.3,
+  eleven_multilingual_v2: 0.24,
+  eleven_turbo_v2_5: 0.15,
+};
+// Approximate list overage price per character (USD), from $ per 1k.
+export const ELEVENLABS_USD_PER_1K: Record<string, number> = {
+  eleven_v3: 0.22,
+  eleven_multilingual_v2: 0.18,
+  eleven_turbo_v2_5: 0.11,
+};
+
+export function estimateVoiceCost(model: string, chars: number): { credits: number; usd: number; perChar: number } {
+  const perChar = ELEVENLABS_CREDITS_PER_CHAR[model] ?? 0.3;
+  const usdPer1k = ELEVENLABS_USD_PER_1K[model] ?? 0.22;
+  return {
+    credits: Math.round(chars * perChar),
+    usd: (chars / 1000) * usdPer1k,
+    perChar,
+  };
 }

@@ -17,6 +17,9 @@ type Mode =
       story: Story;
       resumeSlot?: number;
       resumeEpisodeId?: string;
+      /** Studio "Play from here": open directly at this scene (episodic
+       *  playtest launches the owning episode straight into it). */
+      playFromSceneId?: string;
       primedMusic?: PrimedAudio | null;
       primedNarration?: PrimedAudio | null;
     }
@@ -41,7 +44,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "28";
+const CONTENT_REVISION = "34";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -238,6 +241,28 @@ const REVISION_RESETS: Record<string, string[]> = {
   // and B), and Endings C ("A Stopped Watch") and D ("Ten Past Nine")
   // arrive verbatim.
   "28": ["nobodys-witness-draft"],
+  // r29: three step-by-step "Demo Lab" teaching cases join the catalogue
+  // (Conversation / Scene Craft / Branching Reel), and the draft's
+  // nwd_sn_p1 background typo (/img/nw2/ -> /img/nwd/) is fixed — retire the
+  // draft snapshot so the corrected asset path reaches cached copies.
+  "29": ["nobodys-witness-draft"],
+  // r30: Scene Craft demo gains the color-grade/film-stock take and the
+  // parallax-depth take; retire its snapshot so the new scenes appear.
+  "30": ["demo-scene-craft-lab"],
+  // r31: after-beat routing fields on dialogue beats + duplicate-story; the
+  // Scene Craft demo uses an after-beat cut. Retire snapshots so they refresh.
+  "31": ["demo-scene-craft-lab"],
+  // r32: tab renames (Beats / Characters / Game Objective / Newsstand Theme)
+  // and multiple stacked foreground images; refresh the Scene Craft demo
+  // snapshot so the new foreground extras appear.
+  "32": ["demo-scene-craft-lab"],
+  // r33: the In-Game Theme tab (HUD palettes, fonts, text size) reads the
+  // same dialogueBox field, so existing snapshots keep working — no reset
+  // required. Listed for migration bookkeeping only.
+  "33": [],
+  // r34: batch ElevenLabs voice generation in the Beats tab — no data
+  // migration needed (no story shape change); bump only for bookkeeping.
+  "34": [],
 };
 
 function migrateLegacyStoryStorage() {
@@ -433,10 +458,14 @@ export default function App() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  // shared reel import / Studio playtest handoff from URL hash
+  // shared reel import / Studio playtest handoff from URL hash. The hash is
+  // STUDIO_PLAY_HASH + token; we strip any trailing "&scene=…" suffix because
+  // the scene id rides in the payload, not the token — otherwise the popup's
+  // &scene= suffix made the localStorage token lookups miss.
   useEffect(() => {
     if (location.hash.startsWith(STUDIO_PLAY_HASH)) {
-      const token = decodeURIComponent(location.hash.slice(STUDIO_PLAY_HASH.length));
+      let token = decodeURIComponent(location.hash.slice(STUDIO_PLAY_HASH.length));
+      token = token.split("&")[0];
       const key = studioPlayKey(token);
       const raw = localStorage.getItem(key);
       if (raw) {
@@ -444,14 +473,15 @@ export default function App() {
           const payload = JSON.parse(raw) as { story?: Story } | Story | null;
           const wrapped = payload && typeof payload === "object" && "story" in payload ? payload : null;
           const story = (wrapped ? wrapped.story : payload) as Story | null | undefined;
-          if (story?.id && story.startSceneId && Array.isArray(story.scenes)) {
+          const fromSceneId = (wrapped && (wrapped as { fromSceneId?: string }).fromSceneId) || undefined;
+          if (story?.id && Array.isArray(story.scenes)) {
             // React StrictMode runs mount effects twice in dev. Do not remove the
             // handoff before the async media resolver finishes, or the second
             // effect sees an empty token and the new tab falls back to the
             // newsstand. Duplicate resolves are harmless; both land on the same
             // play mode, and the token is cleared only after a successful handoff.
             void resolveStoryMedia(story).then((resolved) => {
-              setMode({ kind: "play", story: resolved, primedMusic: null });
+              setMode({ kind: "play", story: resolved, primedMusic: null, playFromSceneId: fromSceneId });
               localStorage.removeItem(key);
               window.history.replaceState(null, "", `${location.pathname}${location.search}`);
             });
@@ -525,7 +555,7 @@ export default function App() {
     }
   }, []);
 
-  const play = useCallback((story: Story, resumeSlot?: number, resumeEpisodeId?: string) => {
+  const play = useCallback((story: Story, resumeSlot?: number, resumeEpisodeId?: string, playFromSceneId?: string) => {
     audio.unlock();
     audio.stopSpeech();
     // The persisted story stores compact `asset:<id>` references instead of
@@ -563,7 +593,7 @@ export default function App() {
       }
     }
     resolveStoryMedia(story)
-      .then((resolved) => setMode({ kind: "play", story: resolved, resumeSlot, resumeEpisodeId, primedMusic, primedNarration }))
+      .then((resolved) => setMode({ kind: "play", story: resolved, resumeSlot, resumeEpisodeId, playFromSceneId, primedMusic, primedNarration }))
       .catch((err) => {
         // Never leave the primed opening audio playing over the newsstand if
         // media resolution fails before the player mounts.
@@ -651,7 +681,7 @@ export default function App() {
     say("If this tab stays open, close it in your browser to quit.");
   }, []);
 
-  const openStudioPlayWindow = useCallback((story: Story): boolean => {
+  const openStudioPlayWindow = useCallback((story: Story, fromSceneId?: string): boolean => {
     const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const key = studioPlayKey(token);
     // The playtest runs in a separate document, so an <audio> element primed
@@ -662,13 +692,14 @@ export default function App() {
     // narration; if a strict browser rejects the opening autoplay, the engine
     // retries the clip on the player's first real gesture.
     try {
-      localStorage.setItem(key, JSON.stringify({ story, createdAt: Date.now() }));
+      localStorage.setItem(key, JSON.stringify({ story, fromSceneId: fromSceneId ?? story.startSceneId, createdAt: Date.now() }));
     } catch {
       return false;
     }
 
     const baseUrl = location.href.split("#")[0];
-    const child = window.open(`${baseUrl}${STUDIO_PLAY_HASH}${encodeURIComponent(token)}`, "_blank");
+    const sceneQ = fromSceneId ? `&scene=${encodeURIComponent(fromSceneId)}` : "";
+    const child = window.open(`${baseUrl}${STUDIO_PLAY_HASH}${encodeURIComponent(token)}${sceneQ}`, "_blank");
     if (!child) {
       localStorage.removeItem(key);
       return false;
@@ -729,6 +760,7 @@ export default function App() {
           isNewGamePlus={endingsFound(mode.story) > 0}
           resumeSlot={mode.resumeSlot}
           resumeEpisodeId={mode.resumeEpisodeId}
+          playFromSceneId={mode.playFromSceneId}
           primedMusic={mode.primedMusic}
           primedNarration={mode.primedNarration}
           onExit={() => setMode({ kind: "menu" })}
@@ -739,12 +771,12 @@ export default function App() {
         <Studio
           baseStories={stories}
           onExit={() => setMode({ kind: "menu" })}
-          onPlay={(s) => {
-            if (openStudioPlayWindow(s)) {
+          onPlay={(s, opts) => {
+            if (openStudioPlayWindow(s, opts?.fromSceneId)) {
               say("Playtest opened in a new window.");
             } else {
               say("Pop-up blocked or storage full — opening playtest here instead.");
-              play(s);
+              play(s, undefined, undefined, opts?.fromSceneId);
             }
           }}
           onPublish={(published) => {

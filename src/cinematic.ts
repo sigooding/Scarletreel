@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
 import type {
   CinematicSettings,
+  GradePresetId,
+  HudThemeId,
   LensFlareGhostTier,
   LensFlarePreset,
   LensFlareSettings,
@@ -565,4 +567,238 @@ export function lensFlareStyle(flare: ResolvedLensFlare): CSSProperties {
     "--ghost-dx": `${(50 - flare.x) * flare.reactivity}px`,
     "--ghost-dy": `${(50 - flare.y) * flare.reactivity}px`,
   } as CSSProperties;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Colour grades & film stock                                         */
+/* ------------------------------------------------------------------ */
+
+export interface GradePreset {
+  id: GradePresetId;
+  name: string;
+  tagline: string;
+  badge: string;
+  /** CSS filter chain applied to the graded plate. */
+  filter: string;
+  /** optional CSS filter merged into the dolly-zoom animation (its keyframes
+   * own `filter` for the blur, so it needs the grade baked in). */
+  filterWithBlur?: string;
+  /** split-tone wash laid over the graded plate, CSS background. */
+  tint: string;
+  /** wash opacity 0–1. */
+  tintOpacity: number;
+  /** blend mode for the wash. */
+  tintBlend: string;
+}
+
+export const GRADE_PRESETS: Record<GradePresetId, GradePreset> = {
+  "nolan-imax": {
+    id: "nolan-imax",
+    name: "Nolan — IMAX Cool",
+    tagline: "Cold desaturated teal shadows, crisp contrast, faint steel highlights — the Inception / Dark Knight plate.",
+    badge: "❄️ Cool Blockbuster",
+    filter: "saturate(0.82) contrast(1.18) brightness(0.97) hue-rotate(-8deg)",
+    filterWithBlur: "saturate(0.82) contrast(1.18) brightness(0.97) hue-rotate(-8deg) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "linear-gradient(180deg, rgba(34, 86, 110, 0.28) 0%, rgba(0,0,0,0) 45%, rgba(12, 24, 40, 0.34) 100%)",
+    tintOpacity: 0.85,
+    tintBlend: "soft-light",
+  },
+  "tarantino-35mm": {
+    id: "tarantino-35mm",
+    name: "Tarantino — Warm 35mm",
+    tagline: "Hot reds, teal-green shadows, bleach-bypass punch — the Pulp Fiction / Kill Bill print.",
+    badge: "🩸 Warm Grindhouse",
+    filter: "saturate(1.35) contrast(1.28) brightness(1.02) sepia(0.12) hue-rotate(-6deg)",
+    filterWithBlur: "saturate(1.35) contrast(1.28) brightness(1.02) sepia(0.12) hue-rotate(-6deg) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "linear-gradient(180deg, rgba(122, 26, 20, 0.3) 0%, rgba(0,0,0,0) 40%, rgba(18, 64, 60, 0.32) 100%)",
+    tintOpacity: 0.8,
+    tintBlend: "overlay",
+  },
+  "spielberg-golden": {
+    id: "spielberg-golden",
+    name: "Spielberg — Golden Hour",
+    tagline: "Warm amber highlights, gentle bloom, open midtones — the magic-hour adventure print.",
+    badge: "🌅 Golden Hour",
+    filter: "saturate(1.14) contrast(1.05) brightness(1.06) sepia(0.2) hue-rotate(-4deg)",
+    filterWithBlur: "saturate(1.14) contrast(1.05) brightness(1.06) sepia(0.2) hue-rotate(-4deg) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "radial-gradient(ellipse at 50% 108%, rgba(244, 178, 82, 0.38) 0%, rgba(0,0,0,0) 55%), linear-gradient(180deg, rgba(120, 86, 30, 0.16) 0%, rgba(0,0,0,0) 50%)",
+    tintOpacity: 0.9,
+    tintBlend: "soft-light",
+  },
+  "noir-1940s": {
+    id: "noir-1940s",
+    name: "1940s Noir — Black & White",
+    tagline: "High-contrast silver-grain monochrome, crushed shadows, hard whites — the classic pulp thriller print.",
+    badge: "🎞 Classic Noir",
+    filter: "grayscale(1) contrast(1.35) brightness(0.92)",
+    filterWithBlur: "grayscale(1) contrast(1.35) brightness(0.92) blur(var(--cin-dolly-zoom-blur, 0px))",
+    tint:
+      "linear-gradient(180deg, rgba(0, 0, 0, 0.22) 0%, rgba(0,0,0,0) 35%, rgba(0, 0, 0, 0.42) 100%)",
+    tintOpacity: 1,
+    tintBlend: "multiply",
+  },
+};
+
+export const GRADE_PRESET_LIST: GradePreset[] = [
+  GRADE_PRESETS["nolan-imax"],
+  GRADE_PRESETS["tarantino-35mm"],
+  GRADE_PRESETS["spielberg-golden"],
+  GRADE_PRESETS["noir-1940s"],
+];
+
+/** Clamp helper for parallax/film strengths. */
+export const clampUnit = (v: number | undefined, fallback: number) =>
+  v === undefined ? fallback : Math.min(1, Math.max(0, v));
+
+/** CSS custom properties driving parallax layers. Shift values are in px (at
+ * the reference frame) and come from the GamePlayer/preview pointer tracker. */
+export function parallaxStyle(c: CinematicSettings | undefined): CSSProperties {
+  const depth = clampUnit(c?.parallaxDepth, 0);
+  if (depth <= 0) return {};
+  return {
+    "--par-depth": String(depth),
+    "--par-bg": `${(depth * 14).toFixed(1)}px`,
+    "--par-fg": `${(depth * 30).toFixed(1)}px`,
+  } as CSSProperties;
+}
+
+/* ------------------------------------------------------------------ */
+/*  In-game HUD / text theme                                           */
+/* ------------------------------------------------------------------ */
+
+export interface HudTheme {
+  id: HudThemeId;
+  name: string;
+  tagline: string;
+  badge: string;
+  /** Tailwind/CSS-variable palette that re-tints the whole game subtree. */
+  colors: {
+    gold: string; // primary accent / highlights / nameplates
+    neon: string; // charm / secondary accent
+    cyan: string; // deduce / info accent
+    crimson: string; // danger / heat / danger accents
+    paper: string; // main body text
+  };
+}
+
+export const HUD_THEMES: Record<HudThemeId, HudTheme> = {
+  classic: {
+    id: "classic",
+    name: "Classic Noir",
+    tagline: "The default gold-on-black pulp palette.",
+    badge: "🎬 Default",
+    colors: { gold: "#e8b23c", neon: "#ff2e88", cyan: "#2ad9d9", crimson: "#e23b4e", paper: "#f2e8d5" },
+  },
+  "neon-noir": {
+    id: "neon-noir",
+    name: "Neon Rain",
+    tagline: "Hot magenta and electric cyan against deep night — cyberpunk pulse.",
+    badge: "🌆 Cyberpunk",
+    colors: { gold: "#ff5fa2", neon: "#ff2e88", cyan: "#37e6f0", crimson: "#ff4d6d", paper: "#f5e9f4" },
+  },
+  "sepia-pulp": {
+    id: "sepia-pulp",
+    name: "Sepia Pulp",
+    tagline: "Aged paper, brass and ink — turn the whole case into a yellowing dime novel.",
+    badge: "📜 Vintage",
+    colors: { gold: "#d9a441", neon: "#c9783f", cyan: "#9fae8a", crimson: "#a83a2f", paper: "#f3e6c8" },
+  },
+  "midnight-teal": {
+    id: "midnight-teal",
+    name: "Midnight Teal",
+    tagline: "Cool teal-and-gold IMAX-style palette — restrained, modern, cinematic.",
+    badge: "❄️ Cool",
+    colors: { gold: "#e8d28a", neon: "#7fa7c9", cyan: "#3fd6c8", crimson: "#d96a5f", paper: "#e6ecf2" },
+  },
+  "venetian-red": {
+    id: "venetian-red",
+    name: "Venetian Red",
+    tagline: "Velvet crimson and candlelight — opera house menace.",
+    badge: "🩸 Blood & Gold",
+    colors: { gold: "#e9c46a", neon: "#d94f6b", cyan: "#c9a36b", crimson: "#c1121f", paper: "#f6e8d8" },
+  },
+  "ghost-green": {
+    id: "ghost-green",
+    name: "Ghost Green",
+    tagline: "Phosphor green-on-black — noir ghost story / terminal dread.",
+    badge: "🟢 Spectral",
+    colors: { gold: "#b7e0a0", neon: "#7fd0a6", cyan: "#6fd6c8", crimson: "#e08a7a", paper: "#dcefd6" },
+  },
+};
+
+export const HUD_THEME_LIST: HudTheme[] = [
+  HUD_THEMES.classic,
+  HUD_THEMES["neon-noir"],
+  HUD_THEMES["sepia-pulp"],
+  HUD_THEMES["midnight-teal"],
+  HUD_THEMES["venetian-red"],
+  HUD_THEMES["ghost-green"],
+];
+
+export interface BodyFontChoice {
+  id: string;
+  name: string;
+  cssVar: string;
+  stack: string;
+}
+
+/** Reading-text typefaces, keyed to the CSS font variables defined in index.css. */
+export const BODY_FONTS: BodyFontChoice[] = [
+  { id: "type", name: "Newsreader (body serif)", cssVar: "--font-type", stack: '"Newsreader", Georgia, serif' },
+  { id: "elegant", name: "Playfair Display (elegant)", cssVar: "--font-elegant", stack: '"Playfair Display", Georgia, serif' },
+  { id: "modern", name: "Josefin Sans (modern sans)", cssVar: "--font-modern", stack: '"Josefin Sans", "Helvetica Neue", sans-serif' },
+  { id: "epic", name: "Cinzel (epic capitals)", cssVar: "--font-epic", stack: '"Cinzel", "Times New Roman", serif' },
+  { id: "poster", name: "Bebas Neue (tall poster)", cssVar: "--font-poster", stack: '"Bebas Neue", "Oswald", sans-serif' },
+  { id: "pulp", name: "Alfa Slab One (heavy pulp)", cssVar: "--font-pulp", stack: '"Alfa Slab One", serif' },
+];
+
+export const HEADING_FONTS: BodyFontChoice[] = [
+  { id: "pulp", name: "Alfa Slab One (pulp slab)", cssVar: "--font-pulp", stack: '"Alfa Slab One", serif' },
+  { id: "poster", name: "Bebas Neue (condensed)", cssVar: "--font-poster", stack: '"Bebas Neue", "Oswald", sans-serif' },
+  { id: "epic", name: "Cinzel (inscribed)", cssVar: "--font-epic", stack: '"Cinzel", "Times New Roman", serif' },
+  { id: "ui", name: "Oswald (UI sans)", cssVar: "--font-ui", stack: '"Oswald", sans-serif' },
+  { id: "elegant", name: "Playfair Display", cssVar: "--font-elegant", stack: '"Playfair Display", Georgia, serif' },
+  { id: "type", name: "Newsreader (serif)", cssVar: "--font-type", stack: '"Newsreader", Georgia, serif' },
+];
+
+export function fontStack(kind: "body" | "heading", id?: string): string | undefined {
+  const list = kind === "body" ? BODY_FONTS : HEADING_FONTS;
+  return list.find((f) => f.id === id)?.stack;
+}
+
+/** Build the CSS custom properties that re-theme the whole game subtree. Set
+ * these on the stage root element; every Tailwind color/font utility inside
+ * resolves through these variables. */
+export function inGameThemeVars(
+  theme:
+    | {
+        hudTheme?: HudThemeId;
+        accentColor?: string;
+        dangerColor?: string;
+        bodyFont?: string;
+        headingFont?: string;
+        textScale?: number;
+      }
+    | undefined
+): CSSProperties {
+  if (!theme) return {};
+  const vars: Record<string, string> = {};
+  const scheme = HUD_THEMES[theme.hudTheme ?? "classic"] ?? HUD_THEMES.classic;
+  // Palette: scheme defaults, overridden by any custom accent/danger.
+  vars["--color-gold"] = theme.accentColor || scheme.colors.gold;
+  vars["--color-neon"] = scheme.colors.neon;
+  vars["--color-cyan-neon"] = scheme.colors.cyan;
+  vars["--color-crimson"] = theme.dangerColor || scheme.colors.crimson;
+  vars["--color-paper"] = scheme.colors.paper;
+  const body = fontStack("body", theme.bodyFont);
+  if (body) vars["--font-type"] = body;
+  const heading = fontStack("heading", theme.headingFont);
+  if (heading) vars["--font-pulp"] = heading;
+  if (theme.textScale && theme.textScale !== 1) {
+    vars["--ingame-text-scale"] = String(theme.textScale);
+  }
+  return vars as CSSProperties;
 }

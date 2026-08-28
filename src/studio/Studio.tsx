@@ -23,16 +23,24 @@ import {
 } from "@xyflow/react";
 import { audio } from "../audio";
 import {
+  BODY_FONTS,
   defaultLensFlare,
   defaultLight,
+  GRADE_PRESETS,
+  GRADE_PRESET_LIST,
+  HEADING_FONTS,
+  HUD_THEMES,
+  HUD_THEME_LIST,
+  inGameThemeVars,
   LENS_FLARE_PRESETS,
   lightPoints,
   lightStyle,
+  parallaxStyle,
   parseGlowColor,
   resolveLensFlare,
   resolveLights,
 } from "../cinematic";
-import { cinematicLayer, ForegroundLayer, LensFlareLayer, parseAnchor } from "../game/Game";
+import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
 import {
   characterOpinion,
   clamp,
@@ -62,13 +70,16 @@ import { ActEditor, ACT_TINTS } from "./ActEditor";
 import { HelpNote, StudioHelpModal } from "./StudioHelp";
 import { healLayout, tidyLayoutPositions } from "./canvas";
 import {
+  audioTagsForModel,
   ELEVENLABS_MODELS,
   convertConfirmMessage,
+  estimateVoiceCost,
+  getElevenKey,
   getElevenModel,
+  modelSupportsAudioTags,
   setElevenKey,
   setElevenModel,
   synthesizeElevenLabs,
-  getElevenKey,
 } from "./aiVoice";
 import {
   clearVoiceFolder,
@@ -101,6 +112,7 @@ import type {
   CursorKind,
   ForegroundAnimation,
   ForegroundAnimationMode,
+  ForegroundExtra,
   Gating,
   GlobalState,
   Hotspot,
@@ -236,7 +248,19 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
     <div className={`scene-card w-56 border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}>
       {!isStart && <Handle type="target" position={Position.Left} style={{ background: "#8b8b9e" }} />}
       <div className="flex items-center justify-between gap-1 border-b border-noir-600 px-2 py-1">
-        <span className="font-pulp text-[10px] uppercase tracking-wider text-gold truncate">
+        <span
+          className="min-w-0 flex-1 cursor-text truncate font-pulp text-[10px] uppercase tracking-wider text-gold hover:text-paper"
+          title="Click to rename this scene"
+          onClick={(e) => {
+            e.stopPropagation();
+            const next = window.prompt("Scene name", scene.title);
+            if (next && next.trim() && next.trim() !== scene.title) {
+              window.dispatchEvent(
+                new CustomEvent("scarlet-rename-scene", { detail: { sceneId: scene.id, title: next } })
+              );
+            }
+          }}
+        >
           {scene.nodeType === "credits" && "🎬 CREDITS · "}
           {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
           {isStart && "★ START · "}
@@ -422,6 +446,56 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/** Local-state text area that only commits to the story on blur / Enter /
+ *  unmount. Keeping text in component state means typing doesn't re-render
+ *  the inspector or clone the whole story on every keystroke — which was
+ *  causing the beat line to drop focus / reject typing mid-edit. */
+function CommitTextArea({
+  value,
+  onCommit,
+  className,
+  rows = 4,
+  placeholder,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  className?: string;
+  rows?: number;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState(value);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  // Re-sync only when the external value changes AND we're not focused (e.g.
+  // after an undo, duplicate, or sound-tag insertion elsewhere).
+  useEffect(() => {
+    if (ref.current && document.activeElement === ref.current) return;
+    setText(value);
+  }, [value]);
+  const commit = () => {
+    if (text !== value) onCommit(text);
+  };
+  return (
+    <textarea
+      ref={ref}
+      className={className}
+      rows={rows}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      // Commit on Enter? For dialogue we keep newlines natural, so Enter is a
+      // line break; save happens on blur. Keep a Ctrl/Cmd+Enter to save early.
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          commit();
+          ref.current?.blur();
+        }
+      }}
+    />
+  );
+}
+
 const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
 
@@ -452,6 +526,15 @@ function CollapsibleSection({
   titleClass = "text-cyan-neon",
   className = "border border-noir-600/70 bg-noir-900/40",
   headerRight,
+  controlledOpen,
+  onToggle,
+  draggable,
+  dragOver,
+  onDragStartHandle,
+  onDragEnterHandle,
+  onDragOverHandle,
+  onDropHandle,
+  onDragEndHandle,
 }: {
   id: string;
   title: React.ReactNode;
@@ -461,8 +544,19 @@ function CollapsibleSection({
   titleClass?: string;
   className?: string;
   headerRight?: React.ReactNode;
+  /** when supplied, open state is owned by the parent (no localStorage) */
+  controlledOpen?: boolean;
+  onToggle?: (next: boolean) => void;
+  /** enable drag-to-reorder: true while a drag is over this card */
+  draggable?: boolean;
+  dragOver?: boolean;
+  onDragStartHandle?: (e: React.DragEvent) => void;
+  onDragEnterHandle?: (e: React.DragEvent) => void;
+  onDragOverHandle?: (e: React.DragEvent) => void;
+  onDropHandle?: (e: React.DragEvent) => void;
+  onDragEndHandle?: (e: React.DragEvent) => void;
 }) {
-  const [open, setOpen] = useState<boolean>(() => {
+  const [localOpen, setLocalOpen] = useState<boolean>(() => {
     try {
       const raw = localStorage.getItem(sectionStateKey(id));
       if (raw === "0") return false;
@@ -472,19 +566,47 @@ function CollapsibleSection({
     }
     return defaultOpen;
   });
-  const toggle = () =>
-    setOpen((o) => {
-      const next = !o;
-      try {
-        localStorage.setItem(sectionStateKey(id), next ? "1" : "0");
-      } catch {
-        /* storage unavailable — state still toggles for this session */
-      }
-      return next;
-    });
+  const open = controlledOpen !== undefined ? controlledOpen : localOpen;
+  const toggle = () => {
+    const next = !open;
+    if (controlledOpen !== undefined) {
+      onToggle?.(next);
+      return;
+    }
+    setLocalOpen(next);
+    try {
+      localStorage.setItem(sectionStateKey(id), next ? "1" : "0");
+    } catch {
+      /* storage unavailable — state still toggles for this session */
+    }
+  };
   return (
-    <div className={className}>
+    <div
+      className={`${className} ${dragOver ? "ring-2 ring-gold bg-gold/10" : ""}`}
+      onDragEnter={onDragEnterHandle}
+      onDragOver={onDragOverHandle}
+      onDrop={onDropHandle}
+    >
       <div className="flex w-full items-center justify-between gap-2 px-2 py-1.5 hover:bg-noir-800/60">
+        {draggable && (
+          <span
+            draggable
+            onDragStart={onDragStartHandle}
+            onDragEnd={onDragEndHandle}
+            title="Drag to reorder"
+            className="flex cursor-grab touch-none select-none items-center text-paper/35 hover:text-gold active:cursor-grabbing"
+            aria-label="Drag to reorder"
+          >
+            <svg width="8" height="14" viewBox="0 0 8 14" aria-hidden>
+              <circle cx="2" cy="2.5" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="2.5" r="1.3" fill="currentColor" />
+              <circle cx="2" cy="7" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="7" r="1.3" fill="currentColor" />
+              <circle cx="2" cy="11.5" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="11.5" r="1.3" fill="currentColor" />
+            </svg>
+          </span>
+        )}
         <button
           type="button"
           onClick={toggle}
@@ -524,17 +646,47 @@ function CinematicPreview({
     );
   }
   const { className, style } = cinematicLayer(cinematic, url);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const pOn = (cinematic?.parallaxDepth ?? 0) > 0;
+  // Pointer parallax in the preview — write the same --par-x / --par-y vars the
+  // game uses so the preview is live and truthful.
+  const onPreviewMove = (e: React.PointerEvent) => {
+    const el = previewRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--par-x", (((e.clientX - r.left) / r.width) * 2 - 1).toFixed(3));
+    el.style.setProperty("--par-y", (((e.clientY - r.top) / r.height) * 2 - 1).toFixed(3));
+  };
+  const onPreviewLeave = () => {
+    previewRef.current?.style.removeProperty("--par-x");
+    previewRef.current?.style.removeProperty("--par-y");
+  };
   return (
-    <div className="relative aspect-video w-full overflow-hidden border border-gold/30 bg-noir-950">
-      <div className={`absolute inset-0 ${className}`} style={style}>
-        {resolveLights(cinematic).map((l, i) => (
-          <div key={i} className="cin-light" style={lightStyle(l)} />
-        ))}
-        <LensFlareLayer cinematic={cinematic} />
+    <div
+      ref={previewRef}
+      onPointerMove={pOn ? onPreviewMove : undefined}
+      onPointerLeave={pOn ? onPreviewLeave : undefined}
+      className="relative aspect-video w-full overflow-hidden border border-gold/30 bg-noir-950"
+      style={pOn ? parallaxStyle(cinematic) : undefined}
+    >
+      <div className={`absolute inset-0 ${pOn ? "parallax-plate" : ""}`} style={pOn ? parallaxStyle(cinematic) : undefined}>
+        <div className={`absolute inset-0 ${className}`} style={style}>
+          {resolveLights(cinematic).map((l, i) => (
+            <div key={i} className="cin-light" style={lightStyle(l)} />
+          ))}
+          <LensFlareLayer cinematic={cinematic} />
+          <CinematicOverlays cinematic={cinematic} />
+        </div>
       </div>
-      <ForegroundLayer cinematic={cinematic} resolve={media} />
+      {pOn && <ParallaxMidLayers cinematic={cinematic} resolve={media} />}
+      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"}>
+        <ForegroundExtras cinematic={cinematic} resolve={media} />
+        <ForegroundLayer cinematic={cinematic} resolve={media} />
+      </div>
       <span className="pointer-events-none absolute bottom-1 right-1 z-[5] rounded bg-noir-950/70 px-1 py-0.5 font-pulp text-[7px] uppercase tracking-widest text-gold/70">
         {cinematic?.mode ?? "pan"}
+        {cinematic?.colorGrade ? ` · ${GRADE_PRESETS[cinematic.colorGrade]?.name?.split(" — ")[0] ?? ""}` : ""}
+        {pOn ? " · parallax" : ""}
       </span>
     </div>
   );
@@ -1077,6 +1229,138 @@ function CinematicControls({
         )}
       </CollapsibleSection>
 
+      <CollapsibleSection id="cin-grade" title="🎨 Color grade & film stock" titleClass="text-neon">
+        <Field label="Director / stock grade">
+          <select
+            className={inputCls}
+            value={c.colorGrade ?? ""}
+            onChange={(e) => set({ colorGrade: (e.target.value || undefined) as CinematicSettings["colorGrade"] })}
+          >
+            <option value="">— no grade (straight plate) —</option>
+            {GRADE_PRESET_LIST.map((g) => (
+              <option key={g.id} value={g.id}>{g.badge} {g.name}</option>
+            ))}
+          </select>
+        </Field>
+        {c.colorGrade && (
+          <p className="border border-neon/20 bg-neon/5 p-2 font-type text-[9px] leading-snug text-paper/55">
+            <b className="text-neon">{GRADE_PRESETS[c.colorGrade]?.name}</b> — {GRADE_PRESETS[c.colorGrade]?.tagline}{" "}
+            The grade works on every camera mode and on insert-shot beat backgrounds.
+          </p>
+        )}
+        <label className="flex items-start gap-2 border border-gold/25 bg-gold/5 px-2 py-1.5 text-[10px] uppercase tracking-wider text-paper/70">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={!!c.filmGrade}
+            onChange={(e) => set({ filmGrade: e.target.checked || undefined })}
+          />
+          <span>
+            🎞 Film grade — 35mm print emulation
+            <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+              Animated grain (heavier than the ambient grain), gate weave, highlight halation bloom, light flicker and the
+              occasional scratch/dust pass. Sits above the color grade like the physical print of the graded image.
+            </span>
+          </span>
+        </label>
+        {c.filmGrade && (
+          <Field label={`Film strength ${Math.round((c.filmGradeStrength ?? 0.7) * 100)}%`}>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0.15}
+                max={1}
+                step={0.05}
+                value={c.filmGradeStrength ?? 0.7}
+                className="flex-1 accent-pink-500"
+                onChange={(e) => set({ filmGradeStrength: Number(e.target.value) })}
+              />
+              <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round((c.filmGradeStrength ?? 0.7) * 100)}%</span>
+            </div>
+          </Field>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-parallax" title="🌆 Parallax depth" titleClass="text-cyan-neon">
+        <Field label={`Depth ${Math.round((c.parallaxDepth ?? 0) * 100)}%`}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={c.parallaxDepth ?? 0}
+              className="flex-1 accent-cyan-400"
+              onChange={(e) => set({ parallaxDepth: Number(e.target.value) || undefined })}
+            />
+            <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round((c.parallaxDepth ?? 0) * 100)}%</span>
+          </div>
+        </Field>
+        <p className="font-type text-[9px] leading-snug text-paper/45">
+          The camera subtly follows the cursor — the plate drifts slowest, mid planes and the foreground subject faster,
+          like a diorama. A gentle idle sway plays when the mouse is still. Move your mouse over the live preview above to
+          feel it.
+        </p>
+        <Field label="Mid-ground depth planes (transparent cutouts)">
+          {(c.parallaxLayers ?? []).map((layer, i) => (
+            <div key={i} className="mb-2 space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <AssetDropdown
+                  assetType="image"
+                  value={layer.image}
+                  returnReference
+                  storyId={storyId}
+                  placeholder="Pick a transparent plane image…"
+                  onChange={(v) => {
+                    const layers = [...(c.parallaxLayers ?? [])];
+                    layers[i] = { ...layer, image: v ?? "" };
+                    set({ parallaxLayers: layers.filter((l) => l.image) });
+                  }}
+                />
+                <button
+                  className="shrink-0 border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                  onClick={() => set({ parallaxLayers: (c.parallaxLayers ?? []).filter((_, j) => j !== i) })}
+                >
+                  ✕
+                </button>
+              </div>
+              <Field label={`Depth ${Math.round(layer.depth * 100)}% (0=far / 1=near)`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={layer.depth}
+                  className="w-full accent-cyan-400"
+                  onChange={(e) => {
+                    const layers = [...(c.parallaxLayers ?? [])];
+                    layers[i] = { ...layer, depth: Number(e.target.value) };
+                    set({ parallaxLayers: layers });
+                  }}
+                />
+              </Field>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <MediaUploadButton
+              accept="image/*"
+              storyId={storyId}
+              label="⤒ Upload plane"
+              onUploaded={(_url, assetId) =>
+                set({ parallaxLayers: [...(c.parallaxLayers ?? []), { image: `asset:${assetId}`, depth: 0.5 }] })
+              }
+            />
+            <button
+              className="shrink border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+              onClick={() => set({ parallaxLayers: [...(c.parallaxLayers ?? []), { image: "gradient:linear-gradient(180deg, rgba(10,12,20,0) 40%, rgba(10,12,20,0.55) 100%)", depth: 0.35 }] })}
+              title="Add a gradient fog plane (uses the picker above to swap for an image)"
+            >
+              ＋ Fog plane
+            </button>
+          </div>
+        </Field>
+      </CollapsibleSection>
+
       <CollapsibleSection id="cin-foreground" title="🧍 Foreground overlay">
         <p className="font-type text-[9px] text-paper/40">
           Layers a fixed image over the scene, in front of any camera motion — great for a character, prop or frame. Works with every
@@ -1439,6 +1723,103 @@ function CinematicControls({
             </div>
           </>
         )}
+      </CollapsibleSection>
+
+      {/* ---- additional foreground images (stacked extras) ---- */}
+      <CollapsibleSection id="cin-foreground-extras" title="👥 Additional foreground images" titleClass="text-neon">
+        <p className="font-type text-[9px] text-paper/40">
+          Layer more characters, props or frames on top of the plate, each independently positioned, scaled and
+          mirrored. They render just behind the primary foreground above and parallax by their own depth.
+        </p>
+        {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
+          const update = (patch: Partial<ForegroundExtra>) => {
+            const n = [...(c.foregroundExtras ?? [])];
+            n[i] = { ...extra, ...patch };
+            set({ foregroundExtras: n });
+          };
+          const remove = () => set({ foregroundExtras: (c.foregroundExtras ?? []).filter((_: ForegroundExtra, j: number) => j !== i) });
+          return (
+          <div key={i} className="space-y-1.5 border border-neon/20 bg-neon/5 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-pulp text-[9px] uppercase tracking-widest text-neon">Image {i + 1}{!extra.image ? " — choose an image" : ""}</span>
+              <button
+                className="shrink-0 border border-crimson/50 px-2 py-0.5 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                onClick={remove}
+              >
+                ✕
+              </button>
+            </div>
+            <AssetDropdown
+              storyId={storyId}
+              assetType="image"
+              returnReference
+              value={extra.image || undefined}
+              placeholder="Pick a transparent image…"
+              onChange={(url) => update({ image: url ?? "" })}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Field label={`Position X ${extra.x ?? 50}% · Y ${extra.y ?? 80}%`}>
+                <div className="space-y-1">
+                  <input type="range" min={0} max={100} step={1} value={extra.x ?? 50} className="w-full accent-pink-500"
+                    onChange={(e) => update({ x: Number(e.target.value) })} />
+                  <input type="range" min={0} max={100} step={1} value={extra.y ?? 80} className="w-full accent-pink-500"
+                    onChange={(e) => update({ y: Number(e.target.value) })} />
+                </div>
+              </Field>
+              <Field label={`Scale ${(extra.scale ?? 1).toFixed(2)}×`}>
+                <input type="range" min={0.2} max={2.5} step={0.05} value={extra.scale ?? 1} className="w-full accent-pink-500"
+                  onChange={(e) => update({ scale: Number(e.target.value) })} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Fit">
+                <select className={inputCls} value={extra.fit ?? "contain"} onChange={(e) => update({ fit: e.target.value as never })}>
+                  <option value="contain">Contain (whole fits)</option>
+                  <option value="cover">Cover (fill frame)</option>
+                  <option value="fill">Fill (stretch)</option>
+                  <option value="native">Native size</option>
+                </select>
+              </Field>
+              <Field label={`Parallax depth ${Math.round((extra.depth ?? 0) * 100)}%`}>
+                <input type="range" min={0} max={1} step={0.05} value={extra.depth ?? 0} className="w-full accent-cyan-400"
+                  onChange={(e) => update({ depth: Number(e.target.value) || undefined })} />
+              </Field>
+            </div>
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <input type="checkbox" checked={!!extra.flip} onChange={(e) => update({ flip: e.target.checked || undefined })} />
+              ↔ Flip horizontally (face the other way)
+            </label>
+          </div>
+          );
+        })}
+        <div className="flex gap-2">
+          <button
+            className="flex-1 border border-neon/50 py-1.5 font-pulp text-[9px] uppercase tracking-widest text-neon hover:bg-neon/10"
+            onClick={() =>
+              set({
+                foregroundExtras: [
+                  ...(c.foregroundExtras ?? []),
+                  { image: "", x: 50, y: 80, scale: 1, fit: "contain", anchor: "50% 100%", depth: 0.6 },
+                ],
+              })
+            }
+          >
+            ＋ Add foreground image
+          </button>
+          <MediaUploadButton
+            storyId={storyId}
+            accept="image/*"
+            label="⤒ Upload new"
+            onUploaded={(_url, assetId) =>
+              set({
+                foregroundExtras: [
+                  ...(c.foregroundExtras ?? []),
+                  { image: `asset:${assetId}`, x: 50, y: 80, scale: 1, fit: "contain", anchor: "50% 100%", depth: 0.6 },
+                ],
+              })
+            }
+          />
+        </div>
       </CollapsibleSection>
 
       <CollapsibleSection id="cin-lighting" title="💡 Lighting" titleClass="text-gold">
@@ -2296,7 +2677,7 @@ function TalkingPreview({
   return <img src={assetUrl(resolved[i])} alt="" className="h-24 w-auto max-w-full object-contain" />;
 }
 
-/** Global ElevenLabs settings for the People tab. The API key lives in
+/** Global ElevenLabs settings for the Characters tab. The API key lives in
  *  localStorage only — never in the story data, saves, or exports. */
 function AiVoiceSettings() {
   const [key, setKey] = useState(getElevenKey());
@@ -3410,7 +3791,7 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
             })}
           </div>
         ) : (
-          <p className="font-type text-[10px] text-paper/40">No characters yet — add some in the People tab to see relationship opinions.</p>
+          <p className="font-type text-[10px] text-paper/40">No characters yet — add some in the Characters tab to see relationship opinions.</p>
         )}
       </div>
     </div>
@@ -3432,7 +3813,7 @@ function StudioInner({
 }: {
   baseStories: Story[];
   onExit: () => void;
-  onPlay: (story: Story) => void;
+  onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
@@ -3512,9 +3893,38 @@ function StudioInner({
   const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
   // where the most recent converted MP3 ended up (file path, or a warning)
   const [aiNote, setAiNote] = useState<{ text: string; at: number } | null>(null);
+  // Batch voice generation state — converts every eligible beat (per scene
+  // or the whole story) one character's voice at a time, saving each as its
+  // own correctly-attributed MP3.
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+  const [batchDone, setBatchDone] = useState<string | null>(null);
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
+  // Which beats are expanded in the Beats tab. New beats start open; an
+  // explicit per-beat id set lets users minimise beats they've finished and
+  // have a "collapse all" so the list doesn't get long.
+  const [expandedBeats, setExpandedBeats] = useState<Set<string>>(() => new Set());
+  const [beatsUserToggled, setBeatsUserToggled] = useState<Set<string>>(() => new Set());
+  // Drag-and-drop beat reordering: the beat id being dragged and the one
+  // currently dragged over.
+  const [dragBeatId, setDragBeatId] = useState<string | null>(null);
+  const [dragOverBeatId, setDragOverBeatId] = useState<string | null>(null);
+  // Move a beat to before/after the target index within the selected scene.
+  const reorderBeat = (dragId: string, targetId: string) => {
+    if (dragId === targetId) return;
+    mutate((draft) => {
+      const sc = draft.scenes.find((x) => x.id === selectedId) ?? draft.scenes[0];
+      const beats = sc.dialogueBeats;
+      if (!beats) return;
+      const from = beats.findIndex((x) => x.id === dragId);
+      const to = beats.findIndex((x) => x.id === targetId);
+      if (from < 0 || to < 0) return;
+      const [moved] = beats.splice(from, 1);
+      beats.splice(to, 0, moved);
+    });
+  };
   const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
   const [globalTitleTheme, setGlobalTitleThemeState] = useState<TitleTheme>(() => {
     // Read the title settings on boot from the same key
@@ -3748,6 +4158,15 @@ function StudioInner({
   };
   const mutate = (fn: (draft: Story) => void) => {
     const next = deepClone(story);
+    fn(next);
+    commit(next);
+  };
+  // Like mutate, but always clones the LATEST committed state — safe for
+  // async work that fires many updates over time (batch voice generation,
+  // multi-step imports). Cloning the stale `story` closure would have each
+  // update overwrite the last; this accumulates them instead.
+  const mutateLatest = (fn: (draft: Story) => void) => {
+    const next = deepClone(storyRef.current);
     fn(next);
     commit(next);
   };
@@ -4138,6 +4557,16 @@ function StudioInner({
       const sceneId = (e as CustomEvent<string>).detail;
       if (sceneId) deleteScene(sceneId);
     };
+    const onRenameCustom = (e: Event) => {
+      const detail = (e as CustomEvent<{ sceneId: string; title: string }>).detail;
+      if (!detail?.sceneId) return;
+      const title = detail.title.trim();
+      if (!title) return;
+      mutate((draft) => {
+        const sc = draft.scenes.find((s) => s.id === detail.sceneId);
+        if (sc) sc.title = title;
+      });
+    };
     const onDeleteEdge = (e: Event) => {
       const edgeId = (e as CustomEvent<string>).detail;
       const edge = edges.find((edge) => edge.id === edgeId);
@@ -4162,10 +4591,12 @@ function StudioInner({
     window.addEventListener("keydown", onKey);
     window.addEventListener("scarlet-delete-scene", onDeleteCustom as EventListener);
     window.addEventListener("scarlet-delete-edge", onDeleteEdge as EventListener);
+    window.addEventListener("scarlet-rename-scene", onRenameCustom as EventListener);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scarlet-delete-scene", onDeleteCustom as EventListener);
       window.removeEventListener("scarlet-delete-edge", onDeleteEdge as EventListener);
+      window.removeEventListener("scarlet-rename-scene", onRenameCustom as EventListener);
     };
   }, [undo, redo, edges, mutate, deleteScene]);
 
@@ -4389,6 +4820,274 @@ function StudioInner({
     }
   };
 
+  /* ---------- duplicate the whole story ----------
+   * Makes an independent, editable copy of the CURRENT story (the built-in,
+   * a custom case, or a draft): new story id and title, regenerated scene +
+   * beat + hotspot ids remapped across every internal reference (choices,
+   * hotspots, puzzles, acts, episodes, auto-advance, part breaks, start
+   * scene) so the graph wires up identically, and the canvas layout is
+   * offset so the copy doesn't stack on the original. Saved as a custom
+   * story so the built-ins are never modified. */
+  const duplicateStory = async () => {
+    const src = deepClone(story);
+    const newStoryId = `case_${uid()}`;
+    const sceneIdMap = new Map<string, string>();
+    src.scenes.forEach((s) => {
+      // Keep end/credits-style ids readable-ish but unique.
+      sceneIdMap.set(s.id, `${s.id}_copy_${uid().slice(0, 5)}`);
+    });
+    const remap = (id?: string) => (id ? sceneIdMap.get(id) ?? id : id);
+
+    const copy: Story = {
+      ...src,
+      id: newStoryId,
+      title: `${src.title.replace(/\s*\(copy\).*$/, "")} (copy)`,
+      startSceneId: remap(src.startSceneId) ?? "",
+      layout: Object.fromEntries(
+        Object.entries(src.layout ?? {}).map(([id, pos]) => [
+          remap(id) ?? id,
+          { x: pos.x + 80, y: pos.y + 90 },
+        ])
+      ),
+      scenes: src.scenes.map((s) => ({
+        ...s,
+        id: remap(s.id) as string,
+        autoAdvanceTargetSceneId: remap(s.autoAdvanceTargetSceneId),
+        choices: s.choices?.map((ch) => ({
+          ...ch,
+          id: `c_${uid()}`,
+          targetSceneId: remap(ch.targetSceneId),
+          timedOutTargetSceneId: remap(ch.timedOutTargetSceneId),
+        })),
+        hotspots: s.hotspots?.map((h) => ({
+          ...h,
+          id: `hs_${uid()}`,
+          action: {
+            ...h.action,
+            targetSceneId: remap(h.action.targetSceneId),
+            patternPuzzle: h.action.patternPuzzle
+              ? {
+                  ...h.action.patternPuzzle,
+                  targetSceneId: remap(h.action.patternPuzzle.targetSceneId),
+                  wrongTargetSceneId: remap(h.action.patternPuzzle.wrongTargetSceneId),
+                }
+              : undefined,
+          },
+        })),
+        dialogueBeats: s.dialogueBeats?.map((b) => ({
+          ...b,
+          id: `b_${uid()}`,
+          afterBeatTargetSceneId: remap(b.afterBeatTargetSceneId),
+        })),
+        onEnterActions: s.onEnterActions,
+      })),
+      acts: src.acts?.map((a) => ({ ...a, id: `act_${uid()}`, startSceneId: remap(a.startSceneId) ?? a.startSceneId })),
+      // Episodes are rebuilt with new ids below where the episode-id map exists.
+      episodes: src.episodes?.map((e) => ({
+        ...e,
+        id: `ep_${uid()}`,
+        startSceneId: remap(e.startSceneId) ?? e.startSceneId,
+        sceneIds: e.sceneIds.map((id) => remap(id) ?? id),
+      })),
+      briefing: src.briefing
+        ? { ...src.briefing, heatFailSceneId: remap(src.briefing.heatFailSceneId) }
+        : src.briefing,
+      deduction: src.deduction,
+      // Custom copies don't carry bundled media; asset:/ url references
+      // resolve against the shared media library, which already holds them.
+      assets: undefined,
+    };
+    // Re-point episode unlock references to the new episode ids.
+    if (copy.episodes && src.episodes) {
+      const epMap = new Map<string, string>();
+      src.episodes.forEach((e, i) => epMap.set(e.id, copy.episodes![i].id));
+      copy.episodes = copy.episodes.map((e, i) => ({
+        ...e,
+        unlockAfter: src.episodes![i].unlockAfter?.map((u) => ({
+          ...u,
+          episodeId: epMap.get(u.episodeId) ?? u.episodeId,
+        })),
+        nextEpisodeByEnding: e.nextEpisodeByEnding
+          ? Object.fromEntries(Object.entries(e.nextEpisodeByEnding).map(([k, v]) => [k, epMap.get(v) ?? v]))
+          : undefined,
+      }));
+    }
+    const compact = await compactStoryMedia(copy);
+    if (!onCreateStory(compact)) {
+      say("Could not duplicate — browser storage may be full.");
+      audio.fail();
+      return;
+    }
+    past.current = [];
+    future.current = [];
+    setStory(compact);
+    setSelectedId(null);
+    setSelectedHotspot(null);
+    setFocusedChoiceId(null);
+    localStorage.setItem("scarlet-studio-last-story", compact.id);
+    say(`Duplicated "${src.title}" as "${compact.title}" — a fully independent copy.`);
+    audio.success();
+  };
+
+  /* ---------- batch ElevenLabs voice generation ----------
+   * Converts every eligible beat in ONE scene to a per-character MP3.
+   * Each line is billed/synthesized separately and saved through the same
+   * pipeline as the single Generate button, so the file lands in
+   * public/voices/<person>/<scene>/ on desktop (linked folder / media
+   * library in browser) with the correct character's voice on the line.
+   * Conversational context (the surrounding turns) is sent so the delivery
+   * responds to the previous speaker. Updates apply progressively onto the
+   * latest draft so every line sticks. */
+  const batchGenerateVoices = async (scopeSceneId: string, modelOverride?: string) => {
+    const key = getElevenKey();
+    if (!key) {
+      window.alert("Add your ElevenLabs API key first — Characters tab → 🎙 AI Voice (ElevenLabs).");
+      setTab("characters");
+      return;
+    }
+    const scene = story.scenes.find((x) => x.id === scopeSceneId);
+    if (!scene) return;
+    const model = modelOverride ?? getElevenModel();
+
+    type Job = { beatId: string; characterId: string; characterName: string; line: string; hasAudio: boolean; prev: string; next: string };
+    const jobs: Job[] = [];
+    const beats = scene.dialogueBeats ?? [];
+    for (let bi = 0; bi < beats.length; bi += 1) {
+      const b = beats[bi];
+      const ch = story.characters.find((x) => x.id === b.characterId);
+      const line = b.text?.trim();
+      if (!line || b.silent) continue;
+      if (b.recalls && Object.keys(b.recalls).length) continue; // route-dependent text stays on TTS
+      if (!ch?.elevenVoiceId) continue; // speaker has no assigned voice
+      // Label each turn with its speaker so ElevenLabs knows WHO is in the
+      // exchange (e.g. a Vera/Jack back-and-forth) and voices the line as a
+      // reply to the correct character rather than an isolated read.
+      const spoken = (idx: number) => {
+        const bb = beats[idx];
+        if (!bb || !bb.text.trim()) return "";
+        if (bb.characterId === "narrator") return `(Narration) ${bb.text.trim()}`;
+        const who = story.characters.find((c) => c.id === bb.characterId)?.name ?? "Speaker";
+        return `${who}: ${bb.text.trim()}`;
+      };
+      // Full preceding conversation in the scene (the API truncates to its
+      // own context limit); next line is just the immediate follow-up.
+      const prev = beats
+        .slice(0, bi)
+        .map((_bb, k) => spoken(k))
+        .filter(Boolean)
+        .join("\n");
+      jobs.push({
+        beatId: b.id,
+        characterId: b.characterId,
+        characterName: ch.name,
+        line,
+        hasAudio: !!b.audioUrl,
+        prev,
+        next: bi + 1 < beats.length ? spoken(bi + 1) : "",
+      });
+    }
+
+    if (!jobs.length) {
+      window.alert(
+        "No convertible lines in this scene. Each beat needs spoken text and a character whose ElevenLabs voice ID is set in the Characters tab. Silent beats and memory-recall lines stay on text-to-speech."
+      );
+      return;
+    }
+    const existing = jobs.filter((j) => j.hasAudio).length;
+    const modelLabel = ELEVENLABS_MODELS.find((m) => m.id === model)?.label ?? model;
+
+    // Work out which lines would actually be generated (regenerate-all vs
+    // only gaps) so the warning prices the real spend, not the whole scene.
+    let onlyMissing = false;
+    if (existing > 0) {
+      onlyMissing = !window.confirm(
+        `${jobs.length} line(s) in "${scene.title}" (${new Set(jobs.map((j) => j.characterName)).size} character(s)).\n\n` +
+          `${existing} line(s) already have an MP3.\n\nOK = regenerate ALL ${jobs.length} lines.\nCancel = only generate the ${jobs.length - existing} that don't have an MP3 yet.`
+      );
+    }
+    const toGenerate = onlyMissing ? jobs.filter((j) => !j.hasAudio) : jobs;
+    const genChars = toGenerate.reduce((n, j) => n + j.line.length, 0);
+    const genCost = estimateVoiceCost(model, genChars);
+    const money =
+      genCost.usd >= 5 ? `~$${genCost.usd.toFixed(0)}` : `~$${genCost.usd.toFixed(2)}`;
+
+    // ---- Double-check / cost warning -------------------------------------
+    const warning =
+      `⚠ YOU ARE ABOUT TO SPEND ELEVENLABS CREDITS\n\n` +
+      `Scene: ${scene.title}\nModel: ${modelLabel}\n` +
+      `Lines to generate: ${toGenerate.length}\n` +
+      `Characters: ${genChars.toLocaleString()}  (≈ ${Math.round(genChars / 6).toLocaleString()} words)\n\n` +
+      `Estimated cost: ~${genCost.credits.toLocaleString()} credits (${money} list overage).\n` +
+      `(Your plan's monthly credit grant may cover this; you are only charged overage.)\n\n` +
+      `Each line is generated separately in its character's voice and applied automatically. This cannot be undone once the API call is made.\n\n` +
+      `Proceed? Click OK to spend the credits, Cancel to abort.`;
+    if (!window.confirm(warning)) return;
+    // Second confirmation for any spend over a small threshold so an
+    // accidental click never burns a large batch.
+    if (genCost.credits >= 500) {
+      const sure = window.prompt(
+        `Final check: this spends ~${genCost.credits.toLocaleString()} credits on ${toGenerate.length} line(s). Type GENERATE to proceed.`,
+        ""
+      );
+      if ((sure ?? "").trim().toUpperCase() !== "GENERATE") return;
+    }
+    const queue = toGenerate;
+    if (!queue.length) {
+      setBatchDone("Nothing to generate — every line in this scene already has an MP3.");
+      return;
+    }
+    setBatchBusy(true);
+    setBatchDone(null);
+    let ok = 0;
+    let failed = 0;
+    const failures: string[] = [];
+    for (let i = 0; i < queue.length; i += 1) {
+      const job = queue[i];
+      setBatchProgress({ done: i, total: queue.length, label: `${job.characterName}` });
+      try {
+        const { dataUrl, blob } = await synthesizeElevenLabs(
+          job.line,
+          story.characters.find((x) => x.id === job.characterId)!.elevenVoiceId!,
+          model,
+          { previousText: job.prev, nextText: job.next }
+        );
+        const saved = await saveGeneratedVoice({
+          storyId: story.id,
+          characterId: job.characterId,
+          sceneId: scene.id,
+          beatId: job.beatId,
+          blob,
+          dataUrl,
+          assetName: `voice-${job.characterId}-${job.beatId}`,
+        });
+        // Apply onto the LATEST draft so rapid async saves accumulate instead
+        // of overwriting each other.
+        mutateLatest((d) => {
+          const s = d.scenes.find((x) => x.id === scene.id)!;
+          const b = s.dialogueBeats!.find((x) => x.id === job.beatId)!;
+          b.audioUrl = saved.url;
+        });
+        ok += 1;
+      } catch (err) {
+        failed += 1;
+        failures.push(`${job.characterName}: ${(err as Error).message}`);
+        const msg = (err as Error).message || "";
+        if (msg.includes("401") || msg.includes("refused") || msg.includes("422")) break;
+        // Rate limit: brief back-off then continue with the next line.
+        if (msg.includes("429") || msg.includes("Rate limited")) await new Promise((r) => setTimeout(r, 4000));
+      }
+    }
+    setBatchProgress(null);
+    setBatchBusy(false);
+    const summary =
+      `"${scene.title}" — ${ok} MP3${ok === 1 ? "" : "s"} saved & applied to beats` +
+      (failed ? `, ${failed} failed.` : ".") +
+      (failures.length ? `\n\n${failures.slice(0, 4).join("\n")}` : "");
+    setBatchDone(summary);
+    say(`Batch voices: ${ok} saved${failed ? `, ${failed} failed` : ""}.`);
+    if (failed === 0) audio.success();
+  };
+
   const importJson = async (file: File) => {
     try {
       const text = await file.text();
@@ -4467,6 +5166,13 @@ function StudioInner({
           title="Start a brand-new empty case"
         >
           ＋ New Story
+        </button>
+        <button
+          onClick={() => { void duplicateStory(); }}
+          className="btn-tool"
+          title="Duplicate this whole case into a brand-new, independent story (every scene, beat, hotspot and wire copied with fresh ids)"
+        >
+          ⧉ Duplicate Story
         </button>
         <button onClick={() => addScene(80 + Math.random() * 200, 80 + Math.random() * 200)} className="btn-tool" title="Add standard game scene">
           ＋ Scene
@@ -4926,7 +5632,7 @@ function StudioInner({
                   ✎ Edit scene
                 </button>
                 <button role="menuitem" className="block w-full px-4 py-1.5 text-left text-xs text-neon hover:bg-noir-700"
-                  onClick={() => { const c = deepClone(story); c.startSceneId = target.id; onPlay(c); setNodeMenu(null); }}
+                  onClick={() => { onPlay(deepClone(story), { fromSceneId: target.id }); setNodeMenu(null); }}
                   title="Launch the game starting at this scene (fresh state)">
                   ▶ Play from here
                 </button>
@@ -5043,21 +5749,21 @@ function StudioInner({
               >
                 {{
                   scene: "Scene",
-                  beats: "Dialogue",
+                  beats: "Beats",
                   hotspots: "Hotspots",
                   choices: "Choices",
                   test: "▶ Test",
-                  characters: "People",
+                  characters: "Characters",
                   audio: "Audio",
                   items: "Items",
                   flags: "🏷 Flags",
-                  briefing: "🗂 Win/Lose",
+                  briefing: "🎯 Game Objective",
                   acts: "🎭 Acts",
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
-                  dialogueBox: "💬 Dialogue Box",
-                  globalTitle: "🎼 Theme Options",
+                  dialogueBox: "🎮 In-Game Theme",
+                  globalTitle: "🎼 Newsstand Theme",
                 }[t]}
               </button>
             ))}
@@ -5069,7 +5775,7 @@ function StudioInner({
                   1. Case File<br />{story.briefing?.objective ? "✓" : "required"}
                 </button>
                 <button onClick={() => setTab("characters")} className={`border p-1 ${story.characters.length ? "border-emerald-500/40 text-emerald-400" : "border-crimson/50 text-crimson"}`}>
-                  2. People<br />{story.characters.length} total
+                  2. Characters<br />{story.characters.length} total
                 </button>
                 <button onClick={() => setTab("items")} className="border border-gold/35 p-1 text-gold">
                   3. Items<br />{story.items.length} total
@@ -5154,7 +5860,7 @@ function StudioInner({
             )}
             {tab === "characters" && (
               <>
-                <HelpNote id="people-tab" title="People">
+                <HelpNote id="characters-tab" title="Characters">
                   Characters voice their dialogue beats (pick a Web Speech voice and audition it with <b>Test voice</b>)
                   and carry a trust score (−5…+5) that gates and consequences can move. Tick{" "}
                   <b>Show this met character on corkboard</b> to make a suspect appear on the deduction board once the
@@ -5267,11 +5973,88 @@ function StudioInner({
               const opacity = dbox.backgroundOpacity ?? 0.85;
               return (
                 <div className="space-y-2">
-                  <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">💬 Dialogue box</h3>
+                  <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎮 In-game theme</h3>
                   <p className="font-type text-[9px] leading-relaxed text-paper/45">
-                    The panel at the bottom of the frame. These settings apply to the whole story so
-                    the reading surface stays consistent between scenes.
+                    Story-wide look: the dialogue panel, the reading text type &amp; size, and the HUD accent colours.
+                    Everything here applies to the whole case so the reading surface and HUD stay consistent scene to scene.
                   </p>
+
+                  {/* ---- HUD colour scheme ---- */}
+                  <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5" style={inGameThemeVars(dbox)}>
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎨 HUD colour scheme</div>
+                    <select
+                      className={inputCls}
+                      value={dbox.hudTheme ?? "classic"}
+                      onChange={(e) => setBox({ hudTheme: (e.target.value || "classic") as never })}
+                    >
+                      {HUD_THEME_LIST.map((h) => (
+                        <option key={h.id} value={h.id}>{h.badge} {h.name} — {h.tagline}</option>
+                      ))}
+                    </select>
+                    <p className="font-type text-[9px] leading-snug text-paper/45">
+                      {HUD_THEMES[dbox.hudTheme ?? "classic"]?.tagline}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label="Custom accent">
+                        <input type="color" className={`${inputCls} h-8 p-0.5`}
+                          value={dbox.accentColor ?? HUD_THEMES[dbox.hudTheme ?? "classic"].colors.gold}
+                          onChange={(e) => setBox({ accentColor: e.target.value })} />
+                      </Field>
+                      <Field label="Custom danger">
+                        <input type="color" className={`${inputCls} h-8 p-0.5`}
+                          value={dbox.dangerColor ?? HUD_THEMES[dbox.hudTheme ?? "classic"].colors.crimson}
+                          onChange={(e) => setBox({ dangerColor: e.target.value })} />
+                      </Field>
+                    </div>
+                    {(dbox.accentColor || dbox.dangerColor) && (
+                      <button
+                        className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
+                        onClick={() => setBox({ accentColor: undefined, dangerColor: undefined })}
+                      >
+                        ⟲ Use the scheme colours
+                      </button>
+                    )}
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.minimalHud}
+                        onChange={(e) => setBox({ minimalHud: e.target.checked || undefined })} />
+                      <span>Minimal HUD
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          Fades scene-label/lead readouts until you hover — a cleaner, more cinematic frame.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* ---- text type & size ---- */}
+                  <div className="border border-neon/30 bg-neon/5 p-2 space-y-1.5" style={inGameThemeVars(dbox)}>
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-neon">📝 Text type &amp; size</div>
+                    <Field label="Body font (prose & dialogue)">
+                      <select className={inputCls} value={dbox.bodyFont ?? "type"}
+                        onChange={(e) => setBox({ bodyFont: e.target.value as never })}>
+                        {BODY_FONTS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Heading font (nameplates, HUD labels)">
+                      <select className={inputCls} value={dbox.headingFont ?? "pulp"}
+                        onChange={(e) => setBox({ headingFont: e.target.value as never })}>
+                        {HEADING_FONTS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={`Reading text size ${Math.round((dbox.textScale ?? 1) * 100)}%`}>
+                      <input type="range" min={0.8} max={1.4} step={0.05}
+                        className="w-full accent-pink-500"
+                        value={dbox.textScale ?? 1}
+                        onChange={(e) => setBox({ textScale: Number(e.target.value) })} />
+                      <p className="mt-1 font-type text-[9px] text-paper/45">
+                        Resizes the prose/dialogue text and the reserved line height so the panel stays stable.
+                      </p>
+                    </Field>
+                  </div>
+
+                  <div className="border border-paper/15 p-2 space-y-1.5">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/70">🗨 Dialogue panel</div>
+
 
                   <Field label={`Reserve ${reserve === 0 ? "no" : reserve} line${reserve === 1 ? "" : "s"} of space`}>
                     <input
@@ -5349,22 +6132,28 @@ function StudioInner({
                     </Field>
                   </div>
 
-                  <label className="flex items-center gap-2 font-type text-[10px] text-paper/70">
-                    <input
-                      type="checkbox"
-                      checked={!!dbox.bordered}
-                      onChange={(e) => setBox({ bordered: e.target.checked })}
-                    />
-                    Draw a border + drop shadow (reads as a card rather than a gradient)
-                  </label>
+                    <label className="flex items-center gap-2 font-type text-[10px] text-paper/70">
+                      <input
+                        type="checkbox"
+                        checked={!!dbox.bordered}
+                        onChange={(e) => setBox({ bordered: e.target.checked })}
+                      />
+                      Draw a border + drop shadow (reads as a card rather than a gradient)
+                    </label>
+                  </div>
 
                   {/* Live preview of the panel against a stand-in scene. */}
                   <div className="mt-2">
-                    <p className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-paper/40">Preview</p>
+                    <p className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-paper/40">Preview — reflects HUD colours, fonts &amp; size</p>
                     <div
-                      className="relative h-32 w-full overflow-hidden border border-noir-600"
-                      style={{ background: "linear-gradient(135deg,#1b2b3a,#432038 60%,#0b0d12)" }}
+                      className="relative h-40 w-full overflow-hidden border border-noir-600"
+                      style={{ ...inGameThemeVars(dbox), background: "linear-gradient(135deg,#1b2b3a,#432038 60%,#0b0d12)" }}
                     >
+                      {/* a faux HUD label so the accent/heading font is visible */}
+                      <div className="absolute left-2 top-2 flex items-center gap-2">
+                        <span className="h-2.5 w-[3px] bg-gold" aria-hidden />
+                        <span className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎙 Narrator</span>
+                      </div>
                       <div className="absolute inset-x-0 bottom-0 p-2">
                         <div
                           className={`relative p-2 ${dbox.bordered ? "border border-paper/15 shadow-2xl shadow-black/60" : ""}`}
@@ -5377,8 +6166,8 @@ function StudioInner({
                           }}
                         >
                           <p
-                            className="font-pulp text-[11px] leading-snug text-paper"
-                            style={{ minHeight: reserve > 0 ? `${(reserve * 1.375).toFixed(3)}em` : undefined }}
+                            className="ingame-prose font-type text-paper"
+                            style={{ ["--ingame-text-scale" as string]: String(dbox.textScale ?? 1), minHeight: reserve > 0 ? `${(reserve * 1.375 * (dbox.textScale ?? 1)).toFixed(3)}em` : undefined }}
                           >
                             The rain hadn't let up since Tuesday.
                           </p>
@@ -5386,7 +6175,7 @@ function StudioInner({
                       </div>
                     </div>
                     <p className="mt-1 font-type text-[9px] text-paper/35">
-                      The grey block shows the height the panel holds even before the text fills it.
+                      Try a HUD scheme, swap the body font, or move the text-size slider — the preview updates live.
                     </p>
                   </div>
                 </div>
@@ -5714,6 +6503,21 @@ function StudioInner({
                     <p className="mt-1 font-type text-[9px] text-paper/40">
                       This track loops until another scene chooses a different track or a scene with <b className="text-crimson">No music</b> is reached.
                     </p>
+                    <Field label={`Music level (${Math.round((scene.musicLevel ?? 1) * 100)}%) — loudness of THIS track`}>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={1.6}
+                        step={0.05}
+                        className="w-full accent-gold"
+                        value={scene.musicLevel ?? 1}
+                        onChange={(e) => updateScene(scene.id, { musicLevel: parseFloat(e.target.value) })}
+                      />
+                      <p className="mt-1 font-type text-[9px] text-paper/40">
+                        Default starting volume for this scene's track — e.g. lower it for an ambient bed under dialogue, raise it for a title theme.
+                        Stacks with the player's own music volume; 100% is the normal level.
+                      </p>
+                    </Field>
                   </Field>
                 )}
                 {scene.musicMode === "none" && (
@@ -5815,6 +6619,18 @@ function StudioInner({
                       </p>
                     </Field>
                 )}
+                {/* A beat-level auto route already ends this scene: the scene
+                    timer is redundant (and could fight it), so hide it and tell
+                    the author where to edit instead. */}
+                {(scene.dialogueBeats ?? []).some((beat) => beat.afterBeatTargetSceneId && (beat.afterBeatMode ?? "auto") === "auto") ? (
+                  <div className="space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">⏱ Auto-advance</div>
+                    <p className="font-type text-[9px] leading-snug text-paper/50">
+                      A final beat on this scene is set to <b>auto-continue to another scene</b>, so the scene-level
+                      auto-advance timer is hidden (the beat cut is the timer). Edit it on that beat in the Beats tab.
+                    </p>
+                  </div>
+                ) : (
                 <div className="space-y-2 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
                   <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">⏱ Auto-advance when no choices are available</div>
                   <Field label="Target scene">
@@ -5870,6 +6686,7 @@ function StudioInner({
                     </p>
                   </Field>
                 </div>
+                )}
                 {scene.nodeType === "credits" && (
                   <div className="space-y-2 border border-gold/40 bg-gold/5 p-2">
                     <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Credits intro</div>
@@ -6415,7 +7232,7 @@ function StudioInner({
                   </Field>
                   {!(scene.dialogueBeats ?? []).some((b) => b.background) && (
                     <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[9px] text-paper/55">
-                      Add a <b className="text-cyan-neon">replacement background image</b> to a beat in the Dialogue tab to give it its own cinematic settings here.
+                      Add a <b className="text-cyan-neon">replacement background image</b> to a beat in the Beats tab to give it its own cinematic settings here.
                     </p>
                   )}
                   <CinematicControls
@@ -6476,7 +7293,7 @@ function StudioInner({
                 </Field>
                 {scene && (
                   <button
-                    onClick={() => { const c = deepClone(story); c.startSceneId = scene.id; onPlay(c); }}
+                    onClick={() => { onPlay(deepClone(story), { fromSceneId: scene.id }); }}
                     className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10"
                     title="Launch the game starting at this scene (fresh world state, does not change your start scene)"
                   >
@@ -6743,18 +7560,133 @@ function StudioInner({
 
             {scene && tab === "beats" && (
               <>
-                <HelpNote id="beats-tab" title="Dialogue beats">
-                  Beats play <b>in order</b> after the scene prose — reorder them with the ▲/▼ buttons in each beat's
-                  title bar. A beat's <b>condition rule</b> hides it until a gate passes (pair it with a 💬 reply choice's
-                  flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a different line when the player
-                  made a specific earlier choice (<code>{"{said}"}</code> echoes their exact words).
+                <HelpNote id="beats-tab" title="Beats">
+                  Beats play <b>in order</b> after the scene prose — <b>drag the ⠿ grip</b> on a beat's title bar to reorder
+                  them (or use the ▲/▼ buttons). Click a beat's <b>▾/▸</b> header to minimise it, or use the buttons below to
+                  fold everything away and find beats in long lists. A beat's <b>condition rule</b> hides it until a gate passes (pair it
+                  with a 💬 reply choice's flag for conversational Q&amp;A), and <b>Memories recalled</b> swaps in a
+                  different line when the player made a specific earlier choice (<code>{"{said}"}</code> echoes their words).
                 </HelpNote>
+
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
+                    onClick={() => {
+                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
+                      setExpandedBeats(new Set());
+                    }}
+                  >
+                    ▸ Collapse all
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
+                    onClick={() => {
+                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
+                      setExpandedBeats(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
+                    }}
+                  >
+                    ▾ Expand all
+                  </button>
+                </div>
+
+                {/* Batch ElevenLabs voice generation for THIS scene — every
+                    eligible line converted separately, each in its speaker's
+                    assigned voice with conversational context, then applied
+                    to the beat automatically. Scene-scoped on purpose: do one
+                    conversation at a time so delivery and credits stay sane. */}
+                <div className="space-y-1.5 border border-neon/30 bg-neon/5 p-2">
+                  <div className="font-pulp text-[9px] uppercase tracking-widest text-neon">
+                    🎙 Batch voice — this scene
+                  </div>
+                  <Field label="Voice model">
+                    <select
+                      className={inputCls}
+                      defaultValue={getElevenModel()}
+                      onChange={(e) => setElevenModel(e.target.value)}
+                    >
+                      {ELEVENLABS_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  {/* Live cost preview for this scene, for the selected model. */}
+                  {(() => {
+                    const model = getElevenModel();
+                    const genChars = (scene.dialogueBeats ?? [])
+                      .filter((b) => {
+                        const t = b.text?.trim();
+                        if (!t || b.silent) return false;
+                        if (b.recalls && Object.keys(b.recalls).length) return false;
+                        const ch = story.characters.find((x) => x.id === b.characterId);
+                        return !!ch?.elevenVoiceId;
+                      })
+                      .reduce((n, b) => n + b.text.trim().length, 0);
+                    const est = estimateVoiceCost(model, genChars);
+                    return (
+                      <div className="rounded border border-gold/30 bg-gold/5 px-2 py-1.5 text-center">
+                        <p className="font-type text-[9px] leading-tight text-gold/90">
+                          {genChars > 0 ? (
+                            <>
+                              ≈ {genChars.toLocaleString()} chars → <b>~{est.credits.toLocaleString()} credits</b>
+                              {est.usd >= 0.5 ? ` (~$${est.usd.toFixed(2)} overage)` : ""}
+                            </>
+                          ) : (
+                            "No convertible lines in this scene (set character voice IDs first)."
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })()}
+                  <button
+                    disabled={batchBusy}
+                    onClick={() => { setBatchDone(null); void batchGenerateVoices(scene.id); }}
+                    className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+                    title="Generate MP3s for every convertible beat in THIS scene — each in its speaker's voice with conversational context, then applied automatically. Spends ElevenLabs credits; you'll confirm first."
+                  >
+                    {batchBusy
+                      ? `Converting… ${batchProgress ? `${batchProgress.done + 1}/${batchProgress.total}` : ""}`
+                      : "▶ Generate this scene's voices"}
+                  </button>
+                  {batchBusy && batchProgress && (
+                    <>
+                      <div className="h-1 w-full overflow-hidden rounded bg-noir-700">
+                        <div
+                          className="h-full bg-neon transition-all"
+                          style={{ width: `${Math.round(((batchProgress.done) / batchProgress.total) * 100)}%` }}
+                        />
+                      </div>
+                      <p className="font-type text-[9px] leading-snug text-gold">
+                        {batchProgress.done + 1} / {batchProgress.total} · {batchProgress.label}
+                      </p>
+                    </>
+                  )}
+                  {batchDone && (
+                    <p className="whitespace-pre-line border border-emerald-500/30 bg-emerald-500/5 p-1.5 font-type text-[9px] leading-snug text-emerald-300/90">
+                      {batchDone}
+                    </p>
+                  )}
+                  <p className="font-type text-[9px] leading-snug text-paper/45">
+                    Converts the whole <b>conversation in this scene</b> — each line in that character's assigned voice,
+                    reading the lines around it for natural back-and-forth, then applies each MP3 to its beat automatically.
+                    Skips silent/recall lines and characters without a voice ID. Set voices (and the API key) in the
+                    Characters tab.
+                  </p>
+                </div>
                 {(scene.dialogueBeats ?? []).map((b, i) => {
                   const speakerName =
                     b.characterId === "narrator"
                       ? "Narrator"
                       : story.characters.find((c) => c.id === b.characterId)?.name ?? "Narrator";
                   const snippet = b.text.replace(/\s+/g, " ").trim().slice(0, 30);
+                  // Open if the user has opened it OR it's a brand-new beat the
+                  // author just added (default open) OR the focused beat. Beat
+                  // collapse persists across edits via the user-toggled set.
+                  const isOpen =
+                    beatsUserToggled.has(b.id)
+                      ? expandedBeats.has(b.id)
+                      : true;
                   return (
                     <CollapsibleSection
                       key={b.id}
@@ -6762,6 +7694,41 @@ function StudioInner({
                       title={<span>💬 Beat {i + 1} · {speakerName}{snippet ? ` — ${snippet}` : ""}</span>}
                       titleClass="text-gold"
                       defaultOpen={focusedBeatId === b.id}
+                      controlledOpen={isOpen}
+                      onToggle={(next) => {
+                        setBeatsUserToggled((prev) => new Set(prev).add(b.id));
+                        setExpandedBeats((prev) => {
+                          const s2 = new Set(prev);
+                          if (next) s2.add(b.id); else s2.delete(b.id);
+                          return s2;
+                        });
+                      }}
+                      draggable
+                      dragOver={dragOverBeatId === b.id && dragBeatId !== b.id}
+                      onDragStartHandle={(e) => {
+                        setDragBeatId(b.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", b.id);
+                      }}
+                      onDragEnterHandle={(e) => {
+                        e.preventDefault();
+                        if (dragBeatId && dragBeatId !== b.id) setDragOverBeatId(b.id);
+                      }}
+                      onDragOverHandle={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDropHandle={(e) => {
+                        e.preventDefault();
+                        const dropped = e.dataTransfer.getData("text/plain") || dragBeatId;
+                        if (dropped) reorderBeat(dropped, b.id);
+                        setDragBeatId(null);
+                        setDragOverBeatId(null);
+                      }}
+                      onDragEndHandle={() => {
+                        setDragBeatId(null);
+                        setDragOverBeatId(null);
+                      }}
                       headerRight={
                         <span className="flex items-center gap-1">
                           <button
@@ -6844,7 +7811,7 @@ function StudioInner({
                         />
                       </Field>
                     </div>
-                    <Field label="🖼 Replacement background image (shown only while this beat plays)">
+                    <Field label="🖼 Replacement background image (persists over later beats by default — see options below)">
                       <div className="flex gap-1">
                         <input
                           className={inputCls}
@@ -6943,7 +7910,49 @@ function StudioInner({
                           </Field>
                         </div>
                       )}
+                      <div className="mt-1 space-y-1 border border-gold/20 bg-gold/5 p-1.5">
+                        <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={b.backgroundHold !== false}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const beat = d.scenes.find((x) => x.id === scene.id)!.dialogueBeats!.find((x) => x.id === b.id)!;
+                                beat.backgroundHold = e.target.checked ? undefined : false;
+                              })
+                            }
+                          />
+                          <span>
+                            📌 Keep image on later beats
+                            <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                              On by default — this insert stays up while later beats talk over it, until another beat
+                              sets a new image. Turn OFF to show it only during this beat, then snap back to the scene.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
                     </Field>
+                    {/* On any beat: end a held insert and return to the scene plate. */}
+                    <label className="flex items-start gap-2 border border-cyan-neon/25 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/70">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={!!b.backgroundRevert}
+                        onChange={(e) =>
+                          mutate((d) => {
+                            const beat = d.scenes.find((x) => x.id === scene.id)!.dialogueBeats!.find((x) => x.id === b.id)!;
+                            beat.backgroundRevert = e.target.checked || undefined;
+                          })
+                        }
+                      />
+                      <span>
+                        🔙 End insert shot here — return to the scene image
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          Drops a held replacement background when this beat begins (use on a beat with no image of its own).
+                        </span>
+                      </span>
+                    </label>
                     <label className="flex items-center gap-2 border border-neon/20 bg-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
                       <input
                         type="checkbox"
@@ -6957,6 +7966,78 @@ function StudioInner({
                       />
                       🔇 Silent beat — no narration (text only)
                     </label>
+                    {/* ---- after this beat: route to another scene ---- */}
+                    <div className="border border-cyan-neon/30 bg-cyan-neon/5 p-2 space-y-1.5">
+                      <Field label="🎬 After this beat — cut to scene (insert shot ends the scene)">
+                        <select
+                          className={inputCls}
+                          value={b.afterBeatTargetSceneId ?? ""}
+                          onChange={(e) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              const beat = s.dialogueBeats!.find((x) => x.id === b.id)!;
+                              beat.afterBeatTargetSceneId = e.target.value || undefined;
+                              if (e.target.value && beat.afterBeatMode === undefined) {
+                                beat.afterBeatMode = "auto";
+                                beat.afterBeatDelaySeconds = 1.6;
+                              }
+                            })
+                          }
+                        >
+                          <option value="">— stay in this scene after the beat —</option>
+                          {story.scenes
+                            .filter((s) => s.id !== scene.id)
+                            .map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.isEnding ? "🏁 " : "🎞 "}
+                                {s.title}
+                              </option>
+                            ))}
+                        </select>
+                      </Field>
+                      {b.afterBeatTargetSceneId && (
+                        <>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            When this beat (the LAST visible line) is dismissed, the game cuts straight to that scene —
+                            this insert background fades directly into the next, with no flash back to the scene plate.
+                            Put it on the scene's final beat.
+                          </p>
+                          <Field label="When to cut">
+                            <select
+                              className={inputCls}
+                              value={b.afterBeatMode ?? "auto"}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.afterBeatMode = e.target.value as "auto" | "continue";
+                                })
+                              }
+                            >
+                              <option value="auto">⏱ Auto — hold on a timer, then cut</option>
+                              <option value="continue">▸ Continue button / Space — the player cuts</option>
+                            </select>
+                          </Field>
+                          {(b.afterBeatMode ?? "auto") === "auto" && (
+                            <Field label={`Hold ${b.afterBeatDelaySeconds ?? 1.6}s after the line finishes (the timer guarantees the beat is read)`}>
+                              <input
+                                type="range"
+                                min={0.5}
+                                max={12}
+                                step={0.5}
+                                className="w-full accent-cyan-400"
+                                value={b.afterBeatDelaySeconds ?? 1.6}
+                                onChange={(e) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.dialogueBeats!.find((x) => x.id === b.id)!.afterBeatDelaySeconds = Number(e.target.value);
+                                  })
+                                }
+                              />
+                            </Field>
+                          )}
+                        </>
+                      )}
+                    </div>
                     {b.characterId !== "narrator" && story.characters.some((ch) => ch.id === b.characterId) && (
                       <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
                         <input
@@ -6971,7 +8052,7 @@ function StudioInner({
                         />
                         🗣 Talking animation — {b.useCharacterAnimation !== false ? "animate" : "resting pose"} while they speak
                         {!(story.characters.find((ch) => ch.id === b.characterId)?.talkingFrames?.length) && (
-                          <span className="text-paper/35 normal-case">(set frames in People tab first)</span>
+                          <span className="text-paper/35 normal-case">(set frames in the Characters tab first)</span>
                         )}
                       </label>
                     )}
@@ -7028,13 +8109,13 @@ function StudioInner({
                                 : b.recalls && Object.keys(b.recalls).length
                                   ? "This line recalls memories — its text changes by route, so it stays on TTS"
                                   : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
-                                    ? "Assign this character's ElevenLabs voice ID in the People tab first"
+                                    ? "Assign this character's ElevenLabs voice ID in the Characters tab first"
                                     : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
                           }
                           onClick={async () => {
                             const ch = story.characters.find((x) => x.id === b.characterId);
                             if (!ch?.elevenVoiceId) {
-                              window.alert("Assign this character's ElevenLabs voice ID in the People tab first.");
+                              window.alert("Assign this character's ElevenLabs voice ID in the Characters tab first.");
                               return;
                             }
                             const line = b.text.trim();
@@ -7093,17 +8174,59 @@ function StudioInner({
                         )}
                       </div>
                     </Field>
-                    <Field label="Line">
-                      <textarea
+                    <Field label="Line (click to type — saves when you click away)">
+                      <CommitTextArea
                         className={`${inputCls} h-16 font-type`}
                         value={b.text}
-                        onChange={(e) =>
-                          mutate((d) => {
+                        onCommit={(next) =>
+                          mutateLatest((d) => {
                             const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = e.target.value;
+                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = next;
                           })
                         }
                       />
+                      {/* Audio tags — v3 performs sound cues (laugh/cough);
+                          older models get only voice-delivery direction like
+                          whisper, with a note. */}
+                      {b.characterId !== "narrator" && (() => {
+                        const tags = audioTagsForModel(getElevenModel());
+                        const v3 = modelSupportsAudioTags(getElevenModel());
+                        if (!tags.length) return null;
+                        return (
+                          <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
+                            <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
+                              🎙 Insert cue · {v3 ? "sound + delivery" : "delivery only"}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {tags.map((t) => (
+                                <button
+                                  key={t.tag}
+                                  type="button"
+                                  title={t.hint}
+                                  onClick={() =>
+                                    mutate((d) => {
+                                      const beat = d.scenes
+                                        .find((x) => x.id === scene.id)!
+                                        .dialogueBeats!.find((x) => x.id === b.id)!;
+                                      beat.text = `${beat.text ? beat.text.replace(/\s*$/, "") + " " : ""}${t.tag} `;
+                                    })
+                                  }
+                                  className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-wide text-neon hover:bg-neon/15"
+                                >
+                                  {t.label}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                              {v3 ? (
+                                <>Bracketed cues like <b>[laughs]</b> are performed by the v3 voice — place them where the sound happens.</>
+                              ) : (
+                                <>This model only handles delivery cues like <b>[whispers]</b>. Switch to <b>Eleven v3</b> for performed sounds ([laughs], [coughs]…) — other models read the brackets aloud.</>
+                              )}
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </Field>
                     {/* Memory recall substitutions — the NPC echoes a specific
                         earlier choice instead of a generic line. */}
@@ -8312,7 +9435,7 @@ import type { TitleTheme } from "../types";
 export function Studio(props: {
   baseStories: Story[];
   onExit: () => void;
-  onPlay: (story: Story) => void;
+  onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;

@@ -183,8 +183,10 @@ export interface DialogueBeat {
   conditionRule?: Gating;
 
   /** Optional replacement background image (url / gradient: / asset:) shown
-   * while this beat plays. Reverts to the scene's default background when the
-   * next beat starts (or the dialogue finishes). */
+   * for this beat. By default a replacement image PERSISTS through later
+   * beats (they stay on it until another beat sets a new image or a beat
+   * ends the insert). Set `backgroundHold` to false to show it for THIS beat
+   * only and revert to the scene plate as soon as the next beat starts. */
   background?: string;
   /** Cinematic camera/lighting applied to this beat's replacement background. */
   cinematic?: CinematicSettings;
@@ -192,6 +194,13 @@ export interface DialogueBeat {
   backgroundTransition?: "cut" | "fade" | "crossfade" | "fade-black" | "slide-left" | "slide-right" | "iris-in";
   /** Duration of the background transition in seconds (default 0.5). */
   backgroundTransitionSpeed?: number;
+  /** Keep this beat's replacement background up for the beats that follow
+   * (default true — persists). Set false to revert to the scene plate on the
+   * very next beat. */
+  backgroundHold?: boolean;
+  /** End any currently-held insert shot: drop back to the scene's own plate
+   * when this beat begins. Use on a beat with no background of its own. */
+  backgroundRevert?: boolean;
 
   /** optional MP3 voice line — plays instead of Web Speech TTS */
   audioUrl?: string;
@@ -206,6 +215,26 @@ export interface DialogueBeat {
    * the `{said}` placeholder to echo the player's exact words. When several
    * memories are present, the first matching tag in insertion order wins. */
   recalls?: Record<string, string>;
+
+  /* ---- AFTER THIS BEAT: route to another scene ----
+   * Normally a beat's replacement background reverts to the scene plate when
+   * the dialogue finishes (before the scene's choices appear). These fields
+   * instead send the player to another scene the moment this beat DONE is
+   * dismissed — so the insert shot crossfades straight into the next scene,
+   * with no cut back to the scene's own background. This is the clean way to
+   * chain insert shots / build cutscenes out of beats. Only meaningful on a
+   * beat that is visible at the end of a scene's beat queue (a following beat
+   * merely routes when its turn ends; the LAST visible beat performs it). */
+  /** Scene to go to when this beat is dismissed. Ignored on every beat except
+   * the last visible one in the queue (later beats take over). */
+  afterBeatTargetSceneId?: string;
+  /** "auto" (default): routes itself after `afterBeatDelaySeconds` once the
+   * line has finished typing. "continue": waits for the player's ▸ Continue
+   * / Space press — good when you want them to read it before it cuts. */
+  afterBeatMode?: "auto" | "continue";
+  /** Hold time (seconds) between the finished line and the auto-route
+   * (default 1.6). Ignored in "continue" mode. */
+  afterBeatDelaySeconds?: number;
 }
 
 export interface EndingData {
@@ -396,6 +425,55 @@ export interface CreditsSettings {
   gateWeave?: "off" | "subtle" | "worn" | "projector";
 }
 
+/** An ADDITIONAL foreground image layered on top of the plate (and the primary
+ * `foregroundImage` subject). Unlike the single primary foreground — which is
+ * the vertigo/talking-sprite anchor and cycles keyframes — these are static
+ * (or zooming) decorations/characters you can stack as many of as you like,
+ * each independently positioned, scaled, flipped and parallaxed. */
+export interface ForegroundExtra {
+  /** image url / `gradient:` / `asset:` reference */
+  image: string;
+  /** how the image fits its box (default contain) */
+  fit?: "contain" | "cover" | "fill" | "native";
+  /** image scale (default 1) */
+  scale?: number;
+  /** anchor position as % of the frame (default 50 / 50) */
+  x?: number;
+  y?: number;
+  /** point ON the image pinned at x/y, CSS background-position style (default "50% 100%" — feet on the floor) */
+  anchor?: string;
+  /** mirror horizontally, so two subjects can face each other */
+  flip?: boolean;
+  /** parallax depth 0 (far)→1 (near); only moves when parallaxDepth is on. */
+  depth?: number;
+  /** optional animated push-in zoom (1 = none) */
+  zoom?: number;
+  /** seconds the foreground zoom takes (default 8) */
+  zoomDuration?: number;
+}
+
+/** A mid-ground parallax depth plane (see CinematicSettings.parallaxLayers). */
+export interface ParallaxLayer {
+  /** image url / `gradient:` / `asset:` reference — transparent cutouts work best */
+  image: string;
+  /** 0 (far plane, shifts the least) → 1 (near plane, shifts like the foreground) */
+  depth: number;
+  /** how the image fits its plane (same semantics as foregroundFit) */
+  fit?: "contain" | "cover" | "fill" | "native";
+  /** plane scale (default 1) */
+  scale?: number;
+  /** anchor position, % of frame (default 50 / 50) */
+  x?: number;
+  y?: number;
+}
+
+/** Named colour grade presets (see GRADE_PRESETS in src/cinematic.ts). */
+export type GradePresetId =
+  | "nolan-imax"
+  | "tarantino-35mm"
+  | "spielberg-golden"
+  | "noir-1940s";
+
 /** Cinematic camera/lighting settings applied to an image (scene background
  * or a dialogue beat's replacement background). */
 export interface CinematicSettings {
@@ -463,6 +541,12 @@ export interface CinematicSettings {
    * several poses. When set, its `frames` replace the single foregroundImage
    * (every frame shares the same scale / fit / position). */
   foregroundAnimation?: ForegroundAnimation;
+  /** ADDITIONAL foreground images stacked on top of the plate (and behind
+   * the primary foregroundImage subject). Unlike the single primary
+   * foreground (the vertigo / talking-sprite anchor), these are independently
+   * positioned, scaled, flipped and parallaxed extras — add as many as you
+   * like for multiple characters / props / frames in one shot. */
+  foregroundExtras?: ForegroundExtra[];
   /** drift distance for the slow "pan" mode as % of image width (default 0 —
    * keeps the gentle push-in only) */
   panDistance?: number;
@@ -476,6 +560,29 @@ export interface CinematicSettings {
   lensFlare?: LensFlareSettings;
   /** multiple lens flare sources (when multiple distinct flares are authored) */
   flares?: LensFlareSettings[];
+
+  /** Cinematic COLOR GRADE applied to the background plate: a named
+   * director/stock look (see GRADE_PRESETS in src/cinematic.ts). Grades work
+   * on ANY camera mode — they are a CSS filter + split-tone wash layered over
+   * the moving plate, not a camera move. */
+  colorGrade?: GradePresetId;
+  /** Film-stock emulation: animated 35mm grain (stronger than the global
+   * grain), gate weave, a soft halation bloom around highlights, light
+   * flicker and the occasional dust/scratch pass. Sits ABOVE the grade so it
+   * reads as the physical print of the graded image. */
+  filmGrade?: boolean;
+  /** Strength of the film-stock treatment, 0–1 (default 0.7). */
+  filmGradeStrength?: number;
+
+  /** Mouse/pointer PARALLAX depth: the camera subtly follows the cursor, and
+   * the layers drift against each other (background slowest, foreground
+   * fastest) for a diorama feel. 0/off–1 strong; default 0.35 when set.
+   * Falls back to a gentle idle sway on devices with no pointer. */
+  parallaxDepth?: number;
+  /** Extra mid-ground depth planes between plate and subject. Each plane is a
+   * transparent cutout that parallaxes at its own rate; `depth` 0 (far) → 1
+   * (near) drives its shift. Great for window frames, crowds, fog banks. */
+  parallaxLayers?: ParallaxLayer[];
 
   /** @deprecated legacy single light — merged into `lights` on next edit. */
   lightSource?: string;
@@ -685,6 +792,12 @@ export interface SceneNode {
    *  Applies to both the outgoing track and the incoming one, so a switch is
    *  a true crossfade. Defaults to 1.4s. 0 = hard cut (the old behaviour). */
   musicFadeSeconds?: number;
+  /** Default level for this scene's music, 0–1 (a multiplier on the music
+   *  channel). Lets a scene start a track louder (a title theme) or lower
+   *  (ambient bed under dialogue) independent of the player's music volume.
+   *  Only applied when this scene starts a track (musicMode "track"); a
+   *  "continue"/"none" scene doesn't retune an already-playing track. */
+  musicLevel?: number;
   /** one-shot recorded prose narration, used instead of Web Speech */
   narrationAudioUrl?: string;
   /** scene-level narration override; defaults to true */
@@ -879,7 +992,42 @@ export interface DialogueBoxTheme {
   /** Draw a hairline border + shadow around the panel so it reads as a
    * physical card rather than a gradient. Default false. */
   bordered?: boolean;
+
+  /* ------------------------------------------------------------------ *
+   *  In-game text type / size
+   * ------------------------------------------------------------------ */
+  /** Typeface for body prose + dialogue lines (the big reading text). */
+  bodyFont?: "type" | "pulp" | "poster" | "elegant" | "epic" | "modern";
+  /** Typeface for headings — nameplates, HUD labels, scene titles. */
+  headingFont?: "pulp" | "poster" | "epic" | "ui" | "elegant" | "type";
+  /** Body text size scale, 0.8–1.4 (1 = default). Scales the reading text
+   * and the line reservation proportionally. */
+  textScale?: number;
+
+  /* ------------------------------------------------------------------ *
+   *  HUD / accent theme
+   * ------------------------------------------------------------------ */
+  /** Named HUD colour scheme, applied story-wide. "classic" keeps the
+   * default noir palette; the rest re-tint gold/neon/cyan/crimson accents. */
+  hudTheme?: HudThemeId;
+  /** Custom primary accent (hex), overrides the scheme's accent/gold for
+   * nameplates, highlights and the choice focus. Used when set. */
+  accentColor?: string;
+  /** Custom danger/heat colour (hex), overrides crimson (bad gates, HEAT). */
+  dangerColor?: string;
+  /** Hide the small ⏱ countdown / autosave style readouts and similar HUD
+   * chrome for a cleaner, more cinematic frame. */
+  minimalHud?: boolean;
 }
+
+/** Named in-game HUD colour schemes (see HUD_THEMES in src/cinematic.ts). */
+export type HudThemeId =
+  | "classic"
+  | "neon-noir"
+  | "sepia-pulp"
+  | "midnight-teal"
+  | "venetian-red"
+  | "ghost-green";
 
 /** Global config for the main title / landing page */
 export interface TitleTheme {

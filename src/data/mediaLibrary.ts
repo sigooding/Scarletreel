@@ -385,6 +385,8 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     if (!c) return;
     visit(c.foregroundImage);
     c.foregroundAnimation?.frames?.forEach(visit);
+    c.foregroundExtras?.forEach((e) => visit(e.image));
+    c.parallaxLayers?.forEach((l) => visit(l.image));
   };
   story.scenes.forEach((sc) => {
     visit(sc.background);
@@ -607,6 +609,20 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
         await Promise.all(sc.cinematic.foregroundAnimation.frames.map((f) => compact(f, "image", sc.title)))
       ).filter((f): f is string => !!f);
     }
+    if (sc.cinematic?.foregroundExtras?.length) {
+      for (const e of sc.cinematic.foregroundExtras) {
+        const out = await compact(e.image, "image", sc.title);
+        e.image = out ?? e.image;
+      }
+    }
+    if (sc.cinematic?.parallaxLayers?.length) {
+      for (const l of sc.cinematic.parallaxLayers) {
+        if (l.image.startsWith("asset:") || l.image.startsWith("data:")) {
+          const out = await compact(l.image, "image", sc.title);
+          if (out) l.image = out;
+        }
+      }
+    }
     for (const b of sc.dialogueBeats ?? []) {
       b.audioUrl = await compact(b.audioUrl, "audio", sc.title);
       b.background = await compact(b.background, "image", sc.title);
@@ -617,6 +633,12 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
         b.cinematic.foregroundAnimation.frames = (
           await Promise.all(b.cinematic.foregroundAnimation.frames.map((f) => compact(f, "image", sc.title)))
         ).filter((f): f is string => !!f);
+      }
+      if (b.cinematic?.foregroundExtras?.length) {
+        for (const e of b.cinematic.foregroundExtras) {
+          const out = await compact(e.image, "image", sc.title);
+          e.image = out ?? e.image;
+        }
       }
     }
   }

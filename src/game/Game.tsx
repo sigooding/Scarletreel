@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audio, type MixChannel } from "../audio";
 import {
   calculateGhostElements,
+  GRADE_PRESETS,
+  inGameThemeVars,
   lensFlareStyle,
   lightStyle,
+  parallaxStyle,
   resolveLensFlares,
   resolveLights,
   type ResolvedLensFlare,
@@ -17,6 +20,7 @@ import {
   createInitialState,
   currentEpisode,
   effectiveChoiceGating,
+  episodeOfScene,
   examineZoom,
   interrogationOutcome,
   isPressingReply,
@@ -77,10 +81,12 @@ import type {
   CinematicSettings,
   CreditsLine,
   CreditsSettings,
+  DialogueBeat,
   DialogueBoxTheme,
   Episode,
   EpisodeProgress,
   ForegroundAnimation,
+  ForegroundExtra,
   GameSave,
   GlobalState,
   Hotspot,
@@ -298,7 +304,8 @@ const PROSE_LINE_EM = 1.375;
 function reservedProseHeight(theme: DialogueBoxTheme | undefined): string | undefined {
   const lines = theme?.reserveLines ?? DEFAULT_RESERVE_LINES;
   if (lines <= 0) return undefined;
-  return `${(lines * PROSE_LINE_EM).toFixed(3)}em`;
+  const scale = theme?.textScale ?? 1;
+  return `${(lines * PROSE_LINE_EM * scale).toFixed(3)}em`;
 }
 
 /** Backdrop layer for the narrative panel. Sits behind the panel's content
@@ -333,6 +340,53 @@ function bgStyle(bg: string): React.CSSProperties {
   if (resolved.startsWith("gradient:")) return { background: resolved.slice(9) };
   if (resolved.startsWith("video:")) return { background: "#05050a" };
   return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
+}
+
+/** Grade + film-stock + parallax classes for a cinematic plate. The colour
+ * grade is a class only for non-dolly-zoom modes (the dolly-zoom keyframes
+ * own `filter` for the blur, so its grade filter is baked into the keyframes
+ * via --cin-grade-filter); the film treatment and parallax wrapper are plain
+ * classes that work with any mode. */
+function cinematicGradeClasses(c: CinematicSettings | undefined): string {
+  const out: string[] = [];
+  const grade = c?.colorGrade ? GRADE_PRESETS[c.colorGrade] : undefined;
+  const film = !!c?.filmGrade;
+  if (grade && (c?.mode ?? "pan") !== "dolly-zoom") out.push(`cin-grade-${grade.id}`);
+  if (film) out.push("film-grade");
+  return out.join(" ");
+}
+
+/** The split-tone wash + scratch layer that sit ABOVE a graded/filmed plate
+ * (also the only grade treatment video cutscenes can show — a video frame
+ * can't take a CSS filter). Render inside the same relative container as the
+ * plate so it covers it exactly. */
+export function CinematicOverlays({ cinematic }: { cinematic?: CinematicSettings }) {
+  const grade = cinematic?.colorGrade ? GRADE_PRESETS[cinematic.colorGrade] : undefined;
+  const film = !!cinematic?.filmGrade;
+  if (!grade && !film) return null;
+  const strength = Math.max(0, Math.min(1, cinematic?.filmGradeStrength ?? 0.7));
+  return (
+    <>
+      {grade && (
+        <div
+          className="grade-wash"
+          aria-hidden
+          style={{
+            background: grade.tint,
+            "--grade-wash-op": grade.tintOpacity,
+            "--grade-wash-blend": grade.tintBlend,
+          } as React.CSSProperties}
+        />
+      )}
+      {film && (
+        <div
+          className="film-scratches"
+          aria-hidden
+          style={{ "--film-strength": strength } as React.CSSProperties}
+        />
+      )}
+    </>
+  );
 }
 
 /** Build the CSS class + variables that apply cinematic camera motion and
@@ -376,6 +430,23 @@ export function cinematicLayer(c: CinematicSettings | undefined, url: string): {
     "--cin-dolly-zoom-to": `${zoomDir === "pull" ? 1 : zoomAmount}`,
     "--cin-dolly-zoom-blur": `${Math.max(0, c?.dollyZoomBlur ?? 0)}px`,
     "--cin-dolly-zoom-dur": `${Math.max(1, c?.dollyZoomDuration ?? 8)}s`,
+    // Colour grade: dolly-zoom keyframes own `filter` (the blur), so the grade
+    // filter is baked into the keyframe variable; other modes take a class.
+    ...(mode === "dolly-zoom"
+      ? {
+          // Keyframes consume these; defaults keep the blur-only behaviour.
+          "--cin-grade-filter": c?.colorGrade
+            ? (GRADE_PRESETS[c.colorGrade]?.filterWithBlur ?? GRADE_PRESETS[c.colorGrade]?.filter ?? `blur(${Math.max(0, c?.dollyZoomBlur ?? 0)}px)`)
+            : `blur(${Math.max(0, c?.dollyZoomBlur ?? 0)}px)`,
+          "--cin-grade-filter-clean": c?.colorGrade ? (GRADE_PRESETS[c.colorGrade]?.filter ?? "none") : "none",
+        }
+      : {}),
+    // Film-stock strength (drives grain/halation/scratch opacity).
+    ...(c?.filmGrade
+      ? {
+          "--film-strength": String(Math.max(0, Math.min(1, c.filmGradeStrength ?? 0.7))),
+        }
+      : {}),
   } as React.CSSProperties;
   // Dolly needs the image larger than the frame so it has room to travel —
   // pin the height and let the width overflow instead of cropping to cover.
@@ -400,10 +471,113 @@ export function cinematicLayer(c: CinematicSettings | undefined, url: string): {
                   : "cin-dolly-zoom"
               : "cin-static",
     (c?.dimAmount ?? 0) > 0 ? "cin-dim" : "",
+    cinematicGradeClasses(c),
   ]
     .filter(Boolean)
     .join(" ");
   return { className, style };
+}
+
+/* ------------------------------------------------------------------ */
+/*  parallax depth planes                                             */
+/* ------------------------------------------------------------------ */
+
+/** Tracks the pointer over the stage and writes --par-x / --par-y
+ * (range -1..1) onto the root element so parallax layers can shift. Honors
+ * reduced-motion (no vars set → layers stay centred). The values are written
+ * as CSS custom properties directly to avoid a React re-render per frame. */
+function useParallaxTracker(rootRef: React.RefObject<HTMLElement | null>, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const el = rootRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onMove = (e: PointerEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const r = el.getBoundingClientRect();
+        const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+        const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
+        el.style.setProperty("--par-x", nx.toFixed(3));
+        el.style.setProperty("--par-y", ny.toFixed(3));
+        el.classList.add("parallax-active");
+      });
+    };
+    const onLeave = () => {
+      el.style.removeProperty("--par-x");
+      el.style.removeProperty("--par-y");
+      el.classList.remove("parallax-active");
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerleave", onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerleave", onLeave);
+    };
+  }, [rootRef, enabled]);
+}
+
+/** True when the currently-shown plate should parallax (scene plate, or an
+ * insert-shot beat background carrying its own parallax settings). */
+function hasParallax(c: CinematicSettings | undefined): boolean {
+  return (c?.parallaxDepth ?? 0) > 0;
+}
+
+
+/** Extra mid-ground depth planes (window frames, fog banks, crowds) that
+ * parallax between the plate and the foreground subject. Each plane shifts
+ * against --par-x/--par-y by its own depth (far planes slow, near planes
+ * fast). Only rendered when parallax depth is enabled on the cinematic. */
+export function ParallaxMidLayers({
+  cinematic,
+  resolve,
+}: {
+  cinematic?: CinematicSettings;
+  /** Studio-preview asset resolver; the game passes nothing. */
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const depth = cinematic?.parallaxDepth ?? 0;
+  const layers = cinematic?.parallaxLayers ?? [];
+  if (!(depth > 0) || !layers.length) return null;
+  const r = resolve ?? ((v?: string) => v);
+  const planeVars = (depth: number): React.CSSProperties =>
+    ({ "--plane-shift": `${(6 + depth * 22).toFixed(1)}px` } as React.CSSProperties);
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[1]">
+      {layers.map((layer, i) => {
+        const src = assetUrl(r(layer.image));
+        if (!src) return null;
+        if (src.startsWith("gradient:")) {
+          return (
+            <div
+              key={i}
+              className="parallax-mid absolute inset-0"
+              style={{ ...planeVars(layer.depth), background: src.slice(9) }}
+              aria-hidden
+            />
+          );
+        }
+        const scale = Math.max(0.05, layer.scale ?? 1);
+        const fit = layer.fit ?? "cover";
+        return (
+          <div key={i} className="parallax-mid absolute inset-0" style={planeVars(layer.depth)} aria-hidden>
+            <img
+              src={src}
+              alt=""
+              draggable={false}
+              className="absolute inset-0 h-full w-full"
+              style={{
+                objectFit: fit === "native" ? undefined : fit,
+                transform: `scale(${scale})`,
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /** Parse a CSS background-position style anchor ("50% 20%", "center bottom",
@@ -524,6 +698,113 @@ export function ForegroundLayer({
         anim={anim}
       />
     </div>
+  );
+}
+
+/** ADDITIONAL foreground images (the stacked extras). Each is an independent
+ * character/prop/frame placed on top of the plate (behind the primary
+ * foreground subject). Sizing is frame-relative: the image sits in a box
+ * anchored at (x, y), scaled by `scale` (fraction of the frame height), and —
+ * when parallax depth is on — shifts with the pointer by its own `depth`. */
+function ForegroundExtraImage({
+  extra,
+  resolve,
+}: {
+  extra: ForegroundExtra;
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const r = resolve ?? ((v?: string) => v);
+  const src = assetUrl(r(extra.image));
+  if (!src) return null;
+  const x = clamp(extra.x ?? 50, 0, 100);
+  const y = clamp(extra.y ?? 50, 0, 100);
+  const scale = Math.max(0.05, extra.scale ?? 1);
+  const fit = extra.fit ?? "contain";
+  const { ax, ay } = parseAnchor(extra.anchor ?? "50% 100%");
+  const zoom = extra.zoom !== undefined && extra.zoom !== 1 ? extra.zoom : undefined;
+  const zoomDur = Math.max(1, extra.zoomDuration ?? 8);
+  // Anchor-position box, translated by its anchor point.
+  // Box: fit modes fill the frame (subject spans the whole plate);
+  // "contain"/"native" sit in a height-fractioned box that hugs the image
+  // ratio, so e.g. a character at scale 0.8 occupies 80% of frame height.
+  const boxStyle: React.CSSProperties = {
+    left: `${x}%`,
+    top: `${y}%`,
+    width: fit === "cover" || fit === "fill" ? "100%" : "auto",
+    height: fit === "cover" || fit === "fill" ? "100%" : `${(scale * 100).toFixed(1)}%`,
+    aspectRatio: fit === "cover" || fit === "fill" ? undefined : "auto",
+    transform: `translate(${(-ax).toFixed(2)}%, ${(-ay).toFixed(2)}%)`,
+    transformOrigin: `${ax}% ${ay}%`,
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+  };
+  const flipScale = extra.flip ? -1 : 1;
+  if (src.startsWith("gradient:")) {
+    return <div className="absolute" style={{ ...boxStyle, background: src.slice(9) }} aria-hidden />;
+  }
+  return (
+    <div className="absolute" style={boxStyle} aria-hidden>
+      <img
+        src={src}
+        alt=""
+        draggable={false}
+        className={`select-none ${
+          fit === "cover"
+            ? "h-full w-full object-cover"
+            : fit === "fill"
+              ? "h-full w-full"
+              : "h-auto w-auto max-h-full max-w-full object-contain"
+        } ${zoom ? "fg-zoom" : ""}`}
+        style={{
+          transformOrigin: `${ax}% ${ay}%`,
+          transform: zoom ? undefined : `scaleX(${flipScale})`,
+          height: fit === "cover" || fit === "fill" ? "100%" : undefined,
+          width: fit === "cover" || fit === "fill" ? "100%" : undefined,
+          ...(zoom
+            ? ({
+                "--fg-base": String(flipScale),
+                "--fg-zoom": String(zoom),
+                "--fg-zoom-dur": `${zoomDur}s`,
+              } as React.CSSProperties)
+            : {}),
+        }}
+      />
+    </div>
+  );
+}
+
+/** The stack of additional foreground images for a cinematic. Renders in the
+ * SAME parallax-fg wrapper as the primary foreground; each extra independently
+ * shifts by its depth when parallax is on. */
+export function ForegroundExtras({
+  cinematic,
+  resolve,
+}: {
+  cinematic?: CinematicSettings;
+  resolve?: (v?: string) => string | undefined;
+}) {
+  const extras = cinematic?.foregroundExtras ?? [];
+  if (!extras.length) return null;
+  // When parallax is on, each extra wraps in a parallax-mid plane so it
+  // shifts by its own depth; otherwise it renders as a plain layer.
+  const parallaxOn = (cinematic?.parallaxDepth ?? 0) > 0;
+  return (
+    <>
+      {extras.map((e, i) => {
+        const el = <ForegroundExtraImage key={i} extra={e} resolve={resolve} />;
+        if (!parallaxOn || (e.depth ?? 0) <= 0) return el;
+        return (
+          <div
+            key={`par-${i}`}
+            className="parallax-mid absolute inset-0"
+            style={{ "--plane-shift": `${(4 + (e.depth ?? 0.5) * 26).toFixed(1)}px` } as React.CSSProperties}
+          >
+            {el}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -1697,17 +1978,25 @@ function BeatBackground({
       {layers.map((l) => {
         const { className: cinClass, style: cinStyle } = cinematicLayer(l.cinematic, l.background);
         const animClass = l.exiting ? "beatbg-out" : `beatbg-in-${transitionName}`;
+        const pOn = hasParallax(l.cinematic);
         return (
           <div
             key={l.key}
             className={`absolute inset-0 z-[2] ${animClass}`}
             style={{ "--beatbg-speed": `${speed}s` } as React.CSSProperties}
           >
-            <div className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
-              <LightGlow cinematic={l.cinematic} />
-              <LensFlareLayer cinematic={l.cinematic} />
+            <div className={`absolute inset-0 ${pOn ? "parallax-plate" : ""}`} style={pOn ? parallaxStyle(l.cinematic) : undefined}>
+              <div className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
+                <LightGlow cinematic={l.cinematic} />
+                <LensFlareLayer cinematic={l.cinematic} />
+                <CinematicOverlays cinematic={l.cinematic} />
+              </div>
             </div>
-            <ForegroundLayer cinematic={l.cinematic} />
+            {pOn && <ParallaxMidLayers cinematic={l.cinematic} />}
+            <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+              <ForegroundExtras cinematic={l.cinematic} />
+              <ForegroundLayer cinematic={l.cinematic} />
+            </div>
             {!l.exiting && transitionName === "fade-black" && (
               <div className="beatbg-black absolute inset-0 z-[3] bg-black" style={{ "--beatbg-speed": `${speed}s` } as React.CSSProperties} />
             )}
@@ -2428,6 +2717,9 @@ function CasePlayer({
   episodeEndPanel?: React.ReactNode;
   /** open the season / episode-list screen */
   onOpenSeason?: () => void;
+  /** Studio playtest: a direct from-scene run (fresh state, no save/resume
+   *  chrome) — the case-closes panel offers an Exit instead of resume. */
+  playtestMode?: boolean;
   onExit: () => void;
 }) {
   const [state, setState] = useState<GlobalState>(() => initialState ?? createInitialState(story));
@@ -2649,6 +2941,8 @@ function CasePlayer({
   const highlightsRef = useRef<string[]>([]);
   highlightsRef.current = episodeHighlights;
   const sceneAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Per-scene music level for the currently-playing track (1 = default).
+  const musicLevelRef = useRef<number>(1);
   // Elements currently fading out. They are detached from sceneAudioRef the
   // moment the fade starts, so the incoming track can be wired up immediately
   // and the two overlap into a crossfade rather than a gap.
@@ -2677,6 +2971,10 @@ function CasePlayer({
   }, []);
   const musicSrcRef = useRef<string | null>(null);
   const bgVideoRef = useRef<HTMLVideoElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  // Stable ref to leaveFor so earlier callbacks (advanceBeat) can call it
+  // without a forward dependency on its useCallback declaration.
+  const leaveForRef = useRef<((dest: string, breakTitle?: string) => void) | null>(null);
   const narrationTimerRef = useRef<number | null>(null);
   const primedNarrationRef = useRef<PrimedAudio | null>(primedNarration ?? null);
   const craftHintShown = useRef(false);
@@ -2926,8 +3224,12 @@ function CasePlayer({
       if (!reuse) a.loop = true;
       a.muted = !soundOnRef.current;
       // The voice-duck envelope multiplies in here too, so a track that
-      // starts mid-dialogue comes in already ducked.
-      const target = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+      // starts mid-dialogue comes in already ducked. A per-scene music level
+      // lets the author start this track louder/lower than the player's
+      // default music volume.
+      const trackLevel = scene.musicLevel !== undefined && scene.musicLevel >= 0 ? scene.musicLevel : 1;
+      musicLevelRef.current = trackLevel;
+      const target = audio.volumes.master * audio.volumes.music * trackLevel * audio.duckFactor;
       // Start silent and ramp in. A track adopted from the priming click may
       // already be audible, so it fades from wherever it actually is.
       a.volume = reuse ? a.volume : 0;
@@ -2981,6 +3283,7 @@ function CasePlayer({
     if (musicMode === "none") {
       // "No music" is a cue too: ramp the soundtrack out instead of dropping
       // it, so entering a silent scene lands rather than lurches.
+      musicLevelRef.current = 1;
       if (sceneAudioRef.current) {
         const outgoing = sceneAudioRef.current;
         outgoing.onplaying = null;
@@ -3343,7 +3646,7 @@ function CasePlayer({
     // and the fade fight, producing an audible stutter. The ramp already
     // targets the live mixer value, so the new level lands when it settles.
     if (sceneAudioRef.current && !isFading(sceneAudioRef.current)) {
-      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+      sceneAudioRef.current.volume = audio.volumes.master * audio.volumes.music * (musicLevelRef.current ?? 1) * audio.duckFactor;
     }
     // Video cutscenes follow master only.
     if (bgVideoRef.current) bgVideoRef.current.volume = audio.volumes.master;
@@ -3351,12 +3654,14 @@ function CasePlayer({
 
   // Sine-duck envelope: the scene music is a raw Audio element outside the
   // WebAudio buses, so the stepped duck factor is re-applied to the live
-  // track as the half-sine ramp progresses (and on release).
+  // track as the half-sine ramp progresses (and on release). The per-scene
+  // music level for the *current* track multiplies in too.
   useEffect(() => {
     audio.onDuckChange = () => {
       const a = sceneAudioRef.current;
       if (a && !isFading(a)) {
-        a.volume = audio.volumes.master * audio.volumes.music * audio.duckFactor;
+        const level = musicLevelRef.current ?? 1;
+        a.volume = audio.volumes.master * audio.volumes.music * level * audio.duckFactor;
       }
     };
     return () => {
@@ -3408,7 +3713,7 @@ function CasePlayer({
           setMusicPlaying(true);
           // Keep the voice duck in the target — re-enabling sound mid-dialogue
           // shouldn't slam the track up over a line that's still talking.
-          fadeAudio(a, audio.volumes.master * audio.volumes.music * audio.duckFactor, MUSIC_FADE_MS);
+          fadeAudio(a, audio.volumes.master * audio.volumes.music * (musicLevelRef.current ?? 1) * audio.duckFactor, MUSIC_FADE_MS);
         })
         .catch(() => setSoundBlocked(true));
     }
@@ -3528,11 +3833,61 @@ function CasePlayer({
   const interactive = sceneReady && !inBeats;
   const hasValidAutoAdvance = !!scene?.autoAdvanceTargetSceneId && story.scenes.some((candidate) => candidate.id === scene.autoAdvanceTargetSceneId);
   const currentBeat = inBeats ? visibleBeats[beatIdx] : null;
+  /* The insert shot to actually display on the current beat. A beat's own
+   * replacement image PERSISTS by default: it stays up through later beats
+   * (the characters keep talking over it) until another beat sets a new
+   * image or any beat ends the insert. backgroundHold=false makes an image
+   * last only its own beat; backgroundRevert=true drops back to the scene
+   * plate. We walk the visible beats up to and including the current one to
+   * find the active held insert. */
+  const heldInsert = useMemo(() => {
+    if (!inBeats) return null;
+    let held: DialogueBeat | null = null;
+    for (let i = 0; i <= beatIdx && i < visibleBeats.length; i += 1) {
+      const b = visibleBeats[i];
+      if (b.backgroundRevert) {
+        held = null; // explicit drop back to the scene plate
+      } else if (b.background) {
+        held = b; // this beat sets (or replaces) the held insert
+      } else if (held && held.backgroundHold === false) {
+        held = null; // a one-beat-only insert expires on the next beat
+      }
+    }
+    return held;
+  }, [inBeats, beatIdx, visibleBeats]);
   // Effective text with memory recall substitution — an NPC echoing what you
   // said, not just a flag-gated generic line.
   const currentBeatText = currentBeat
     ? resolveBeatText(currentBeat, state.memories, state.activeFlags, story.flagNotes)
     : "";
+
+  /* ---- after-beat routing: an insert shot that ends the scene ----
+   * A beat can carry afterBeatTargetSceneId so that when the LAST visible
+   * beat finishes, instead of reverting to the scene plate and showing the
+   * choices, the player routes straight to another scene — the replacement
+   * background crossfades into the new scene with no cut back to the plate.
+   * Mode: "auto" routes on a timer once the line is done; "continue" waits
+   * for the ▸ Continue / Space press. */
+  const beatRouteTarget = useMemo(() => {
+    // The route fires only from the LAST visible beat of the queue — the one
+    // the player dismisses when the dialogue runs out. (An earlier beat with
+    // routing is simply overridden by whichever beat is actually last; the
+    // validator warns if a non-final beat carries one so it's not a surprise.)
+    const last = visibleBeats[visibleBeats.length - 1];
+    return last?.afterBeatTargetSceneId ?? null;
+  }, [visibleBeats]);
+  const routingBeat = visibleBeats.length ? visibleBeats[visibleBeats.length - 1] : null;
+  const beatRouteValid = !!beatRouteTarget && story.scenes.some((s) => s.id === beatRouteTarget);
+  const beatRouteMode = routingBeat?.afterBeatMode === "continue" ? "continue" : "auto";
+  const beatRouteDelay = Math.max(0, Math.min(600, routingBeat?.afterBeatDelaySeconds ?? 1.6));
+  // The player is ON the final beat that routes into another scene — used to
+  // suppress skip/back/timer chrome over the insert even while typing.
+  const onRoutingBeat = beatRouteValid && !!currentBeat && currentBeat === routingBeat;
+  // Routing is live once that line has finished typing (the timer counts from
+  // when they've read it).
+  const beatRouteReady = onRoutingBeat && beatDone;
+  // Auto beat-route countdown (timer only; the HUD is hidden for the cut).
+  const [, setBeatRouteRemaining] = useState(0);
 
   /* -------- dialogue log --------
    * Every spoken line of the run — prose and beats, with speakers — is
@@ -3571,10 +3926,21 @@ function CasePlayer({
       setBeatDone(true);
       return;
     }
+    // Last beat with an after-beat route: dismissing it cuts straight to the
+    // next scene, so the insert background never reverts to the plate.
+    if (currentBeat === routingBeat && beatRouteValid) {
+      audio.click();
+      setBeatRouteRemaining(0);
+      audio.stopSpeech();
+      // leaveFor is declared below as a useCallback; it's stable enough that
+      // the ref indirection avoids a TDZ reference at render time.
+      leaveForRef.current?.(beatRouteTarget as string, scene?.partBreak);
+      return;
+    }
     audio.click();
     setBeatDone(false);
     setBeatIdx((i) => i + 1);
-  }, [inBeats, beatDone]);
+  }, [inBeats, beatDone, currentBeat, routingBeat, beatRouteValid, beatRouteTarget, scene?.partBreak]);
 
   // Rewind the scene's dialogue only — never into a previous scene. From the
   // choices it returns to the final line (shown instantly); from a beat it steps
@@ -3682,6 +4048,10 @@ function CasePlayer({
         }
         return;
       }
+      // On the routing beat, the after-beat timer owns the cut — don't
+      // advance the queue (which would revert the insert background) and
+      // let the beat-route timer fire the leave.
+      if (currentBeat === routingBeat && beatRouteValid) return;
       const t = window.setTimeout(() => {
         setBeatDone(false);
         setBeatIdx((i) => i + 1);
@@ -3790,6 +4160,12 @@ function CasePlayer({
   // scene already has a base cinematic (otherwise the swap does nothing on a
   // scene with no cinematic configured).
   const bgCinematic = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+  // Parallax follows the pointer across the stage; enabled when the plate or
+  // the currently showing insert-shot beat carries depth settings.
+  const beatCinematic = inBeats ? currentBeat?.cinematic : undefined;
+  const parallaxOn = hasParallax(bgCinematic) || hasParallax(beatCinematic);
+  const parallaxCinematic = hasParallax(beatCinematic) ? beatCinematic : bgCinematic;
+  useParallaxTracker(stageRef, parallaxOn);
 
   // Keep the latest closure values for the timer's interval callback so it never
   // reads a stale `scene`, `availableChoices`, or `choiceClocks` (which is what
@@ -3928,6 +4304,10 @@ function CasePlayer({
     },
     [actOpenedBy, hasChartableSteps, goToScene, story]
   );
+  // Keep the ref pointed at the latest leaveFor for advanceBeat to call.
+  useEffect(() => {
+    leaveForRef.current = leaveFor;
+  }, [leaveFor]);
 
   /* -------- scene auto-advance --------
    * For pure cinematic / prose-only nodes: once the setup, dialogue and any
@@ -3964,6 +4344,41 @@ function CasePlayer({
       window.clearTimeout(t);
     };
   }, [scene, sceneId, hasValidAutoAdvance, overlay, menuOpen, interactive, hasUsableChoice, leaveFor]);
+
+  /* -------- after-beat auto route (insert shot that ends the scene) --------
+   * AUTO mode: once the final beat has finished typing (and no menu/overlay is
+   * up), hold for beatRouteDelay so the player can read it, then route to the
+   * beat's target. The timer pauses under a menu/overlay exactly like the
+   * scene auto-advance timer. CONTINUE mode waits for advanceBeat() (the ▸
+   * Continue pill / Space), so no timer runs here. While this is pending the
+   * replacement background stays on screen — no revert to the plate. */
+  useEffect(() => {
+    if (!beatRouteReady || beatRouteMode !== "auto") {
+      setBeatRouteRemaining(0);
+      return;
+    }
+    if (overlay || menuOpen || holdActive) {
+      return; // paused; resume on close
+    }
+    const target = beatRouteTarget as string;
+    const delay = Math.max(0, beatRouteDelay);
+    setBeatRouteRemaining(delay);
+    const go = () => {
+      setBeatRouteRemaining(0);
+      audio.stopSpeech();
+      leaveFor(target, scene?.partBreak);
+    };
+    if (delay <= 0) {
+      const t = window.setTimeout(go, 0);
+      return () => window.clearTimeout(t);
+    }
+    const tick = window.setInterval(() => setBeatRouteRemaining((s) => Math.max(0, s - 1)), 1000);
+    const t = window.setTimeout(go, delay * 1000);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(t);
+    };
+  }, [beatRouteReady, beatRouteMode, beatRouteTarget, beatRouteDelay, overlay, menuOpen, holdActive, leaveFor, scene?.partBreak]);
 
   /** Append a decision to the ordered journey log. Captures the siblings
    *  that existed at this moment — including ones gated shut — because the
@@ -4683,9 +5098,13 @@ function CasePlayer({
       transformOrigin: b ? `${b.x + b.w / 2}% ${b.y + b.h / 2}%` : "50% 50%",
       transition: "transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1)",
     };
+    const plateParallax = hasParallax(bgCinematic) && !b;
     return (
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute inset-0 will-change-transform" style={examineStyle}>
+        <div
+          className={`absolute inset-0 will-change-transform ${plateParallax ? "parallax-plate parallax-idle" : ""}`}
+          style={{ ...examineStyle, ...(plateParallax ? parallaxStyle(bgCinematic) : {}) }}
+        >
           {resolvedBackground.startsWith("video:") ? (
             <>
               <video
@@ -4698,13 +5117,30 @@ function CasePlayer({
               />
               <LightGlow cinematic={bgCinematic} />
               <LensFlareLayer cinematic={bgCinematic} />
+              <CinematicOverlays cinematic={bgCinematic} />
             </>
           ) : (
-            <div key={`${sceneId}-${entrySeq}`} className={`absolute inset-0 ${cinClass}`} style={cinStyle}>
+            <div
+              key={`${sceneId}-${entrySeq}`}
+              className={`absolute inset-0 ${cinClass}`}
+              style={cinStyle}
+            >
               <LightGlow cinematic={bgCinematic} />
               <LensFlareLayer cinematic={bgCinematic} />
+              <CinematicOverlays cinematic={bgCinematic} />
             </div>
           )}
+          {/* Mid-ground parallax depth planes — between plate and subject.
+              Parallax layers aren't magnified by the examine zoom (they sit
+              OUTSIDE the zoom wrapper): drawn after it, above it. */}
+        </div>
+        {hasParallax(bgCinematic) && (
+          <ParallaxMidLayers key={`par-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
+        )}
+        <div className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}>
+          {/* Additional stacked foreground images (extras) — render BELOW the
+              primary subject so the main foregroundImage stays on top. */}
+          <ForegroundExtras key={`fge-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
               each time the player enters the scene (not only on first mount). */}
           <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
@@ -4750,7 +5186,12 @@ function CasePlayer({
 
   return (
     <div
-      className="fx-grain fx-vignette relative h-full w-full overflow-hidden bg-noir-950 select-none"
+      ref={stageRef}
+      className={`fx-grain fx-vignette relative h-full w-full overflow-hidden bg-noir-950 select-none ${dialogueTheme?.minimalHud ? "ingame-minimal-hud" : ""}`}
+      style={{
+        ...parallaxStyle(parallaxOn ? parallaxCinematic : undefined),
+        ...inGameThemeVars(dialogueTheme),
+      }}
       onPointerDown={() => {
         audio.unlock();
         retryMusic();
@@ -4770,9 +5211,9 @@ function CasePlayer({
         buildSingleBg()
       )}
       <BeatBackground
-        beat={inBeats ? currentBeat : null}
-        transitionName={currentBeat?.backgroundTransition ?? "fade"}
-        transitionSpeed={currentBeat?.backgroundTransitionSpeed ?? 0.5}
+        beat={inBeats ? heldInsert : null}
+        transitionName={heldInsert?.backgroundTransition ?? "fade"}
+        transitionSpeed={heldInsert?.backgroundTransitionSpeed ?? 0.5}
       />
 
       {/* Characters on stage — the active speaker cycles their talking frames;
@@ -5655,8 +6096,8 @@ function CasePlayer({
                   <p
                     className={`relative max-w-2xl leading-snug text-paper [text-shadow:_0_1px_2px_rgba(0,0,0,0.95),_0_0_10px_rgba(0,0,0,0.7)] ${
                       classicSubtitles
-                        ? "font-type text-sm md:text-base leading-relaxed"
-                        : "font-type font-medium text-xl md:text-2xl tracking-wide"
+                        ? "ingame-prose-classic font-type"
+                        : "ingame-prose font-type font-medium tracking-wide"
                     }`}
                     // Hold the full height from the first character so the
                     // controls above don't ride up as the line types in. The
@@ -5745,8 +6186,8 @@ function CasePlayer({
                 <p
                   className={`relative max-w-2xl leading-snug text-paper [text-shadow:_0_1px_2px_rgba(0,0,0,0.95),_0_0_10px_rgba(0,0,0,0.7)] ${
                     classicSubtitles
-                      ? "font-type text-sm md:text-base leading-relaxed text-left"
-                      : "font-type font-medium text-xl md:text-2xl tracking-wide"
+                      ? "ingame-prose-classic font-type text-left"
+                      : "ingame-prose font-type font-medium tracking-wide"
                   }`}
                   style={{ minHeight: reservedProse }}
                 >
@@ -5772,38 +6213,57 @@ function CasePlayer({
                     )}
                   </span>
                 </p>
-                <div className="mt-2 flex items-center gap-1.5">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      goBack();
-                    }}
-                    disabled={!canRewind}
-                    className="beat-ctl"
-                    title="Rewind one line (←)"
-                  >
-                    ◂ back
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      advanceBeat();
-                    }}
-                    className="beat-ctl beat-ctl-primary"
-                  >
-                    {beatDone ? "▸ continue · space" : "▸▸ skip"}
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      speakLine(currentBeat, currentBeatText);
-                    }}
-                    className="beat-ctl"
-                    title="Speak the line"
-                  >
-                    🎤
-                  </button>
-                </div>
+                {/* When the last beat routes into another scene, the cut is
+                    the beat's point — over the whole routing beat (even while
+                    typing) hide skip/back/timer controls so the insert plays
+                    clean. Auto mode shows nothing and cuts on its timer;
+                    continue mode shows only a Continue button. */}
+                {onRoutingBeat && beatRouteMode === "auto" ? null : onRoutingBeat && beatRouteMode === "continue" ? (
+                  <div className="mt-2 flex justify-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        advanceBeat();
+                      }}
+                      className="beat-ctl beat-ctl-primary"
+                    >
+                      {beatDone ? "▸ Continue · space" : "▸ Continue · space"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        goBack();
+                      }}
+                      disabled={!canRewind}
+                      className="beat-ctl"
+                      title="Rewind one line (←)"
+                    >
+                      ◂ back
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        advanceBeat();
+                      }}
+                      className="beat-ctl beat-ctl-primary"
+                    >
+                      {!beatDone ? "▸▸ skip" : "▸ continue · space"}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        speakLine(currentBeat, currentBeatText);
+                      }}
+                      className="beat-ctl"
+                      title="Speak the line"
+                    >
+                      🎤
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -5906,6 +6366,9 @@ function CasePlayer({
               </div>
             </>
           )}
+
+          {/* Auto beat-route timer is intentionally hidden for a clean
+              cinematic cut. (Continue mode keeps its single button above.) */}
 
           {interactive && !scene.isEnding && !hasUsableChoice && hasValidAutoAdvance && !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0 && (
             <div className="mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
@@ -6592,6 +7055,7 @@ export function GamePlayer({
   primedMusic,
   primedNarration,
   onExit,
+  playFromSceneId,
 }: {
   story: Story;
   typeSpeed: number;
@@ -6602,6 +7066,10 @@ export function GamePlayer({
   primedMusic?: PrimedAudio | null;
   primedNarration?: PrimedAudio | null;
   onExit: () => void;
+  /** Studio "Play from here": start the game directly at this scene.
+   *  For episodic stories it launches the owning episode straight into
+   *  the scene, skipping the season screen / recap / title card. */
+  playFromSceneId?: string;
 }) {
   const episodic = isEpisodic(story);
 
@@ -6615,9 +7083,34 @@ export function GamePlayer({
         resumeSlot={resumeSlot}
         primedMusic={primedMusic}
         primedNarration={primedNarration}
+        startSceneId={playFromSceneId}
         onExit={onExit}
       />
     );
+  }
+
+  // Studio playtest for an episodic story: open the episode that owns the
+  // scene directly, at that scene, with carried-over state but no save/resume
+  // chrome (fresh world state, like a normal playtest).
+  if (playFromSceneId) {
+    const owner = episodeOfScene(story, playFromSceneId);
+    if (owner) {
+      return (
+        <CasePlayer
+          key={`playtest-${owner.id}`}
+          story={story}
+          typeSpeed={typeSpeed}
+          isNewGamePlus={isNewGamePlus}
+          primedMusic={primedMusic}
+          primedNarration={primedNarration}
+          episode={owner}
+          initialState={carryOverState(story, owner.id)}
+          startSceneId={playFromSceneId}
+          playtestMode
+          onExit={onExit}
+        />
+      );
+    }
   }
 
   return (
