@@ -8221,6 +8221,25 @@ function StudioInner({
                           </Field>
                         </div>
                       )}
+                      {b.background && (
+                        <div className="mt-1 space-y-2 border border-gold/20 bg-gold/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">
+                            🎬 Beat camera — zoom to subject &amp; motion
+                          </div>
+                          <CinematicControls
+                            cinematic={b.cinematic}
+                            previewUrl={media(b.background) ?? b.background}
+                            storyId={story.id}
+                            media={media}
+                            onChange={(next) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.cinematic = next;
+                              })
+                            }
+                          />
+                        </div>
+                      )}
                       <div className="mt-1 space-y-1 border border-gold/20 bg-gold/5 p-1.5">
                         <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
                           <input
