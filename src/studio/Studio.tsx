@@ -8150,6 +8150,124 @@ function StudioInner({
                           })
                         }
                       />
+                      <Field label="Voice MP3 URL (optional — replaces TTS for this line)">
+                        <div className="flex gap-1">
+                          <input
+                            className={inputCls}
+                            placeholder="/audio/line_01.mp3 or https://..."
+                            value={mediaField(b.audioUrl)}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = e.target.value || undefined;
+                              })
+                            }
+                          />
+                          <MediaUploadButton
+                            storyId={story.id}
+                            accept="audio/*"
+                            label="⇧ Upload"
+                            onUploaded={(_url, assetId) => mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${assetId}`;
+                            })}
+                          />
+                        </div>
+                        <div className="mt-1">
+                          <AssetDropdown
+                            storyId={story.id}
+                            assetType="audio"
+                            returnReference
+                            value={b.audioUrl}
+                            onChange={(url) => mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
+                            })}
+                            placeholder="Or use uploaded audio..."
+                          />
+                        </div>
+                        <div className="mt-1 flex gap-1">
+                          <button
+                            disabled={
+                              aiBusyBeat === b.id ||
+                              !!b.silent ||
+                              !b.text.trim() ||
+                              !!(b.recalls && Object.keys(b.recalls).length) ||
+                              !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                            }
+                            title={
+                              b.silent
+                                ? "Silent beat — no line to convert"
+                                : !b.text.trim()
+                                  ? "Write the line first"
+                                  : b.recalls && Object.keys(b.recalls).length
+                                    ? "This line recalls memories — its text changes by route, so it stays on TTS"
+                                    : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                                      ? "Assign this character's ElevenLabs voice ID in the Characters tab first"
+                                      : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
+                            }
+                            onClick={async () => {
+                              const ch = story.characters.find((x) => x.id === b.characterId);
+                              if (!ch?.elevenVoiceId) {
+                                window.alert("Assign this character's ElevenLabs voice ID in the Characters tab first.");
+                                return;
+                              }
+                              const line = b.text.trim();
+                              if (!line) return;
+                              if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
+                              setAiBusyBeat(b.id);
+                              setAiNote(null);
+                              try {
+                                const { dataUrl, blob } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
+                                // Save the MP3 as a real file (public/voices/<person>/<scene>/
+                                // on desktop, the linked folder in the browser) and point the
+                                // beat at wherever it actually landed.
+                                const saved = await saveGeneratedVoice({
+                                  storyId: story.id,
+                                  characterId: b.characterId,
+                                  sceneId: scene.id,
+                                  beatId: b.id,
+                                  blob,
+                                  dataUrl,
+                                  assetName: `voice-${b.characterId}-${b.id}`,
+                                });
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = saved.url;
+                                });
+                                setAiNote({ text: saved.note, at: Date.now() });
+                                void new Audio(dataUrl).play(); // audition the result straight away
+                              } catch (err) {
+                                window.alert((err as Error).message);
+                              } finally {
+                                setAiBusyBeat(null);
+                              }
+                            }}
+                            className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+                          >
+                            {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
+                          </button>
+                          {aiNote && (
+                            <p className="font-type text-[8px] leading-snug text-gold/90" title={aiNote.text}>
+                              {aiNote.text}
+                            </p>
+                          )}
+                          {b.audioUrl && (
+                            <button
+                              onClick={() =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = undefined;
+                                })
+                              }
+                              title="Clear the MP3 — this line falls back to TTS"
+                              className="border border-crimson/40 px-2 py-1 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                            >
+                              ✕ TTS
+                            </button>
+                          )}
+                        </div>
+                      </Field>
                       {/* Audio tags — v3 performs sound cues (laugh/cough);
                           older models get only voice-delivery direction like
                           whisper, with a note. */}
@@ -8461,127 +8579,6 @@ function StudioInner({
                         )}
                       </label>
                     )}
-                    </CollapsibleSection>
-                    <CollapsibleSection id={`beat-${b.id}-voice`} title="🎙 Voice">
-                    <Field label="Voice MP3 URL (optional — replaces TTS for this line)">
-                      <div className="flex gap-1">
-                        <input
-                          className={inputCls}
-                          placeholder="/audio/line_01.mp3 or https://..."
-                          value={mediaField(b.audioUrl)}
-                          onChange={(e) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = e.target.value || undefined;
-                            })
-                          }
-                        />
-                        <MediaUploadButton
-                          storyId={story.id}
-                          accept="audio/*"
-                          label="⇧ Upload"
-                          onUploaded={(_url, assetId) => mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${assetId}`;
-                          })}
-                        />
-                      </div>
-                      <div className="mt-1">
-                        <AssetDropdown
-                          storyId={story.id}
-                          assetType="audio"
-                          returnReference
-                          value={b.audioUrl}
-                          onChange={(url) => mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
-                          })}
-                          placeholder="Or use uploaded audio..."
-                        />
-                      </div>
-                      <div className="mt-1 flex gap-1">
-                        <button
-                          disabled={
-                            aiBusyBeat === b.id ||
-                            !!b.silent ||
-                            !b.text.trim() ||
-                            !!(b.recalls && Object.keys(b.recalls).length) ||
-                            !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
-                          }
-                          title={
-                            b.silent
-                              ? "Silent beat — no line to convert"
-                              : !b.text.trim()
-                                ? "Write the line first"
-                                : b.recalls && Object.keys(b.recalls).length
-                                  ? "This line recalls memories — its text changes by route, so it stays on TTS"
-                                  : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
-                                    ? "Assign this character's ElevenLabs voice ID in the Characters tab first"
-                                    : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
-                          }
-                          onClick={async () => {
-                            const ch = story.characters.find((x) => x.id === b.characterId);
-                            if (!ch?.elevenVoiceId) {
-                              window.alert("Assign this character's ElevenLabs voice ID in the Characters tab first.");
-                              return;
-                            }
-                            const line = b.text.trim();
-                            if (!line) return;
-                            if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
-                            setAiBusyBeat(b.id);
-                            setAiNote(null);
-                            try {
-                              const { dataUrl, blob } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
-                              // Save the MP3 as a real file (public/voices/<person>/<scene>/
-                              // on desktop, the linked folder in the browser) and point the
-                              // beat at wherever it actually landed.
-                              const saved = await saveGeneratedVoice({
-                                storyId: story.id,
-                                characterId: b.characterId,
-                                sceneId: scene.id,
-                                beatId: b.id,
-                                blob,
-                                dataUrl,
-                                assetName: `voice-${b.characterId}-${b.id}`,
-                              });
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = saved.url;
-                              });
-                              setAiNote({ text: saved.note, at: Date.now() });
-                              void new Audio(dataUrl).play(); // audition the result straight away
-                            } catch (err) {
-                              window.alert((err as Error).message);
-                            } finally {
-                              setAiBusyBeat(null);
-                            }
-                          }}
-                          className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
-                        >
-                          {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
-                        </button>
-                        {aiNote && (
-                          <p className="font-type text-[8px] leading-snug text-gold/90" title={aiNote.text}>
-                            {aiNote.text}
-                          </p>
-                        )}
-                        {b.audioUrl && (
-                          <button
-                            onClick={() =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = undefined;
-                              })
-                            }
-                            title="Clear the MP3 — this line falls back to TTS"
-                            className="border border-crimson/40 px-2 py-1 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                          >
-                            ✕ TTS
-                          </button>
-                        )}
-                      </div>
-                    </Field>
-                    
                     </CollapsibleSection>
                     <CollapsibleSection id={`beat-${b.id}-cond`} title="🧠 Conditions & memories">
                     {/* Memory recall substitutions — the NPC echoes a specific
