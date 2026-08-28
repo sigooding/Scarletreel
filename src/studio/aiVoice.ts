@@ -71,8 +71,11 @@ export async function synthesizeElevenLabs(
   text: string,
   voiceId: string,
   model: string,
-  context?: { previousText?: string; nextText?: string }
+  _context?: { previousText?: string; nextText?: string }
 ): Promise<SynthesisResult> {
+  // Note: conversational `previous_text`/`next_text` is intentionally NOT sent
+  // — those fields belong to the Conversational-Agents API and make the TTS
+  // endpoint return 422. Natural delivery comes from v3's acting + sound cues.
   const key = getElevenKey();
   if (!key) throw new Error("No ElevenLabs API key set — add it in the AI Voice section of the People tab first.");
   let res: Response;
@@ -88,10 +91,9 @@ export async function synthesizeElevenLabs(
         text,
         model_id: model,
         voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.25, use_speaker_boost: true },
-        // Conversational context: the surrounding turns help the model pace
-        // and intone the line as a reply rather than an isolated read.
-        ...(context?.previousText ? { previous_text: context.previousText.slice(-1000) } : {}),
-        ...(context?.nextText ? { next_text: context.nextText.slice(-400) } : {}),
+        // NOTE: previous_text/next_text are Conversational-Agents-API params and
+        // are NOT accepted by the text-to-speech endpoint — sending them made it
+        // return 422. Natural delivery comes from v3's acting + sound-tag cues.
       }),
     });
   } catch {

@@ -458,10 +458,14 @@ export default function App() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  // shared reel import / Studio playtest handoff from URL hash
+  // shared reel import / Studio playtest handoff from URL hash. The hash is
+  // STUDIO_PLAY_HASH + token; we strip any trailing "&scene=…" suffix because
+  // the scene id rides in the payload, not the token — otherwise the popup's
+  // &scene= suffix made the localStorage token lookups miss.
   useEffect(() => {
     if (location.hash.startsWith(STUDIO_PLAY_HASH)) {
-      const token = decodeURIComponent(location.hash.slice(STUDIO_PLAY_HASH.length));
+      let token = decodeURIComponent(location.hash.slice(STUDIO_PLAY_HASH.length));
+      token = token.split("&")[0];
       const key = studioPlayKey(token);
       const raw = localStorage.getItem(key);
       if (raw) {
