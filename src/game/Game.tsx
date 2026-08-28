@@ -2696,6 +2696,7 @@ function CasePlayer({
   onEpisodeComplete,
   episodeEndPanel,
   onOpenSeason,
+  onOpenInStudio,
   onExit,
 }: {
   story: Story;
@@ -2718,6 +2719,9 @@ function CasePlayer({
   episodeEndPanel?: React.ReactNode;
   /** open the season / episode-list screen */
   onOpenSeason?: () => void;
+  /** jump into the Studio with the current scene selected (authoring escape
+   *  hatch from the in-game menu) */
+  onOpenInStudio?: (sceneId: string) => void;
   /** Studio playtest: a direct from-scene run (fresh state, no save/resume
    *  chrome) — the case-closes panel offers an Exit instead of resume. */
   playtestMode?: boolean;
@@ -5626,6 +5630,19 @@ function CasePlayer({
                 >
                   🔍 Reveal hotspots (H)
                 </button>
+                {onOpenInStudio && (
+                  <button
+                    onClick={() => {
+                      audio.click();
+                      setMenuOpen(false);
+                      onOpenInStudio(sceneId);
+                    }}
+                    className="hud-menu-item text-cyan-neon"
+                    title="Open the Studio on this exact scene to edit it"
+                  >
+                    🎬 Edit this scene in Studio
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setShowCaseFile((v) => !v);
@@ -7099,6 +7116,7 @@ export function GamePlayer({
   primedNarration,
   onExit,
   playFromSceneId,
+  onOpenInStudio,
 }: {
   story: Story;
   typeSpeed: number;
@@ -7113,6 +7131,8 @@ export function GamePlayer({
    *  For episodic stories it launches the owning episode straight into
    *  the scene, skipping the season screen / recap / title card. */
   playFromSceneId?: string;
+  /** jump into the Studio on the current scene (in-game menu) */
+  onOpenInStudio?: (sceneId: string) => void;
 }) {
   const episodic = isEpisodic(story);
 
@@ -7127,6 +7147,7 @@ export function GamePlayer({
         primedMusic={primedMusic}
         primedNarration={primedNarration}
         startSceneId={playFromSceneId}
+        onOpenInStudio={onOpenInStudio}
         onExit={onExit}
       />
     );
@@ -7150,6 +7171,7 @@ export function GamePlayer({
           initialState={carryOverState(story, owner.id)}
           startSceneId={playFromSceneId}
           playtestMode
+          onOpenInStudio={onOpenInStudio}
           onExit={onExit}
         />
       );
@@ -7164,6 +7186,7 @@ export function GamePlayer({
       resumeSlot={resumeSlot}
       resumeEpisodeId={resumeEpisodeId}
       primedMusic={primedMusic}
+      onOpenInStudio={onOpenInStudio}
       onExit={onExit}
     />
   );
@@ -7176,6 +7199,7 @@ function SeasonPlayer({
   resumeSlot,
   resumeEpisodeId,
   primedMusic,
+  onOpenInStudio,
   onExit,
 }: {
   story: Story;
@@ -7184,6 +7208,7 @@ function SeasonPlayer({
   resumeSlot?: number;
   resumeEpisodeId?: string;
   primedMusic?: { url: string; el: HTMLAudioElement } | null;
+  onOpenInStudio?: (sceneId: string) => void;
   onExit: () => void;
 }) {
   const episodes = useMemo(() => seasonEpisodes(story), [story]);
@@ -7326,6 +7351,7 @@ function SeasonPlayer({
       startSceneId={episode.startSceneId}
       onEpisodeComplete={handleEpisodeComplete}
       onOpenSeason={openSeason}
+      onOpenInStudio={onOpenInStudio}
       episodeEndPanel={
         finished ? (
           <EpisodeEndCard

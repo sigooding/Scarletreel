@@ -24,7 +24,7 @@ type Mode =
       primedMusic?: PrimedAudio | null;
       primedNarration?: PrimedAudio | null;
     }
-  | { kind: "studio" }
+  | { kind: "studio"; openStoryId?: string; openSceneId?: string }
   | { kind: "gallery" };
 
 const SETTINGS_KEY = "scarlet-reel-settings-v1";
@@ -818,6 +818,9 @@ export default function App() {
           playFromSceneId={mode.playFromSceneId}
           primedMusic={mode.primedMusic}
           primedNarration={mode.primedNarration}
+          onOpenInStudio={(sceneId) =>
+            setMode({ kind: "studio", openStoryId: mode.story.id, openSceneId: sceneId })
+          }
           onExit={() => setMode({ kind: "menu" })}
         />
       )}
@@ -825,6 +828,8 @@ export default function App() {
       {mode.kind === "studio" && (
         <Studio
           baseStories={stories}
+          initialStoryId={mode.openStoryId}
+          initialSceneId={mode.openSceneId}
           onExit={() => setMode({ kind: "menu" })}
           onPlay={(s, opts) => {
             if (openStudioPlayWindow(s, opts?.fromSceneId)) {

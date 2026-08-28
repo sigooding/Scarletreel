@@ -3932,6 +3932,8 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
 
 function StudioInner({
   baseStories,
+  initialStoryId,
+  initialSceneId,
   onExit,
   onPlay,
   onPublish,
@@ -3940,6 +3942,10 @@ function StudioInner({
   onUpdateTitleTheme,
 }: {
   baseStories: Story[];
+  /** open on this story (e.g. "edit this scene in Studio" from the game) */
+  initialStoryId?: string;
+  /** and select this scene once open */
+  initialSceneId?: string;
   onExit: () => void;
   onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
@@ -4002,8 +4008,14 @@ function StudioInner({
     } catch {
       /* storage unavailable — open the first story as before */
     }
-    const openId = lastId && baseStories.some((s) => s.id === lastId) ? lastId : baseStories[0].id;
+    const openId =
+      initialStoryId && baseStories.some((s) => s.id === initialStoryId)
+        ? initialStoryId
+        : lastId && baseStories.some((s) => s.id === lastId)
+          ? lastId
+          : baseStories[0].id;
     return loadDraft(openId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   });
   // Remember which story is being edited so the next session reopens it.
   useEffect(() => {
@@ -4016,7 +4028,11 @@ function StudioInner({
   const past = useRef<Story[]>([]);
   const future = useRef<Story[]>([]);
   const [, forceTick] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // "Edit this scene in Studio" arrives with a target scene; select it on open
+  // (only if it actually belongs to the story that was loaded).
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    initialSceneId && story.scenes.some((s) => s.id === initialSceneId) ? initialSceneId : null
+  );
   // beat id currently being synthesized by ElevenLabs (one line at a time)
   const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
   // where the most recent converted MP3 ended up (file path, or a warning)
@@ -9732,6 +9748,8 @@ import type { TitleTheme } from "../types";
 
 export function Studio(props: {
   baseStories: Story[];
+  initialStoryId?: string;
+  initialSceneId?: string;
   onExit: () => void;
   onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
