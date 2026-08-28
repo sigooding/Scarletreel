@@ -7399,6 +7399,14 @@ function StudioInner({
                 <Field label="Title">
                   <input className={inputCls} value={scene.title} onChange={(e) => updateScene(scene.id, { title: e.target.value })} />
                 </Field>
+                <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
+                  <input
+                    type="checkbox"
+                    checked={!!scene.hideSceneTitle}
+                    onChange={(e) => updateScene(scene.id, { hideSceneTitle: e.target.checked || undefined })}
+                  />
+                  🚫 Hide this title in-game (no title card on scene start)
+                </label>
 
                 <Field label="Note (shows on the canvas card)">
                   <textarea
@@ -7603,14 +7611,6 @@ function StudioInner({
                     onChange={(e) => updateScene(scene.id, { noTypewriter: e.target.checked || undefined })}
                   />
                   ⚡ Instant text — disable typewriter (use when MP3 voice is main narration)
-                </label>
-                <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
-                  <input
-                    type="checkbox"
-                    checked={!!scene.hideSceneTitle}
-                    onChange={(e) => updateScene(scene.id, { hideSceneTitle: e.target.checked || undefined })}
-                  />
-                  🚫 Hide scene title — don't flash the title card on scene start
                 </label>
                 <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
                   <input
