@@ -256,7 +256,9 @@ export function nextEpisodeForEnding(story: Story, episodeId: string, endingScen
 export function unassignedScenes(story: Story): SceneNode[] {
   if (!isEpisodic(story)) return [];
   const claimed = new Set(seasonEpisodes(story).flatMap((ep) => ep.sceneIds));
-  return story.scenes.filter((s) => !claimed.has(s.id));
+  // Note placeholders are author markers, not content — never list them as
+  // scenes waiting for an episode.
+  return story.scenes.filter((s) => s.nodeType !== "note" && !claimed.has(s.id));
 }
 
 export function loadSeasonProgress(): SeasonLog {
@@ -917,6 +919,9 @@ export function validateStory(story: Story): ValidationIssue[] {
 
   if (!ids.has(story.startSceneId))
     issues.push({ severity: "error", sceneId: null, message: `Start scene "${story.startSceneId}" does not exist.` });
+  const startScene = story.scenes.find((s) => s.id === story.startSceneId);
+  if (startScene?.nodeType === "note")
+    issues.push({ severity: "error", sceneId: startScene.id, message: `Start scene "${startScene.title}" is a note placeholder — the player would open on a marker, not a scene. Pick a real start scene.` });
 
   const edges = storyEdges(story);
   edges.forEach((e) => {
@@ -943,9 +948,21 @@ export function validateStory(story: Story): ValidationIssue[] {
     edges.filter((e) => e.source === cur && ids.has(e.target)).forEach((e) => queue.push(e.target));
   }
   story.scenes.forEach((sc) => {
-    if (!reachable.has(sc.id))
+    const isNote = sc.nodeType === "note";
+    // A standalone note is a marker not yet wired into the graph — "unreachable"
+    // would just be noise. Once something points at it, reachability matters.
+    if (!reachable.has(sc.id) && !isNote)
       issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}" is unreachable from the start.` });
     const outs = edges.filter((e) => e.source === sc.id);
+    if (isNote) {
+      // Notes bypass in play by following their FIRST outgoing route, so a
+      // wired-in note with no route out is a soft-lock: flag it loudly.
+      if (reachable.has(sc.id) && outs.length === 0)
+        issues.push({ severity: "error", sceneId: sc.id, message: `Note "${sc.title}" is wired in but has no route out — a player reaching it would be stuck. Connect its right handle to the scene that should follow, or delete the note.` });
+      if ((sc.choices ?? []).filter((c) => !!c.targetSceneId).length > 1)
+        issues.push({ severity: "warning", sceneId: sc.id, message: `Note "${sc.title}" has several outgoing routes — only the first one is followed in play. Remove the extras.` });
+      return;
+    }
     if (!sc.isEnding && outs.length === 0)
       issues.push({ severity: "error", sceneId: sc.id, message: `Scene "${sc.title}" has no exits and is not an ending.` });
     if (!sc.isEnding && outs.length > 0) {
@@ -1351,4 +1368,23 @@ export function validateStory(story: Story): ValidationIssue[] {
 
 export function sceneById(story: Story, id: string): SceneNode | undefined {
   return story.scenes.find((s) => s.id === id);
+}
+
+/** Notes are author placeholders ("Missing Scene Here") — the game bypasses
+ * them: this resolves the scene the player actually lands on by following a
+ * note's single outgoing route (its first choice) until a real scene. Notes
+ * with no route resolve to themselves (the author's dead end, flagged by the
+ * validator). The hop guard keeps a note→note cycle from spinning forever. */
+export function bypassedSceneId(story: Story, id: string): string {
+  let cur = id;
+  const seen = new Set<string>();
+  for (let hops = 0; hops < 32 && !seen.has(cur); hops++) {
+    seen.add(cur);
+    const sc = story.scenes.find((s) => s.id === cur);
+    if (!sc || sc.nodeType !== "note") return cur;
+    const out = (sc.choices ?? []).find((c) => !!c.targetSceneId)?.targetSceneId;
+    if (!out || !story.scenes.some((s) => s.id === out)) return cur;
+    cur = out;
+  }
+  return cur;
 }

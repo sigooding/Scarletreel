@@ -17,6 +17,7 @@ import {
   characterOpinion,
   clamp,
   combineItems,
+  bypassedSceneId,
   createInitialState,
   currentEpisode,
   effectiveChoiceGating,
@@ -2723,7 +2724,10 @@ function CasePlayer({
   onExit: () => void;
 }) {
   const [state, setState] = useState<GlobalState>(() => initialState ?? createInitialState(story));
-  const [sceneId, setSceneId] = useState(startSceneId ?? story.startSceneId);
+  // A playtest "from" a note placeholder starts on the scene past it — notes
+  // are bypassed markers, never something the player stands in (unless a
+  // wired-in note is a dead end, which the validator flags).
+  const [sceneId, setSceneId] = useState(() => bypassedSceneId(story, startSceneId ?? story.startSceneId));
   const [entrySeq, setEntrySeq] = useState(0);
   const [proseDone, setProseDone] = useState(false);
   const [proseAcknowledged, setProseAcknowledged] = useState(false);
@@ -3003,7 +3007,12 @@ function CasePlayer({
   // When true, the next successful save exits back to the newsstand.
   const saveThenExitRef = useRef(false);
 
-  const scene = sceneById(story, sceneId);
+  // A dead-end note (wired in but no route out — the validator flags it) is
+  // the only note the player can stand in; show its placeholder text instead
+  // of a blank plate.
+  const rawScene = sceneById(story, sceneId);
+  const scene: typeof rawScene =
+    rawScene?.nodeType === "note" && !rawScene.prose ? { ...rawScene, prose: rawScene.title } : rawScene;
   const playProse = useCallback((target: SceneNode) => {
     const primed = primedNarrationRef.current;
     primedNarrationRef.current = null;
@@ -3125,15 +3134,20 @@ function CasePlayer({
     }
   }, [state.inventory.length, explainCrafting]);
 
-  const goToScene = useCallback((id: string) => {
-    audio.click();
-    setFading(true);
-    window.setTimeout(() => {
-      setSceneId(id);
-      setEntrySeq((s) => s + 1);
-      setFading(false);
-    }, 380);
-  }, []);
+  const goToScene = useCallback(
+    (id: string) => {
+      audio.click();
+      setFading(true);
+      window.setTimeout(() => {
+        // Notes are author placeholders: resolve them to the scene their single
+        // outgoing route points at, so the player passes straight through.
+        setSceneId(bypassedSceneId(story, id));
+        setEntrySeq((s) => s + 1);
+        setFading(false);
+      }, 380);
+    },
+    [story]
+  );
 
   /* -------- scene entry -------- */
   const enteredRef = useRef<string>("");
@@ -3504,7 +3518,7 @@ function CasePlayer({
       const target = story.scenes.some((sc) => sc.id === save.sceneId)
         ? save.sceneId
         : story.startSceneId;
-      setSceneId(target);
+      setSceneId(bypassedSceneId(story, target));
       setEntrySeq((s) => s + 1);
     },
     [story]

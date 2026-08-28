@@ -450,7 +450,7 @@ export function ActEditor({
                       onChange={(e) => patch(act.id, { startSceneId: e.target.value })}
                     >
                       <option value="">— pick the opening scene —</option>
-                      {story.scenes.map((sc) => {
+                      {story.scenes.filter((sc) => sc.nodeType !== "note").map((sc) => {
                         const ownerAct = acts.find((a) => a.id === ownerOf.get(sc.id));
                         const note = ownerAct && ownerAct.id !== act.id ? ` · in ${ownerAct.label}` : "";
                         const end = sc.isEnding ? " · ending" : "";
