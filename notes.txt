@@ -1,0 +1,10 @@
+sk_e65f1e734b61acf7da9b96ad9685762db9285f7b1dde9ba7
+
+2. Desktop (Electron) build — real files on disk too.
+The desktop app copies every upload into the game-media folder as an actual .mp3 file: uploads/<story-id>/<asset-id>-<name>.mp3 — under the app's public//dist/ folder in dev, or %APPDATA%/<app>/game-media/uploads/... in a packaged build — so you get real files you can see, copy, or back up, plus the same IndexedDB row.
+
+Your work autosaves to this browser only — it lives in this browser's storage, not in your repo or on GitHub, and clearing the browser erases it. Export a .reel.json to keep a permanent copy, then commit that file to your repo to share it or version your work.
+
+for each new story in studio can they have setting for the gameplay theme. i.e. change fonts and sizes colours and layout?
+
+can i have option to select beats on a scene and move or cut to new empty scene (only selected beats and in play order). and an option to duplicate a scene and new version is not connected
