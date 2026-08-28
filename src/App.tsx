@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audio, type MixChannel } from "./audio";
 import { STORIES } from "./data/stories";
 import { GamePlayer, LensFlareLayer } from "./game/Game";
+import { clearSession, readSession, writeSession } from "./game/session";
 import { decodeStory, isEpisodic, latestSave, loadEndings, removeStoryEndings, seasonEpisodes, storySeasonProgress } from "./logic";
 import { assetUrl } from "./assetPath";
 import { Studio } from "./studio/Studio";
@@ -23,7 +24,7 @@ type Mode =
       primedMusic?: PrimedAudio | null;
       primedNarration?: PrimedAudio | null;
     }
-  | { kind: "studio" }
+  | { kind: "studio"; openStoryId?: string; openSceneId?: string }
   | { kind: "gallery" };
 
 const SETTINGS_KEY = "scarlet-reel-settings-v1";
@@ -44,7 +45,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "34";
+const CONTENT_REVISION = "35";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -263,6 +264,12 @@ const REVISION_RESETS: Record<string, string[]> = {
   // r34: batch ElevenLabs voice generation in the Beats tab — no data
   // migration needed (no story shape change); bump only for bookkeeping.
   "34": [],
+  // r35: the Draft was regenerated from the studio export
+  // (nobodys-witness-draft.reel.json) and now ships its media as real files
+  // under public/uploads. A cached Studio snapshot — still holding IndexedDB
+  // `asset:` refs and the pre-update graph — would otherwise shadow the
+  // shipped story, so retire it.
+  "35": ["nobodys-witness-draft"],
 };
 
 function migrateLegacyStoryStorage() {
@@ -603,6 +610,54 @@ export default function App() {
       });
   }, [primeOpeningNarration]);
 
+  /* -------- session restore --------
+   * A reload used to drop the player back on the newsstand even though the AUTO
+   * checkpoint still held their exact scene — with HMR reloads in dev (or a
+   * browser refresh, or reopening the packaged app) that reads as "the game
+   * restarted". Remember which screen we were on and put the player back there.
+   * A case resumes through the same latestSave() path as the newsstand's
+   * "▶ Resume" button, so nothing about save handling changes. */
+  const sessionRestored = useRef(false);
+  useEffect(() => {
+    if (sessionRestored.current) return;
+    sessionRestored.current = true;
+    const session = readSession();
+    if (!session) return;
+    if (session.kind === "studio") {
+      setMode({ kind: "studio" });
+      return;
+    }
+    if (session.kind === "gallery") {
+      setMode({ kind: "gallery" });
+      return;
+    }
+    const story = stories.find((s) => s.id === session.storyId);
+    // Case deleted or hidden, or no checkpoint to return to — the newsstand is
+    // the right place to land, so fall through and leave mode alone.
+    if (!story) return;
+    const newest = latestSave(story);
+    if (!newest) return;
+    play(story, newest.slot, newest.episodeId);
+  }, [stories, play]);
+
+  // Persist the current screen. The first run is skipped so the stored session
+  // survives long enough for the restore effect above to read it.
+  const sessionPersistReady = useRef(false);
+  useEffect(() => {
+    if (!sessionPersistReady.current) {
+      sessionPersistReady.current = true;
+      return;
+    }
+    if (mode.kind === "menu") {
+      // Quitting to the newsstand is deliberate — don't bounce back on reload.
+      clearSession();
+    } else if (mode.kind === "play") {
+      writeSession({ kind: "play", storyId: mode.story.id });
+    } else {
+      writeSession({ kind: mode.kind });
+    }
+  }, [mode]);
+
   // Robust export: try download, always try clipboard too, surface feedback via a
   // banner instead of silent failure (sandboxed previews often block downloads).
   const [notice, setNotice] = useState<string | null>(null);
@@ -763,6 +818,9 @@ export default function App() {
           playFromSceneId={mode.playFromSceneId}
           primedMusic={mode.primedMusic}
           primedNarration={mode.primedNarration}
+          onOpenInStudio={(sceneId) =>
+            setMode({ kind: "studio", openStoryId: mode.story.id, openSceneId: sceneId })
+          }
           onExit={() => setMode({ kind: "menu" })}
         />
       )}
@@ -770,6 +828,8 @@ export default function App() {
       {mode.kind === "studio" && (
         <Studio
           baseStories={stories}
+          initialStoryId={mode.openStoryId}
+          initialSceneId={mode.openSceneId}
           onExit={() => setMode({ kind: "menu" })}
           onPlay={(s, opts) => {
             if (openStudioPlayWindow(s, opts?.fromSceneId)) {

@@ -37,11 +37,37 @@ guessing.
 npm test
 ```
 
-Runs the pure-logic engine tests (gating, memory/flag recalls, flag
-collection, the validator, the act-membership walk, and full The Neon Diner
-playthroughs — a gold run and a full-mistake fold run) under plain Node.
-No test framework: the TypeScript body is bundled with the esbuild that
-ships with Vite, so `npm ci` is all you need.
+Runs two suites under plain Node. No test framework — the TypeScript bodies are
+bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
+
+1. **Engine tests** (`npm run test:engine`) — the pure-logic checks: gating,
+   memory/flag recalls, flag collection, the validator, the act-membership
+   walk, and full The Neon Diner playthroughs (a gold run and a full-mistake
+   fold run).
+
+2. **Import/export round trip** (`npm run test:media`) — exercises the real
+   `src/data/mediaLibrary.ts` against a real IndexedDB
+   ([`fake-indexeddb`](https://github.com/dumbmatter/fakeIndexedDB), a
+   devDependency, so it never reaches the shipped bundle — `electron-builder`
+   only packs `dist/`, `electron/` and `package.json`). It runs the export in
+   one process and the import in a **separate** process, so the importing side
+   genuinely starts with an empty store — a real "shared to someone else's
+   machine" test. It seeds **every** media-bearing field listed in
+   `visitStoryMediaRefs` and asserts per-field byte integrity, plus that
+   `compactStoryMedia` migrates every raw `data:` URL to an `asset:` reference.
+
+   > That last part is the one to watch. `visitStoryMediaRefs`,
+   > `resolveStoryMedia` and `compactStoryMedia` each walk the media fields by
+   > hand and must stay in sync — a field missing from the play-time resolver
+   > means its `asset:<id>` reference reaches the browser as a literal URL and
+   > renders nothing, with no error anywhere. This suite exists because that
+   > happened to `cinematic.foregroundExtras` and `cinematic.parallaxLayers`.
+   > **Add a new media-bearing field to all three, then add it to
+   > `scripts/ie-roundtrip/export-side.ts`.**
+
+   `npm run test:media:real` additionally pushes the shipped 45.9 MB
+   `nobodys-witness-draft.reel.json` (69 scenes, 86 bundled assets) through the
+   same import path and asserts every reference resolves.
 
 ### Blank/white screen, or art missing but text showing
 

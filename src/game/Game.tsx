@@ -2696,6 +2696,7 @@ function CasePlayer({
   onEpisodeComplete,
   episodeEndPanel,
   onOpenSeason,
+  onOpenInStudio,
   onExit,
 }: {
   story: Story;
@@ -2718,6 +2719,9 @@ function CasePlayer({
   episodeEndPanel?: React.ReactNode;
   /** open the season / episode-list screen */
   onOpenSeason?: () => void;
+  /** jump into the Studio with the current scene selected (authoring escape
+   *  hatch from the in-game menu) */
+  onOpenInStudio?: (sceneId: string) => void;
   /** Studio playtest: a direct from-scene run (fresh state, no save/resume
    *  chrome) — the case-closes panel offers an Exit instead of resume. */
   playtestMode?: boolean;
@@ -3179,11 +3183,17 @@ function CasePlayer({
       setHoldRemaining(0);
       setAutoAdvanceRemaining(0);
     } else {
+      // A scene whose prose is empty has nothing to read, so don't strand the
+      // player on a blank panel with a "continue to dialogue" button: drop
+      // straight into the beats (or choices). Credits/cutscene intros keep
+      // their deliberate Begin/Continue flow even when terse.
+      const emptyProse =
+        scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && !(scene.prose ?? "").trim();
       // If noTypewriter is enabled (for MP3 voice sync), show prose instantly
       // instead of animating it letter-by-letter. Credits nodes are the
       // exception: their animated intro controls when the Begin button appears.
-      setProseDone(revisit || (!!scene.noTypewriter && scene.nodeType !== "credits"));
-      setProseAcknowledged(revisit);
+      setProseDone(revisit || emptyProse || (!!scene.noTypewriter && scene.nodeType !== "credits"));
+      setProseAcknowledged(revisit || emptyProse);
       setBeatIdx(revisit ? (scene.dialogueBeats?.length ?? 0) : 0);
       setBeatDone(false);
       setChoiceFocus(0);
@@ -3839,6 +3849,14 @@ function CasePlayer({
   // the box symmetrically instead of shunting the controls.
   const reserveContinueSlot =
     !!reservedProse && scene?.nodeType !== "credits" && scene?.nodeType !== "cutscene";
+  // A standard node with no prose has nothing to acknowledge, so its
+  // "continue to dialogue" button must not render (the entry effect also drops
+  // the player straight into the beats).
+  const emptyProseScene =
+    !!scene &&
+    scene.nodeType !== "credits" &&
+    scene.nodeType !== "cutscene" &&
+    !(scene.prose ?? "").trim();
 
   /* -------- beats advancement -------- */
   const holdActive = holdRemaining > 0;
@@ -3874,6 +3892,15 @@ function CasePlayer({
   const currentBeatText = currentBeat
     ? resolveBeatText(currentBeat, state.memories, state.activeFlags, story.flagNotes)
     : "";
+
+  // noTypewriter scenes show their prose instantly; the dialogue must match.
+  // Otherwise the first line types out behind a "skip" control and reads as a
+  // phantom extra "continue" right after the prose button. Mark each beat done
+  // the moment it becomes current so the line is fully shown and a single
+  // click advances.
+  useEffect(() => {
+    if (scene?.noTypewriter) setBeatDone(true);
+  }, [scene?.noTypewriter, currentBeat?.id]);
 
   /* ---- after-beat routing: an insert shot that ends the scene ----
    * A beat can carry afterBeatTargetSceneId so that when the LAST visible
@@ -5406,19 +5433,21 @@ function CasePlayer({
             encounteredCharacters={encounteredCharacters}
             visitedCount={visitedScenes.size}
           />
-          <div
-            key={`scene-title-${sceneId}-${entrySeq}`}
-            className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
-          >
-            <span className="border-y border-paper/25 bg-gradient-to-b from-black/35 to-transparent px-6 py-2 font-pulp text-2xl uppercase tracking-[0.3em] text-paper drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] md:text-3xl">
-              {scene.title}
-            </span>
-            {episode && (
-              <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
-                {episodeLabel(episode.number ?? 1, episode.numberSuffix)} · {episode.title}
+          {!scene.hideSceneTitle && (
+            <div
+              key={`scene-title-${sceneId}-${entrySeq}`}
+              className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
+            >
+              <span className="border-y border-paper/25 bg-gradient-to-b from-black/35 to-transparent px-6 py-2 font-pulp text-2xl uppercase tracking-[0.3em] text-paper drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] md:text-3xl">
+                {scene.title}
               </span>
-            )}
-          </div>
+              {episode && (
+                <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
+                  {episodeLabel(episode.number ?? 1, episode.numberSuffix)} · {episode.title}
+                </span>
+              )}
+            </div>
+          )}
           {episode && onOpenSeason && (
             <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2">
               <EpisodeChip episode={episode} onOpenSeason={onOpenSeason} />
@@ -5603,6 +5632,19 @@ function CasePlayer({
                 >
                   🔍 Reveal hotspots (H)
                 </button>
+                {onOpenInStudio && (
+                  <button
+                    onClick={() => {
+                      audio.click();
+                      setMenuOpen(false);
+                      onOpenInStudio(sceneId);
+                    }}
+                    className="hud-menu-item text-cyan-neon"
+                    title="Open the Studio on this exact scene to edit it"
+                  >
+                    🎬 Edit this scene in Studio
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setShowCaseFile((v) => !v);
@@ -6145,7 +6187,7 @@ function CasePlayer({
                     original pop-in. */}
                 {reserveContinueSlot ? (
                   <div className="mt-3 flex h-7 items-center justify-center">
-                    {proseDone && (
+                    {proseDone && !emptyProseScene && (
                       <button
                         onClick={() => {
                           audio.click();
@@ -6220,8 +6262,14 @@ function CasePlayer({
                         <span className="mr-2 font-pulp text-[10px] uppercase tracking-[0.2em] text-gold">
                           {story.characters.find((c) => c.id === currentBeat.characterId)?.name ?? (currentBeat.characterId === "narrator" ? "Narrator" : "—")}
                         </span>
-                        <Typewriter key={`${currentBeat.id}-classic`} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
+                        {scene.noTypewriter ? (
+                          <span>{currentBeatText}</span>
+                        ) : (
+                          <Typewriter key={`${currentBeat.id}-classic`} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
+                        )}
                       </span>
+                    ) : scene.noTypewriter ? (
+                      <span>{currentBeatText}</span>
                     ) : (
                       <Typewriter key={currentBeat.id} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
                     )}
@@ -7070,6 +7118,7 @@ export function GamePlayer({
   primedNarration,
   onExit,
   playFromSceneId,
+  onOpenInStudio,
 }: {
   story: Story;
   typeSpeed: number;
@@ -7084,6 +7133,8 @@ export function GamePlayer({
    *  For episodic stories it launches the owning episode straight into
    *  the scene, skipping the season screen / recap / title card. */
   playFromSceneId?: string;
+  /** jump into the Studio on the current scene (in-game menu) */
+  onOpenInStudio?: (sceneId: string) => void;
 }) {
   const episodic = isEpisodic(story);
 
@@ -7098,6 +7149,7 @@ export function GamePlayer({
         primedMusic={primedMusic}
         primedNarration={primedNarration}
         startSceneId={playFromSceneId}
+        onOpenInStudio={onOpenInStudio}
         onExit={onExit}
       />
     );
@@ -7121,6 +7173,7 @@ export function GamePlayer({
           initialState={carryOverState(story, owner.id)}
           startSceneId={playFromSceneId}
           playtestMode
+          onOpenInStudio={onOpenInStudio}
           onExit={onExit}
         />
       );
@@ -7135,6 +7188,7 @@ export function GamePlayer({
       resumeSlot={resumeSlot}
       resumeEpisodeId={resumeEpisodeId}
       primedMusic={primedMusic}
+      onOpenInStudio={onOpenInStudio}
       onExit={onExit}
     />
   );
@@ -7147,6 +7201,7 @@ function SeasonPlayer({
   resumeSlot,
   resumeEpisodeId,
   primedMusic,
+  onOpenInStudio,
   onExit,
 }: {
   story: Story;
@@ -7155,6 +7210,7 @@ function SeasonPlayer({
   resumeSlot?: number;
   resumeEpisodeId?: string;
   primedMusic?: { url: string; el: HTMLAudioElement } | null;
+  onOpenInStudio?: (sceneId: string) => void;
   onExit: () => void;
 }) {
   const episodes = useMemo(() => seasonEpisodes(story), [story]);
@@ -7297,6 +7353,7 @@ function SeasonPlayer({
       startSceneId={episode.startSceneId}
       onEpisodeComplete={handleEpisodeComplete}
       onOpenSeason={openSeason}
+      onOpenInStudio={onOpenInStudio}
       episodeEndPanel={
         finished ? (
           <EpisodeEndCard

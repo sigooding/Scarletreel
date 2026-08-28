@@ -85,6 +85,72 @@ function builtinImagesPlugin() {
   };
 }
 
+/**
+ * The audio counterpart of builtinImagesPlugin: EVERY sound file under public/
+ * becomes a pickable { url, label, folder } entry, so the Studio's beat voice
+ * picker can offer them all — including the generated
+ * `voices/<person>/<scene>/<line>.mp3` tree, which a browser cannot enumerate
+ * over HTTP (there is no directory listing), and the imported uploads.
+ *
+ * `person`/`scene` are filled in for the voices tree so a character's own takes
+ * can be grouped ahead of everything else. Scanned in Node during both
+ * `vite dev` and `vite build`, so the single-file build carries the list too.
+ */
+function builtinAudioPlugin() {
+  const virtualId = "virtual:builtin-audio";
+  const resolvedId = "\0" + virtualId;
+  const root = path.resolve(__dirname, "public");
+  const exts = [".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"];
+
+  const scan = () => {
+    const out: { url: string; label: string; folder: string; person?: string; scene?: string }[] = [];
+    const walk = (dir: string, rel: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walk(path.join(dir, entry.name), relPath);
+          continue;
+        }
+        const ext = entry.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? "";
+        if (!exts.includes(ext)) continue;
+        const parts = relPath.split("/");
+        const file = parts[parts.length - 1];
+        const folders = parts.slice(0, -1);
+        const item: { url: string; label: string; folder: string; person?: string; scene?: string } = {
+          url: `/${relPath}`,
+          label: file.replace(/\.[^.]+$/, ""),
+          folder: folders.join("/"),
+        };
+        if (folders[0] === "voices" && folders[1]) {
+          item.person = folders[1];
+          item.scene = folders[2];
+        }
+        out.push(item);
+      }
+    };
+    walk(root, "");
+    out.sort((a, b) => a.url.localeCompare(b.url));
+    return out;
+  };
+
+  return {
+    name: "builtin-audio",
+    resolveId(id: string) {
+      if (id === virtualId) return resolvedId;
+    },
+    load(id: string) {
+      if (id !== resolvedId) return null;
+      return `export default ${JSON.stringify(scan())};`;
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   define: {
@@ -94,7 +160,7 @@ export default defineConfig({
   // directory — including a GitHub Pages project site at /<repo>/. Story media
   // (plain strings in the data files, which the bundler never sees) is
   // rewritten against that base at runtime by src/assetPath.ts.
-  plugins: [react(), tailwindcss(), viteSingleFile(), builtinImagesPlugin()],
+  plugins: [react(), tailwindcss(), viteSingleFile(), builtinImagesPlugin(), builtinAudioPlugin()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

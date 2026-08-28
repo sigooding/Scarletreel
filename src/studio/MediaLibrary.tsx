@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaAsset, AssetType } from "../types";
 import { loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets, ASSET_LIMITS, ASSET_TOTAL_LIMIT } from "../data/mediaLibrary";
+import { listVoiceFilesForCharacter, voiceSlug, type VoiceFileEntry } from "./voiceFiles";
 import { ImagePicker } from "./ImagePicker";
+import builtinAudio from "virtual:builtin-audio";
+import { assetUrl } from "../assetPath";
 
 const inputCls = "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
 
@@ -131,6 +134,202 @@ export function AssetDropdown({
       {selected && assetType === "audio" && <audio controls src={selected.dataUrl} className="h-8 w-full" />}
       {selected && assetType === "video" && <video controls src={selected.dataUrl} className="h-24 w-full object-cover" />}
       {!assets.length && <p className="font-type text-[9px] text-paper/35">No {assetType} uploaded yet — use Upload above or the 📦 Media tab.</p>}
+    </div>
+  );
+}
+
+/** Every audio file a beat can use, in one picker:
+ *
+ *  - the character's own takes from `voices/<person>/<scene>/` — read live from
+ *    the desktop voices folder (IPC) or the author's linked folder, merged with
+ *    the build-time scan of `public/`, so the list also works in the browser
+ *    preview where neither a bridge nor a linked folder exists;
+ *  - then every other audio file in the project (imports, music, other
+ *    characters), so nothing sitting on disk is unreachable.
+ *
+ *  Hovering a file name auditions it through one shared hidden <audio> element
+ *  (the same interaction as the image picker); clicking assigns it. Nothing
+ *  plays until you hover, and moving the pointer out of the list stops it. */
+export function CharacterVoiceFiles({
+  characterId,
+  characterName,
+  value,
+  onChange,
+}: {
+  characterId: string;
+  characterName?: string;
+  value?: string;
+  onChange: (url: string) => void;
+}) {
+  const [files, setFiles] = useState<VoiceFileEntry[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [liveNote, setLiveNote] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [hovered, setHovered] = useState<{ url: string; label: string } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const allAudio = useAllAssets("audio");
+
+  /** Re-read the live voices folder (desktop IPC / linked folder). */
+  const refresh = useCallback(async () => {
+    if (!characterId || characterId === "narrator") {
+      setFiles([]);
+      setLiveNote(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      const list = await listVoiceFilesForCharacter(characterId);
+      setFiles(list);
+      setLiveNote(list.length ? null : "Live folder empty — showing what the build scanned from public/.");
+    } catch (err) {
+      setLiveNote((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [characterId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Never leave audio playing behind when the beat collapses or unmounts.
+  useEffect(() => () => audioRef.current?.pause(), []);
+
+  const who = characterName?.trim() || characterId;
+  const person = characterId && characterId !== "narrator" ? voiceSlug(characterId) : "";
+
+  /** A URL this browser can actually play: public paths need the deploy base,
+   *  `asset:` references resolve through the library, file:// is desktop-only. */
+  const playable = useCallback(
+    (url: string): string | undefined => {
+      if (!url) return undefined;
+      if (url.startsWith("data:") || url.startsWith("http")) return url;
+      if (url.startsWith("asset:")) return allAudio.find((a) => `asset:${a.id}` === url)?.dataUrl;
+      if (url.startsWith("/")) return assetUrl(url);
+      return undefined;
+    },
+    [allAudio]
+  );
+
+  /** Hover a name to audition it — no assignment, no commitment. */
+  const audition = useCallback(
+    (row: { url: string; label: string } | null) => {
+      setHovered(row);
+      const el = audioRef.current;
+      if (!el) return;
+      const src = row ? playable(row.url) : undefined;
+      if (!src) {
+        el.pause();
+        return;
+      }
+      el.src = src;
+      el.currentTime = 0;
+      void el.play().catch(() => {
+        /* autoplay policy — the click-to-assign still works */
+      });
+    },
+    [playable]
+  );
+
+  // This character's takes: live folder first (freshest), then the build scan.
+  const seen = new Set<string>();
+  const mine: { url: string; label: string }[] = [];
+  for (const f of files) {
+    if (seen.has(f.url)) continue;
+    seen.add(f.url);
+    mine.push({ url: f.url, label: `${f.scene}/${f.name}${f.size ? ` (${(f.size / 1024).toFixed(0)}KB)` : ""}` });
+  }
+  for (const a of builtinAudio) {
+    if (a.person !== person || seen.has(a.url)) continue;
+    seen.add(a.url);
+    mine.push({ url: a.url, label: `${a.scene}/${a.label}` });
+  }
+  // Everything else in the project, so no audio file is hidden from the picker.
+  const others = builtinAudio
+    .filter((a) => a.person !== person && !seen.has(a.url))
+    .map((a) => ({ url: a.url, label: `${a.folder ? `${a.folder}/` : ""}${a.label}` }));
+
+  const q = query.trim().toLowerCase();
+  const matches = (row: { url: string; label: string }) => !q || row.label.toLowerCase().includes(q) || row.url.toLowerCase().includes(q);
+  const mineShown = mine.filter(matches);
+  const othersShown = others.filter(matches);
+
+  const row = (r: { url: string; label: string }) => {
+    const active = value === r.url;
+    return (
+      <button
+        key={r.url}
+        type="button"
+        title={r.url}
+        onMouseEnter={() => audition(r)}
+        onFocus={() => audition(r)}
+        onClick={() => {
+          audition(r);
+          onChange(r.url);
+        }}
+        className={`flex w-full items-center gap-1.5 px-2 py-0.5 text-left font-type text-[9px] ${
+          active ? "bg-cyan-neon/15 text-cyan-neon" : "text-paper/75 hover:bg-noir-800"
+        }`}
+      >
+        <span className="w-2 shrink-0 text-[8px]">{active ? "\u2713" : "\u25b6"}</span>
+        <span className="min-w-0 flex-1 truncate">{r.label}</span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="space-y-1">
+      {/* one shared player for every hover audition */}
+      <audio ref={audioRef} preload="none" className="hidden" />
+      <div className="flex items-center justify-between gap-1">
+        <span className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon/80" title={person ? `Files under voices/${person}/ plus every other audio file in the project` : "Every audio file in this project"}>
+          \ud83d\udcc2 Audio for {who} \u00b7 {mine.length + others.length} files
+        </span>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={busy}
+          title="Re-scan the voices folder"
+          className="border border-noir-600 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-cyan-neon/50 hover:text-cyan-neon disabled:opacity-40"
+        >
+          {busy ? "\u23f3" : "\u21bb"}
+        </button>
+      </div>
+      <input
+        className={inputCls}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Filter by name or folder\u2026"
+      />
+      <div className="border border-noir-700 bg-noir-950" onMouseLeave={() => audition(null)}>
+        <div className="max-h-52 overflow-auto py-1">
+          {!mineShown.length && !othersShown.length && (
+            <p className="px-2 py-1.5 font-type text-[9px] text-paper/40">
+              {mine.length + others.length ? `No audio matches \u201c${query}\u201d.` : "No audio files found \u2014 upload one above, or drop files into public/ and rebuild."}
+            </p>
+          )}
+          {mineShown.length > 0 && (
+            <>
+              <div className="sticky top-0 z-10 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon/70">
+                \ud83c\udf99 {who} \u2014 voices/{person} ({mineShown.length})
+              </div>
+              {mineShown.map(row)}
+            </>
+          )}
+          {othersShown.length > 0 && (
+            <>
+              <div className="sticky top-0 z-10 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/45">
+                \ud83d\udcc1 All other audio ({othersShown.length})
+              </div>
+              {othersShown.map(row)}
+            </>
+          )}
+        </div>
+        <div className="border-t border-noir-700 px-2 py-1 font-type text-[9px] text-paper/35">
+          {hovered ? `\u25b6 auditioning ${hovered.label}` : "Hover a name to audition it \u00b7 click to use it"}
+        </div>
+      </div>
+      {liveNote && <p className="font-type text-[9px] leading-snug text-paper/40">{liveNote}</p>}
     </div>
   );
 }

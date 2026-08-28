@@ -62,7 +62,7 @@ import {
   validateStory,
   type ValidationIssue,
 } from "../logic";
-import { MediaLibrary, AssetDropdown, MediaUploadButton } from "./MediaLibrary";
+import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } from "./MediaLibrary";
 import { ImagePicker } from "./ImagePicker";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
@@ -3932,6 +3932,8 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
 
 function StudioInner({
   baseStories,
+  initialStoryId,
+  initialSceneId,
   onExit,
   onPlay,
   onPublish,
@@ -3940,6 +3942,10 @@ function StudioInner({
   onUpdateTitleTheme,
 }: {
   baseStories: Story[];
+  /** open on this story (e.g. "edit this scene in Studio" from the game) */
+  initialStoryId?: string;
+  /** and select this scene once open */
+  initialSceneId?: string;
   onExit: () => void;
   onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;
@@ -4002,8 +4008,14 @@ function StudioInner({
     } catch {
       /* storage unavailable — open the first story as before */
     }
-    const openId = lastId && baseStories.some((s) => s.id === lastId) ? lastId : baseStories[0].id;
+    const openId =
+      initialStoryId && baseStories.some((s) => s.id === initialStoryId)
+        ? initialStoryId
+        : lastId && baseStories.some((s) => s.id === lastId)
+          ? lastId
+          : baseStories[0].id;
     return loadDraft(openId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   });
   // Remember which story is being edited so the next session reopens it.
   useEffect(() => {
@@ -4016,7 +4028,11 @@ function StudioInner({
   const past = useRef<Story[]>([]);
   const future = useRef<Story[]>([]);
   const [, forceTick] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // "Edit this scene in Studio" arrives with a target scene; select it on open
+  // (only if it actually belongs to the story that was loaded).
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    initialSceneId && story.scenes.some((s) => s.id === initialSceneId) ? initialSceneId : null
+  );
   // beat id currently being synthesized by ElevenLabs (one line at a time)
   const [aiBusyBeat, setAiBusyBeat] = useState<string | null>(null);
   // where the most recent converted MP3 ended up (file path, or a warning)
@@ -4038,11 +4054,10 @@ function StudioInner({
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
-  // Which beats are expanded in the Beats tab. New beats start open; an
-  // explicit per-beat id set lets users minimise beats they've finished and
-  // have a "collapse all" so the list doesn't get long.
-  const [expandedBeats, setExpandedBeats] = useState<Set<string>>(() => new Set());
-  const [beatsUserToggled, setBeatsUserToggled] = useState<Set<string>>(() => new Set());
+  // Which single beat is maximised in the Beats tab. Beats default to
+  // minimised and at most one is open at a time: expanding a beat collapses
+  // whichever was open before (accordion). Adding a beat opens just that one.
+  const [expandedBeatId, setExpandedBeatId] = useState<string | null>(null);
   // Drag-and-drop beat reordering: the beat id being dragged and the one
   // currently dragged over.
   const [dragBeatId, setDragBeatId] = useState<string | null>(null);
@@ -6902,6 +6917,7 @@ function StudioInner({
                   an act boundary, the act's route map) plays when the player leaves it. Deeper polish — camera
                   moves, light glows, letterbox — lives in the cinematic sections below.
                 </HelpNote>
+                <CollapsibleSection id={`scene-${scene.id}-basics`} title="🪪 Scene basics" defaultOpen>
                 <Field label="Scene id">
                   <input className={inputCls} value={scene.id} disabled />
                 </Field>
@@ -6916,6 +6932,7 @@ function StudioInner({
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
                   </select>
                 </Field>
+                </CollapsibleSection>
                 {(scene.nodeType === "credits" || scene.nodeType === "cutscene") && (
                   <Field label="⏳ Cinematic hold — seconds before choices appear (0 = instant)">
                     <div className="flex items-center gap-2">
@@ -7381,9 +7398,18 @@ function StudioInner({
                     </p>
                   </div>
                 )}
+                <CollapsibleSection id={`scene-${scene.id}-title`} title="🏷 Title & notes" defaultOpen>
                 <Field label="Title">
                   <input className={inputCls} value={scene.title} onChange={(e) => updateScene(scene.id, { title: e.target.value })} />
                 </Field>
+                <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
+                  <input
+                    type="checkbox"
+                    checked={!!scene.hideSceneTitle}
+                    onChange={(e) => updateScene(scene.id, { hideSceneTitle: e.target.checked || undefined })}
+                  />
+                  🚫 Hide this title in-game (no title card on scene start)
+                </label>
 
                 <Field label="Note (shows on the canvas card)">
                   <textarea
@@ -7394,6 +7420,8 @@ function StudioInner({
                   />
                 </Field>
 
+                </CollapsibleSection>
+                <CollapsibleSection id={`scene-${scene.id}-look`} title="🖼 Look, atmosphere & camera">
                 <Field label="Background image / gradient">
                   {scene.background.startsWith("video:") ? (
                     <p className="border border-gold/30 bg-gold/5 px-2 py-1 font-type text-[10px] text-gold">
@@ -7574,6 +7602,8 @@ function StudioInner({
                 <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] text-paper/55">
                   Need real music or recorded narration? Use the <b className="text-cyan-neon">Audio</b> tab — music and voice are separate there.
                 </p>
+                </CollapsibleSection>
+                <CollapsibleSection id={`scene-${scene.id}-prose`} title="📜 Prose, pacing & structure">
                 <Field label="Prose (narrator)">
                   <textarea
                     className={`${inputCls} h-28 font-type`}
@@ -7700,6 +7730,7 @@ function StudioInner({
                     ) : null}
                   </div>
                 )}
+                </CollapsibleSection>
                 <CollapsibleSection
                   id={`interrogation-${scene.id}`}
                   title="🎭 Interrogation (composure pressure)"
@@ -7891,22 +7922,9 @@ function StudioInner({
                   <button
                     type="button"
                     className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
-                    onClick={() => {
-                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
-                      setExpandedBeats(new Set());
-                    }}
+                    onClick={() => setExpandedBeatId(null)}
                   >
                     ▸ Collapse all
-                  </button>
-                  <button
-                    type="button"
-                    className="flex-1 border border-noir-600 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-gold hover:text-gold"
-                    onClick={() => {
-                      setBeatsUserToggled(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
-                      setExpandedBeats(new Set((scene.dialogueBeats ?? []).map((b) => b.id)));
-                    }}
-                  >
-                    ▾ Expand all
                   </button>
                 </div>
 
@@ -7999,13 +8017,10 @@ function StudioInner({
                       ? "Narrator"
                       : story.characters.find((c) => c.id === b.characterId)?.name ?? "Narrator";
                   const snippet = b.text.replace(/\s+/g, " ").trim().slice(0, 30);
-                  // Open if the user has opened it OR it's a brand-new beat the
-                  // author just added (default open) OR the focused beat. Beat
-                  // collapse persists across edits via the user-toggled set.
-                  const isOpen =
-                    beatsUserToggled.has(b.id)
-                      ? expandedBeats.has(b.id)
-                      : true;
+                  // Accordion: a beat is open only when it is the single
+                  // expanded one. Everything else stays minimised, so a long
+                  // list reads as a compact stack of title bars.
+                  const isOpen = expandedBeatId === b.id;
                   return (
                     <CollapsibleSection
                       key={b.id}
@@ -8014,14 +8029,7 @@ function StudioInner({
                       titleClass="text-gold"
                       defaultOpen={focusedBeatId === b.id}
                       controlledOpen={isOpen}
-                      onToggle={(next) => {
-                        setBeatsUserToggled((prev) => new Set(prev).add(b.id));
-                        setExpandedBeats((prev) => {
-                          const s2 = new Set(prev);
-                          if (next) s2.add(b.id); else s2.delete(b.id);
-                          return s2;
-                        });
-                      }}
+                      onToggle={(next) => setExpandedBeatId(next ? b.id : null)}
                       draggable
                       dragOver={dragOverBeatId === b.id && dragBeatId !== b.id}
                       onDragStartHandle={(e) => {
@@ -8097,6 +8105,7 @@ function StudioInner({
                         </span>
                       }
                     >
+                    <CollapsibleSection id={`beat-${b.id}-dlg`} title="💬 Dialogue" defaultOpen>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Speaker">
                         <select
@@ -8130,6 +8139,193 @@ function StudioInner({
                         />
                       </Field>
                     </div>
+                    <Field label="Line (click to type — saves when you click away)">
+                      <CommitTextArea
+                        className={`${inputCls} h-16 font-type`}
+                        value={b.text}
+                        onCommit={(next) =>
+                          mutateLatest((d) => {
+                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = next;
+                          })
+                        }
+                      />
+                      <Field label="Voice MP3 URL (optional — replaces TTS for this line)">
+                        <div className="flex gap-1">
+                          <input
+                            className={inputCls}
+                            placeholder="/audio/line_01.mp3 or https://..."
+                            value={mediaField(b.audioUrl)}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = e.target.value || undefined;
+                              })
+                            }
+                          />
+                          <MediaUploadButton
+                            storyId={story.id}
+                            accept="audio/*"
+                            label="⇧ Upload"
+                            onUploaded={(_url, assetId) => mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${assetId}`;
+                            })}
+                          />
+                        </div>
+                        <div className="mt-1">
+                          <AssetDropdown
+                            storyId={story.id}
+                            assetType="audio"
+                            returnReference
+                            value={b.audioUrl}
+                            onChange={(url) => mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
+                            })}
+                            placeholder="Or use uploaded audio..."
+                          />
+                        </div>
+                        <div className="mt-1">
+                          <CharacterVoiceFiles
+                            characterId={b.characterId}
+                            characterName={story.characters.find((x) => x.id === b.characterId)?.name}
+                            value={b.audioUrl}
+                            onChange={(url) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="mt-1 flex gap-1">
+                          <button
+                            disabled={
+                              aiBusyBeat === b.id ||
+                              !!b.silent ||
+                              !b.text.trim() ||
+                              !!(b.recalls && Object.keys(b.recalls).length) ||
+                              !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                            }
+                            title={
+                              b.silent
+                                ? "Silent beat — no line to convert"
+                                : !b.text.trim()
+                                  ? "Write the line first"
+                                  : b.recalls && Object.keys(b.recalls).length
+                                    ? "This line recalls memories — its text changes by route, so it stays on TTS"
+                                    : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
+                                      ? "Assign this character's ElevenLabs voice ID in the Characters tab first"
+                                      : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
+                            }
+                            onClick={async () => {
+                              const ch = story.characters.find((x) => x.id === b.characterId);
+                              if (!ch?.elevenVoiceId) {
+                                window.alert("Assign this character's ElevenLabs voice ID in the Characters tab first.");
+                                return;
+                              }
+                              const line = b.text.trim();
+                              if (!line) return;
+                              if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
+                              setAiBusyBeat(b.id);
+                              setAiNote(null);
+                              try {
+                                const { dataUrl, blob } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
+                                // Save the MP3 as a real file (public/voices/<person>/<scene>/
+                                // on desktop, the linked folder in the browser) and point the
+                                // beat at wherever it actually landed.
+                                const saved = await saveGeneratedVoice({
+                                  storyId: story.id,
+                                  characterId: b.characterId,
+                                  sceneId: scene.id,
+                                  beatId: b.id,
+                                  blob,
+                                  dataUrl,
+                                  assetName: `voice-${b.characterId}-${b.id}`,
+                                });
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = saved.url;
+                                });
+                                setAiNote({ text: saved.note, at: Date.now() });
+                                void new Audio(dataUrl).play(); // audition the result straight away
+                              } catch (err) {
+                                window.alert((err as Error).message);
+                              } finally {
+                                setAiBusyBeat(null);
+                              }
+                            }}
+                            className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+                          >
+                            {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
+                          </button>
+                          {aiNote && (
+                            <p className="font-type text-[8px] leading-snug text-gold/90" title={aiNote.text}>
+                              {aiNote.text}
+                            </p>
+                          )}
+                          {b.audioUrl && (
+                            <button
+                              onClick={() =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = undefined;
+                                })
+                              }
+                              title="Clear the MP3 — this line falls back to TTS"
+                              className="border border-crimson/40 px-2 py-1 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                            >
+                              ✕ TTS
+                            </button>
+                          )}
+                        </div>
+                      </Field>
+                      {/* Audio tags — v3 performs sound cues (laugh/cough);
+                          older models get only voice-delivery direction like
+                          whisper, with a note. */}
+                      {b.characterId !== "narrator" && (() => {
+                        const tags = audioTagsForModel(voiceModel);
+                        const v3 = modelSupportsAudioTags(voiceModel);
+                        if (!tags.length) return null;
+                        return (
+                          <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
+                            <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
+                              🎙 Insert cue · {v3 ? "sound + delivery" : "delivery only"}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {tags.map((t) => (
+                                <button
+                                  key={t.tag}
+                                  type="button"
+                                  title={t.hint}
+                                  onClick={() =>
+                                    mutate((d) => {
+                                      const beat = d.scenes
+                                        .find((x) => x.id === scene.id)!
+                                        .dialogueBeats!.find((x) => x.id === b.id)!;
+                                      beat.text = `${beat.text ? beat.text.replace(/\s*$/, "") + " " : ""}${t.tag} `;
+                                    })
+                                  }
+                                  className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-wide text-neon hover:bg-neon/15"
+                                >
+                                  {t.label}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                              {v3 ? (
+                                <>Bracketed cues like <b>[laughs]</b> are performed by the v3 voice — place them where the sound happens.</>
+                              ) : (
+                                <>This model only handles delivery cues like <b>[whispers]</b>. Switch to <b>Eleven v3</b> for performed sounds ([laughs], [coughs]…) — other models read the brackets aloud.</>
+                              )}
+                            </p>
+                          </div>
+                        );
+                      })()}
+                    </Field>
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-bg`} title="🖼 Background & camera">
                     <Field label="🖼 Replacement background image (persists over later beats by default — see options below)">
                       <div className="flex gap-1">
                         <input
@@ -8229,6 +8425,25 @@ function StudioInner({
                           </Field>
                         </div>
                       )}
+                      {b.background && (
+                        <div className="mt-1 space-y-2 border border-gold/20 bg-gold/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">
+                            🎬 Beat camera — zoom to subject &amp; motion
+                          </div>
+                          <CinematicControls
+                            cinematic={b.cinematic}
+                            previewUrl={media(b.background) ?? b.background}
+                            storyId={story.id}
+                            media={media}
+                            onChange={(next) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.cinematic = next;
+                              })
+                            }
+                          />
+                        </div>
+                      )}
                       <div className="mt-1 space-y-1 border border-gold/20 bg-gold/5 p-1.5">
                         <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
                           <input
@@ -8285,6 +8500,8 @@ function StudioInner({
                       />
                       🔇 Silent beat — no narration (text only)
                     </label>
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-route`} title="🎬 Routing & animation">
                     {/* ---- after this beat: route to another scene ---- */}
                     <div className="border border-cyan-neon/30 bg-cyan-neon/5 p-2 space-y-1.5">
                       <Field label="🎬 After this beat — cut to scene (insert shot ends the scene)">
@@ -8375,178 +8592,8 @@ function StudioInner({
                         )}
                       </label>
                     )}
-                    <Field label="Voice MP3 URL (optional — replaces TTS for this line)">
-                      <div className="flex gap-1">
-                        <input
-                          className={inputCls}
-                          placeholder="/audio/line_01.mp3 or https://..."
-                          value={mediaField(b.audioUrl)}
-                          onChange={(e) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = e.target.value || undefined;
-                            })
-                          }
-                        />
-                        <MediaUploadButton
-                          storyId={story.id}
-                          accept="audio/*"
-                          label="⇧ Upload"
-                          onUploaded={(_url, assetId) => mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = `asset:${assetId}`;
-                          })}
-                        />
-                      </div>
-                      <div className="mt-1">
-                        <AssetDropdown
-                          storyId={story.id}
-                          assetType="audio"
-                          returnReference
-                          value={b.audioUrl}
-                          onChange={(url) => mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
-                          })}
-                          placeholder="Or use uploaded audio..."
-                        />
-                      </div>
-                      <div className="mt-1 flex gap-1">
-                        <button
-                          disabled={
-                            aiBusyBeat === b.id ||
-                            !!b.silent ||
-                            !b.text.trim() ||
-                            !!(b.recalls && Object.keys(b.recalls).length) ||
-                            !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
-                          }
-                          title={
-                            b.silent
-                              ? "Silent beat — no line to convert"
-                              : !b.text.trim()
-                                ? "Write the line first"
-                                : b.recalls && Object.keys(b.recalls).length
-                                  ? "This line recalls memories — its text changes by route, so it stays on TTS"
-                                  : !story.characters.find((x) => x.id === b.characterId)?.elevenVoiceId
-                                    ? "Assign this character's ElevenLabs voice ID in the Characters tab first"
-                                    : "Synthesize this line with ElevenLabs — spends credits, you'll be asked to confirm"
-                          }
-                          onClick={async () => {
-                            const ch = story.characters.find((x) => x.id === b.characterId);
-                            if (!ch?.elevenVoiceId) {
-                              window.alert("Assign this character's ElevenLabs voice ID in the Characters tab first.");
-                              return;
-                            }
-                            const line = b.text.trim();
-                            if (!line) return;
-                            if (!window.confirm(convertConfirmMessage(`${ch.name} — ${scene.title}`, ch.elevenVoiceId, getElevenModel(), line))) return;
-                            setAiBusyBeat(b.id);
-                            setAiNote(null);
-                            try {
-                              const { dataUrl, blob } = await synthesizeElevenLabs(line, ch.elevenVoiceId, getElevenModel());
-                              // Save the MP3 as a real file (public/voices/<person>/<scene>/
-                              // on desktop, the linked folder in the browser) and point the
-                              // beat at wherever it actually landed.
-                              const saved = await saveGeneratedVoice({
-                                storyId: story.id,
-                                characterId: b.characterId,
-                                sceneId: scene.id,
-                                beatId: b.id,
-                                blob,
-                                dataUrl,
-                                assetName: `voice-${b.characterId}-${b.id}`,
-                              });
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = saved.url;
-                              });
-                              setAiNote({ text: saved.note, at: Date.now() });
-                              void new Audio(dataUrl).play(); // audition the result straight away
-                            } catch (err) {
-                              window.alert((err as Error).message);
-                            } finally {
-                              setAiBusyBeat(null);
-                            }
-                          }}
-                          className="w-full border border-neon/40 py-1 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
-                        >
-                          {aiBusyBeat === b.id ? "Converting…" : b.audioUrl ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
-                        </button>
-                        {aiNote && (
-                          <p className="font-type text-[8px] leading-snug text-gold/90" title={aiNote.text}>
-                            {aiNote.text}
-                          </p>
-                        )}
-                        {b.audioUrl && (
-                          <button
-                            onClick={() =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = undefined;
-                              })
-                            }
-                            title="Clear the MP3 — this line falls back to TTS"
-                            className="border border-crimson/40 px-2 py-1 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                          >
-                            ✕ TTS
-                          </button>
-                        )}
-                      </div>
-                    </Field>
-                    <Field label="Line (click to type — saves when you click away)">
-                      <CommitTextArea
-                        className={`${inputCls} h-16 font-type`}
-                        value={b.text}
-                        onCommit={(next) =>
-                          mutateLatest((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = next;
-                          })
-                        }
-                      />
-                      {/* Audio tags — v3 performs sound cues (laugh/cough);
-                          older models get only voice-delivery direction like
-                          whisper, with a note. */}
-                      {b.characterId !== "narrator" && (() => {
-                        const tags = audioTagsForModel(voiceModel);
-                        const v3 = modelSupportsAudioTags(voiceModel);
-                        if (!tags.length) return null;
-                        return (
-                          <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
-                            <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
-                              🎙 Insert cue · {v3 ? "sound + delivery" : "delivery only"}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {tags.map((t) => (
-                                <button
-                                  key={t.tag}
-                                  type="button"
-                                  title={t.hint}
-                                  onClick={() =>
-                                    mutate((d) => {
-                                      const beat = d.scenes
-                                        .find((x) => x.id === scene.id)!
-                                        .dialogueBeats!.find((x) => x.id === b.id)!;
-                                      beat.text = `${beat.text ? beat.text.replace(/\s*$/, "") + " " : ""}${t.tag} `;
-                                    })
-                                  }
-                                  className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-wide text-neon hover:bg-neon/15"
-                                >
-                                  {t.label}
-                                </button>
-                              ))}
-                            </div>
-                            <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
-                              {v3 ? (
-                                <>Bracketed cues like <b>[laughs]</b> are performed by the v3 voice — place them where the sound happens.</>
-                              ) : (
-                                <>This model only handles delivery cues like <b>[whispers]</b>. Switch to <b>Eleven v3</b> for performed sounds ([laughs], [coughs]…) — other models read the brackets aloud.</>
-                              )}
-                            </p>
-                          </div>
-                        );
-                      })()}
-                    </Field>
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-cond`} title="🧠 Conditions & memories">
                     {/* Memory recall substitutions — the NPC echoes a specific
                         earlier choice instead of a generic line. */}
                     <Field label="Memories recalled (memory tag OR flag → line). Replaces the Line above when that choice was made — or that flag is set. Use {said} for the player's exact words (or the flag's note from the 🏷 Flags tab).">
@@ -8635,6 +8682,7 @@ function StudioInner({
                       }
                     />
                     </CollapsibleSection>
+                    </CollapsibleSection>
                   );
                 })}
                 <button
@@ -8649,6 +8697,9 @@ function StudioInner({
                         text: "New line of smoky dialogue...",
                       });
                     });
+                    // The fresh beat becomes the one maximised card (and folds
+                    // whatever was open), so the author lands straight in it.
+                    setExpandedBeatId(id);
                     setFocusedBeatId(id);
                     window.setTimeout(() => setFocusedBeatId(null), 1600);
                   }}
@@ -9753,6 +9804,8 @@ import type { TitleTheme } from "../types";
 
 export function Studio(props: {
   baseStories: Story[];
+  initialStoryId?: string;
+  initialSceneId?: string;
   onExit: () => void;
   onPlay: (story: Story, opts?: { fromSceneId?: string }) => void;
   onPublish: (story: Story) => boolean;

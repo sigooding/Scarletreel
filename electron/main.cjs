@@ -303,6 +303,63 @@ function registerVoiceIpc() {
     const buffer = await fs.readFile(resolved);
     return { base64: buffer.toString("base64"), size: buffer.length, name: path.basename(resolved) };
   });
+
+  /** List every MP3 already on disk for one person (voices/<person>/<scene>/…),
+   *  newest first, so Studio can reuse a line generated for another scene.
+   *  Roots mirror scarlet-voice:read — in dev the repo's public/ and dist/
+   *  voices trees (returned as /voices/… URLs, preferred), plus the userData
+   *  game-media folder a packaged build writes to (returned as file:// URLs). */
+  ipcMain.handle("scarlet-voice:list", async (_event, personRaw) => {
+    const person = String(personRaw ?? "");
+    if (!/^[A-Za-z0-9._-]+$/.test(person)) throw new Error("Invalid voice person slug.");
+
+    const roots = [];
+    if (!app.isPackaged) {
+      roots.push({ dir: path.join(app.getAppPath(), "public", "voices"), web: true });
+      roots.push({ dir: path.join(app.getAppPath(), "dist", "voices"), web: true });
+    }
+    roots.push({ dir: path.join(app.getPath("userData"), "game-media", "voices"), web: false });
+
+    const out = [];
+    const seen = new Set();
+    for (const root of roots) {
+      const personDir = path.join(root.dir, person);
+      let scenes;
+      try {
+        scenes = await fs.readdir(personDir, { withFileTypes: true });
+      } catch {
+        continue; // this root holds nothing for this person
+      }
+      for (const scene of scenes) {
+        if (!scene.isDirectory()) continue;
+        const sceneDir = path.join(personDir, scene.name);
+        let files;
+        try {
+          files = await fs.readdir(sceneDir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const file of files) {
+          if (!file.isFile() || !file.name.toLowerCase().endsWith(".mp3")) continue;
+          const relPath = `voices/${person}/${scene.name}/${file.name}`;
+          if (seen.has(relPath)) continue;
+          seen.add(relPath);
+          const abs = path.join(sceneDir, file.name);
+          const stat = await fs.stat(abs).catch(() => null);
+          out.push({
+            relPath,
+            scene: scene.name,
+            name: file.name,
+            size: stat ? stat.size : 0,
+            mtime: stat ? stat.mtimeMs : 0,
+            url: root.web ? `/${relPath}` : pathToFileURL(abs).toString(),
+          });
+        }
+      }
+    }
+    out.sort((a, b) => b.mtime - a.mtime);
+    return out;
+  });
 }
 
 function registerWindowIpc() {

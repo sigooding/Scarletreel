@@ -12,3 +12,22 @@ declare module "virtual:builtin-images" {
   const images: BuiltinImage[];
   export default images;
 }
+
+/* Type the build-time virtual module injected by the `builtin-audio` Vite
+ * plugin — every audio file found under public/ (voices tree + uploads). */
+declare module "virtual:builtin-audio" {
+  export interface BuiltinAudio {
+    /** stable public path, e.g. "/voices/jack/nwd_diner/line-1.mp3" */
+    url: string;
+    /** file name without its extension */
+    label: string;
+    /** folder relative to public/, e.g. "uploads/nobodys-witness-draft" */
+    folder: string;
+    /** set for the voices tree: the person slug the take belongs to */
+    person?: string;
+    /** set for the voices tree: the scene folder under that person */
+    scene?: string;
+  }
+  const audio: BuiltinAudio[];
+  export default audio;
+}

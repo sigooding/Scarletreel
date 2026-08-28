@@ -1126,6 +1126,96 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   }
 }
 
+/* ================================================================== */
+/*  7. Session restore (game/session.ts — real code)                   */
+/*                                                                     */
+/*  A reload must put the player back where they were instead of on    */
+/*  the newsstand, and a corrupt or hostile stored value must never    */
+/*  be enough to break startup.                                        */
+/* ================================================================== */
+{
+  const { SESSION_KEY, readSession, writeSession, clearSession } = await import("../src/game/session");
+
+  const store = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+  };
+
+  check("session: absent to begin with", readSession() === null);
+
+  writeSession({ kind: "play", storyId: "the-neon-diner" });
+  check(
+    "session: a play session round trips with its case id",
+    JSON.stringify(readSession()) === JSON.stringify({ kind: "play", storyId: "the-neon-diner" }),
+    readSession()
+  );
+  check("session: stored under the documented key", store.has(SESSION_KEY));
+
+  writeSession({ kind: "studio" });
+  check("session: studio round trips", readSession()?.kind === "studio", readSession());
+  writeSession({ kind: "gallery" });
+  check("session: gallery round trips", readSession()?.kind === "gallery", readSession());
+
+  clearSession();
+  check("session: quitting to the newsstand clears it", readSession() === null && !store.has(SESSION_KEY));
+
+  // A bad stored value must read as "no session", never throw at startup.
+  for (const [name, bad] of [
+    ["corrupt JSON", "{not json"],
+    ["JSON null", "null"],
+    ["a number", "42"],
+    ["a string", "\"the-neon-diner\""],
+    ["an array", "[]"],
+    ["unknown kind", JSON.stringify({ kind: "credits" })],
+    ["no kind", JSON.stringify({ storyId: "x" })],
+    ["play with no case id", JSON.stringify({ kind: "play" })],
+    ["play with empty case id", JSON.stringify({ kind: "play", storyId: "" })],
+    ["play with non-string id", JSON.stringify({ kind: "play", storyId: 7 })],
+  ] as Array<[string, string]>) {
+    store.set(SESSION_KEY, bad);
+    let out: unknown = "threw";
+    try {
+      out = readSession();
+    } catch {
+      /* stays "threw" */
+    }
+    check(`session: ${name} reads as no session`, out === null, out);
+  }
+
+  // Storage that throws outright (private mode / disabled cookies) must not
+  // take startup down with it.
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: () => {
+      throw new Error("SecurityError");
+    },
+    setItem: () => {
+      throw new Error("SecurityError");
+    },
+    removeItem: () => {
+      throw new Error("SecurityError");
+    },
+    key: () => null,
+    length: 0,
+    clear: () => {},
+  };
+  let threw = false;
+  try {
+    check("session: throwing storage reads as no session", readSession() === null);
+    writeSession({ kind: "studio" }); // must swallow, not propagate
+    clearSession();
+  } catch {
+    threw = true;
+  }
+  check("session: throwing storage never propagates", !threw);
+}
+
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   for (const f of failures) console.log(`  ✖ ${f}`);
