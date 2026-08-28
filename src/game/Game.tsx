@@ -3179,11 +3179,17 @@ function CasePlayer({
       setHoldRemaining(0);
       setAutoAdvanceRemaining(0);
     } else {
+      // A scene whose prose is empty has nothing to read, so don't strand the
+      // player on a blank panel with a "continue to dialogue" button: drop
+      // straight into the beats (or choices). Credits/cutscene intros keep
+      // their deliberate Begin/Continue flow even when terse.
+      const emptyProse =
+        scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && !(scene.prose ?? "").trim();
       // If noTypewriter is enabled (for MP3 voice sync), show prose instantly
       // instead of animating it letter-by-letter. Credits nodes are the
       // exception: their animated intro controls when the Begin button appears.
-      setProseDone(revisit || (!!scene.noTypewriter && scene.nodeType !== "credits"));
-      setProseAcknowledged(revisit);
+      setProseDone(revisit || emptyProse || (!!scene.noTypewriter && scene.nodeType !== "credits"));
+      setProseAcknowledged(revisit || emptyProse);
       setBeatIdx(revisit ? (scene.dialogueBeats?.length ?? 0) : 0);
       setBeatDone(false);
       setChoiceFocus(0);
@@ -3839,6 +3845,14 @@ function CasePlayer({
   // the box symmetrically instead of shunting the controls.
   const reserveContinueSlot =
     !!reservedProse && scene?.nodeType !== "credits" && scene?.nodeType !== "cutscene";
+  // A standard node with no prose has nothing to acknowledge, so its
+  // "continue to dialogue" button must not render (the entry effect also drops
+  // the player straight into the beats).
+  const emptyProseScene =
+    !!scene &&
+    scene.nodeType !== "credits" &&
+    scene.nodeType !== "cutscene" &&
+    !(scene.prose ?? "").trim();
 
   /* -------- beats advancement -------- */
   const holdActive = holdRemaining > 0;
@@ -6154,7 +6168,7 @@ function CasePlayer({
                     original pop-in. */}
                 {reserveContinueSlot ? (
                   <div className="mt-3 flex h-7 items-center justify-center">
-                    {proseDone && (
+                    {proseDone && !emptyProseScene && (
                       <button
                         onClick={() => {
                           audio.click();
