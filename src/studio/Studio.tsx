@@ -6917,6 +6917,7 @@ function StudioInner({
                   an act boundary, the act's route map) plays when the player leaves it. Deeper polish — camera
                   moves, light glows, letterbox — lives in the cinematic sections below.
                 </HelpNote>
+                <CollapsibleSection id={`scene-${scene.id}-basics`} title="🪪 Scene basics" defaultOpen>
                 <Field label="Scene id">
                   <input className={inputCls} value={scene.id} disabled />
                 </Field>
@@ -6931,6 +6932,7 @@ function StudioInner({
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
                   </select>
                 </Field>
+                </CollapsibleSection>
                 {(scene.nodeType === "credits" || scene.nodeType === "cutscene") && (
                   <Field label="⏳ Cinematic hold — seconds before choices appear (0 = instant)">
                     <div className="flex items-center gap-2">
@@ -7396,6 +7398,7 @@ function StudioInner({
                     </p>
                   </div>
                 )}
+                <CollapsibleSection id={`scene-${scene.id}-title`} title="🏷 Title & notes" defaultOpen>
                 <Field label="Title">
                   <input className={inputCls} value={scene.title} onChange={(e) => updateScene(scene.id, { title: e.target.value })} />
                 </Field>
@@ -7417,6 +7420,8 @@ function StudioInner({
                   />
                 </Field>
 
+                </CollapsibleSection>
+                <CollapsibleSection id={`scene-${scene.id}-look`} title="🖼 Look, atmosphere & camera">
                 <Field label="Background image / gradient">
                   {scene.background.startsWith("video:") ? (
                     <p className="border border-gold/30 bg-gold/5 px-2 py-1 font-type text-[10px] text-gold">
@@ -7597,6 +7602,8 @@ function StudioInner({
                 <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] text-paper/55">
                   Need real music or recorded narration? Use the <b className="text-cyan-neon">Audio</b> tab — music and voice are separate there.
                 </p>
+                </CollapsibleSection>
+                <CollapsibleSection id={`scene-${scene.id}-prose`} title="📜 Prose, pacing & structure">
                 <Field label="Prose (narrator)">
                   <textarea
                     className={`${inputCls} h-28 font-type`}
@@ -7723,6 +7730,7 @@ function StudioInner({
                     ) : null}
                   </div>
                 )}
+                </CollapsibleSection>
                 <CollapsibleSection
                   id={`interrogation-${scene.id}`}
                   title="🎭 Interrogation (composure pressure)"
