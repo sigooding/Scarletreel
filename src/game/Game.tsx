@@ -5433,19 +5433,21 @@ function CasePlayer({
             encounteredCharacters={encounteredCharacters}
             visitedCount={visitedScenes.size}
           />
-          <div
-            key={`scene-title-${sceneId}-${entrySeq}`}
-            className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
-          >
-            <span className="border-y border-paper/25 bg-gradient-to-b from-black/35 to-transparent px-6 py-2 font-pulp text-2xl uppercase tracking-[0.3em] text-paper drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] md:text-3xl">
-              {scene.title}
-            </span>
-            {episode && (
-              <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
-                {episodeLabel(episode.number ?? 1, episode.numberSuffix)} · {episode.title}
+          {!scene.hideSceneTitle && (
+            <div
+              key={`scene-title-${sceneId}-${entrySeq}`}
+              className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
+            >
+              <span className="border-y border-paper/25 bg-gradient-to-b from-black/35 to-transparent px-6 py-2 font-pulp text-2xl uppercase tracking-[0.3em] text-paper drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] md:text-3xl">
+                {scene.title}
               </span>
-            )}
-          </div>
+              {episode && (
+                <span className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap font-pulp text-[9px] uppercase tracking-[0.4em] text-gold/70">
+                  {episodeLabel(episode.number ?? 1, episode.numberSuffix)} · {episode.title}
+                </span>
+              )}
+            </div>
+          )}
           {episode && onOpenSeason && (
             <div className="absolute left-1/2 top-3 z-50 -translate-x-1/2">
               <EpisodeChip episode={episode} onOpenSeason={onOpenSeason} />

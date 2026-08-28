@@ -820,6 +820,9 @@ export interface SceneNode {
   credits?: CreditsSettings;
   /** when true, prose renders instantly with no typewriter tick — use when MP3 voice is the real narration */
   noTypewriter?: boolean;
+  /** when true, the big scene-title card that flashes on scene entry is not
+   *  shown (the small HUD label remains). Useful for quiet cold opens. */
+  hideSceneTitle?: boolean;
   /** visual particle overlay; if undefined, falls back to legacy auto-matching based on ambient audio */
   particles?: "none" | "rain" | "smoke" | "storm";
   /** cinematic camera motion applied to the scene background image */
