@@ -370,13 +370,13 @@ export function EpisodeEditor({
                         onChange={(e) => patch(ep.id, { startSceneId: e.target.value })}
                       >
                         <option value="">— pick an opening scene —</option>
-                        {epScenes.map((sc) => (
+                        {epScenes.filter((sc) => sc.nodeType !== "note").map((sc) => (
                           <option key={sc.id} value={sc.id}>{sc.title}</option>
                         ))}
                       </select>
                     </Field>
                     <div className="mt-1.5 max-h-52 space-y-1 overflow-y-auto">
-                      {story.scenes.map((sc) => {
+                      {story.scenes.filter((sc) => sc.nodeType !== "note").map((sc) => {
                         const owner = episodeOfScene(story, sc.id);
                         const mine = owner?.id === ep.id;
                         const takenElsewhere = owner && !mine;

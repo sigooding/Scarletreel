@@ -768,8 +768,11 @@ export interface SceneNode {
   /** Author's sticky note for the Studio canvas — shown as a strip on the
    * scene's node card. Studio metadata only; the game never renders it. */
   note?: string;
-  /** standard, credits (no HUD, big typography), or cutscene (no HUD, full-screen video) */
-  nodeType?: "standard" | "credits" | "cutscene";
+  /** standard, credits (no HUD, big typography), cutscene (no HUD, full-screen video),
+   * or note — an author placeholder ("Missing Scene Here"): wired into the graph
+   * on both sides but bypassed in play (the game follows its single outgoing
+   * route straight through). */
+  nodeType?: "standard" | "credits" | "cutscene" | "note";
   /** Marks this scene as the END OF A PART. On leaving it, the game shows the
    * route flowchart for the part just played before continuing. The string is
    * the part's display name (e.g. "Part 3 — Two Hundred and Eleven Thousand").

@@ -241,32 +241,160 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           : isStart
             ? "border-gold/80"
             : isEnd
-              ? "border-crimson/60"
-              : "border-noir-600";
+            ? "border-crimson/60"
+            : "border-noir-600";
+
+  // Inline rename editor. window.prompt() does not exist in the Electron
+  // shell (or a sandboxed iframe), so the card edits its own title in place:
+  // click to type, Enter or click away saves, Esc cancels.
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const editingRef = useRef(false);
+  const titleInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (editing) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }
+  }, [editing]);
+  const startRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDraftTitle(scene.title);
+    editingRef.current = true;
+    setEditing(true);
+  };
+  const commitRename = () => {
+    if (!editingRef.current) return;
+    editingRef.current = false;
+    setEditing(false);
+    const title = draftTitle.trim();
+    // Notes may be empty (the card shows a placeholder); scene titles may not.
+    if ((title || scene.nodeType === "note") && title !== scene.title) {
+      window.dispatchEvent(
+        new CustomEvent("scarlet-rename-scene", { detail: { sceneId: scene.id, title, isNote: scene.nodeType === "note" } })
+      );
+    }
+  };
+  const cancelRename = () => {
+    if (!editingRef.current) return;
+    editingRef.current = false;
+    setEditing(false);
+  };
+
+  // ---- note placeholder node -------------------------------------------
+  // An author marker ("Missing Scene Here") that wires into the graph on both
+  // sides but is BYPASSED in play. One clickable body (type what belongs
+  // here), one target handle, one outgoing "route out" handle.
+  if (scene.nodeType === "note") {
+    const route = (scene.choices ?? [])[0];
+    return (
+      <div className="scene-card w-56 border-2 border-dashed border-gold/70 bg-[#171410] text-paper shadow-[0_0_14px_rgba(232,178,60,0.2)]">
+        <Handle type="target" position={Position.Left} style={{ background: "#e8b23c" }} />
+        <div className="flex items-center justify-between gap-1 border-b border-dashed border-gold/30 px-2 py-1">
+          <span className="min-w-0 flex-1 truncate font-pulp text-[10px] uppercase tracking-wider text-gold">
+            📝 Note — bypassed in play
+          </span>
+          <span className="flex items-center gap-1 text-[9px]">
+            {issueCount > 0 && (
+              <span className="text-crimson" title={`${issueCount} issue(s)`}>
+                ⚠{issueCount}
+              </span>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm(`Delete note "${scene.title || "(empty)"}"?`)) {
+                  window.dispatchEvent(new CustomEvent("scarlet-delete-scene", { detail: scene.id }));
+                }
+              }}
+              className="ml-1 font-pulp px-1 text-crimson hover:text-white"
+              title="Delete this note"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+        {editing ? (
+          <textarea
+            ref={(el) => {
+              titleInputRef.current = el;
+            }}
+            className="nodrag nopan m-1 min-h-[64px] resize-none border border-gold/70 bg-noir-950 p-2 font-type text-[11px] leading-snug text-paper outline-none focus:border-gold"
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") commitRename();
+              else if (e.key === "Escape") cancelRename();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Note text"
+            title="Ctrl+Enter or click away saves · Esc cancels"
+            spellCheck={false}
+          />
+        ) : (
+          <div
+            className="m-1 min-h-[64px] cursor-text rounded border border-dashed border-gold/25 bg-noir-950/40 p-2 font-type text-[11px] leading-snug text-paper/85 hover:border-gold/50"
+            title="Click to type what belongs here · drag to move the note"
+            onClick={() => {
+              setDraftTitle(scene.title);
+              editingRef.current = true;
+              setEditing(true);
+            }}
+          >
+            {scene.title || <span className="italic text-paper/35">Missing Scene Here</span>}
+          </div>
+        )}
+        <div className="relative border-t border-dashed border-gold/30 px-2 py-1 text-[9px] italic text-gold/70">
+          {route?.targetSceneId ? "route out → wired" : "drag from here to route out →"}
+          <Handle
+            type="source"
+            id={route ? `choice:${route.id}` : "new"}
+            position={Position.Right}
+            style={{ top: "50%", background: "#e8b23c" }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`scene-card w-56 border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}>
       {!isStart && <Handle type="target" position={Position.Left} style={{ background: "#8b8b9e" }} />}
       <div className="flex items-center justify-between gap-1 border-b border-noir-600 px-2 py-1">
-        <span
-          className="min-w-0 flex-1 cursor-text truncate font-pulp text-[10px] uppercase tracking-wider text-gold hover:text-paper"
-          title="Click to rename this scene"
-          onClick={(e) => {
-            e.stopPropagation();
-            const next = window.prompt("Scene name", scene.title);
-            if (next && next.trim() && next.trim() !== scene.title) {
-              window.dispatchEvent(
-                new CustomEvent("scarlet-rename-scene", { detail: { sceneId: scene.id, title: next } })
-              );
-            }
-          }}
-        >
-          {scene.nodeType === "credits" && "🎬 CREDITS · "}
-          {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
-          {isStart && "★ START · "}
-          {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
-          {scene.title}
-        </span>
+        {editing ? (
+          <input
+            ref={(el) => {
+              titleInputRef.current = el;
+            }}
+            className="nodrag nopan min-w-0 flex-1 border border-gold/70 bg-noir-950 px-1 font-pulp text-[10px] uppercase tracking-wider text-paper outline-none focus:border-gold"
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") commitRename();
+              else if (e.key === "Escape") cancelRename();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Scene name"
+            title="Enter saves · Esc cancels"
+            spellCheck={false}
+          />
+        ) : (
+          <span
+            className="min-w-0 flex-1 cursor-text truncate font-pulp text-[10px] uppercase tracking-wider text-gold hover:text-paper"
+            title="Click to rename this scene"
+            onClick={startRename}
+          >
+            {scene.nodeType === "credits" && "🎬 CREDITS · "}
+            {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
+            {isStart && "★ START · "}
+            {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
+            {scene.title}
+          </span>
+        )}
         <span className="flex items-center gap-1 text-[9px]">
           {scene.isEnding && <span title="Ending — no output">🏁</span>}
           {isStart && <span title="Start — no input">★</span>}
@@ -3899,6 +4027,14 @@ function StudioInner({
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; label: string } | null>(null);
   const [batchDone, setBatchDone] = useState<string | null>(null);
+  // ElevenLabs model, mirrored into React state: setElevenModel() only writes
+  // localStorage, so without this the cost preview / insert-cue list rendered
+  // from the stored value would never update when the author picks a model.
+  const [voiceModel, setVoiceModel] = useState(getElevenModel());
+  const changeVoiceModel = (id: string) => {
+    setVoiceModel(id);
+    setElevenModel(id);
+  };
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
@@ -3926,6 +4062,11 @@ function StudioInner({
     });
   };
   const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
+  // Storage is the source of truth for the ElevenLabs model (the Characters
+  // tab can change it elsewhere), so re-read it whenever the tab changes.
+  useEffect(() => {
+    setVoiceModel(getElevenModel());
+  }, [tab]);
   const [globalTitleTheme, setGlobalTitleThemeState] = useState<TitleTheme>(() => {
     // Read the title settings on boot from the same key
     try {
@@ -3945,6 +4086,9 @@ function StudioInner({
   const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; sceneId: string } | null>(null);
   const clipboardScene = useRef<SceneNode | null>(null);
   const [exportPayload, setExportPayload] = useState<string | null>(null);
+  // Shown when both clipboard AND window.prompt are unavailable (Electron
+  // shell / sandboxed iframe): a select-all box for the share link.
+  const [shareBox, setShareBox] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
   // Save reminder: work autosaves to local storage only — this browser's
   // storage on the web, the app's data folder in the compiled app. It never
@@ -4269,6 +4413,27 @@ function StudioInner({
     audio.pickup();
   };
 
+  const addNoteScene = (fx: number, fy: number) => {
+    const id = `scene_${uid()}`;
+    mutate((d) => {
+      d.scenes.push({
+        id,
+        title: "Missing Scene Here",
+        nodeType: "note",
+        background: "gradient:linear-gradient(135deg,#1a150c 0%,#0c0c14 100%)",
+        prose: "",
+        choices: [],
+        hotspots: [],
+        dialogueBeats: [],
+      });
+      d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
+    });
+    setSelectedId(id);
+    setTab("scene");
+    say("Note added — click its text to type what belongs here. Wire it in on both sides; the game bypasses it in play.");
+    audio.pickup();
+  };
+
   const deleteScene = (id: string) => {
     const isStart = id === story.startSceneId;
     mutate((d) => {
@@ -4558,10 +4723,11 @@ function StudioInner({
       if (sceneId) deleteScene(sceneId);
     };
     const onRenameCustom = (e: Event) => {
-      const detail = (e as CustomEvent<{ sceneId: string; title: string }>).detail;
+      const detail = (e as CustomEvent<{ sceneId: string; title: string; isNote?: boolean }>).detail;
       if (!detail?.sceneId) return;
       const title = detail.title.trim();
-      if (!title) return;
+      // Notes may be left empty (the card shows a placeholder); titles may not.
+      if (!title && !detail.isNote) return;
       mutate((draft) => {
         const sc = draft.scenes.find((s) => s.id === detail.sceneId);
         if (sc) sc.title = title;
@@ -4577,7 +4743,11 @@ function StudioInner({
         if (!sc) return;
         if (d.kind === "choice") {
           const c = sc.choices?.find((x) => x.id === d.refId);
-          if (c) c.targetSceneId = "";
+          if (!c) return;
+          // A note's route IS its single choice — removing the wire removes
+          // the route (and the card's handle drops back to "connect me").
+          if (sc.nodeType === "note") sc.choices = sc.choices?.filter((x) => x.id !== d.refId) ?? [];
+          else c.targetSceneId = "";
         } else if (d.kind === "hotspot") {
           const h = sc.hotspots?.find((x) => x.id === d.refId);
           if (h) h.action.targetSceneId = undefined;
@@ -4607,6 +4777,7 @@ function StudioInner({
       // in the Choices tab immediately — otherwise a fresh "New choice..." is
       // silently dropped into the list with no way to know where it went.
       let newChoiceId: string | null = null;
+      let focusChoice = true;
       mutate((d) => {
         const sc = d.scenes.find((s) => s.id === conn.source);
         if (!sc) return;
@@ -4623,11 +4794,20 @@ function StudioInner({
         } else {
           sc.choices = sc.choices ?? [];
           newChoiceId = `c_${uid()}`;
-          sc.choices.push({ id: newChoiceId, text: "New choice — click to edit", targetSceneId: conn.target!, attitudeTag: "Neutral" });
+          // A note's single "route out" handle: the first connection becomes
+          // its bypass route.
+          const isNote = sc.nodeType === "note";
+          if (isNote) focusChoice = false;
+          sc.choices.push({
+            id: newChoiceId,
+            text: isNote ? "Bypass route" : "New choice — click to edit",
+            targetSceneId: conn.target!,
+            attitudeTag: "Neutral",
+          });
         }
       });
       audio.stringSnap();
-      if (newChoiceId) {
+      if (newChoiceId && focusChoice) {
         setSelectedId(conn.source!);
         setTab("choices");
         setFocusedChoiceId(newChoiceId);
@@ -4648,9 +4828,13 @@ function StudioInner({
     const itemIds = new Set(next.items.map((i) => i.id));
     const fixes: string[] = [];
 
-    if (!sceneIds.has(next.startSceneId) && next.scenes[0]) {
-      next.startSceneId = next.scenes[0].id;
-      fixes.push("reset start scene");
+    if (!sceneIds.has(next.startSceneId)) {
+      // Notes are placeholders, never a start scene.
+      const firstReal = next.scenes.find((s) => s.nodeType !== "note");
+      if (firstReal) {
+        next.startSceneId = firstReal.id;
+        fixes.push("reset start scene");
+      }
     }
     const start = next.startSceneId;
 
@@ -4816,7 +5000,22 @@ function StudioInner({
       await navigator.clipboard.writeText(url);
       say("Share link copied to clipboard! 📋");
     } catch {
-      window.prompt("Copy your share link:", url);
+      // Clipboard blocked: prompt() is the classic fallback, but it doesn't
+      // exist in the Electron shell — show the link in a select-all box
+      // instead of throwing.
+      let showed = false;
+      try {
+        if (typeof window.prompt === "function") {
+          window.prompt("Copy your share link:", url);
+          showed = true;
+        }
+      } catch {
+        /* dialog blocked in this shell */
+      }
+      if (!showed) {
+        setShareBox(url);
+        say("Clipboard blocked — the share link is in the box below, select and copy it.");
+      }
     }
   };
 
@@ -5025,10 +5224,27 @@ function StudioInner({
     // Second confirmation for any spend over a small threshold so an
     // accidental click never burns a large batch.
     if (genCost.credits >= 500) {
-      const sure = window.prompt(
-        `Final check: this spends ~${genCost.credits.toLocaleString()} credits on ${toGenerate.length} line(s). Type GENERATE to proceed.`,
-        ""
-      );
+      let sure: string | null = null;
+      let dialogOk = false;
+      try {
+        if (typeof window.prompt === "function") {
+          sure = window.prompt(
+            `Final check: this spends ~${genCost.credits.toLocaleString()} credits on ${toGenerate.length} line(s). Type GENERATE to proceed.`,
+            ""
+          );
+          dialogOk = true;
+        }
+      } catch {
+        /* dialog blocked in this shell */
+      }
+      if (!dialogOk) {
+        // Fail closed: without the typed GENERATE confirmation we must not
+        // spend credits, so abort with an explanation instead of throwing.
+        setBatchDone(
+          "Cancelled — this shell can't show the typed GENERATE confirmation, so the batch was not run. Try from a normal browser window, or keep each scene under the confirmation threshold."
+        );
+        return;
+      }
       if ((sure ?? "").trim().toUpperCase() !== "GENERATE") return;
     }
     const queue = toGenerate;
@@ -5176,6 +5392,13 @@ function StudioInner({
         </button>
         <button onClick={() => addScene(80 + Math.random() * 200, 80 + Math.random() * 200)} className="btn-tool" title="Add standard game scene">
           ＋ Scene
+        </button>
+        <button
+          onClick={() => addNoteScene(80 + Math.random() * 200, 80 + Math.random() * 200)}
+          className="btn-tool"
+          title="Add a placeholder note — wires into the graph on both sides but is bypassed in play (e.g. 'Missing Scene Here')"
+        >
+          📝 Note
         </button>
         <button
           onClick={() => addCreditsScene(80 + Math.random() * 200, 80 + Math.random() * 200)}
@@ -5428,6 +5651,29 @@ function StudioInner({
         </div>
       )}
 
+      {shareBox && (
+        <div className="absolute bottom-4 left-1/2 z-[85] w-[min(92vw,640px)] -translate-x-1/2 border border-gold/60 bg-noir-950/95 p-2 shadow-2xl pop-in">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">
+              📋 Share link — select all and copy
+            </span>
+            <button
+              onClick={() => setShareBox(null)}
+              className="px-1 text-paper/50 hover:text-neon"
+              aria-label="Close share link box"
+            >
+              ✕
+            </button>
+          </div>
+          <input
+            readOnly
+            value={shareBox}
+            onFocus={(e) => e.target.select()}
+            className="w-full border border-noir-600 bg-noir-900 px-2 py-1.5 font-mono text-[10px] text-paper/80 outline-none"
+          />
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1">
         {/* canvas */}
         <div className="relative min-w-0 flex-1" onClick={() => { setMenu(null); setNodeMenu(null); }}>
@@ -5521,6 +5767,16 @@ function StudioInner({
                 }}
               >
                 ＋ Add scene here
+              </button>
+              <button
+                role="menuitem"
+                className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700 text-gold"
+                onClick={() => {
+                  addNoteScene(menu.fx, menu.fy);
+                  setMenu(null);
+                }}
+              >
+                📝 Add note here
               </button>
               <button
                 role="menuitem"
@@ -6572,7 +6828,70 @@ function StudioInner({
               </p>
             )}
 
-            {scene && tab === "scene" && (
+            {scene && scene.nodeType === "note" && ["scene", "beats", "hotspots", "choices"].includes(tab) && (
+              <div className="space-y-3">
+                <div className="border border-gold/40 bg-gold/5 p-3">
+                  <h3 className="font-pulp text-xs uppercase tracking-widest text-gold">📝 Note placeholder</h3>
+                  <p className="mt-1 font-type text-[10px] leading-snug text-paper/60">
+                    A marker for a scene that doesn't exist yet. It wires into the graph on both sides, but the game{" "}
+                    <b className="text-gold">bypasses</b> it in play — a player who reaches it passes straight through to
+                    the scene its right handle points at. When you've written the real scene, convert this note into a
+                    full scene (or delete it and re-wire).
+                  </p>
+                </div>
+                <Field label="What belongs here">
+                  <textarea
+                    className={`${inputCls} h-24 font-type`}
+                    value={scene.title}
+                    placeholder="e.g. Missing Scene Here"
+                    onChange={(e) => updateScene(scene.id, { title: e.target.value })}
+                  />
+                </Field>
+                {(() => {
+                  const es = storyEdges(story);
+                  const incoming = es.filter((e) => e.target === scene.id);
+                  const outgoing = es.filter((e) => e.source === scene.id);
+                  const name = (sid: string) => story.scenes.find((s) => s.id === sid)?.title ?? sid;
+                  return (
+                    <div className="space-y-1.5 border border-noir-600 bg-noir-900/40 p-2 font-type text-[10px] leading-snug text-paper/60">
+                      <div>
+                        ⬅ <b className="text-paper/80">In from:</b>{" "}
+                        {incoming.length
+                          ? incoming.map((e) => `${name(e.source)} (“${e.label}”)`).join(" · ")
+                          : <span className="text-paper/35">nothing yet — drag a choice handle from a scene into its left side</span>}
+                      </div>
+                      <div>
+                        ➡ <b className="text-paper/80">Route out (bypass target):</b>{" "}
+                        {outgoing.length ? name(outgoing[0].target) : <span className="text-crimson">nowhere — a player reaching this note would be stuck</span>}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      updateScene(scene.id, {
+                        nodeType: undefined,
+                        background: scene.background.startsWith("gradient:") ? BACKGROUNDS[8] : scene.background,
+                        prose: scene.prose || "The scene opens on...",
+                      });
+                      say("Note converted to a full scene — author it in the Scene tab and give it exits.");
+                    }}
+                    className="flex-1 border border-cyan-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                  >
+                    🎬 Convert to full scene
+                  </button>
+                  <button
+                    onClick={() => deleteScene(scene.id)}
+                    className="flex-1 border border-crimson/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                  >
+                    🗑 Delete note
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {scene && scene.nodeType !== "note" && tab === "scene" && (
               <>
                 <HelpNote id="scene-tab" title="Scene tab">
                   The <b>background</b> accepts an image path (e.g. <code>/img/alley.jpg</code>), a{" "}
@@ -7603,8 +7922,8 @@ function StudioInner({
                   <Field label="Voice model">
                     <select
                       className={inputCls}
-                      defaultValue={getElevenModel()}
-                      onChange={(e) => setElevenModel(e.target.value)}
+                      value={voiceModel}
+                      onChange={(e) => changeVoiceModel(e.target.value)}
                     >
                       {ELEVENLABS_MODELS.map((m) => (
                         <option key={m.id} value={m.id}>{m.label}</option>
@@ -7613,7 +7932,7 @@ function StudioInner({
                   </Field>
                   {/* Live cost preview for this scene, for the selected model. */}
                   {(() => {
-                    const model = getElevenModel();
+                    const model = voiceModel;
                     const genChars = (scene.dialogueBeats ?? [])
                       .filter((b) => {
                         const t = b.text?.trim();
@@ -7641,7 +7960,7 @@ function StudioInner({
                   })()}
                   <button
                     disabled={batchBusy}
-                    onClick={() => { setBatchDone(null); void batchGenerateVoices(scene.id); }}
+                    onClick={() => { setBatchDone(null); void batchGenerateVoices(scene.id, voiceModel); }}
                     className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
                     title="Generate MP3s for every convertible beat in THIS scene — each in its speaker's voice with conversational context, then applied automatically. Spends ElevenLabs credits; you'll confirm first."
                   >
@@ -8189,8 +8508,8 @@ function StudioInner({
                           older models get only voice-delivery direction like
                           whisper, with a note. */}
                       {b.characterId !== "narrator" && (() => {
-                        const tags = audioTagsForModel(getElevenModel());
-                        const v3 = modelSupportsAudioTags(getElevenModel());
+                        const tags = audioTagsForModel(voiceModel);
+                        const v3 = modelSupportsAudioTags(voiceModel);
                         if (!tags.length) return null;
                         return (
                           <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
@@ -8340,7 +8659,7 @@ function StudioInner({
               </>
             )}
 
-            {scene && tab === "hotspots" && (
+            {scene && scene.nodeType !== "note" && tab === "hotspots" && (
               <>
                 <HelpNote id="hotspots-tab" title="Hotspots">
                   A hotspot is a clickable zone on the art. One action each: go to scene, give item, set flag, show
@@ -8820,7 +9139,7 @@ function StudioInner({
               </>
             )}
 
-            {scene && tab === "choices" && (
+            {scene && scene.nodeType !== "note" && tab === "choices" && (
               <>
                 <HelpNote id="choices-tab" title="Choices">
                   A choice either <b>navigates</b> (it has a target scene) or is a <b>💬 reply</b> — replies answer in
