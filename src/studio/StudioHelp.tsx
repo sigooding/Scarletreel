@@ -284,7 +284,9 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               tab first), reads the surrounding lines as <b>conversational context</b> so delivery responds naturally to the
               previous speaker, and each finished MP3 is <b>applied to its beat automatically</b> (no manual wiring). Desktop saves
               to <code>public/voices/&lt;person&gt;/&lt;scene&gt;/</code>; browser saves via the linked voice folder or media library.
-              The confirmation shows total characters (credits) up front; when MP3s exist you choose regenerate-all or fill-the-gaps.
+              A live <b>≈ credits estimate</b> shows above the button for the chosen model, and clicking opens a <b>cost warning
+              that asks you to confirm twice</b> (large batches require typing GENERATE) before any credit is spent; when MP3s exist
+              you choose regenerate-all or fill-the-gaps.
               Do one conversation/scene at a time — silent beats, memory-recall lines, and characters without a voice ID are skipped.
               On the <b>Eleven v3</b> model, use the <b>🎙 Insert sound</b> chips under a line to add performed cues like
               <code>[laughs]</code>, <code>[coughs]</code>, <code>[sighs]</code> — v3 acts them out (v2/turbo would read the

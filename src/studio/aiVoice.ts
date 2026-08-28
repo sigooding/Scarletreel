@@ -193,3 +193,30 @@ export function audioTagsForModel(model: string): AudioTag[] {
 export function modelSupportsAudioTags(model: string): boolean {
   return model === "eleven_v3" || /v3/.test(model);
 }
+
+/* ------------------------------------------------------------------ *
+ *  Cost estimation (pre-flight warning before a batch spend).
+ *  Credits per character by model; v3 = 0.30/char. List USD/1k is
+ *  approximate and depends on the account tier/plan grant.
+ * ------------------------------------------------------------------ */
+export const ELEVENLABS_CREDITS_PER_CHAR: Record<string, number> = {
+  eleven_v3: 0.3,
+  eleven_multilingual_v2: 0.24,
+  eleven_turbo_v2_5: 0.15,
+};
+// Approximate list overage price per character (USD), from $ per 1k.
+export const ELEVENLABS_USD_PER_1K: Record<string, number> = {
+  eleven_v3: 0.22,
+  eleven_multilingual_v2: 0.18,
+  eleven_turbo_v2_5: 0.11,
+};
+
+export function estimateVoiceCost(model: string, chars: number): { credits: number; usd: number; perChar: number } {
+  const perChar = ELEVENLABS_CREDITS_PER_CHAR[model] ?? 0.3;
+  const usdPer1k = ELEVENLABS_USD_PER_1K[model] ?? 0.22;
+  return {
+    credits: Math.round(chars * perChar),
+    usd: (chars / 1000) * usdPer1k,
+    perChar,
+  };
+}

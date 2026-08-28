@@ -73,6 +73,7 @@ import {
   audioTagsForModel,
   ELEVENLABS_MODELS,
   convertConfirmMessage,
+  estimateVoiceCost,
   getElevenKey,
   getElevenModel,
   modelSupportsAudioTags,
@@ -4992,23 +4993,45 @@ function StudioInner({
       );
       return;
     }
-    const totalChars = jobs.reduce((n, j) => n + j.line.length, 0);
     const existing = jobs.filter((j) => j.hasAudio).length;
+    const modelLabel = ELEVENLABS_MODELS.find((m) => m.id === model)?.label ?? model;
+
+    // Work out which lines would actually be generated (regenerate-all vs
+    // only gaps) so the warning prices the real spend, not the whole scene.
     let onlyMissing = false;
     if (existing > 0) {
       onlyMissing = !window.confirm(
         `${jobs.length} line(s) in "${scene.title}" (${new Set(jobs.map((j) => j.characterName)).size} character(s)).\n\n` +
-          `This spends ~${totalChars} characters of ElevenLabs credits (model: ${model}).\n\n` +
-          `${existing} line(s) already have an MP3.\n\nOK = regenerate ALL lines.\nCancel = only generate lines that don't have an MP3 yet.`
+          `${existing} line(s) already have an MP3.\n\nOK = regenerate ALL ${jobs.length} lines.\nCancel = only generate the ${jobs.length - existing} that don't have an MP3 yet.`
       );
-    } else {
-      const go = window.confirm(
-        `Generate ElevenLabs MP3s for ${jobs.length} line(s) in "${scene.title}"?\n\n` +
-          `This spends ~${totalChars} characters of credits (model: ${model}). Each line uses its speaker's voice, gets conversational context, and is saved as its own MP3 that's applied to the beat automatically.`
-      );
-      if (!go) return;
     }
-    const queue = jobs.filter((j) => (onlyMissing ? !j.hasAudio : true));
+    const toGenerate = onlyMissing ? jobs.filter((j) => !j.hasAudio) : jobs;
+    const genChars = toGenerate.reduce((n, j) => n + j.line.length, 0);
+    const genCost = estimateVoiceCost(model, genChars);
+    const money =
+      genCost.usd >= 5 ? `~$${genCost.usd.toFixed(0)}` : `~$${genCost.usd.toFixed(2)}`;
+
+    // ---- Double-check / cost warning -------------------------------------
+    const warning =
+      `⚠ YOU ARE ABOUT TO SPEND ELEVENLABS CREDITS\n\n` +
+      `Scene: ${scene.title}\nModel: ${modelLabel}\n` +
+      `Lines to generate: ${toGenerate.length}\n` +
+      `Characters: ${genChars.toLocaleString()}  (≈ ${Math.round(genChars / 6).toLocaleString()} words)\n\n` +
+      `Estimated cost: ~${genCost.credits.toLocaleString()} credits (${money} list overage).\n` +
+      `(Your plan's monthly credit grant may cover this; you are only charged overage.)\n\n` +
+      `Each line is generated separately in its character's voice and applied automatically. This cannot be undone once the API call is made.\n\n` +
+      `Proceed? Click OK to spend the credits, Cancel to abort.`;
+    if (!window.confirm(warning)) return;
+    // Second confirmation for any spend over a small threshold so an
+    // accidental click never burns a large batch.
+    if (genCost.credits >= 500) {
+      const sure = window.prompt(
+        `Final check: this spends ~${genCost.credits.toLocaleString()} credits on ${toGenerate.length} line(s). Type GENERATE to proceed.`,
+        ""
+      );
+      if ((sure ?? "").trim().toUpperCase() !== "GENERATE") return;
+    }
+    const queue = toGenerate;
     if (!queue.length) {
       setBatchDone("Nothing to generate — every line in this scene already has an MP3.");
       return;
@@ -7588,6 +7611,34 @@ function StudioInner({
                       ))}
                     </select>
                   </Field>
+                  {/* Live cost preview for this scene, for the selected model. */}
+                  {(() => {
+                    const model = getElevenModel();
+                    const genChars = (scene.dialogueBeats ?? [])
+                      .filter((b) => {
+                        const t = b.text?.trim();
+                        if (!t || b.silent) return false;
+                        if (b.recalls && Object.keys(b.recalls).length) return false;
+                        const ch = story.characters.find((x) => x.id === b.characterId);
+                        return !!ch?.elevenVoiceId;
+                      })
+                      .reduce((n, b) => n + b.text.trim().length, 0);
+                    const est = estimateVoiceCost(model, genChars);
+                    return (
+                      <div className="rounded border border-gold/30 bg-gold/5 px-2 py-1.5 text-center">
+                        <p className="font-type text-[9px] leading-tight text-gold/90">
+                          {genChars > 0 ? (
+                            <>
+                              ≈ {genChars.toLocaleString()} chars → <b>~{est.credits.toLocaleString()} credits</b>
+                              {est.usd >= 0.5 ? ` (~$${est.usd.toFixed(2)} overage)` : ""}
+                            </>
+                          ) : (
+                            "No convertible lines in this scene (set character voice IDs first)."
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   <button
                     disabled={batchBusy}
                     onClick={() => { setBatchDone(null); void batchGenerateVoices(scene.id); }}
