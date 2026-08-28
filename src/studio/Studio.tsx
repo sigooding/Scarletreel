@@ -8089,6 +8089,7 @@ function StudioInner({
                         </span>
                       }
                     >
+                    <CollapsibleSection id={`beat-${b.id}-dlg`} title="💬 Dialogue" defaultOpen>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Speaker">
                         <select
@@ -8122,6 +8123,62 @@ function StudioInner({
                         />
                       </Field>
                     </div>
+                    <Field label="Line (click to type — saves when you click away)">
+                      <CommitTextArea
+                        className={`${inputCls} h-16 font-type`}
+                        value={b.text}
+                        onCommit={(next) =>
+                          mutateLatest((d) => {
+                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = next;
+                          })
+                        }
+                      />
+                      {/* Audio tags — v3 performs sound cues (laugh/cough);
+                          older models get only voice-delivery direction like
+                          whisper, with a note. */}
+                      {b.characterId !== "narrator" && (() => {
+                        const tags = audioTagsForModel(voiceModel);
+                        const v3 = modelSupportsAudioTags(voiceModel);
+                        if (!tags.length) return null;
+                        return (
+                          <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
+                            <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
+                              🎙 Insert cue · {v3 ? "sound + delivery" : "delivery only"}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {tags.map((t) => (
+                                <button
+                                  key={t.tag}
+                                  type="button"
+                                  title={t.hint}
+                                  onClick={() =>
+                                    mutate((d) => {
+                                      const beat = d.scenes
+                                        .find((x) => x.id === scene.id)!
+                                        .dialogueBeats!.find((x) => x.id === b.id)!;
+                                      beat.text = `${beat.text ? beat.text.replace(/\s*$/, "") + " " : ""}${t.tag} `;
+                                    })
+                                  }
+                                  className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-wide text-neon hover:bg-neon/15"
+                                >
+                                  {t.label}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                              {v3 ? (
+                                <>Bracketed cues like <b>[laughs]</b> are performed by the v3 voice — place them where the sound happens.</>
+                              ) : (
+                                <>This model only handles delivery cues like <b>[whispers]</b>. Switch to <b>Eleven v3</b> for performed sounds ([laughs], [coughs]…) — other models read the brackets aloud.</>
+                              )}
+                            </p>
+                          </div>
+                        );
+                      })()}
+                    </Field>
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-bg`} title="🖼 Background & camera">
                     <Field label="🖼 Replacement background image (persists over later beats by default — see options below)">
                       <div className="flex gap-1">
                         <input
@@ -8296,6 +8353,8 @@ function StudioInner({
                       />
                       🔇 Silent beat — no narration (text only)
                     </label>
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-route`} title="🎬 Routing & animation">
                     {/* ---- after this beat: route to another scene ---- */}
                     <div className="border border-cyan-neon/30 bg-cyan-neon/5 p-2 space-y-1.5">
                       <Field label="🎬 After this beat — cut to scene (insert shot ends the scene)">
@@ -8386,6 +8445,8 @@ function StudioInner({
                         )}
                       </label>
                     )}
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-voice`} title="🎙 Voice">
                     <Field label="Voice MP3 URL (optional — replaces TTS for this line)">
                       <div className="flex gap-1">
                         <input
@@ -8504,60 +8565,9 @@ function StudioInner({
                         )}
                       </div>
                     </Field>
-                    <Field label="Line (click to type — saves when you click away)">
-                      <CommitTextArea
-                        className={`${inputCls} h-16 font-type`}
-                        value={b.text}
-                        onCommit={(next) =>
-                          mutateLatest((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.dialogueBeats!.find((x) => x.id === b.id)!.text = next;
-                          })
-                        }
-                      />
-                      {/* Audio tags — v3 performs sound cues (laugh/cough);
-                          older models get only voice-delivery direction like
-                          whisper, with a note. */}
-                      {b.characterId !== "narrator" && (() => {
-                        const tags = audioTagsForModel(voiceModel);
-                        const v3 = modelSupportsAudioTags(voiceModel);
-                        if (!tags.length) return null;
-                        return (
-                          <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">
-                            <div className="font-pulp text-[8px] uppercase tracking-widest text-neon">
-                              🎙 Insert cue · {v3 ? "sound + delivery" : "delivery only"}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {tags.map((t) => (
-                                <button
-                                  key={t.tag}
-                                  type="button"
-                                  title={t.hint}
-                                  onClick={() =>
-                                    mutate((d) => {
-                                      const beat = d.scenes
-                                        .find((x) => x.id === scene.id)!
-                                        .dialogueBeats!.find((x) => x.id === b.id)!;
-                                      beat.text = `${beat.text ? beat.text.replace(/\s*$/, "") + " " : ""}${t.tag} `;
-                                    })
-                                  }
-                                  className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-wide text-neon hover:bg-neon/15"
-                                >
-                                  {t.label}
-                                </button>
-                              ))}
-                            </div>
-                            <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
-                              {v3 ? (
-                                <>Bracketed cues like <b>[laughs]</b> are performed by the v3 voice — place them where the sound happens.</>
-                              ) : (
-                                <>This model only handles delivery cues like <b>[whispers]</b>. Switch to <b>Eleven v3</b> for performed sounds ([laughs], [coughs]…) — other models read the brackets aloud.</>
-                              )}
-                            </p>
-                          </div>
-                        );
-                      })()}
-                    </Field>
+                    
+                    </CollapsibleSection>
+                    <CollapsibleSection id={`beat-${b.id}-cond`} title="🧠 Conditions & memories">
                     {/* Memory recall substitutions — the NPC echoes a specific
                         earlier choice instead of a generic line. */}
                     <Field label="Memories recalled (memory tag OR flag → line). Replaces the Line above when that choice was made — or that flag is set. Use {said} for the player's exact words (or the flag's note from the 🏷 Flags tab).">
@@ -8645,6 +8655,7 @@ function StudioInner({
                         })
                       }
                     />
+                    </CollapsibleSection>
                     </CollapsibleSection>
                   );
                 })}
