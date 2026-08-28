@@ -3875,6 +3875,15 @@ function CasePlayer({
     ? resolveBeatText(currentBeat, state.memories, state.activeFlags, story.flagNotes)
     : "";
 
+  // noTypewriter scenes show their prose instantly; the dialogue must match.
+  // Otherwise the first line types out behind a "skip" control and reads as a
+  // phantom extra "continue" right after the prose button. Mark each beat done
+  // the moment it becomes current so the line is fully shown and a single
+  // click advances.
+  useEffect(() => {
+    if (scene?.noTypewriter) setBeatDone(true);
+  }, [scene?.noTypewriter, currentBeat?.id]);
+
   /* ---- after-beat routing: an insert shot that ends the scene ----
    * A beat can carry afterBeatTargetSceneId so that when the LAST visible
    * beat finishes, instead of reverting to the scene plate and showing the
@@ -6220,8 +6229,14 @@ function CasePlayer({
                         <span className="mr-2 font-pulp text-[10px] uppercase tracking-[0.2em] text-gold">
                           {story.characters.find((c) => c.id === currentBeat.characterId)?.name ?? (currentBeat.characterId === "narrator" ? "Narrator" : "—")}
                         </span>
-                        <Typewriter key={`${currentBeat.id}-classic`} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
+                        {scene.noTypewriter ? (
+                          <span>{currentBeatText}</span>
+                        ) : (
+                          <Typewriter key={`${currentBeat.id}-classic`} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
+                        )}
                       </span>
+                    ) : scene.noTypewriter ? (
+                      <span>{currentBeatText}</span>
                     ) : (
                       <Typewriter key={currentBeat.id} text={currentBeatText} speed={typeSpeed} forceComplete={beatDone} onDone={() => setBeatDone(true)} />
                     )}
