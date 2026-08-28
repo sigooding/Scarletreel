@@ -43,6 +43,16 @@ type DesktopMediaBridge = {
   /** Read a voice MP3 back (packaged apps reference them by file:// URL).
    *  `fileUrl` is validated on the main side to stay inside the voices tree. */
   readVoice?(fileUrl: string): Promise<{ base64: string; size: number; name: string }>;
+  /** List every MP3 already on disk for one person (`voices/<person>/…`),
+   *  across all their scenes, newest first. `person` is a `voiceSlug`. */
+  listVoices?(person: string): Promise<Array<{
+    relPath: string;
+    url: string;
+    scene: string;
+    name: string;
+    size: number;
+    mtime: number;
+  }>>;
   setFullscreen?(enabled: boolean): Promise<boolean>;
   isFullscreen?(): Promise<boolean>;
   setWindowSize?(width: number, height: number): Promise<{ width: number; height: number }>;

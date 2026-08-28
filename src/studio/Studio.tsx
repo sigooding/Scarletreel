@@ -62,7 +62,7 @@ import {
   validateStory,
   type ValidationIssue,
 } from "../logic";
-import { MediaLibrary, AssetDropdown, MediaUploadButton } from "./MediaLibrary";
+import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } from "./MediaLibrary";
 import { ImagePicker } from "./ImagePicker";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
@@ -8184,6 +8184,19 @@ function StudioInner({
                               s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
                             })}
                             placeholder="Or use uploaded audio..."
+                          />
+                        </div>
+                        <div className="mt-1">
+                          <CharacterVoiceFiles
+                            characterId={b.characterId}
+                            characterName={story.characters.find((x) => x.id === b.characterId)?.name}
+                            value={b.audioUrl}
+                            onChange={(url) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.audioUrl = url;
+                              })
+                            }
                           />
                         </div>
                         <div className="mt-1 flex gap-1">

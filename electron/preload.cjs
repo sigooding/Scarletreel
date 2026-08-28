@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld("scarletReelDesktop", {
   readVoice(fileUrl) {
     return ipcRenderer.invoke("scarlet-voice:read", fileUrl);
   },
+  /**
+   * List every MP3 already on disk for one person (voices/<person>/…), across
+   * all their scenes, newest first — used by the beat's voice picker.
+   */
+  listVoices(person) {
+    return ipcRenderer.invoke("scarlet-voice:list", person);
+  },
   setFullscreen(enabled) {
     return ipcRenderer.invoke("scarlet-window:set-fullscreen", !!enabled);
   },

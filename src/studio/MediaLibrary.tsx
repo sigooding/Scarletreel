@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { MediaAsset, AssetType } from "../types";
 import { loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets, ASSET_LIMITS, ASSET_TOTAL_LIMIT } from "../data/mediaLibrary";
+import { listVoiceFilesForCharacter, voiceSlug, type VoiceFileEntry } from "./voiceFiles";
 import { ImagePicker } from "./ImagePicker";
 
 const inputCls = "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
@@ -131,6 +132,88 @@ export function AssetDropdown({
       {selected && assetType === "audio" && <audio controls src={selected.dataUrl} className="h-8 w-full" />}
       {selected && assetType === "video" && <video controls src={selected.dataUrl} className="h-24 w-full object-cover" />}
       {!assets.length && <p className="font-type text-[9px] text-paper/35">No {assetType} uploaded yet — use Upload above or the 📦 Media tab.</p>}
+    </div>
+  );
+}
+
+/** Every MP3 already on disk for one character — ALL their scenes, newest
+ *  first — so a line can reuse a take recorded for another scene instead of
+ *  only seeing files uploaded through the media library.
+ *
+ *  Desktop walks the real `voices/<person>/` tree via IPC; in the browser it
+ *  walks the linked voice folder (AI Voice section). With neither available it
+ *  says so rather than silently showing an empty list. */
+export function CharacterVoiceFiles({
+  characterId,
+  characterName,
+  value,
+  onChange,
+}: {
+  characterId: string;
+  characterName?: string;
+  value?: string;
+  onChange: (url: string) => void;
+}) {
+  const [files, setFiles] = useState<VoiceFileEntry[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!characterId || characterId === "narrator") {
+      setFiles([]);
+      setNote(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      const list = await listVoiceFilesForCharacter(characterId);
+      setFiles(list);
+      setNote(list.length ? null : `No MP3s in voices/${voiceSlug(characterId)}/ yet — Generate one, or drop files into that folder and hit \u21BB.`);
+    } catch (err) {
+      setNote((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [characterId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const who = characterName?.trim() || characterId;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-1">
+        <span className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon/80" title={`Files on disk under voices/${voiceSlug(characterId)}/`}>
+          \ud83d\udcc2 All MP3s for {who}
+          {files.length ? ` (${files.length})` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={busy}
+          title="Re-scan the voices folder"
+          className="border border-noir-600 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-cyan-neon/50 hover:text-cyan-neon disabled:opacity-40"
+        >
+          {busy ? "\u23f3" : "\u21bb"}
+        </button>
+      </div>
+      <select
+        className={inputCls}
+        value={value ?? ""}
+        onChange={(e) => {
+          if (e.target.value) onChange(e.target.value);
+        }}
+      >
+        <option value="">Pick one of their recorded lines\u2026</option>
+        {files.map((f) => (
+          <option key={f.url} value={f.url}>
+            {f.scene} / {f.name}
+            {f.size ? ` (${(f.size / 1024).toFixed(0)}KB)` : ""}
+          </option>
+        ))}
+      </select>
+      {note && <p className="font-type text-[9px] leading-snug text-paper/40">{note}</p>}
     </div>
   );
 }
