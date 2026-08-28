@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MediaAsset, AssetType } from "../types";
 import { loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets, ASSET_LIMITS, ASSET_TOTAL_LIMIT } from "../data/mediaLibrary";
 import { listVoiceFilesForCharacter, voiceSlug, type VoiceFileEntry } from "./voiceFiles";
 import { ImagePicker } from "./ImagePicker";
+import builtinAudio from "virtual:builtin-audio";
+import { assetUrl } from "../assetPath";
 
 const inputCls = "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
 
@@ -136,13 +138,17 @@ export function AssetDropdown({
   );
 }
 
-/** Every MP3 already on disk for one character — ALL their scenes, newest
- *  first — so a line can reuse a take recorded for another scene instead of
- *  only seeing files uploaded through the media library.
+/** Every audio file a beat can use, in one picker:
  *
- *  Desktop walks the real `voices/<person>/` tree via IPC; in the browser it
- *  walks the linked voice folder (AI Voice section). With neither available it
- *  says so rather than silently showing an empty list. */
+ *  - the character's own takes from `voices/<person>/<scene>/` — read live from
+ *    the desktop voices folder (IPC) or the author's linked folder, merged with
+ *    the build-time scan of `public/`, so the list also works in the browser
+ *    preview where neither a bridge nor a linked folder exists;
+ *  - then every other audio file in the project (imports, music, other
+ *    characters), so nothing sitting on disk is unreachable.
+ *
+ *  Picking a file assigns it AND puts a player under the list, so the take is
+ *  auditioned the moment it's chosen. */
 export function CharacterVoiceFiles({
   characterId,
   characterName,
@@ -156,21 +162,23 @@ export function CharacterVoiceFiles({
 }) {
   const [files, setFiles] = useState<VoiceFileEntry[]>([]);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [liveNote, setLiveNote] = useState<string | null>(null);
+  const allAudio = useAllAssets("audio");
 
+  /** Re-read the live voices folder (desktop IPC / linked folder). */
   const refresh = useCallback(async () => {
     if (!characterId || characterId === "narrator") {
       setFiles([]);
-      setNote(null);
+      setLiveNote(null);
       return;
     }
     setBusy(true);
     try {
       const list = await listVoiceFilesForCharacter(characterId);
       setFiles(list);
-      setNote(list.length ? null : `No MP3s in voices/${voiceSlug(characterId)}/ yet — Generate one, or drop files into that folder and hit \u21BB.`);
+      setLiveNote(list.length ? null : "Live folder empty — the list below is what the build scanned from public/.");
     } catch (err) {
-      setNote((err as Error).message);
+      setLiveNote((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -181,12 +189,43 @@ export function CharacterVoiceFiles({
   }, [refresh]);
 
   const who = characterName?.trim() || characterId;
+  const person = characterId && characterId !== "narrator" ? voiceSlug(characterId) : "";
+
+  // This character's takes: live folder first (freshest), then the build scan.
+  const seen = new Set<string>();
+  const mine: { url: string; label: string }[] = [];
+  for (const f of files) {
+    if (seen.has(f.url)) continue;
+    seen.add(f.url);
+    mine.push({ url: f.url, label: `${f.scene}/${f.name}${f.size ? ` (${(f.size / 1024).toFixed(0)}KB)` : ""}` });
+  }
+  for (const a of builtinAudio) {
+    if (a.person !== person || seen.has(a.url)) continue;
+    seen.add(a.url);
+    mine.push({ url: a.url, label: `${a.scene}/${a.label}` });
+  }
+  // Everything else in the project, so no audio file is hidden from the picker.
+  const others = builtinAudio.filter((a) => a.person !== person && !seen.has(a.url));
+
+  /** A URL the browser can actually play: public paths need the deploy base,
+   *  `asset:` references resolve through the library, file:// is desktop-only. */
+  const previewSrc = useMemo(() => {
+    if (!value) return undefined;
+    if (value.startsWith("data:") || value.startsWith("http")) return value;
+    if (value.startsWith("asset:")) return allAudio.find((a) => `asset:${a.id}` === value)?.dataUrl;
+    if (value.startsWith("/")) return assetUrl(value);
+    return undefined;
+  }, [value, allAudio]);
+
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-1">
-        <span className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon/80" title={`Files on disk under voices/${voiceSlug(characterId)}/`}>
-          \ud83d\udcc2 All MP3s for {who}
-          {files.length ? ` (${files.length})` : ""}
+        <span
+          className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon/80"
+          title={person ? `Files under voices/${person}/ plus every other audio file in the project` : "Every audio file in this project"}
+        >
+          \ud83d\udcc2 Audio for {who}
+          {mine.length ? ` (${mine.length})` : ""}
         </span>
         <button
           type="button"
@@ -205,15 +244,40 @@ export function CharacterVoiceFiles({
           if (e.target.value) onChange(e.target.value);
         }}
       >
-        <option value="">Pick one of their recorded lines\u2026</option>
-        {files.map((f) => (
-          <option key={f.url} value={f.url}>
-            {f.scene} / {f.name}
-            {f.size ? ` (${(f.size / 1024).toFixed(0)}KB)` : ""}
-          </option>
-        ))}
+        <option value="">Pick an audio file\u2026</option>
+        {mine.length > 0 && (
+          <optgroup label={`\ud83c\udf99 ${who} \u2014 voices/${person} (${mine.length})`}>
+            {mine.map((f) => (
+              <option key={f.url} value={f.url}>
+                {f.label}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {others.length > 0 && (
+          <optgroup label={`\ud83d\udcc1 All other audio in this project (${others.length})`}>
+            {others.map((a) => (
+              <option key={a.url} value={a.url}>
+                {a.folder ? `${a.folder}/` : ""}
+                {a.label}
+              </option>
+            ))}
+          </optgroup>
+        )}
       </select>
-      {note && <p className="font-type text-[9px] leading-snug text-paper/40">{note}</p>}
+      {previewSrc ? (
+        <audio key={previewSrc} controls autoPlay src={previewSrc} className="h-8 w-full" />
+      ) : value ? (
+        <p className="font-type text-[9px] text-paper/40">
+          Saved as a desktop file path — it plays in the game, but the browser cannot stream it here.
+        </p>
+      ) : null}
+      {liveNote && <p className="font-type text-[9px] leading-snug text-paper/40">{liveNote}</p>}
+      {!mine.length && !others.length && (
+        <p className="font-type text-[9px] leading-snug text-paper/40">
+          No audio files found — upload one above, or drop files into public/ and rebuild.
+        </p>
+      )}
     </div>
   );
 }
