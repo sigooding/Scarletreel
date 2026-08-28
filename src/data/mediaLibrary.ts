@@ -475,6 +475,12 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     if (c.foregroundAnimation?.frames?.length) {
       c.foregroundAnimation.frames = c.foregroundAnimation.frames.map((f) => resolveMediaValue(f, map) ?? f);
     }
+    // Stacked foreground extras and mid-ground parallax planes carry images too
+    // — visitStoryMediaRefs (and so the export bundler) visits them, so the
+    // play-time resolver must as well or their refs survive as literal
+    // "asset:<id>" URLs and render nothing.
+    c.foregroundExtras?.forEach((e) => apply(e, "image"));
+    c.parallaxLayers?.forEach((l) => apply(l, "image"));
   };
   next.scenes.forEach((sc) => {
     apply(sc, "background");
@@ -638,6 +644,14 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
         for (const e of b.cinematic.foregroundExtras) {
           const out = await compact(e.image, "image", sc.title);
           e.image = out ?? e.image;
+        }
+      }
+      if (b.cinematic?.parallaxLayers?.length) {
+        for (const l of b.cinematic.parallaxLayers) {
+          if (l.image.startsWith("asset:") || l.image.startsWith("data:")) {
+            const out = await compact(l.image, "image", sc.title);
+            if (out) l.image = out;
+          }
         }
       }
     }
