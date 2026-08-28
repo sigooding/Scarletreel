@@ -4027,6 +4027,14 @@ function StudioInner({
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; label: string } | null>(null);
   const [batchDone, setBatchDone] = useState<string | null>(null);
+  // ElevenLabs model, mirrored into React state: setElevenModel() only writes
+  // localStorage, so without this the cost preview / insert-cue list rendered
+  // from the stored value would never update when the author picks a model.
+  const [voiceModel, setVoiceModel] = useState(getElevenModel());
+  const changeVoiceModel = (id: string) => {
+    setVoiceModel(id);
+    setElevenModel(id);
+  };
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
@@ -4054,6 +4062,11 @@ function StudioInner({
     });
   };
   const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
+  // Storage is the source of truth for the ElevenLabs model (the Characters
+  // tab can change it elsewhere), so re-read it whenever the tab changes.
+  useEffect(() => {
+    setVoiceModel(getElevenModel());
+  }, [tab]);
   const [globalTitleTheme, setGlobalTitleThemeState] = useState<TitleTheme>(() => {
     // Read the title settings on boot from the same key
     try {
@@ -7909,8 +7922,8 @@ function StudioInner({
                   <Field label="Voice model">
                     <select
                       className={inputCls}
-                      defaultValue={getElevenModel()}
-                      onChange={(e) => setElevenModel(e.target.value)}
+                      value={voiceModel}
+                      onChange={(e) => changeVoiceModel(e.target.value)}
                     >
                       {ELEVENLABS_MODELS.map((m) => (
                         <option key={m.id} value={m.id}>{m.label}</option>
@@ -7919,7 +7932,7 @@ function StudioInner({
                   </Field>
                   {/* Live cost preview for this scene, for the selected model. */}
                   {(() => {
-                    const model = getElevenModel();
+                    const model = voiceModel;
                     const genChars = (scene.dialogueBeats ?? [])
                       .filter((b) => {
                         const t = b.text?.trim();
@@ -7947,7 +7960,7 @@ function StudioInner({
                   })()}
                   <button
                     disabled={batchBusy}
-                    onClick={() => { setBatchDone(null); void batchGenerateVoices(scene.id); }}
+                    onClick={() => { setBatchDone(null); void batchGenerateVoices(scene.id, voiceModel); }}
                     className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
                     title="Generate MP3s for every convertible beat in THIS scene — each in its speaker's voice with conversational context, then applied automatically. Spends ElevenLabs credits; you'll confirm first."
                   >
@@ -8495,8 +8508,8 @@ function StudioInner({
                           older models get only voice-delivery direction like
                           whisper, with a note. */}
                       {b.characterId !== "narrator" && (() => {
-                        const tags = audioTagsForModel(getElevenModel());
-                        const v3 = modelSupportsAudioTags(getElevenModel());
+                        const tags = audioTagsForModel(voiceModel);
+                        const v3 = modelSupportsAudioTags(voiceModel);
                         if (!tags.length) return null;
                         return (
                           <div className="mt-1 rounded border border-neon/25 bg-neon/5 p-1.5">

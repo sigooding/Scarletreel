@@ -75,3 +75,41 @@ survives refreshes, cache clears and restarts.
 - `npm install` can drift from the lockfile. Prefer `npm ci`.
 - The production build inlines everything into a single `dist/index.html`
   (`npm run build`).
+
+## Developer notes
+
+### Don't call `window.prompt()`
+
+The desktop shell (Electron — `npm run desktop:dev-live` or packaged) does
+**not** implement `window.prompt()`; it throws `prompt() is not supported`,
+while `alert`/`confirm` work as native dialogs. The Studio therefore never
+calls `prompt()` for editing (renaming a scene node is in-place: click the
+card title, Enter or click away saves, Esc cancels) and its two dialog
+fallbacks are guarded: the share link falls back to a select-all box, and the
+ElevenLabs batch "type GENERATE" spend check **fails closed** when no dialog
+is available. If you add UI, prefer in-place editing over `prompt()`.
+
+### Note placeholder nodes ("Missing Scene Here")
+
+Scenes with `nodeType: "note"` are author markers for scenes that don't exist
+yet (added via the 📝 Note toolbar button or right-click → "Add note here").
+They wire into the graph on both sides but are **bypassed in play**:
+`bypassedSceneId()` in `src/logic.ts` follows a note's first outgoing route
+until a real scene (hop-guarded against note→note cycles), and `Game.tsx`
+applies it at every scene transition, playtest entry, and save restore.
+Any new code that resolves a target scene id must route through it. The
+validator enforces: a note can't be the start scene, a wired-in note with no
+route out is a soft-lock **error**, multi-route notes warn, and notes are
+exempt from the unreachable / no-exits checks. The placeholder text lives in
+`scene.title` (a dead-end note shows it as its plate instead of a blank
+scene). The inspector offers "Convert to full scene" (clears `nodeType`) once
+the real scene is written.
+
+### ElevenLabs model & cost estimate
+
+The chosen model lives in localStorage (`scarlet-ai-voice-model`).
+`setElevenModel()` only writes storage — it does not re-render anything — so
+the Beats-tab UI mirrors it into React state (`voiceModel`, re-read on every
+tab switch) to keep the live cost preview and the insert-cue list in sync.
+Per-model rates are `ELEVENLABS_CREDITS_PER_CHAR` / `ELEVENLABS_USD_PER_1K`
+in `src/studio/aiVoice.ts`.
