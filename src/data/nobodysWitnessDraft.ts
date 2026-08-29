@@ -969,7 +969,8 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     "nwd_followed_no": "D1-B — refused the case in the booth, then followed her home anyway. The folder went back with her; the suspicion didn't. (Feeds the rent call and the phone rehire.)",
     "nwd_rent_call": "Sal Hirsch's second notice. The phone had to be answered — hold-to-examine on the desk phone — before the 'Call Vera.' choice opens.",
     "nwd_folder_taken": "The folder is back in his hands. Vera left it by the buzzer 'before I could think of a better word for it.'",
-    "nwd_rehired": "He called Vera back and took the case on the phone — same price, no napkin, folder from the front hall. He's on his way to The Blue Cue."
+    "nwd_rehired": "He called Vera back and took the case on the phone — same price, no napkin, folder from the front hall. He's on his way to The Blue Cue.",
+    "nwd_said_no": "D1-B — he said the word “No” to her face. Vera remembers it verbatim on the phone; it costs him -1 trust and it's in her mouth when she answers."
   },
   "items": [
     {
@@ -1604,12 +1605,21 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "attitudeTag": "Neutral",
           "consequences": {
             "setFlags": [
-              "nwd_d1b"
+              "nwd_d1b",
+              "nwd_said_no"
             ],
             "removeItems": [
               "nwd_folder"
+            ],
+            "trustChanges": [
+              {
+                "characterId": "vera",
+                "delta": -1
+              }
             ]
-          }
+          },
+          "memoryLog": "nwd_said_no",
+          "rememberLine": "Vera will remember that."
         }
       ],
       "hotspots": [],
@@ -2419,7 +2429,10 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_ov_v2",
           "characterId": "vera",
           "expression": "level",
-          "text": "Two of them, in that order, at two in the morning, and you want me to believe it's the case?"
+          "text": "Two of them, in that order, at two in the morning, and you want me to believe it's the case?",
+          "recalls": {
+            "nwd_said_no": "“{said}” — that's the word you used. In the booth, with the folder between us and me holding it. You want me to believe it's the case?"
+          }
         },
         {
           "id": "nwd_ov_j2",
