@@ -109,6 +109,9 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
         "nwd_diner_take",
         "nwd_diner_desc",
         "nwd_diner_refuse",
+        "nwd_office_vera",
+        "nwd_office_rent",
+        "nwd_follow_home",
         "nwd_poolhall",
         "nwd_poolhall_out",
         "nwd_poolhall_name",
@@ -623,16 +626,16 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
   ],
   "layout": {
     "nwd_coldopen": {
-      "x": -600,
-      "y": -20
+      "x": -1320,
+      "y": -300
     },
     "nwd_titles": {
-      "x": -320,
-      "y": -20
+      "x": -840,
+      "y": -300
     },
     "nwd_diner": {
-      "x": -40,
-      "y": -20
+      "x": -440,
+      "y": -260
     },
     "nwd_poolhall": {
       "x": 660,
@@ -656,7 +659,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     },
     "nwd_diner_file": {
       "x": 260,
-      "y": -220
+      "y": -180
     },
     "nwd_diner_take": {
       "x": 660,
@@ -671,8 +674,8 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "y": -220
     },
     "nwd_diner_desc": {
-      "x": 240,
-      "y": 220
+      "x": -60,
+      "y": 360
     },
     "nwd_diner_refuse": {
       "x": 660,
@@ -691,12 +694,12 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "y": 220
     },
     "nwd_curtain_pasttense": {
-      "x": 440,
-      "y": 440
+      "x": 220,
+      "y": 380
     },
     "nwd_curtain_threeweeks": {
       "x": 660,
-      "y": 440
+      "y": 700
     },
     "nwd_curtain_sheisnt": {
       "x": 880,
@@ -897,6 +900,18 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     "scene_525h8dd": {
       "x": -100,
       "y": 1160
+    },
+    "nwd_follow_home": {
+      "x": 660,
+      "y": 480
+    },
+    "nwd_office_rent": {
+      "x": 880,
+      "y": 480
+    },
+    "nwd_office_vera": {
+      "x": 1100,
+      "y": 480
     }
   },
   "flagNotes": {
@@ -950,7 +965,12 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     "act3v_trade": "Visit budget (engine bookkeeping): the feed store. Reaching Part 5 inside the budget keeps the deadline.",
     "vera_confessed": "Vera's confession played — the mill lot, or upstairs above the feed store on the D2 route.",
     "eleven_hours_known": "Jack knows the eleven hours: the number, the not-calling, the arithmetic. Set at the mill lot — or upstairs, on the D2 route.",
-    "friday_deadline_known": "Jack knows about Friday."
+    "friday_deadline_known": "Jack knows about Friday.",
+    "nwd_followed_no": "D1-B — refused the case in the booth, then followed her home anyway. The folder went back with her; the suspicion didn't. (Feeds the rent call and the phone rehire.)",
+    "nwd_rent_call": "Sal Hirsch's second notice. The phone had to be answered — hold-to-examine on the desk phone — before the 'Call Vera.' choice opens.",
+    "nwd_folder_taken": "The folder is back in his hands. Vera left it by the buzzer 'before I could think of a better word for it.'",
+    "nwd_rehired": "He called Vera back and took the case on the phone — same price, no napkin, folder from the front hall. He's on his way to The Blue Cue.",
+    "nwd_said_no": "D1-B — he said the word “No” to her face. Vera remembers it verbatim on the phone; it costs him -1 trust and it's in her mouth when she answers."
   },
   "items": [
     {
@@ -1064,6 +1084,13 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "name": "Bartender (V.O.)",
       "role": "Real calm. Like a guy who already made up his mind.",
       "avatarUrl": "emoji:☎",
+      "trustMeter": 0
+    },
+    {
+      "id": "hirsch",
+      "name": "Sal Hirsch",
+      "role": "Landlord — the only bill in town that doesn't lie",
+      "avatarUrl": "emoji:📞",
       "trustMeter": 0
     }
   ],
@@ -1262,7 +1289,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "characterId": "jack",
           "expression": "V.O. — flat, from somewhere further on",
           "text": "Nobody took what I lost. I handed it over. In order. So when I tell you I didn't see it coming — I saw it. That's the only thing I need you to believe.",
-          "audioUrl": "/uploads/nobodys-witness-draft/voice-1787878238560-wjnxwrh.mp3"
+          "audioUrl": "/uploads/nobodys-witness-draft/1787845826388-24aekf7.mp3"
         },
         {
           "id": "nwd_d_vo0b",
@@ -1441,8 +1468,8 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_d_vo3",
           "characterId": "jack",
           "expression": "V.O. — low, going still",
-          "text": "I knew the name. Blackwood's four thousand people and half of them owe Solomon Reyes something — David Voss ran his money, everybody knew that the way you know which houses have somebody in them. So a man who works for Solomon disappears, and his wife comes to the one person in town who doesn't. That's not a coincidence. That's a shape.",
-          "audioUrl": "/uploads/nobodys-witness-draft/voice-1787878238587-utpjw6y.mp3"
+          "text": "I knew the name. Blackwood's four thousand people and half of them owe Solomon Reyes something — David Voss ran his money, everybody knew that the way you know which houses have somebody in them. So a man who works for Solomon disappears, and his wife comes to the one person in town who isn't owned by Solomon. That's not a coincidence. That's a shape.",
+          "audioUrl": "/uploads/nobodys-witness-draft/voice-1787930331445-d48nv56.mp3"
         },
         {
           "id": "nwd_d_vo3b",
@@ -1578,12 +1605,21 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "attitudeTag": "Neutral",
           "consequences": {
             "setFlags": [
-              "nwd_d1b"
+              "nwd_d1b",
+              "nwd_said_no"
             ],
             "removeItems": [
               "nwd_folder"
+            ],
+            "trustChanges": [
+              {
+                "characterId": "vera",
+                "delta": -1
+              }
             ]
-          }
+          },
+          "memoryLog": "nwd_said_no",
+          "rememberLine": "Vera will remember that."
         }
       ],
       "hotspots": [],
@@ -2047,7 +2083,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_db_vo1",
           "characterId": "jack",
           "expression": "V.O. — flat",
-          "text": "And that was it. I did the sensible thing and I felt sensible about it for about four days."
+          "text": "And that was it. I did the sensible thing, and I felt sensible about it for about four hours. That's the honest number. I've been over it since."
         },
         {
           "id": "nwd_db_s5",
@@ -2060,15 +2096,438 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_db_vo2",
           "characterId": "jack",
           "expression": "V.O. — flat — a beat after 'you take'",
-          "text": "People ask what the hardest part of this job is. It's not the ones you take. It's sitting in the same booth at the same time three weeks later, having been completely right, and finding out that being right didn't stop a single thing from happening."
+          "text": "People ask what the hardest part of this job is. It's not the ones you take. It's the ones you don't — and finding out, three blocks later with the engine still warm, that the ones you don't get in the car with you anyway."
         }
       ],
       "choices": [
         {
           "id": "nwd_db_go",
-          "text": "Three weeks later.",
-          "targetSceneId": "nwd_curtain_threeweeks",
+          "text": "Follow her home.",
+          "targetSceneId": "nwd_follow_home",
+          "attitudeTag": "Neutral",
+          "consequences": {
+            "setFlags": [
+              "nwd_followed_no"
+            ]
+          }
+        }
+      ],
+      "hotspots": [],
+      "onEnterActions": []
+    },
+    {
+      "id": "nwd_follow_home",
+      "title": "Part 1 (alt) — Three Cars Back",
+      "background": "/img/nw2/bg-follow-home.jpg",
+      "ambientAudio": "rain",
+      "particles": "rain",
+      "transition": "fade",
+      "cinematic": {
+        "mode": "zoom-hold",
+        "focalPoint": "32% 45%",
+        "zoomDuration": 40,
+        "dimAmount": 0.2,
+        "lights": [
+          {
+            "x": 68,
+            "y": 12,
+            "color": "#ffb761",
+            "intensity": 0.22,
+            "size": 30,
+            "pulseSeconds": 6,
+            "pulseAmount": 0.35
+          }
+        ]
+      },
+      "prose": "Rain. The diner's neon running backward across the hood. Three cars back.",
+      "dialogueBeats": [
+        {
+          "id": "nwd_fh_vo1",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "I told myself I didn't follow her. The car had been running, I said, and it was dark, and the depot was that way. The car had not been running. It was dark. The depot was the other way."
+        },
+        {
+          "id": "nwd_fh_s1",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "text": "Rain. A wiper that isn't moving."
+        },
+        {
+          "id": "nwd_fh_vo2",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "Three blocks. She walked like the street owed her money, and on Fifth two men came out of a bar and stopped when she passed, which in Blackwood is the same as a dog sitting down in your path."
+        },
+        {
+          "id": "nwd_fh_vo3",
+          "characterId": "jack",
+          "expression": "V.O. — flat — a beat after 'behind her'",
+          "text": "She didn't check behind her. That's the part I should have filed, not the part I did. She was the kind of calm that costs people, and I kept my hands at ten and two like the road was any good."
+        },
+        {
+          "id": "nwd_fh_s2",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "text": "A key. A door. One light coming on upstairs, the rest of the building staying dark."
+        },
+        {
+          "id": "nwd_fh_vo4",
+          "characterId": "jack",
+          "expression": "V.O. — quiet",
+          "text": "One light. No second. If a man's running, he takes the second light with him. I sat in the rain until the corner lamp decided to flicker, and then I drove back to the office the long way, which is the only way there."
+        }
+      ],
+      "choices": [
+        {
+          "id": "nwd_fh_go",
+          "text": "Back to the office.",
+          "targetSceneId": "nwd_office_rent",
           "attitudeTag": "Neutral"
+        }
+      ],
+      "hotspots": [],
+      "onEnterActions": []
+    },
+    {
+      "id": "nwd_office_rent",
+      "title": "Part 1 (alt) — The Rent",
+      "background": "/img/nw2/bg-office-rent.jpg",
+      "ambientAudio": "rain",
+      "particles": "rain",
+      "transition": "fade",
+      "cinematic": {
+        "mode": "zoom-hold",
+        "focalPoint": "34% 64%",
+        "zoomDuration": 40,
+        "dimAmount": 0.22,
+        "lights": [
+          {
+            "x": 12,
+            "y": 40,
+            "color": "#ffd98a",
+            "intensity": 0.25,
+            "size": 34,
+            "pulseSeconds": 7,
+            "pulseAmount": 0.4
+          }
+        ]
+      },
+      "prose": "The office. A desk lamp, a cold coffee, and a phone that hasn't rung in six hours. Rain on the blind.",
+      "dialogueBeats": [
+        {
+          "id": "nwd_or_vo1",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "The office is the part of the job where the job gets you back. The desk's the size of a dining table in a house nobody owns. The coffee's been on the counter since morning, and there's one bill in the drawer with my name on it, and it's the only one I haven't managed to lose."
+        },
+        {
+          "id": "nwd_or_s1",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "text": "Rain on the blind. A radiator ticking, like it's keeping score."
+        },
+        {
+          "id": "nwd_or_vo2",
+          "characterId": "jack",
+          "expression": "V.O. — quiet",
+          "text": "One notice in the mail. Another in the drawer. I wasn't counting on the rent. I was counting on it, the way you count on a thing you know is coming and keep pretending it isn't."
+        },
+        {
+          "id": "nwd_or_vo3",
+          "characterId": "jack",
+          "expression": "V.O. — flat — a beat after 'Two hundred'",
+          "text": "Two hundred a day. The number from the diner was still sitting in my chest where the folder had been, and I was about to find out whether a man can be right twice and broke the second time."
+        },
+        {
+          "id": "nwd_or_vo4",
+          "characterId": "jack",
+          "expression": "V.O. — flat — a beat after 'third time'",
+          "text": "I let it. Once. Twice. By the third time it wasn't the phone anymore. It was a fact, ringing."
+        },
+        {
+          "id": "nwd_or_s2",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "text": "The phone. Once. Twice."
+        },
+        {
+          "id": "nwd_or_h1",
+          "characterId": "hirsch",
+          "expression": "level, unhurried",
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          },
+          "text": "Morrow."
+        },
+        {
+          "id": "nwd_or_h2",
+          "characterId": "hirsch",
+          "expression": "dry, businesslike",
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          },
+          "text": "Second notice on the office. I'm not the kind of landlord who sends a third. I send the movers."
+        },
+        {
+          "id": "nwd_or_j1",
+          "characterId": "jack",
+          "expression": "flat",
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          },
+          "text": "I know what you're calling about, Sal."
+        },
+        {
+          "id": "nwd_or_h3",
+          "characterId": "hirsch",
+          "expression": "level — a beat before the last sentence",
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          },
+          "text": "Then you know what to do about it. The building's got a name on the door. The deed isn't taking applications."
+        },
+        {
+          "id": "nwd_or_s3",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          },
+          "text": "Click."
+        },
+        {
+          "id": "nwd_or_vo5",
+          "characterId": "jack",
+          "expression": "V.O. — flat — a beat after 'warm'",
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          },
+          "text": "I stood there with the phone still warm in my hand, two hundred a day sitting across town in a booth, and I understood exactly what the rain wanted. That's the trouble with rain. It wants things."
+        }
+      ],
+      "choices": [
+        {
+          "id": "nwd_or_go",
+          "text": "Call Vera.",
+          "targetSceneId": "nwd_office_vera",
+          "attitudeTag": "Neutral",
+          "hidden": true,
+          "gating": {
+            "requiresFlags": [
+              "nwd_rent_call"
+            ]
+          }
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "nwd_or_phone",
+          "label": "The phone",
+          "bounds": {
+            "x": 23,
+            "y": 53,
+            "w": 21,
+            "h": 23
+          },
+          "cursor": "use",
+          "examine": true,
+          "examineSeconds": 2.5,
+          "action": {
+            "type": "showText",
+            "text": "It's the building. It's always the building.",
+            "flagSet": "nwd_rent_call"
+          }
+        }
+      ],
+      "onEnterActions": []
+    },
+    {
+      "id": "nwd_office_vera",
+      "title": "Part 1 (alt) — The Phone Call",
+      "background": "/img/nw2/bg-office-call.jpg",
+      "ambientAudio": "rain",
+      "particles": "rain",
+      "transition": "fade",
+      "cinematic": {
+        "mode": "zoom-hold",
+        "focalPoint": "68% 62%",
+        "zoomDuration": 40,
+        "dimAmount": 0.24,
+        "lights": [
+          {
+            "x": 26,
+            "y": 26,
+            "color": "#ff2e88",
+            "intensity": 0.18,
+            "size": 32,
+            "pulseSeconds": 5,
+            "pulseAmount": 0.6
+          },
+          {
+            "x": 72,
+            "y": 36,
+            "color": "#2ad9d9",
+            "intensity": 0.14,
+            "size": 36,
+            "pulseSeconds": 6,
+            "pulseAmount": 0.5
+          }
+        ]
+      },
+      "prose": "Rain against the window. The phone, a hand's width from his.",
+      "dialogueBeats": [
+        {
+          "id": "nwd_ov_vo1",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "One listing for Voss in the phone book, and it's not the husband's name on it. I stood there holding it for a second. That's what the book's for — and some part of me wanted to know how long that number had been waiting for a man to pick up."
+        },
+        {
+          "id": "nwd_ov_s1",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "text": "Numbers. Rain on the blind."
+        },
+        {
+          "id": "nwd_ov_vo2",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "It rang four times, which in this town is a lot of faith for one call."
+        },
+        {
+          "id": "nwd_ov_v1",
+          "characterId": "vera",
+          "expression": "wary, not unkind",
+          "text": "Mr. Morrow."
+        },
+        {
+          "id": "nwd_ov_j1",
+          "characterId": "jack",
+          "expression": "flat — a beat before the last two sentences",
+          "text": "Mrs. Voss. I owe you a word, and I've been around long enough to know the order the words have to go in. It went: sorry. Then: wrong."
+        },
+        {
+          "id": "nwd_ov_v2",
+          "characterId": "vera",
+          "expression": "level",
+          "text": "Two of them, in that order, at two in the morning, and you want me to believe it's the case?",
+          "recalls": {
+            "nwd_said_no": "“{said}” — that's the word you used. In the booth, with the folder between us and me holding it. You want me to believe it's the case?"
+          }
+        },
+        {
+          "id": "nwd_ov_j2",
+          "characterId": "jack",
+          "expression": "flat",
+          "text": "It's the case. A phone just rang on my desk and it was the landlord, and I'm a man who's out of arguments and in of rent."
+        },
+        {
+          "id": "nwd_ov_v3",
+          "characterId": "vera",
+          "expression": "a beat — and something almost like respect",
+          "text": "You're a bad liar. I'll take it."
+        },
+        {
+          "id": "nwd_ov_j3",
+          "characterId": "jack",
+          "expression": "businesslike, but softer",
+          "text": "Two hundred a day, plus expenses. I find him, I tell you where he is. What you do after that's yours to carry."
+        },
+        {
+          "id": "nwd_ov_v4",
+          "characterId": "vera",
+          "expression": "quiet — a beat after 'money'",
+          "text": "That's not why you called."
+        },
+        {
+          "id": "nwd_ov_j4",
+          "characterId": "jack",
+          "expression": "dry",
+          "text": "Ask me again in November."
+        },
+        {
+          "id": "nwd_ov_v5",
+          "characterId": "vera",
+          "expression": "flat — a beat before the last sentence",
+          "text": "The folder's in the front hall, on the table by the buzzer. I left it before I could think of a better word for it."
+        },
+        {
+          "id": "nwd_ov_vo3",
+          "characterId": "jack",
+          "expression": "V.O. — flat — a beat after 'front hall'",
+          "text": "No napkin, no line. A phone call, a name I didn't like, and a folder I hadn't earned sitting in the front hall of a building on the east side. I'd taken a case with two words and a phone. I was about to find out what that was worth."
+        },
+        {
+          "id": "nwd_ov_v6",
+          "characterId": "vera",
+          "expression": "slow, putting the receiver down",
+          "text": "Hurry, Mr. Morrow. The first name on your list is a place that don't wait."
+        },
+        {
+          "id": "nwd_ov_s2",
+          "characterId": "narrator",
+          "expression": "sound",
+          "silent": true,
+          "text": "Click. The rain. The lamp, ticking in the heat."
+        },
+        {
+          "id": "nwd_ov_vo4",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "I hung up and stood there a minute with the dead phone in my hand, because a man who said no to a case that night had one more no to say before he'd earn the yes. The front hall. The buzzer. The table."
+        }
+      ],
+      "choices": [
+        {
+          "id": "nwd_ov_folder",
+          "text": "Take the folder from the front hall.",
+          "targetSceneId": "",
+          "reply": true,
+          "attitudeTag": "Neutral",
+          "consequences": {
+            "setFlags": [
+              "nwd_folder_taken"
+            ],
+            "addItems": [
+              "nwd_folder"
+            ]
+          }
+        },
+        {
+          "id": "nwd_ov_go",
+          "text": "The Blue Cue. First name on the list.",
+          "targetSceneId": "nwd_poolhall",
+          "attitudeTag": "Neutral",
+          "hidden": true,
+          "gating": {
+            "requiresItems": [
+              "nwd_folder"
+            ]
+          },
+          "consequences": {
+            "setFlags": [
+              "nwd_rehired"
+            ]
+          }
         }
       ],
       "hotspots": [],
@@ -3372,7 +3831,8 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "prose": "I did the sensible thing and I felt sensible about it for about four days. END OF ACT ONE.",
       "dialogueBeats": [],
       "choices": [],
-      "hotspots": []
+      "hotspots": [],
+      "note": "Old D1-B curtain — superseded. The No route now continues: follow her home → the rent call → the phone rehire → The Blue Cue. Kept as the entry point for the (now dormant) Three Weeks episode."
     },
     {
       "id": "nwd_curtain_sheisnt",
