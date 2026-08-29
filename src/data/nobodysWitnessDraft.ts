@@ -1,7 +1,7 @@
 import type { Story } from "../types";
 
 /**
- * Nobody's Witness Draft (v2 — branching) — generated from nobodys-witness-draft.reel.json.
+ * Nobody's Witness Draft (v2 — branching) — generated from nobodys-witness-draft-d1b.reel.json.
  *
  * DO NOT EDIT BY HAND: regenerate with
  *   node scripts/import-draft-to-src.mjs
@@ -109,9 +109,11 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
         "nwd_diner_take",
         "nwd_diner_desc",
         "nwd_diner_refuse",
-        "nwd_office_vera",
-        "nwd_office_rent",
         "nwd_follow_home",
+        "nwd_lit_window",
+        "nwd_office_rent",
+        "nwd_office_vera",
+        "nwd_office_take",
         "nwd_poolhall",
         "nwd_poolhall_out",
         "nwd_poolhall_name",
@@ -699,7 +701,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     },
     "nwd_curtain_threeweeks": {
       "x": 660,
-      "y": 700
+      "y": 440
     },
     "nwd_curtain_sheisnt": {
       "x": 880,
@@ -902,16 +904,24 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "y": 1160
     },
     "nwd_follow_home": {
-      "x": 660,
-      "y": 480
+      "x": 1100,
+      "y": 440
+    },
+    "nwd_lit_window": {
+      "x": 1320,
+      "y": 440
     },
     "nwd_office_rent": {
-      "x": 880,
-      "y": 480
+      "x": 1760,
+      "y": 440
     },
     "nwd_office_vera": {
-      "x": 1100,
-      "y": 480
+      "x": 1980,
+      "y": 440
+    },
+    "nwd_office_take": {
+      "x": 2200,
+      "y": 440
     }
   },
   "flagNotes": {
@@ -966,11 +976,13 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     "vera_confessed": "Vera's confession played — the mill lot, or upstairs above the feed store on the D2 route.",
     "eleven_hours_known": "Jack knows the eleven hours: the number, the not-calling, the arithmetic. Set at the mill lot — or upstairs, on the D2 route.",
     "friday_deadline_known": "Jack knows about Friday.",
-    "nwd_followed_no": "D1-B — refused the case in the booth, then followed her home anyway. The folder went back with her; the suspicion didn't. (Feeds the rent call and the phone rehire.)",
-    "nwd_rent_call": "Sal Hirsch's second notice. The phone had to be answered — hold-to-examine on the desk phone — before the 'Call Vera.' choice opens.",
+    "nwd_followed_no": "D1-B — refused the case in the booth, then followed her home anyway. The folder went back with her; the suspicion didn't. (Feeds the lit window, the rent call and the phone rehire.)",
+    "nwd_window_watched": "D1-B — held on the lit window long enough to read it: one bulb, no second, nobody coming or going. She's alone in there with whatever it is.",
+    "nwd_rent_call": "Sal Hirsch's second notice. The phone had to be answered — hold-to-examine on the desk phone — before Sal says his piece and the 'Call Vera.' choice opens.",
+    "nwd_rent_read": "The second notice under the lamp. Two hundred a day plus expenses — the arithmetic was practically rude.",
     "nwd_folder_taken": "The folder is back in his hands. Vera left it by the buzzer 'before I could think of a better word for it.'",
     "nwd_rehired": "He called Vera back and took the case on the phone — same price, no napkin, folder from the front hall. He's on his way to The Blue Cue.",
-    "nwd_said_no": "D1-B — he said the word “No” to her face. Vera remembers it verbatim on the phone; it costs him -1 trust and it's in her mouth when she answers."
+    "nwd_said_no": "D1-B — he said the word “No” to her face, and Vera remembered it verbatim. It cost him a point of her trust, and it was in her mouth when she answered the phone."
   },
   "items": [
     {
@@ -1090,7 +1102,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "id": "hirsch",
       "name": "Sal Hirsch",
       "role": "Landlord — the only bill in town that doesn't lie",
-      "avatarUrl": "emoji:📞",
+      "avatarUrl": "emoji:☎",
       "trustMeter": 0
     }
   ],
@@ -1596,7 +1608,12 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_df_gold",
           "text": "Name your price.",
           "targetSceneId": "nwd_diner_take",
-          "attitudeTag": "Neutral"
+          "attitudeTag": "Neutral",
+          "consequences": {
+            "addItems": [
+              "nwd_folder"
+            ]
+          }
         },
         {
           "id": "nwd_df_d1b",
@@ -2101,7 +2118,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       ],
       "choices": [
         {
-          "id": "nwd_db_go",
+          "id": "nwd_dr_follow",
           "text": "Follow her home.",
           "targetSceneId": "nwd_follow_home",
           "attitudeTag": "Neutral",
@@ -2110,6 +2127,12 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
               "nwd_followed_no"
             ]
           }
+        },
+        {
+          "id": "nwd_dr_home",
+          "text": "Go home. Leave it alone.",
+          "targetSceneId": "nwd_curtain_threeweeks",
+          "attitudeTag": "Neutral"
         }
       ],
       "hotspots": [],
@@ -2118,7 +2141,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     {
       "id": "nwd_follow_home",
       "title": "Part 1 (alt) — Three Cars Back",
-      "background": "/img/nw2/bg-follow-home.jpg",
+      "background": "/uploads/nobodys-witness-draft/1788060000001-d1bcar1.jpg",
       "ambientAudio": "rain",
       "particles": "rain",
       "transition": "fade",
@@ -2148,10 +2171,9 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "I told myself I didn't follow her. The car had been running, I said, and it was dark, and the depot was that way. The car had not been running. It was dark. The depot was the other way."
         },
         {
-          "id": "nwd_fh_s1",
+          "id": "nwd_fh_n1",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
           "text": "Rain. A wiper that isn't moving."
         },
         {
@@ -2167,24 +2189,17 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "She didn't check behind her. That's the part I should have filed, not the part I did. She was the kind of calm that costs people, and I kept my hands at ten and two like the road was any good."
         },
         {
-          "id": "nwd_fh_s2",
+          "id": "nwd_fh_n2",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
           "text": "A key. A door. One light coming on upstairs, the rest of the building staying dark."
-        },
-        {
-          "id": "nwd_fh_vo4",
-          "characterId": "jack",
-          "expression": "V.O. — quiet",
-          "text": "One light. No second. If a man's running, he takes the second light with him. I sat in the rain until the corner lamp decided to flicker, and then I drove back to the office the long way, which is the only way there."
         }
       ],
       "choices": [
         {
           "id": "nwd_fh_go",
-          "text": "Back to the office.",
-          "targetSceneId": "nwd_office_rent",
+          "text": "Kill the lights. Watch the window.",
+          "targetSceneId": "nwd_lit_window",
           "attitudeTag": "Neutral"
         }
       ],
@@ -2192,9 +2207,89 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "onEnterActions": []
     },
     {
+      "id": "nwd_lit_window",
+      "title": "Part 1 (alt) — One Light, No Second",
+      "background": "/uploads/nobodys-witness-draft/1788060000002-d1bwin2.jpg",
+      "ambientAudio": "rain",
+      "particles": "rain",
+      "transition": "fade",
+      "cinematic": {
+        "mode": "zoom-hold",
+        "focalPoint": "40% 26%",
+        "zoomDuration": 36,
+        "dimAmount": 0.22,
+        "lights": [
+          {
+            "x": 38,
+            "y": 24,
+            "color": "#ffd9a0",
+            "intensity": 0.2,
+            "size": 30,
+            "pulseSeconds": 7,
+            "pulseAmount": 0.3
+          }
+        ]
+      },
+      "prose": "Across the street and one floor up: rain on the glass, a lit window, and the shape of a woman standing very still in it.",
+      "dialogueBeats": [
+        {
+          "id": "nwd_lw_vo1",
+          "characterId": "jack",
+          "expression": "V.O. — quiet",
+          "text": "Her silhouette in the window, and the rain doing the rest. She stood there a long time without moving — not the standing of a woman waiting for somebody. The standing of a woman counting what's left."
+        },
+        {
+          "id": "nwd_lw_vo2",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "You watch a window long enough, you stop seeing the woman and start seeing the arithmetic. One light on, one light only, at midnight, in a town where everybody's business runs two bulbs deep."
+        },
+        {
+          "id": "nwd_lw_vo3",
+          "characterId": "jack",
+          "expression": "V.O. — flat — after the window",
+          "conditionRule": {
+            "requiresFlags": [
+              "nwd_window_watched"
+            ]
+          },
+          "text": "No second light. If a man's running, he takes the second light with him. Nobody came to that door, and nobody left. Whatever she's carrying, she's carrying it alone. I sat in the rain until the corner lamp decided to flicker, and then I drove back to the office the long way, which is the only way there."
+        }
+      ],
+      "choices": [
+        {
+          "id": "nwd_lw_go",
+          "text": "Back to the office.",
+          "targetSceneId": "nwd_office_rent",
+          "attitudeTag": "Neutral"
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "nwd_lw_win",
+          "label": "The lit window",
+          "bounds": {
+            "x": 24,
+            "y": 6,
+            "w": 36,
+            "h": 38
+          },
+          "cursor": "use",
+          "examine": true,
+          "examineSeconds": 3,
+          "action": {
+            "type": "showText",
+            "text": "The curtain's thin. She's not crying and she's not pacing. She's standing like testimony — one hand at her collar, facing the room she's already searched.",
+            "flagSet": "nwd_window_watched"
+          }
+        }
+      ],
+      "onEnterActions": []
+    },
+    {
       "id": "nwd_office_rent",
       "title": "Part 1 (alt) — The Rent",
-      "background": "/img/nw2/bg-office-rent.jpg",
+      "background": "/uploads/nobodys-witness-draft/1788060000003-d1brent.jpg",
       "ambientAudio": "rain",
       "particles": "rain",
       "transition": "fade",
@@ -2224,10 +2319,9 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "The office is the part of the job where the job gets you back. The desk's the size of a dining table in a house nobody owns. The coffee's been on the counter since morning, and there's one bill in the drawer with my name on it, and it's the only one I haven't managed to lose."
         },
         {
-          "id": "nwd_or_s1",
+          "id": "nwd_or_n1",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
           "text": "Rain on the blind. A radiator ticking, like it's keeping score."
         },
         {
@@ -2240,7 +2334,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_or_vo3",
           "characterId": "jack",
           "expression": "V.O. — flat — a beat after 'Two hundred'",
-          "text": "Two hundred a day. The number from the diner was still sitting in my chest where the folder had been, and I was about to find out whether a man can be right twice and broke the second time."
+          "text": "Two hundred a day. The number I never said out loud was still sitting in my chest where the folder had been, and I was about to find out whether a man can be right twice and broke the second time."
         },
         {
           "id": "nwd_or_vo4",
@@ -2249,11 +2343,10 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "I let it. Once. Twice. By the third time it wasn't the phone anymore. It was a fact, ringing."
         },
         {
-          "id": "nwd_or_s2",
+          "id": "nwd_or_n2",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
-          "text": "The phone. Once. Twice."
+          "text": "The phone. Once. Twice. A third time."
         },
         {
           "id": "nwd_or_h1",
@@ -2300,10 +2393,9 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "Then you know what to do about it. The building's got a name on the door. The deed isn't taking applications."
         },
         {
-          "id": "nwd_or_s3",
+          "id": "nwd_or_n3",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
           "conditionRule": {
             "requiresFlags": [
               "nwd_rent_call"
@@ -2329,12 +2421,18 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "Call Vera.",
           "targetSceneId": "nwd_office_vera",
           "attitudeTag": "Neutral",
-          "hidden": true,
           "gating": {
             "requiresFlags": [
               "nwd_rent_call"
             ]
-          }
+          },
+          "hidden": true
+        },
+        {
+          "id": "nwd_or_home",
+          "text": "Go home. Leave it alone.",
+          "targetSceneId": "nwd_curtain_threeweeks",
+          "attitudeTag": "Neutral"
         }
       ],
       "hotspots": [
@@ -2342,17 +2440,17 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_or_phone",
           "label": "The phone",
           "bounds": {
-            "x": 23,
-            "y": 53,
-            "w": 21,
-            "h": 23
+            "x": 15,
+            "y": 45,
+            "w": 33,
+            "h": 35
           },
           "cursor": "use",
           "examine": true,
           "examineSeconds": 2.5,
           "action": {
             "type": "showText",
-            "text": "It's the building. It's always the building.",
+            "text": "You lift the receiver before the fourth. It's the building. It's always the building.",
             "flagSet": "nwd_rent_call"
           }
         }
@@ -2362,10 +2460,12 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
     {
       "id": "nwd_office_vera",
       "title": "Part 1 (alt) — The Phone Call",
-      "background": "/img/nw2/bg-office-call.jpg",
+      "background": "/uploads/nobodys-witness-draft/1788060000004-d1bcall.jpg",
       "ambientAudio": "rain",
       "particles": "rain",
       "transition": "fade",
+      "autoAdvanceTargetSceneId": "nwd_office_take",
+      "autoAdvanceDelaySeconds": 2.2,
       "cinematic": {
         "mode": "zoom-hold",
         "focalPoint": "68% 62%",
@@ -2401,10 +2501,9 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "One listing for Voss in the phone book, and it's not the husband's name on it. I stood there holding it for a second. That's what the book's for — and some part of me wanted to know how long that number had been waiting for a man to pick up."
         },
         {
-          "id": "nwd_ov_s1",
+          "id": "nwd_ov_n1",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
           "text": "Numbers. Rain on the blind."
         },
         {
@@ -2438,7 +2537,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_ov_j2",
           "characterId": "jack",
           "expression": "flat",
-          "text": "It's the case. A phone just rang on my desk and it was the landlord, and I'm a man who's out of arguments and in of rent."
+          "text": "It's the case. A phone just rang on my desk and it was the landlord, and I'm a man who's out of arguments and in arrears."
         },
         {
           "id": "nwd_ov_v3",
@@ -2483,54 +2582,116 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "Hurry, Mr. Morrow. The first name on your list is a place that don't wait."
         },
         {
-          "id": "nwd_ov_s2",
+          "id": "nwd_ov_n2",
           "characterId": "narrator",
           "expression": "sound",
-          "silent": true,
           "text": "Click. The rain. The lamp, ticking in the heat."
         },
         {
           "id": "nwd_ov_vo4",
           "characterId": "jack",
           "expression": "V.O. — flat",
-          "text": "I hung up and stood there a minute with the dead phone in my hand, because a man who said no to a case that night had one more no to say before he'd earn the yes. The front hall. The buzzer. The table."
+          "text": "I hung up and stood there a minute with the dead phone in my hand, because a man who said no to a case that night had one more no to say before he'd earn the yes."
+        }
+      ],
+      "choices": [],
+      "hotspots": [],
+      "onEnterActions": []
+    },
+    {
+      "id": "nwd_office_take",
+      "title": "Part 1 (alt) — The Blue Cue, First Name on the List",
+      "background": "/uploads/nobodys-witness-draft/1788060000005-d1bgo01.jpg",
+      "ambientAudio": "rain",
+      "particles": "rain",
+      "transition": "fade",
+      "cinematic": {
+        "mode": "zoom-hold",
+        "focalPoint": "62% 46%",
+        "zoomDuration": 40,
+        "dimAmount": 0.22,
+        "lights": [
+          {
+            "x": 30,
+            "y": 44,
+            "color": "#ffd98a",
+            "intensity": 0.22,
+            "size": 32,
+            "pulseSeconds": 7,
+            "pulseAmount": 0.4
+          }
+        ]
+      },
+      "prose": "The office at two in the morning. The lamp still on, the coat already on, the door standing open on the dark hall.",
+      "dialogueBeats": [
+        {
+          "id": "nwd_ot_vo1",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "The front hall first. The buzzer, the table, the folder — right where she said it would be, squared to the table's edge like she'd practiced leaving it there. I didn't ring up. She'd already said everything a buzzer could carry."
+        },
+        {
+          "id": "nwd_ot_vo2",
+          "characterId": "jack",
+          "expression": "V.O. — flat, a coat going on",
+          "text": "No napkin, no line. A folder out of a front hall, a name I didn't like, and a woman who heard the word no and handed me the case anyway."
+        },
+        {
+          "id": "nwd_ot_vo3",
+          "characterId": "jack",
+          "expression": "V.O. — flat, a match striking",
+          "text": "Smart move was letting it go. I'd already made the smart move once tonight. It bought me a second notice, a phone that only rings for the landlord, and the longest four hours of a quiet year."
+        },
+        {
+          "id": "nwd_ot_vo4",
+          "characterId": "jack",
+          "expression": "V.O. — flat",
+          "text": "Lonely, dressed up as a work ethic. I turned the page — same page, one more time — and put my hat on."
         }
       ],
       "choices": [
         {
-          "id": "nwd_ov_folder",
-          "text": "Take the folder from the front hall.",
-          "targetSceneId": "",
-          "reply": true,
+          "id": "nwd_ot_go",
+          "text": "The Blue Cue. First name on the list.",
+          "targetSceneId": "nwd_poolhall",
           "attitudeTag": "Neutral",
           "consequences": {
             "setFlags": [
+              "nwd_rehired",
               "nwd_folder_taken"
             ],
             "addItems": [
               "nwd_folder"
-            ]
-          }
-        },
-        {
-          "id": "nwd_ov_go",
-          "text": "The Blue Cue. First name on the list.",
-          "targetSceneId": "nwd_poolhall",
-          "attitudeTag": "Neutral",
-          "hidden": true,
-          "gating": {
-            "requiresItems": [
-              "nwd_folder"
-            ]
-          },
-          "consequences": {
-            "setFlags": [
-              "nwd_rehired"
+            ],
+            "trustChanges": [
+              {
+                "characterId": "vera",
+                "delta": 1
+              }
             ]
           }
         }
       ],
-      "hotspots": [],
+      "hotspots": [
+        {
+          "id": "nwd_ot_notice",
+          "label": "The second notice",
+          "bounds": {
+            "x": 14,
+            "y": 38,
+            "w": 28,
+            "h": 32
+          },
+          "cursor": "use",
+          "examine": true,
+          "examineSeconds": 2.5,
+          "action": {
+            "type": "showText",
+            "text": "Sal's second notice, under the lamp where it does the most good. Two hundred a day plus expenses. The arithmetic was so simple it was practically rude.",
+            "flagSet": "nwd_rent_read"
+          }
+        }
+      ],
       "onEnterActions": []
     },
     {
@@ -3831,8 +3992,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "prose": "I did the sensible thing and I felt sensible about it for about four days. END OF ACT ONE.",
       "dialogueBeats": [],
       "choices": [],
-      "hotspots": [],
-      "note": "Old D1-B curtain — superseded. The No route now continues: follow her home → the rent call → the phone rehire → The Blue Cue. Kept as the entry point for the (now dormant) Three Weeks episode."
+      "hotspots": []
     },
     {
       "id": "nwd_curtain_sheisnt",
