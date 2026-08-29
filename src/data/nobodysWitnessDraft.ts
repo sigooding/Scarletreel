@@ -2253,7 +2253,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
               "nwd_window_watched"
             ]
           },
-          "text": "No second light. If a man's running, he takes the second light with him. Nobody came to that door all night, and nobody left. Whatever she's carrying, she's carrying it alone — and I put the car in gear before I could decide what that made me."
+          "text": "No second light. If a man's running, he takes the second light with him. Nobody came to that door, and nobody left. Whatever she's carrying, she's carrying it alone. I sat in the rain until the corner lamp decided to flicker, and then I drove back to the office the long way, which is the only way there."
         }
       ],
       "choices": [
@@ -2334,7 +2334,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_or_vo3",
           "characterId": "jack",
           "expression": "V.O. — flat — a beat after 'Two hundred'",
-          "text": "Two hundred a day. The number from the diner was still sitting in my chest where the folder had been, and I was about to find out whether a man can be right twice and broke the second time."
+          "text": "Two hundred a day. The number I never said out loud was still sitting in my chest where the folder had been, and I was about to find out whether a man can be right twice and broke the second time."
         },
         {
           "id": "nwd_or_vo4",
@@ -2640,7 +2640,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "id": "nwd_ot_vo3",
           "characterId": "jack",
           "expression": "V.O. — flat, a match striking",
-          "text": "Smart move was letting it go. I'd already made the smart move once tonight. It bought me a second notice, a dead phone, and the longest four hours of a quiet year."
+          "text": "Smart move was letting it go. I'd already made the smart move once tonight. It bought me a second notice, a phone that only rings for the landlord, and the longest four hours of a quiet year."
         },
         {
           "id": "nwd_ot_vo4",
