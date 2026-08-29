@@ -1,7 +1,7 @@
 import type { Story } from "../types";
 
 /**
- * Nobody's Witness Draft (v2 — branching) — generated from nobodys-witness-draft-d1b.reel.json.
+ * Nobody's Witness Draft (v2 — branching) — generated from new draft.reel (2).json.
  *
  * DO NOT EDIT BY HAND: regenerate with
  *   node scripts/import-draft-to-src.mjs
@@ -3022,7 +3022,11 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           }
         }
       ],
-      "onEnterActions": []
+      "onEnterActions": [],
+      "musicMode": "track",
+      "musicUrl": "/uploads/nobodys-witness-draft/1788024868121-4jwpy6y.mp3",
+      "musicFadeSeconds": 0,
+      "musicLevel": 1.05
     },
     {
       "id": "nwd_poolhall_out",
