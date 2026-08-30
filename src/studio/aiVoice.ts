@@ -64,17 +64,20 @@ export interface SynthesisResult {
 /**
  * Build voice_settings appropriate for the chosen model.
  *
- * Eleven v3 does NOT support speaker boost or speed (product guide). Sending
- * those fields with `eleven_v3` has produced HTTP 400s from the API. v2/turbo
- * still take the full set. Style exaggeration is kept low so delivery stays
- * stable; v3 acts through audio tags instead.
+ * Eleven v3 does NOT support similarity, speaker boost or speed (product
+ * guide). Sending any of those fields with `eleven_v3` produces HTTP 400s from
+ * the API — which is exactly what "Generate MP3" was hitting. v2/turbo still
+ * take the full set. Style exaggeration is kept low so delivery stays stable;
+ * v3 acts through audio tags instead.
  */
 function voiceSettingsForModel(model: string): Record<string, number | boolean> {
   const isV3 = model === "eleven_v3" || /(?:^|_)v3(?:_|$)/.test(model);
   if (isV3) {
-    // v3: stability + similarity only. No use_speaker_boost, no speed.
-    // Stability near 0.5 ("Natural") is the sweet spot for dialogue.
-    return { stability: 0.5, similarity_boost: 0.75 };
+    // v3: stability is the only supported dial-in (similarity, speed and
+    // speaker boost are NOT available on v3). Sending similarity_boost here
+    // WAS the 400 — so send just stability. 0.5 ("Natural") is the sweet spot
+    // for dialogue.
+    return { stability: 0.5 };
   }
   return {
     stability: 0.4,
