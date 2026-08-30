@@ -61,40 +61,118 @@ export interface SynthesisResult {
   chars: number;
 }
 
+/**
+ * Build voice_settings appropriate for the chosen model.
+ *
+ * Eleven v3 does NOT support speaker boost or speed (product guide). Sending
+ * those fields with `eleven_v3` has produced HTTP 400s from the API. v2/turbo
+ * still take the full set. Style exaggeration is kept low so delivery stays
+ * stable; v3 acts through audio tags instead.
+ */
+function voiceSettingsForModel(model: string): Record<string, number | boolean> {
+  const isV3 = model === "eleven_v3" || /(?:^|_)v3(?:_|$)/.test(model);
+  if (isV3) {
+    // v3: stability + similarity only. No use_speaker_boost, no speed.
+    // Stability near 0.5 ("Natural") is the sweet spot for dialogue.
+    return { stability: 0.5, similarity_boost: 0.75 };
+  }
+  return {
+    stability: 0.4,
+    similarity_boost: 0.8,
+    style: 0.25,
+    use_speaker_boost: true,
+  };
+}
+
+/**
+ * Pull a readable message out of every ElevenLabs error body shape we've seen:
+ *   { detail: "…" }
+ *   { detail: { status, message } }          ← most common (400 voice_not_found etc.)
+ *   { detail: [{ msg/message, … }, …] }      ← validation arrays
+ *   { message: "…" }
+ */
+function formatElevenErrorBody(body: unknown): string {
+  if (!body || typeof body !== "object") return "";
+  const b = body as {
+    message?: unknown;
+    detail?: unknown;
+  };
+  const detail = b.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        if (!d || typeof d !== "object") return typeof d === "string" ? d : "";
+        const item = d as { message?: unknown; msg?: unknown; loc?: unknown };
+        const msg = typeof item.message === "string" ? item.message : typeof item.msg === "string" ? item.msg : "";
+        return msg;
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const d = detail as { message?: unknown; status?: unknown; msg?: unknown };
+    const msg =
+      (typeof d.message === "string" && d.message) ||
+      (typeof d.msg === "string" && d.msg) ||
+      "";
+    const status = typeof d.status === "string" && d.status ? d.status : "";
+    if (msg && status) return `${status}: ${msg}`;
+    if (msg) return msg;
+    if (status) return status;
+  }
+  if (typeof b.message === "string" && b.message.trim()) return b.message.trim();
+  try {
+    return JSON.stringify(body).slice(0, 280);
+  } catch {
+    return "";
+  }
+}
+
 /** Synthesize one line with ElevenLabs and return it as a data URL ready
  *  for the media-library upload. Throws an Error with a readable message
  *  for every failure mode (bad key, credits, rate limit, voice/model).
  *  Pass `context` (the lines immediately around this one, with speaker
- *  labels) for ElevenLabs' conversational context — it reads the prior
- *  turn so the delivery responds to it naturally instead of in isolation. */
+ *  labels) for ElevenLabs' previous_text / next_text continuity — the TTS
+ *  endpoint accepts these and uses them so delivery responds to the turn
+ *  instead of reading the line in isolation. */
 export async function synthesizeElevenLabs(
   text: string,
   voiceId: string,
   model: string,
-  _context?: { previousText?: string; nextText?: string }
+  context?: { previousText?: string; nextText?: string }
 ): Promise<SynthesisResult> {
-  // Note: conversational `previous_text`/`next_text` is intentionally NOT sent
-  // — those fields belong to the Conversational-Agents API and make the TTS
-  // endpoint return 422. Natural delivery comes from v3's acting + sound cues.
   const key = getElevenKey();
   if (!key) throw new Error("No ElevenLabs API key set — add it in the AI Voice section of the People tab first.");
+  const line = String(text ?? "").trim();
+  if (!line) throw new Error("Nothing to convert — the line is empty.");
+  const vid = String(voiceId ?? "").trim();
+  if (!vid) throw new Error("No ElevenLabs voice ID — assign one on the character in the People tab.");
+
+  // Cap continuity context. The API accepts previous_text/next_text on the
+  // TTS endpoint; very long scene history just burns latency and can trip
+  // request-size limits, so keep a useful window.
+  const prev = (context?.previousText ?? "").trim().slice(-1500) || undefined;
+  const next = (context?.nextText ?? "").trim().slice(0, 500) || undefined;
+
+  const body: Record<string, unknown> = {
+    text: line,
+    model_id: model || "eleven_v3",
+    voice_settings: voiceSettingsForModel(model || "eleven_v3"),
+  };
+  if (prev) body.previous_text = prev;
+  if (next) body.next_text = next;
+
   let res: Response;
   try {
-    res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+    res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vid)}`, {
       method: "POST",
       headers: {
         "xi-api-key": key,
         "Content-Type": "application/json",
         Accept: "audio/mpeg",
       },
-      body: JSON.stringify({
-        text,
-        model_id: model,
-        voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.25, use_speaker_boost: true },
-        // NOTE: previous_text/next_text are Conversational-Agents-API params and
-        // are NOT accepted by the text-to-speech endpoint — sending them made it
-        // return 422. Natural delivery comes from v3's acting + sound-tag cues.
-      }),
+      body: JSON.stringify(body),
     });
   } catch {
     throw new Error("Could not reach the ElevenLabs API — check your connection and try again.");
@@ -102,28 +180,47 @@ export async function synthesizeElevenLabs(
   if (!res.ok) {
     let detail = "";
     try {
-      const body = (await res.json()) as { message?: string; detail?: string | { message?: string }[] };
-      if (typeof body.detail === "string") detail = body.detail;
-      else if (Array.isArray(body.detail)) detail = body.detail.map((d) => d?.message ?? "").filter(Boolean).join("; ");
-      else detail = body.message ?? "";
+      detail = formatElevenErrorBody(await res.json());
     } catch {
       /* non-JSON error body — statusText is enough */
     }
-    const msg = detail || res.statusText;
-    if (res.status === 401) throw new Error(`ElevenLabs rejected the API key (401). ${msg}`);
+    const msg = detail || res.statusText || "";
+    if (res.status === 401) throw new Error(`ElevenLabs rejected the API key (401). ${msg}`.trim());
+    if (res.status === 403) throw new Error(`ElevenLabs forbidden (403) — check the key's scopes include Text to Speech. ${msg}`.trim());
+    if (res.status === 404) throw new Error(`ElevenLabs voice not found (404) — check the voice ID is in your Voice Lab (library voices must be added first). ${msg}`.trim());
+    if (res.status === 400) {
+      // Most common: voice_not_found, bad model/voice pairing, unsupported settings.
+      const hint = /voice/i.test(msg)
+        ? " Voice IDs must be in your Voice Lab (add library voices there first), and v3 voices need the Eleven v3 model."
+        : " Check the voice ID, that the model matches the voice (v3 voices → Eleven v3), and that the line isn't empty.";
+      throw new Error(`ElevenLabs rejected the request (400). ${msg}${hint}`.trim());
+    }
     if (res.status === 422)
-      throw new Error(`ElevenLabs refused the request (422) — usually an out-of-credits balance or a voice/model mismatch. ${msg}`);
+      throw new Error(`ElevenLabs refused the request (422) — usually an out-of-credits balance or a voice/model mismatch. ${msg}`.trim());
     if (res.status === 429) throw new Error("Rate limited by ElevenLabs (429) — wait a few seconds and try again.");
-    throw new Error(`ElevenLabs error ${res.status}. ${msg}`);
+    throw new Error(`ElevenLabs error ${res.status}. ${msg}`.trim());
   }
   const blob = await res.blob();
+  if (!blob.size) throw new Error("ElevenLabs returned an empty audio file — try again, or switch model.");
+  // Rare: a non-2xx-looking payload that still typed as JSON/text. Only
+  // inspect when the Content-Type is clearly not audio — reading the blob
+  // consumes it, so we never do this for audio/mpeg responses.
+  if (blob.type && /json|text\//i.test(blob.type)) {
+    let detail = "";
+    try {
+      detail = formatElevenErrorBody(JSON.parse(await blob.text()));
+    } catch {
+      detail = "unexpected non-audio response";
+    }
+    throw new Error(`ElevenLabs returned an error payload instead of audio. ${detail}`.trim());
+  }
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(String(fr.result));
     fr.onerror = () => reject(fr.error);
     fr.readAsDataURL(blob);
   });
-  return { dataUrl, blob, bytes: blob.size, chars: text.length };
+  return { dataUrl, blob, bytes: blob.size, chars: line.length };
 }
 
 /** The confirm copy — the credit cost is always on the table before any
