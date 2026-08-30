@@ -3468,7 +3468,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_fa_vo1",
           characterId: "jack",
           expression: "V.O. — spare",
-          text: "I called it in from the booth. She picked up on the first ring, like the phone was already in her hand. I said one hour, the booth. Twenty-two minutes later the door bell — nobody in this town has hurried for anything in fifty years, and that's how I knew.",
+          text: "I called it in from the booth. She picked up on the first ring, like the phone was already in her hand. I said one hour, the booth. Two minutes later the door bell — nobody in this town has hurried for anything in fifty years, and that's how I knew.",
         },
         {
           id: "nwt_fa_vo2",
