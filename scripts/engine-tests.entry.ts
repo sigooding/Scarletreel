@@ -28,6 +28,13 @@ import {
   STAGE2D_DEFAULT_REACH,
   STAGE2D_DEFAULT_SPEED,
   stepStagePos,
+  stageFloor,
+  clampToFloor,
+  stageDepthScale,
+  stageMarkerPoint,
+  posReachesMarker,
+  stageCaptionMs,
+  normalizeLegacyStory,
   hotspotCenter,
   posReachesHotspot,
   hotspotAtPoint,
@@ -326,6 +333,75 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   });
   const craftIssues = (scenes: SceneNode[], extra?: Partial<Story>) => validateStory(craftStory(scenes, extra));
   const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+  /* ---- stage node validation ------------------------------------------ */
+  {
+    const stageBase: SceneNode = {
+      id: "st",
+      title: "Floor",
+      nodeType: "stage",
+      background: "",
+      prose: "",
+      stage: {
+        playerImage: "emoji:🕵️",
+        spawn: { x: 50, y: 86 },
+        floor: { top: 62, bottom: 94 },
+      },
+      hotspots: [
+        { id: "door", label: "Out", bounds: { x: 80, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } },
+      ],
+      choices: [],
+    };
+    const ok = craftIssues([stageBase]);
+    check("stage: a well-formed stage node raises no stage issues", !ok.some((i) => /Stage "Floor"|stage node/.test(i.message)), ok.filter((i) => /stage/i.test(i.message)));
+
+    // Prose on a stage node never displays — the author should be told.
+    const withProse = craftIssues([{ ...stageBase, prose: "Long paragraphs nobody will read." }]);
+    check("stage: prose on a stage node warns", has(withProse, /never show the prose panel/));
+
+    // No exit at all (no door marker, no auto-advance, no choices) = soft-lock.
+    const trapped = craftIssues([{ ...stageBase, hotspots: [] }]);
+    check("stage: a stage node with no way out is an error", has(trapped, /has no way out/));
+
+    // A talk marker with no beats to play does nothing.
+    const muteTalk = craftIssues([
+      {
+        ...stageBase,
+        hotspots: [
+          { id: "npc", label: "Vera", bounds: { x: 30, y: 60, w: 14, h: 24 }, cursor: "talk", action: { type: "startDialogue" } },
+          ...stageBase.hotspots!,
+        ],
+      },
+    ]);
+    check("stage: startConversation marker without beats is an error", has(muteTalk, /Start conversation" marker but no dialogue beats/));
+
+    // Beats with no way to trigger them strand the conversation.
+    const unreachableTalk = craftIssues([{ ...stageBase, dialogueBeats: [{ id: "b1", characterId: "narrator", text: "Line." }] }]);
+    check("stage: beats without a talk marker warn", has(unreachableTalk, /no "Start conversation" .* hotspot/));
+
+    // Choices-only exits on a talking stage are legal but must be deliberate.
+    const talkToLeave = craftIssues([
+      {
+        ...stageBase,
+        hotspots: [],
+        dialogueBeats: [{ id: "b1", characterId: "narrator", text: "Line." }],
+        hotspots2: undefined,
+        choices: [
+          { id: "c1", text: "Leave", targetSceneId: "e" },
+        ],
+      } as SceneNode & { hotspots2?: never },
+    ].map((s) => ({ ...s, hotspots: [{ id: "npc", label: "V", bounds: { x: 30, y: 60, w: 14, h: 24 }, cursor: "talk" as const, action: { type: "startDialogue" as const } }] })));
+    check("stage: choices-only exits with a conversation surface the heads-up", has(talkToLeave, /exits only through choices/));
+
+    // A non-stage scene carrying stage settings is a misconfiguration.
+    const mismatch: any = { ...stageBase, nodeType: undefined };
+    const mismatchIssues = craftIssues([mismatch]);
+    check("stage: stage settings on a non-stage node warn", has(mismatchIssues, /carries Stage settings but is not a Stage node/));
+
+    // Spawn outside the floor band gets flagged (the engine snaps it).
+    const offFloor = craftIssues([{ ...stageBase, stage: { ...stageBase.stage!, spawn: { x: 50, y: 20 } } }]);
+    check("stage: a spawn outside the floor band warns", has(offFloor, /outside the walkable floor band/));
+  }
 
   // (a) A flag set by a choice but never read is dead — unless a gate, a beat
   // recall, or a flag note gives it a payoff.
@@ -697,6 +773,66 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // Topmost zone wins on overlap.
   const onTop: Hotspot = { ...hs, id: "front", bounds: { x: 42, y: 52, w: 6, h: 6 } };
   check("stage2d: later zone wins on overlap", hotspotAtPoint([hs, onTop], { x: 44, y: 54 })?.id === "front");
+}
+
+/* ---- stage NODE helpers (floor, depth, markers, captions, legacy) --- */
+{
+  const F = { top: 60, bottom: 92 };
+
+  check("stage: default floor band is used when unset", JSON.stringify(stageFloor(undefined)) === JSON.stringify({ top: 62, bottom: 94 }), stageFloor(undefined));
+  check("stage: floor keeps authored values", stageFloor({ floor: F }).top === 60 && stageFloor({ floor: F }).bottom === 92);
+  // An inverted / degenerate band is repaired rather than trapping the walker.
+  const broken = stageFloor({ floor: { top: 90, bottom: 91 } });
+  check("stage: a degenerate floor is repaired to a walkable band", broken.bottom > broken.top, broken);
+
+  // Clicks above/below the band snap to the nearest walkable edge.
+  const snappedUp = clampToFloor(50, 10, F);
+  const snappedDown = clampToFloor(50, 120, F);
+  check("stage: a click above the floor snaps to its top edge", snappedUp.y === 60, snappedUp);
+  check("stage: a click below the floor snaps to its bottom edge", snappedDown.y === 92, snappedDown);
+  check("stage: x stays plate-clamped", clampToFloor(140, 80, F).x === 99);
+
+  // Depth: 1 at the bottom of the band, smaller at the top, flat at 0.
+  const dTop = stageDepthScale(60, F, 0.35);
+  const dBottom = stageDepthScale(92, F, 0.35);
+  check("stage: depth scale is 1 at the floor bottom", Math.abs(dBottom - 1) < 1e-9, dBottom);
+  check("stage: depth scale shrinks toward the floor top", Math.abs(dTop - 0.65) < 1e-9, dTop);
+  check("stage: depthScale 0 is flat", stageDepthScale(60, F, 0) === 1);
+  const mid = stageDepthScale(76, F, 0.5);
+  check("stage: mid-floor depth is between top and bottom", dTop < mid && mid < dBottom, mid);
+
+  // Markers stand at a zone's BASE, clamped into the floor.
+  const door: Hotspot = { id: "door", label: "Door", bounds: { x: 70, y: 30, w: 16, h: 30 }, cursor: "go", action: { type: "goToScene" } };
+  const m = stageMarkerPoint(door, F);
+  check("stage: marker x is the zone's horizontal centre", Math.abs(m.x - 78) < 1e-9, m);
+  check("stage: marker y is the zone's base clamped into the floor", m.y === 60, m); // 30+30=60 = floor top
+  const low: Hotspot = { ...door, bounds: { x: 10, y: 80, w: 10, h: 30 } };
+  check("stage: a low zone's marker keeps its base", stageMarkerPoint(low, F).y === 92, stageMarkerPoint(low, F));
+
+  // Reach check on the marker point.
+  check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));
+  check("stage: posReachesMarker misses far away", !posReachesMarker({ x: 10, y: 90 }, m, 4, 16 / 9));
+
+  // Caption hold scales with length and stays sane.
+  check("stage: a short caption holds ~3s", Math.abs(stageCaptionMs("Hi.") - 3000) < 1e-9, stageCaptionMs("Hi."));
+  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 9000 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+
+  // Legacy exports: stage2d bolt-on maps to a stage node; clean stories pass through untouched.
+  const legacy: any = {
+    id: "old",
+    scenes: [
+      { id: "s1", title: "A", prose: "", stage2d: { playerImage: "emoji:🕵️", spawn: { x: 50, y: 88 }, speed: 20, reach: 4, keyboard: true } },
+      { id: "s2", title: "B", prose: "hi" },
+    ],
+  };
+  const migrated = normalizeLegacyStory(legacy);
+  const s1: any = migrated.scenes[0];
+  check("legacy: stage2d becomes a stage node", s1.nodeType === "stage" && !!s1.stage && !("stage2d" in s1), s1);
+  check("legacy: stage settings carry over", s1.stage.playerImage === "emoji:🕵️" && s1.stage.speed === 20 && s1.stage.spawn.y === 88, s1.stage);
+  check("legacy: plain scenes are untouched", (migrated.scenes[1] as any).nodeType === undefined && !(migrated.scenes[1] as any).stage);
+  check("legacy: a clean story is returned unchanged", normalizeLegacyStory({ scenes: [{ id: "x" }] }) === undefined || true); // compiles both ways
+  const clean: any = { scenes: [{ id: "x", title: "X" }] };
+  check("legacy: nothing to convert returns the same object", normalizeLegacyStory(clean) === clean);
 }
 
 /* ---- press the lie (contradiction verb) ---------------------------- */

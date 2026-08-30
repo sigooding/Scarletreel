@@ -103,21 +103,28 @@ export const DEMO_LIE: Story = {
       id: "dl_office",
       title: "Velle's Back Office",
       note:
-        "STEP 1 — STOCK THE EVIDENCE. A press only works if the player is HOLDING the right item, so first you give it to them. " +
-        "① Each hotspot below is a 'take' cursor with action Give item (Hotspots tab → ＋, drag the zone, cursor 'take'). " +
-        "② There are THREE items here on purpose: the 🎟 Pawn Ticket breaks lie #1, the 🧾 Bar Tab breaks lie #2, and the 🔥 Matchbook is a RED HERRING — it shows in the evidence bag but proves nothing. " +
-        "③ The lesson: handing the player every clue doesn't make it easy; they still have to pick the one that matters. ▶ Play: grab all three, then go confront her.",
+        "STEP 1 — STOCK THE EVIDENCE (this scene is a 🚶 WALKABLE STAGE node). A press only works if the player is HOLDING the right item, so first you give it to them. " +
+        "① Node Layout Type is '🚶 Walkable Stage': no prose panel — the stage.enterCaption line plays as a subtitle and the player WALKS. " +
+        "② Each hotspot below is a 'take' marker with action Give item; the stage draws them as gold reticles at the zone's base and the character walks to them. " +
+        "③ There are THREE items on purpose: the 🎟 Pawn Ticket breaks lie #1, the 🧾 Bar Tab breaks lie #2, and the 🔥 Matchbook is a RED HERRING — it shows in the evidence bag but proves nothing. " +
+        "④ The exit is a DOOR MARKER: a hotspot with action '→ Go to scene' (cursor 'go') — on a stage node choices only appear after a conversation, so exits must be walk-to markers. " +
+        "⑤ The lesson: handing the player every clue doesn't make it easy; they still have to pick the one that matters. ▶ Play: walk the floor, grab all three, then walk out the door to confront her.",
       background: "/img/bg-office.jpg",
       ambientAudio: "rain",
-      stage2d: {
+      nodeType: "stage",
+      stage: {
         playerImage: "emoji:🕵️",
         spawn: { x: 50, y: 88 },
         speed: 20,
         reach: 4,
         keyboard: true,
+        floor: { top: 58, bottom: 94 },
+        depthScale: 0.35,
+        hints: "proximity",
+        enterCaption:
+          "Mara Velle's office smells of cigarette smoke and cheap rye. She's gone down to the club to give her statement — which means the desk is unguarded.",
       },
-      prose:
-        "Mara Velle's office smells of cigarette smoke and cheap rye. She's already gone down to the club to give you her statement — which means her desk is unguarded. Three things are worth pocketing before you follow her.\n\nClick the floor to walk (or use the arrow / WASD keys). Walk up to each clue on the desk to pick it up — then go hear her lie to your face.",
+      prose: "",
       dialogueBeats: [],
       hotspots: [
         {
@@ -147,15 +154,16 @@ export const DEMO_LIE: Story = {
           showItemImage: true,
           action: { type: "giveItem", itemGranted: "dl_matchbook" },
         },
-      ],
-      choices: [
         {
-          id: "dl_go_confront",
-          text: "Pocket the evidence and go down to hear her statement.",
-          targetSceneId: "dl_alibi",
-          attitudeTag: "Clever",
+          id: "dl_hs_exit",
+          label: "Follow her down to the club",
+          bounds: { x: 84, y: 74, w: 12, h: 18 },
+          cursor: "go",
+          isRepeatable: true,
+          action: { type: "goToScene", targetSceneId: "dl_alibi" },
         },
       ],
+      choices: [],
     },
 
     /* ── SCENE 2 — LIE ONE: a standalone contradiction ─────────────── */
