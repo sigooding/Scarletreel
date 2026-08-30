@@ -10,6 +10,127 @@
    behaviour below is what the tool actually does — not a paraphrase.
 
 --------------------------------------------------------------------------------
+   RECENT CHANGES (press the lie, walkable 2D scenes, craft linter,
+                   flag notes, route charts, HUD, present-item verb)
+   — read this first
+--------------------------------------------------------------------------------
+   NEW: PRESS THE LIE 🎯        the contradiction verb. A dialogue beat can
+   (catch them in a lie)         carry a LIE: while that line is on screen the
+                                 player gets a "🎯 Press them on that" button,
+                                 opens their satchel, and must present the ONE
+                                 clue that proves the claim false. Right clue
+                                 -> the CAUGHT beat plays (auto-gated on the
+                                 caught flag), trust/meters swing, optional
+                                 "…will remember that" card. Wrong clue -> a
+                                 BLUFF-CALLED line, heat up / trust down, and
+                                 after a wrong-evidence LIMIT (default 2) the
+                                 claim shuts for the scene. In an INTERROGATION
+                                 scene set "composure damage" and a proven lie
+                                 shatters the suspect (crack/clamp by trust).
+                                 Authored on the beat via the Dialogue tab's
+                                 "🎯 Press the Lie" panel. The validator checks
+                                 the evidence exists/obtains and the caught
+                                 beat is gated. See Section 11 "PRESS THE LIE".
+                                 Try Demo Lab: Press the Lie.
+   NEW: STAGE 2D 🚶             a scene can be a WALKABLE stage. Tick
+   (controllable character)      "Player walks around this scene" in the Scene
+                                 tab: the player clicks the ground to move a
+                                 character (or uses arrow / WASD keys), and
+                                 walking ONTO a hotspot fires it through the
+                                 SAME hotspot action (give item, show text, go
+                                 to scene — gating unchanged). It is a movement
+                                 layer over the same scene data, not a new game
+                                 model. Config: sprite (image or emoji:…),
+                                 spawn point, walk speed, reach distance,
+                                 keyboard toggle. See Section 9 "STAGE 2D".
+   NEW: CRAFT LINTER            the Continuity Department now also flags STORY
+                                 CRAFT, not just broken graphs: flags that are
+                                 set but never read (a payoff that never lands),
+                                 "will remember that" cards with nothing behind
+                                 them, memory tags nobody recalls, quick-time
+                                 deadlines that change nothing when they expire,
+                                 two choices that answer identically, and long
+                                 passive corridors with no interaction. All are
+                                 advisory (gold warnings); they never block
+                                 publish. See Section 14.
+   NEW: FLAGS TAB (🏷)          a story-level tab listing every flag used
+                                anywhere (choices, gating, hotspots, QTE
+                                timeouts, pattern puzzles, the corkboard,
+                                on-enter effects), each with a NOTE box and
+                                a "set in …" line. Notes double as content —
+                                see FLAG-KEYED RECALLS below.
+   NEW: FLAG-KEYED RECALLS      a beat's "Memories recalled" key and the
+                                gating "Remembers" picker now accept FLAG
+                                NAMES as well as memoryLog tags. When a flag
+                                (not a memory) matches, {said} echoes the
+                                flag's NOTE from the Flags tab — "she
+                                remembers what you SAW", not just what you
+                                said. The validator accepts both.
+   NEW: PRESENT-ITEM VERB       a choice can PRESENT an item to the
+                                character ("show the photograph"). It locks
+                                (or stays hidden) until you hold the item,
+                                optionally HANDS IT OVER (leaves the satchel),
+                                and records an `item:<id>` memory so later
+                                beats/gates can recall or remember the
+                                presentation — {said} = the item's name. See
+                                Section 10 "PRESENT ITEM".
+   NEW: INTERROGATION           a scene can run a COMPOSURE-PRESSURE
+                                interrogation: attitude-tagged replies press
+                                the suspect (thunk + gauge jolt + reaction),
+                                composure drops, and at zero their TRUST
+                                decides — CRACK (★ stamp + broke beat + flag
+                                + swing) or CLAMP (✖ stamp + backfire).
+                                URGENT: hesitate and the suspect STEADIES
+                                (a visible creep + one +1), a live
+                                "break them now → talk / shut down"
+                                prediction, a red vignette + heartbeat at
+                                critical. See Section 10 "INTERROGATION".
+   NEW: EXAMINE (hold to       a giveItem/showText hotspot can be a HOLD-TO-
+         inspect)                INSPECT zone: the camera zooms in, an
+                                 "EXAMINING" meter fills over the authored
+                                 hold, then the pickup/description fires and
+                                 the zone is hidden. Pair the action's flag
+                                 with a gated beat to narrate the find.
+                                 See Section 9 "EXAMINE" + The Neon Diner's
+                                 "Mabel's Station".
+   NEW: ROUTE NOTES             the end-of-part Flowchart and the end-of-act
+                                RouteMap now list the flags the stretch just
+                                played set, with their notes.
+   NEW: CASE PROGRESS           the in-game Case Progress panel gained a
+                                "Story so far — flags set" list (note, or
+                                the flag's readable name).
+   NEW: PART BREAKS IN STUDIO   the Scene tab has an "End-of-part route
+                                chart" field — part breaks no longer require
+                                hand-editing story data. Use a choke point
+                                the player must pass through.
+   CHANGED: BOTTOM HUD          the "— The Scene —" label and "🎙 narrate"
+                                button are gone; dialogue now sits in a
+                                cinema frame (shimmering hairline, corner
+                                ticks) with a per-speaker accent nameplate,
+                                a pulsing continue pill, and sheen-swept
+                                choice buttons. All motion honours
+                                reduced-motion.
+   FIXED: HEAT BUST             the bust now fires the MOMENT Heat reaches
+                                the limit — including from reply choices,
+                                pattern-puzzle outcomes and on-enter effects,
+                                which used to wait for the next scene change.
+   FIXED: QTE UNDER THE MENU    quick-time clocks pause while the ☰ Menu is
+                                open and resume from the paused value.
+   FIXED: INTERSTITIAL KEYS     the part-break chart closes on Esc/Enter/
+                                Space like its siblings, and the global
+                                shortcuts stand down while a chart / route
+                                map / act card is up (no more firing the
+                                old scene's choices behind the overlay).
+   FIXED: VALIDATOR             a bad hotspot gate was reported twice; it's
+                                now once. Puzzle rewards (and QTE-timeout
+                                items) count as grantable, so a gate on a
+                                puzzle-granted item no longer false-alarms.
+   SAVED: SAVE SCHEMA           save slots now carry a schema stamp; old
+                                un-stamped saves load and get migrated, and
+                                saves from a newer build are refused rather
+                                than mis-loaded.
+
+--------------------------------------------------------------------------------
    CONTENTS
 --------------------------------------------------------------------------------
    Section  1  What Studio Is & How It Works
@@ -90,8 +211,10 @@
    ----------
    TOOLBAR (top bar)
       Story selector, title, Undo/Redo, node tools (Scene / Credits / Cutscene /
-      End Scene), Blank Story, Validator toggle, Repair, Export, Import, Share,
-      Publish, Reset, Storage, Delete permanently, Play draft, Exit.
+      End), New Story, Check (validator), Repair, Export, Import, Share,
+      Reset, Storage, Delete, Play, Exit. Grouped with thin dividers into
+      logical clusters (story / history / add nodes / check / file / danger /
+      primary actions). Uses a clean sans-serif font (not the pulp slab).
 
    CANVAS (centre)
       The story graph. Scene cards are nodes; the handles on their edges are the
@@ -99,9 +222,9 @@
       "flowchart" of your case.
 
    INSPECTOR (right panel)
-      The editing surface for whatever node is selected. Twelve tabs:
-         Scene, Dialogue, Hotspots, Choices, Test, People, Audio, Items,
-         Win/Lose, Media, AI Images, Theme Options.
+      The editing surface for whatever node is selected. Fifteen tabs:
+         Scene, Beats, Hotspots, Choices, Test, People, Audio, Items,
+         Win/Lose, Acts, Episodes, Media, AI Images, Dialogue Box, Theme.
       Above the tabs sit three collapsible summary panels:
          Creator workflow   (the 5-step checklist, Section 17)
          Ship Readiness     (Start scene / Ending scene / No hard errors / Case objective)
@@ -133,7 +256,7 @@
    SECTION 3  —  THE TOOLBAR — EVERY BUTTON, IN DEPTH
 ================================================================================
 
-   THEME OPTIONS
+   THEME
       Opens the global title page editor (not the current story). Controls the
       main menu itself:
         - title text      (e.g. "Scarlet Reel")
@@ -154,7 +277,7 @@
       Step through the edit history. History is held per session, capped at the
       last ~100 states. Undo/Redo also work with Ctrl+Z and Ctrl+Shift+Z / Ctrl+Y.
 
-   + BLANK STORY
+   + NEW STORY
       Creates a new, empty case with a pre-filled Case File (objective, empty
       win/lose conditions). It has no scenes yet. You're dropped on the
       briefing tab first, then add your first scene. A blank case does NOT throw
@@ -165,50 +288,32 @@
       Adds a standard game scene node at a random canvas position. Its title,
       background, prose, choices, hotspots and dialogue start empty.
 
-   CREDITS NODE
+   CREDITS
       Adds an opening/ending cinema-credits node. It hides the main HUD and
       renders a film-style intro (big title, subtitle, divider, credit lines)
       that can fade-up, type-writer, or SLAM in (oversized, snapping to size —
       the pulp title-card punch), and either stagger, roll, or play as
-      one-at-a-time CARDS over a montage of stills. The montage can
-      cross-dissolve or hard-CUT between stills (the Tarantino title-sequence
-      bang — add black spacer frames as "gradient:linear-gradient(#000,#000)"
-      entries for the chapter-card rhythm), and the title itself can take a
-      custom TITLE COLOUR (the glow re-tints to match; stark yellow over hard
-      cuts is the classic look). Defaults fall back to the scene's prose
-      line-by-line.
+      one-at-a-time CARDS over a MONTAGE of stills. The montage is now a visual
+      stills editor: add images via the image browser (browse all art + uploads
+      with hover preview) or upload, reorder with ▲/▼, remove with ✕. The
+      montage can cross-dissolve or hard-CUT between stills (the Tarantino
+      title-sequence bang — add black spacer frames as "gradient:…" entries for
+      the chapter-card rhythm), and the title itself can take a custom TITLE
+      COLOUR (the glow re-tints to match; stark yellow over hard cuts is the
+      classic look). Defaults fall back to the scene's prose line-by-line.
+      The "type" font option is now Newsreader (clean literary serif).
 
-      LOOK PRESETS — at the top of the credits panel, sixteen one-click looks
-      bundle every style knob at once (typeface, card motion, title entrance,
-      title + accent colour, presentation style, the three timing sliders,
-      gate weave, montage pacing). They are filed into four sections: START
-      HERE (PULP DEFAULT — also the reset button), WORN PRINT (GRINDHOUSE
-      SLAM, SATURDAY MATINEE, NOIR '40S, SILENT INTERTITLE, REP-HOUSE ROLL,
-      VHS MIDNIGHT), PRESTIGE & POLISH (PRESTIGE AWARDS, EPIC ROADSHOW,
-      CANDLELIGHT GOTHIC, COLD WAR DOSSIER, DAYTIME DRAMA, FINAL BOW) and
-      MODERN & ELECTRIC (STREAMING COLD OPEN, NEON NIGHT, GIALLO FLASH).
-      Each card previews itself — the preset's own typeface and title
-      colour, a one-line knob read-out under the name (hover for the full
-      story), and the panel header tells you which preset the node
-      currently "matches" or reads "custom look" once you have hand-tweaked
-      it. A preset writes the LOOK and never the CONTENT — your title,
-      subheading, credit lines and montage stills are carried through
-      untouched. Every knob below the grid stays editable, and switching
-      presets is clean: the new look replaces the whole bundle rather than
-      stacking on the old one. Presets live in src/credits.ts and are
-      covered by the engine tests.
-
-   CUTSCENE NODE
+   CUTSCENE
       Adds a full-screen video/storyboard cutscene node. Hides the main HUD and
       plays a video background. Used for cinematic beats (e.g. a talking-head
       clip) with a centred Continue button.
 
-   END SCENE
+   END
       Adds an ending node. An ending takes no output handle. You set its tier
       (victory-gold / victory-silver / gameover), headline and recap, which are
       shown on the final reel panel and recorded to the player's ending gallery.
 
-   VALIDATOR
+   CHECK (VALIDATOR)
       Toggles the "Continuity Department" panel at the bottom of the canvas. It
       lists every issue, warning and error, with a red/gold severity. Click an
       issue to select and fly the camera to that scene.
@@ -243,12 +348,12 @@
       Scans browser storage for stale "-backup-pre-r…" migration keys and removes
       them, reporting how many KB it freed. Useful when autosave hits quota.
 
-   DELETE PERMANENTLY
+   DELETE
       Removes the current story, its draft and its published copy. It first asks
       whether to also delete the story's media assets from the library, or keep
       them for reuse elsewhere. At least one story must always remain.
 
-   PLAY DRAFT
+   PLAY
       Launches the current draft in the game loop. Blocked while any hard error
       exists (opens the Validator). This is the fastest end-to-end test of the
       story graph, gating and endings.
@@ -424,8 +529,9 @@
    HOTSPOT ACTION
    --------------
    type: "goToScene" | "giveItem" | "setFlag" | "showText" | "meterChange"
-       | "openBoard" | "useItem"
+       | "openBoard" | "useItem" | "patternPuzzle"
    targetSceneId?, itemGranted?, flagSet?, text?, meterChange?, itemConsumed?
+   patternPuzzle?   a PatternPuzzleConfig (the ledger mini-game — Section 9)
 
    DIALOGUEBEAT
    ------------
@@ -494,12 +600,25 @@
                      Credits/Cutscene switch the "hold" option too — a timer that
                      locks the Continue button and choices while the intro plays.
    TITLE             the name shown in the HUD.
-   BACKGROUND        an image path, a "gradient:..." string, an uploaded image
-                     ("asset:<id>"), or a "video:<url>" that overrides the image.
+   BACKGROUND        an image browser (searchable dropdown over every built-in
+                     scene image in /img and /assets, plus all your uploads,
+                     plus gradient presets — hover any name for a full preview).
+                     Also accepts a path, "gradient:..." string, uploaded image
+                     ("asset:<id>"), or "video:<url>" that overrides the image.
+                     All image fields across Studio now use this browser.
    AMBIENT LOOP      none / rain / jazz / drone / tension (a synth atmosphere).
    PARTICLES         Auto (derived from the audio), none, rain, smoke, storm.
    PROSE             the narrator's opening paragraph (typewritten in-game).
    START SCENE       toggle — marks this node as the entry point.
+   END-OF-PART ROUTE CHART   text field (e.g. "Part Two — The Long Drop").
+                     When the player LEAVES this scene the game shows the
+                     route flowchart of the stretch just played — and, if
+                     the exit crosses an act boundary, the act's RouteMap
+                     follows before the next act's title card. Leave empty
+                     for no part break. Use a CHOKE POINT the player must
+                     pass through: a hub you backtrack through re-charts on
+                     every exit (an exit with no new decisions charts
+                     nothing and doesn't interrupt).
    THIS SCENE IS AN ENDING   toggle — unlocks tier/headline/recap editing.
    CINEMATIC CONTROLS  the full camera/lighting/foreground editor (Section 13).
 
@@ -567,10 +686,42 @@
 
    6.6  PEOPLE TAB (CHARACTERS)
    ----------------------------
-   Each character has: a portrait (upload, pick from Media, or an emoji), a Name,
-   a Role, a "Show this met character on corkboard" checkbox (adds them as a
-   suspect), and a Web Speech Voice block (pick a voice, tune pitch & rate, and
-   "Test voice" to audition it). Add and remove characters.
+   Each character has: a portrait (upload, pick from the image browser, or an
+   emoji), a Name, a Role, a "Show this met character on corkboard" checkbox
+   (adds them as a suspect), and a Web Speech Voice block (pick a voice, tune
+   pitch & rate, and "Test voice" to audition it). Add and remove characters.
+
+   🗣 TALKING ANIMATION (per character)
+   Each character also has a collapsible "Talking animation" section:
+     TALKING FRAMES     sprite keyframes (transparent PNGs work best) that
+                        auto-cycle as a portrait while this character speaks
+                        in any scene. Add frames via the image browser (browse
+                        all built-in art + uploads with hover preview) or
+                        upload. Reorder with ▲/▼, remove with ✕. A live
+                        cycling preview shows the animation.
+     RESTING POSE       a still image shown when this character is on-scene
+                        but NOT the active speaker (falls back to the first
+                        talking frame if unset).
+     POSITION X / Y     horizontal position (% from left) and vertical
+                        position (% up from the floor).
+     SCALE              sprite size multiplier (default 1).
+     FRAME TIME         how long each keyframe holds before swapping (seconds).
+     MIRROR (FLIP)      mirror the sprite horizontally so two speakers can
+                        face each other across the frame.
+
+   ON-STAGE BEHAVIOUR (in-game)
+   Characters who speak in a scene's dialogue beats automatically appear
+   on-stage (standing at their authored X/Y position, scaled and flipped as
+   set). The ACTIVE SPEAKER cycles through their talking keyframes; everyone
+   else holds their resting pose, slightly dimmed. When the dialogue ends
+   (choices appear), all characters hold their resting pose. Give characters
+   different X positions (and mirror one) so they can face each other.
+
+   PER-BEAT TOGGLE (Dialogue tab)
+   Each dialogue beat has a "🗣 Talking animation" checkbox (shown only when
+   the speaker has talking frames). Default ON; uncheck it and the speaker
+   shows their resting pose for that line instead of animating — handy for
+   quiet aside lines where mouth movement isn't wanted.
 
    6.7  AUDIO TAB
    --------------
@@ -587,8 +738,29 @@
    choosing a partner item and a result item — the two ingredients get combined
    in the player's satchel by dragging one onto the other.
 
-   6.9  WIN/LOSE (CASE FILE)
-   -------------------------
+   6.9  FLAGS TAB (🏷)
+   -------------------
+   A story-level tab listing EVERY flag the engine can see — collected from
+   choices, gating (requires/excludes), hotspots, QTE timeout consequences,
+   pattern-puzzle rewards and final fails, on-enter effects, and corkboard
+   connections. Each flag gets:
+     FLAG ID        the machine name (snake_case).
+     READABLE NAME  the same, humanised ("saw_the_body" → "saw the body").
+     SET IN …       where the flag is set (scene — choice/hotspot/puzzle/
+                    on-enter/board). Empty for a flag that is only REFERENCED
+                    in a gate — the validator will call that an impossible
+                    gate until you set it somewhere.
+     NOTE BOX       your authoring note for what the flag MEANS. Notes are
+                    player-visible content: a beat that recalls the flag
+                    echoes the note in place of {said}, the Route notes on
+                    the end-of-part / end-of-act charts show them, and the
+                    Case Progress "Story so far" lists each set flag with its
+                    note. Write them like sentences ("You saw the body in
+                    the study."). The validator warns about notes whose flag
+                    doesn't exist anywhere (typos, renamed flags).
+
+   6.10  WIN/LOSE (CASE FILE)
+   --------------------------
    OBJECTIVE          one line (always shown in-game; players read it).
    WIN CONDITIONS     bullet list shown in the Case File panel.
    LOSE CONDITIONS    bullet list shown in the Case File panel.
@@ -597,21 +769,24 @@
    ENDING AUDIT       shows the count of victory-gold / victory-silver /
                       gameover endings and flags any missing outcome.
 
-   6.10  MEDIA LIBRARY
+   6.11  MEDIA LIBRARY
    -------------------
    Upload audio, video and images. Everything you upload is stored once per
-   story (and is reusable in any scene/story via the asset dropdowns). A storage
-   indicator tells you if uploads will survive a reload. Uploaded images appear
-   in the Background, foreground, and hotspot-item pickers; uploaded audio in the
+   story (and is reusable in any scene/story via the image browser). A storage
+   indicator tells you if uploads will survive a reload. Every image field in
+   Studio now uses the IMAGE BROWSER — a searchable dropdown that lists every
+   built-in image shipped in /img and /assets (all scenes, characters, covers,
+   animation sprites) PLUS all your uploads PLUS gradient presets. Hover any
+   name for a full-size rollover preview. Uploaded audio appears in the
    music/narration/voice pickers; uploaded video in the cutscene picker.
 
-   6.11  AI IMAGES
+   6.12  AI IMAGES
    ---------------
    A generative helper that produces noir-style art matching the game's look. A
    noir suffix is appended to every prompt to keep the aesthetic consistent.
    Generated images can be saved straight into the library or a given field.
 
-   6.12  THEME OPTIONS (GLOBAL TITLE PAGE)
+   6.13  THEME OPTIONS (GLOBAL TITLE PAGE)
    ---------------------------------------
    Global (not per-story): title text, tagline, soundtrack, background image and
    neon colour. Saved under a global settings key and applied instantly.
@@ -679,19 +854,39 @@
    Flags gate content but don't feel remembered. A memory log fixes that: a
    choice can carry a memoryLog tag, and a dialogue beat can "recall" it — so an
    NPC echoes this specific earlier choice instead of a generic flag-gated line.
+   A beat (or a gate) can ALSO be keyed on a FLAG — "she remembers what you
+   SAW", not just what you said. See FLAG-KEYED RECALLS below.
 
    HOW TO AUTHOR IT
    ----------------
    1. On a choice, set a MEMORY TAG (memoryLog), e.g. "opening_sultry". When the
       player picks it, the engine stores the player's exact line under that tag
       (in the game's memories map).
-   2. On a dialogue beat, add a MEMORY RECALL: a pair of { memoryLog tag → line }.
-      The line replaces the beat's normal text when that choice was made. Use the
-      {said} placeholder to echo the player's exact words. When several memories
-      are present, the first matching one wins.
+   2. On a dialogue beat, add a MEMORY RECALL: a pair of { key → line }, where
+      the key is a memoryLog tag, a flag name, OR an item-present key
+      `item:<id>` (the picker offers all three). The line replaces the beat's
+      normal text when the memory was made / the flag is set / the item was
+      presented. Use the {said} placeholder: for a memory it echoes the
+      player's exact words; for a flag it echoes the flag's NOTE from the 🏷
+      Flags tab (or the flag's readable name when no note is written); for an
+      item it echoes the item's NAME ("The Photograph"). When several keys
+      match, the first in insertion order wins.
    3. Optionally, gate the beat with a "Remembers" rule (requiresMemories) so it
-      only appears at all once a specific choice has been made — the strongest
-      form of "you remember that I did X."
+      only appears at all once the memory was made or the flag is set — the
+      strongest form of "you remember that I did X."
+
+   FLAG-KEYED RECALLS
+   ------------------
+   The recall key and the "Remembers" gate both accept flag names:
+   - BEAT:  recalls: { saw_the_body: "You saw it. {said}" } — plays when the
+      flag is set; {said} becomes the note ("You saw the body in the study.").
+      Write the note like a sentence fragment the line can swallow.
+   - GATE:  requiresMemories: ["saw_the_body"] — passes on the memory OR the
+      flag, so one rule covers both "said it" and "saw it".
+   In the Test tab these are separate rows: FLAGS toggles real flags (which
+   is what flag-keyed recalls and gates respond to) and Memories toggles
+   memoryLog tags. The validator warns (never errors) when a recall or gate
+   references a key that is neither a memoryLog tag nor any flag in the story.
 
    WHERE IT SHOWS UP
    -----------------
@@ -771,6 +966,9 @@
      removed: it applies timedOutConsequences and routes to timedOutTargetSceneId
      (or the choice's own target). The miss path is a distinct, authorable
      consequence — the "miss but survive" pattern.
+   - The clock PAUSES while the ☰ Menu is open and resumes from the paused
+     value — a player weighing a save or a quit can't be routed down the
+     "you hesitated" path behind the menu.
 
    STUDIO
    ------
@@ -875,12 +1073,15 @@
 
    HEAT TRAPDOOR
    -------------
-   If the Case File sets a heatLimit and a heatFailSceneId, then whenever the
-   player lands on a scene (that isn't an ending) while Heat >= heatLimit, the
-   engine sounds a sting, shows "Too much heat. The city closes in." and
-   sends them to the bust scene. It fires once per run so a bust never races with
-   a simultaneous victory navigation. The Case File panel shows a live "Heat
-   before bust" readout.
+   If the Case File sets a heatLimit and a heatFailSceneId, then the MOMENT
+   Heat reaches heatLimit the engine sounds a sting, shows "Too much heat.
+   The city closes in." and sends the player to the bust scene — including
+   from meter gains that don't change scene (reply choices, pattern-puzzle
+   outcomes, on-enter effects), which previously waited for the next scene
+   change. The bust never fires while the player is already standing on an
+   ending (so it can't race a simultaneous victory navigation) and it fires
+   once per run. The Case File panel shows a live "Heat before bust" readout.
+   In a season the bust scene must sit inside the CURRENT episode.
 
    UNLOCKING "CASE CRACKED"
    ------------------------
@@ -943,6 +1144,33 @@
    flag (e.g. "use the key on the door"). When locked, it shows the hint
    (or your custom fail message) instead.
 
+   EXAMINE (hold to inspect)
+   -------------------------
+   A giveItem or showText hotspot can be an EXAMINE zone (Hotspots tab →
+   "🔍 EXAMINE — hold to inspect"). Instead of a click, the player HOLDS the
+   zone:
+     - The scene CAMERA ZOOMS IN on the hotspot bounds (a clamped CSS
+       magnification, ~1.6×–3.5×) over ~0.55s.
+     - An "EXAMINING — <label>" box pops up with a shimmering progress meter
+       that fills over the authored hold (examineSeconds, default 2.5, range
+       1–6s). Releasing the pointer early ABORTS the examine (no reward, the
+       zone stays).
+     - On completion the normal action fires: giveItem = the object is picked
+       up (pickup sound + "Picked up" toast); showText = the description shows
+       as the examination card. The zone is then consumed (hidden).
+   AUTHORING AN INVESTIGATION SCENE:
+     - Use a LARGE, DETAILED background image. The zoom is a CSS
+       magnification — a small or low-res plate blurs when the camera pushes
+       in. A full-bleed, high-res "last order" plate (a counter with a cold
+       coffee, a watch, a note) is the reference: The Neon Diner's
+       "Mabel's Station".
+     - Give each examine hotspot a flagSet, and write a narrator BEAT gated on
+       that flag (conditionRule: requiresFlags) to explain the find. The beat
+       plays as the next line the moment the examine completes.
+     - Vary the hold (2–3s) so each examination has its own weight; a longer
+       hold for the payoff object, a shorter one for flavor.
+     - A locked examine zone behaves like any locked zone (fail card, no zoom).
+
    END-OF-SCENE INVESTIGATION NUDGE
    --------------------------------
    When a scene's dialogue has run out and there are still SEARCHABLE hotspots
@@ -968,6 +1196,80 @@
    lockpicks, safes and ciphers as in-place hotspots rather than navigation. Only
    goToScene and useItem strictly require a target scene; a giveItem/setFlag/
    showText hotspot legitimately stays in place.
+
+   PATTERN PUZZLE (action type "patternPuzzle")
+   --------------------------------------------
+   A ledger mini-game: the player flags the rows that share a hidden pattern.
+   Add a hotspot of action type "🔍 Pattern puzzle", then author its config in
+   the Hotspots tab:
+     PUZZLE TITLE / INSTRUCTION   the header the player sees.
+     FLAG COUNT                   how many rows to flag — it AUTO-SYNCS to the
+                                 number of rows you tick as "answer", because a
+                                 correct solve must flag every answer row. (In
+                                 play the answer count is the source of truth, so
+                                 a mismatched targetCount can never make the
+                                 puzzle unsolvable.)
+     ROWS                         one row per ledger line: date / description /
+                                 amount, plus "Part of the pattern (answer)".
+     PAYOFF TEXT                  shown when cracked.
+     ON SOLVE                     reward + route — grant an item, set flags, a
+                                 Deduce delta, and optionally GO TO a scene.
+     ON WRONG                     message, consequences + route — a wrong-guess
+                                 MESSAGE (shown on a retryable miss), a Heat
+                                 delta, flags, and optionally GO TO a scene.
+     ALLOW RETRY                  on (default): a wrong guess flashes the message
+                                 and the player tries again. OFF: a wrong guess is
+                                 narratively final — it applies the wrong
+                                 consequences and routes to the wrong scene.
+
+   HOW THE PUZZLE BRANCHES THE GRAPH
+   ---------------------------------
+   A pattern puzzle is a real branch, not a dead-end: its solve route
+   (targetSceneId) and fail route (wrongTargetSceneId) are treated as scene
+   edges, so the Studio canvas draws them and the validator counts them as exits
+   (a puzzle-only scene is NOT flagged as having "no exits"). The Solve and
+   Fail consequences (rewardConsequences / wrongSubmissionConsequences) are full
+   Consequences objects — items, flags, meters, trust — applied at the moment of
+   the solve or the final wrong answer.
+
+   PATTERN PUZZLE DEMO CASE
+   ------------------------
+   The included "Pattern Puzzle Demo" case (id: pattern-puzzle-demo) is a tiny
+   smoke-test. Open Studio, pick it, hit "Play draft", and from one screen you
+   can exercise every path:
+     · "Open the bank ledger" — a RETRY puzzle: flag the three ~$10k withdrawals
+       to the same bank to crack it (wrong guesses flash a hint, then retry);
+       solving grants a clue +1 Deduce and routes to the gold ending.
+     · "Decode the cipher note" — a ONE-SHOT puzzle (retry OFF): solve it to
+       route to the gold ending, or get it wrong and there's no second chance —
+       +2 Heat and a route straight to the game-over ending.
+
+   STAGE 2D — A WALKABLE SCENE (controllable character)
+   -----------------------------------------------------
+   A scene can be a STAGE the player walks around instead of a static plate
+   they click. Turn it on in the Scene tab under "🚶 Stage 2D — walkable
+   character". Fields (scene.stage2d):
+
+     · playerImage   the character sprite: an image url / asset: reference,
+                     or an emoji glyph written "emoji:🕵️" (default).
+     · spawn         { x, y } spawn point in scene percentages (default
+                     bottom-centre, x:50 y:86).
+     · speed         walk speed as a % of scene width per second (default 18).
+     · reach         how close (scene-% of width) the character must get to a
+                     hotspot centre to fire it (default 3.5).
+     · keyboard      allow arrow / WASD movement as well as click-to-walk
+                     (default true).
+
+   In play the player clicks the ground (a target ripple shows) or steers with
+   the keys; walking the character ONTO a hotspot zone fires it through the
+   SAME interaction path as clicking it — gating, give-item pickups, showText,
+   openBoard and goToScene all behave exactly as before, and locked zones show
+   their fail message when walked up to. It is purely a movement / presentation
+   layer: the state model, choices, beats and consequences are unchanged. Coordinates
+   are scene percentages (x = % of width, y = % of height); the vertical step is
+   aspect-corrected so stride speed is uniform across a wide plate. Author your
+   hotspots where the player should walk to something. Try the office in
+   Demo Lab: Press the Lie.
 
 
 ================================================================================
@@ -1030,6 +1332,73 @@
    avoid pairing it with rewards/meters/trust — the validator warns it can be
    farmed.
 
+   PRESENT ITEM ("show the photograph")
+   ------------------------------------
+   A choice can PRESENT an item to the character in the scene — the noir verb.
+   On a choice:
+     - PRESENT ITEM: pick the item the choice shows. The choice becomes
+       un-pickable (and, if hidden, stays hidden) until the player HOLDS the
+       item — the engine adds it to the effective gate, and the locked hint
+       reads "needs The Photograph". No authored requiresItems needed.
+     - HAND IT OVER (consumePresentedItem): when on, presenting REMOVES the
+       item from the satchel (they keep it — "hand over the ledger"). Off
+       (default) = you flash it and keep it. The choice being one-shot already
+       prevents showing the same item twice for two reactions.
+   Presenting records an `item:<id>` memory holding the item's NAME, so:
+     - a later beat can RECALL it: recalls: { "item:photo": "You flashed
+       {said}." } where {said} = "The Photograph";
+     - a gate can REMEMBER it: requiresMemories: ["item:photo"].
+   The item: keys appear in the Studio pickers next to memoryLog tags and
+   flags. In The Neon Diner, "Show him the photograph" presents the photo,
+   Ruiz's Act-Two beat is keyed on that presentation, and both evidence
+   endings HAND OVER their item (consumePresentedItem), so each ending locks
+   itself if you never built the item it needs.
+
+   INTERROGATION (composure pressure + urgency)
+   --------------------------------------------
+   Talking is the core loop — give it stakes AND a clock. A scene can run an
+   INTERROGATION on one of its characters (Scene tab → 🎭 Interrogation):
+     - COMPOSURE (default 3): the suspect's guard. Every PRESSING reply —
+       any reply choice tagged Sultry / Aggressive / Clever — drops it by
+       one (a press thunk + gauge jolt + a short reaction line). Neutral
+       replies (plain questions, silence, small talk) are free.
+     - AT ZERO, TRUST DECIDES (this is the risk): if the suspect's trust is
+       at/above the CRACK THRESHOLD (default 0) they CRACK — the ★ BROKE
+       stamp slams in, the broke beat plays as the next line, the broke flag
+       is set, and the broke swing (trust/heat) lands. Below the threshold
+       they CLAMP — the ✖ CLAMPED stamp, the clamped beat, the clamp flag,
+       and the backfire swing (usually heat+, trust−).
+     - HESITATION HAS A COST (the urgency): after each press, a "steadying"
+       window runs for STEADY SECONDS (default 7, range 3–12). A faint line
+       creeps across the gauge the whole time — the moment is passing. If
+       it completes before your next press, the suspect STEADIES: composure
+       +1 (once per scene), a soft exhale, "They steady themselves." Keep
+       the pressure on and the window never completes.
+     - LIVE STAKES: the gauge is a pressure bar that shifts colour
+       (calm → strained → on the edge) with a stage label, and a live
+       prediction under it: "◈ break them now — they'll talk" (green) or
+       "…they'll shut down" (red), which flips as you build or burn trust.
+       At one composure (critical) the room closes in with a pulsing red
+       vignette and the suspect's heartbeat is audible.
+   Composure persists to the save, so a mid-interrogation save keeps its
+   state; presses are one-shot so you can't re-make a line to grind.
+   AUTHORING:
+     - Give the scene at least composure-many pressing replies, or the
+       validator warns composure can never break.
+     - Design the WARM PATH (trust-positive lines first, then press to zero
+       → crack) and the COLD PATH (press cold → clamp). The Neon Diner's
+       booth is the reference: the neutral ask is +1 trust and free, the
+       Sultry photo is a press that also builds trust, the hard Aggressive
+       presses cost trust, and a 6s steady window with Vince-specific
+       reactions — so who you press, in what order, and how fast you press
+       all decide the outcome.
+     - Set STEADY SECONDS shorter for a twitchy, urgent suspect; longer for
+       a stoic one. Add pressReactions[] for the suspect's own escalating
+       lines as they're wound (one per level, from first press to the edge).
+     - Gate the PAYOFF on the broke flag, and the FALLOUT on the clamp flag.
+       Both flags are listed in the 🏷 Flags tab (note them there) and are
+       treated as settable by the validator.
+
    AVAILABILITY & GATING HINT
    --------------------------
    A choice shows "locked" and a hint (e.g. "needs The Dead Man's Note & ...")
@@ -1090,6 +1459,42 @@
    entry (unless autoNarrate is off). If you set noTypewriter, the prose is shown
    instantly rather than type-written. narrationAudioUrl replaces Web Speech for
    the prose with a recorded MP3.
+
+   PRESS THE LIE (the contradiction verb)
+   --------------------------------------
+   A beat can carry a LIE — a false statement the player must disprove with
+   evidence. Author it on the beat in the Dialogue tab via the
+   "🎯 Press the Lie (contradiction)" panel.
+
+     · claim                 what the player challenges (defaults to the beat's
+                             own line). Shown above the evidence bag.
+     · evidenceItemIds       the item id(s) that PROVE the claim false. Usually
+                             exactly ONE clue. Any other held item is a bluff.
+     · caughtBeat            the reaction that plays when the right evidence is
+                             presented. It is spliced in as the next line and is
+                             gated on contradictedFlag, so it only fires on a win.
+     · contradictedFlag      set when the lie breaks; gate the aftermath
+                             (choices/beats) on it.
+     · contradictedConsequences  the payoff swing (trust up, heat down, a flag).
+     · wrongBeat / wrongConsequences  what the speaker says and what it costs
+                             when the wrong evidence is shown (usually heat up /
+                             trust down).
+     · wrongEvidenceLimit    misses before the claim shuts for the scene
+                             (default 2).
+     · composureDamage       in an INTERROGATION scene, a proven lie also does
+                             this much composure damage (2+ cracks the suspect,
+                             running the normal crack/clamp-by-trust resolution).
+     · rememberLine          optional Telltale-style card on a successful catch.
+
+   Play: while the line is on screen a pulsing "🎯 Press them on that" button
+   opens the satchel; the player presents evidence. Right clue → caughtBeat +
+   flag + swing. Wrong clue → wrongBeat + cost, and after the limit the button
+   goes dead ("they shut you down"). ALWAYS give a failed press an ungated exit
+   choice so a shut-down claim can't soft-lock. The validator checks that the
+   evidence exists and is obtainable, that the caught/wrong beats have speakers,
+   and that the caught beat is gated on the caught flag. Worked example:
+   Demo Lab: Press the Lie (the pawn ticket breaks the alibi; the charred
+   matchbook is a red herring; the bar tab cracks the interrogation).
 
 
 ================================================================================
@@ -1210,13 +1615,48 @@
      bright even when the image is dimmed (the dim layer sits below the glows).
    - Legacy single-light fields (lightSource/lightColor/lightRadius) are merged
      into the lights array on next edit, so old drafts keep their glow.
+   - Quick "Cast lens flare from this light" button links a dynamic lens flare
+     directly to any point light source.
+
+   DYNAMIC LENS FLARE
+   ------------------
+   Simulates real optical camera artifacts when bright light enters the lens
+   system: anamorphic horizontal laser beams, starburst diffraction spikes,
+   and a multi-spectral chain of chromatic ghost rings along the optical axis.
+   - OPTICAL PRESETS:
+       Anamorphic Blue     CinemaScope / Sci-Fi widescreen blue laser streak with electric cyan reflections
+       Golden Hour / Amber Warm sunset & vintage tungsten streetlamp glow with golden streak & amber rings
+       Sci-Fi Cyan         Cybernetic cobalt & electric cyan beam with sharp aperture reflections
+       Neon Noir           Cyberpunk magenta streak with purple & cyan chromatic reflections
+       Vintage 35mm        Spherical lens flare with chromatic rainbow halo, iris rings & starburst rays
+       Natural Sun         Soft daylight solar glare with airy pastel rings & delicate diffraction rays
+       Interrogation       Blinding high-contrast stark white beam with crisp sharp diffraction starburst
+       Emerald Night       Moody noir green / eerie night-vision flare with teal secondary reflections
+       Custom              Fully custom-authored optical profile
+   - POSITION: Click anywhere on the interactive preview to place the flare light
+     source. The optical axis automatically computes and projects across the
+     centre (50%, 50%), orienting every internal ghost reflection and aperture
+     diaphragm disc. Quick buttons allow snapping to Center, Top-Left, Top-Right,
+     or directly linking to any Point Light.
+   - ANAMORPHIC STREAK: Author the horizontal laser beam intensity, vertical
+     thickness / spread, and angle (-45° to +45°).
+   - OPTICAL GHOST REFLECTIONS: Configurable ghost intensity, axis spread
+     multiplier (0.5×–2.0×), and detail tier (Subtle 4-element, Standard 8-element
+     with rainbow chromatic halo, or Rich 12-element multi-spectral chain).
+   - STARBURST DIFFRACTION: Diffraction ray intensity and spike count (4, 6, 8,
+     or 12 rays) with continuous glint/shimmer.
+   - CORE & CORONA GLOW: Sizing for the brilliant hot white core and radial corona.
+   - DYNAMIC SHIMMER & CAMERA MOTION REACTIVITY: Shimmer pulse speed, breathing
+     depth, and camera parallax reactivity multiplier (0×–2×). The lens flare
+     dynamically reacts to camera movement, panning, dolly tracking, and handheld
+     camera jitter with physical optical inertia.
 
    PER-BEAT CINEMATIC
    ------------------
    If a dialogue beat has its own replacement background, that beat gets its own
    cinematic settings too (select it in the "Apply cinematic to" dropdown).
-   The beat's camera/lighting replace the scene's while the beat plays, then
-   revert. This is how you do a slow push-in on a character's reaction shot.
+   The beat's camera/lighting/lens flare replace the scene's while the beat plays,
+   then revert. This is how you do a slow push-in on a character's reaction shot.
 
    REDUCED MOTION
    --------------
@@ -1264,6 +1704,22 @@
    - items required by a gate but never granted anywhere (ERROR)
    - flags required by a gate but never set by any choice/hotspot/connection (ERROR)
 
+   CRAFT CHECKS (advisory warnings — the story can be walked but never LANDS)
+   - a flag set but never read by a gate, beat recall, recap or flag note — the
+     player's action changed nothing (the automated backward-design ledger)
+   - a flag cleared but never set
+   - a memoryLog tag nobody recalls or gates on ("the character remembers" —
+     then never does). Silent in episodic seasons (the end card lists them)
+   - a "will remember that" card with no memory tag and no state behind it
+   - a press-the-lie beat with no/unknown evidence, no caught flag, a missing
+     speaker on its caught/wrong beat, or a caught beat not gated on its flag
+   - a quick-time choice whose timeout lands on the same scene/reply with no
+     timeout consequences (a fake deadline)
+   - two visible choices with the same target, attitude, effects and no memory
+     (the same decision twice)
+   - a run of 4+ reachable scenes with no choice, hotspot or interrogation (a
+     passive corridor) — collapse it or ask something mid-run
+
    REPAIR (auto-fix)
    -----------------
    One click fixes the common strands:
@@ -1300,7 +1756,12 @@
    ------
    Bundles the story plus every embedded media asset into one .reel.json. Download
    it or copy the JSON. Because media is included, the file travels complete — it
-   is the way to back up a case or hand it to another author.
+   is the way to back up a case or hand it to another author. The media pipeline
+   covers every asset-bearing field: scene backgrounds, music, narration, voice
+   lines, video cutscenes, foreground overlays, keyframe animations, per-beat
+   backgrounds, character avatars, talking frames AND resting poses, item icons,
+   act title cards, episode title cards / posters / card music / recap stills,
+   the cover image, dialogue-box backdrops, and credits montages.
 
    IMPORT
    ------
@@ -1341,17 +1802,37 @@
    Shift + Left arrow    Restart the scene
    B                     Open the corkboard
    L                     Open the dialogue log (everything said this run)
+   A                     Toggle auto-advance (hands-off reading; remembered)
+   H                     Reveal hotspots — shimmer every clickable zone (3.6s)
    M                     Mute / unmute (remembered between sessions)
    .                     Skip current text
    Esc                   Close / quit
+   Esc / Enter / Space   on an interstitial (part-break chart, act route
+                         map, act/episode title card) — dismiss and continue
 
    QUALITY OF LIFE
    ---------------
    AUTO CHECKPOINT      an invisible save is written on every scene arrival;
                         the newsstand's "▶ Resume" and Load → "⏱ Auto
                         checkpoint" both return to it, so a crash or a closed
-                        tab never costs more than the current scene. Manual
-                        slots are never touched.
+                        tab never costs more than the current scene. A brief
+                        "✓ Checkpoint" pulse confirms the save landed.
+   AUTO-ADVANCE         toggle in the ☰ Menu or press A — hands-off reading
+                        that advances dialogue on a comfortable timer once a
+                        line finishes typing. Stops at every choice so the
+                        player still decides. Remembered per player.
+   SKIP TEXT            toggle in the ☰ Menu — fast-forward mode that types
+                        instantly and steps with a brief gap. Great for
+                        replays. Remembered per player.
+   REVEAL HOTSPOTS      press H or use the ☰ Menu — shimmers every clickable
+                        zone in cyan for ~3.6s so a stuck player can see
+                        what's interactable without spoilers. Also reveals
+                        the hotspot labels. Resets on scene change.
+   EXAMINATION CARD     hotspot results (and locked-zone messages) appear as a
+                        card above the dialogue panel, titled with the zone's
+                        label, holding until clicked (or ~7s). The card text
+                        is also narrated via TTS (respecting mute / auto-
+                        narrate settings).
    DIALOGUE LOG         every spoken line of the run (prose + beats, with
                         speakers) is recorded as it plays — press L or use
                         ☰ Menu → 📜 Dialogue log. Skipped text still lands in
@@ -1361,6 +1842,39 @@
                         beat's insert shot), so scene cuts swap plates
                         instead of flashing black.
    PERSISTENT MUTE      the sound toggle survives reloads.
+   END-OF-GAME FLOWCHART  the route flowchart at an ending shows the FULL
+                        journey (every decision across the whole case), not
+                        just the segment since the last part break.
+   END-OF-PART FLOWCHART  mark a scene with an "End-of-part route chart"
+                        name (Scene tab) and, when the player leaves it, the
+                        decisions since the previous chart animate across the
+                        screen. Esc / Enter / Space dismisses it like the
+                        other interstitials; global shortcuts (1-9, Space,
+                        B, L, …) stand down while it's up, so they can't
+                        fire the old scene's choices behind the overlay.
+   END-OF-ACT ROUTE MAP  when a part exit crosses an act boundary, the
+                        act you're LEAVING gets a full Detroit-style branch
+                        map (every scene, your route lit, the rest grey)
+                        before the next act's title card. Same keys dismiss
+                        it. Act membership is DERIVED from the graph: an act
+                        owns every scene reachable by choice edges, timeout
+                        routes and door hotspots from its start scene,
+                        stopping at the next act's start. Membership is
+                        STRUCTURAL — a door behind a key gate still shows on
+                        the act's map even in a run where the player never
+                        gets the key — and a scene no act's walk reaches
+                        (typically the heat-bust trapdoor) belongs to no act;
+                        the validator notes it. That's a note, not an error.
+   ROUTE NOTES          both charts end with a "Route notes" list: the flags
+                        the stretch just played set (from the decisions'
+                        consequences, including QTE timeouts), each with its
+                        note from the 🏷 Flags tab — a "what has changed in
+                        this case" log.
+   CASE PROGRESS        the top-left panel lists meters, perks, suspects,
+                        clues and corkboard progress, plus "Story so far —
+                        flags set": every active flag with its note (or its
+                        readable name). It scrolls when the case outgrows the
+                        screen.
 
    GAMEPLAY UI
    -----------
@@ -1390,17 +1904,21 @@
    -------------------------------------------
    In a standard scene the prose and dialogue lines render as cinematic
    subtitles over the art (not a heavy panel): the speaker's name sits as a
-   small gold label, the line is centred lower-third in BIG bold PULP lettering
-   (Alfa Slab One — no typewriter mono) with a drop shadow, and a subtle
-   gradient scrim darkens the bottom so it reads over any background. The
+   small gold label, the line is centred lower-third in a clean serif
+   (Newsreader, medium weight) with a drop shadow, and a subtle gradient
+   scrim darkens the bottom so it reads over any background. The
    character portrait is no longer drawn — the voice carries it. A tiny row
-   below shows back / continue (or skip) / speak. Audio narration is
+   below shows back / continue / speak. Audio narration is
    independent of the text, so you can play it as pure voiced subtitles.
-   Credits and cutscene nodes keep their own full-screen presentation.
+   Classic subtitles use the same serif at a smaller reading size with a
+   gold SPEAKER label prefix. The old Special Elite typewriter font has
+   been replaced everywhere with Newsreader (a clean literary serif) for
+   readability. Credits and cutscene nodes keep their own full-screen
+   presentation.
 
    CHOICE STYLING
    --------------
-   Choice buttons are also shown in bold pulp lettering. **Conversational
+   Choice buttons are shown in clean serif. **Conversational
    replies** (the ones that answer in place, marked 💬) get a distinct cyan
    rounded card, while **navigation choices** keep the attitude-coloured left
    bar — so dialogue answers look clearly different from "go there" options.
@@ -1473,6 +1991,11 @@
      and the Storage button to reclaim stale backups.
    - Media is stored compactly. If storage is genuinely full: Export -> Storage ->
      re-import.
+   - PLAYTHROUGH SAVE SLOTS CARRY A SCHEMA STAMP. Saves written before
+     versioning existed (no stamp) load fine and are treated as v1. A save from
+     a NEWER build is refused rather than mis-loaded, so an old app won't
+     corrupt progress made in a new one — reload the app, and the slot comes
+     back.
 
    TROUBLESHOOTING CHEAT SHEET
    ---------------------------
@@ -1513,15 +2036,18 @@
 
    STORY
      id · title · tagline · coverImage · startSceneId · scenes[] · items[]
-     characters[] · deduction? · briefing? · layout? · assets?
+     characters[] · deduction? · briefing? · acts? · episodes? · seasonTitle?
+     flagNotes?{flag → note} · dialogueBox? · layout? · assets?
 
    SCENENODE
      id · title · nodeType(standard|credits|cutscene) · background
+     partBreak?  (end-of-part route chart label; see Scene tab)
      ambientAudio(none|rain|jazz|drone|tension) · particles(none|rain|smoke|storm)
      musicUrl/sceneAudioUrl · musicMode(inherit|track|none) · narrationAudioUrl
      autoNarrate · noTypewriter · choiceDelaySeconds · credits? · prose
-     dialogueBeats[] · hotspots[] · choices[] · onEnterActions[] · isEnding
-     endingData{tier,headline,recap} · cinematic? · letterbox?
+     dialogueBeats[] · hotspots[] · choices[] · onEnterActions[]
+     interrogation?  (composure-pressure interrogation; see INTERROGATION)
+     isEnding · endingData{tier,headline,recap} · cinematic? · letterbox?
      transition(fade|fade-black|cut) · transitionSpeed?
 
    CREDITSSETTINGS
@@ -1531,25 +2057,43 @@
      style(fade-up|scroll|cards) · cardSeconds? · montage[] · montageSeconds?
      montageTransition(dissolve|cut)? · montageLoop? · stagger? · duration?
      scrollDuration? · accentColor? · gateWeave(off|subtle|worn|projector)?
+   NOTE: "type" font is now Newsreader (clean literary serif), not Special Elite.
 
    CHOICE
      id · text · targetSceneId · attitudeTag(Neutral|Sultry|Aggressive|Clever)
      gating? · consequences? · reply? · hidden? · timeLimitSeconds?
      isRepeatable? · exclusiveGroup? · memoryLog? · quickTime? · qtePrompt?
      qteHeartbeat? · qteShakyCam? · timedOutTargetSceneId? · timedOutConsequences?
+     presentItem? · consumePresentedItem?  (the present-item verb; records an
+                                            `item:<id>` memory on pick)
+     A reply with a non-Neutral attitudeTag in an interrogation scene is a
+     PRESS (chips composure); a Neutral reply is not.
+
+   INTERROGATION (SceneNode.interrogation)
+     characterId · composure?(1..5, default 3) · crackTrust?(default 0)
+     steadySeconds?(3..12, default 7)  pressReactions?(string[])
+     brokeBeat{id,characterId,text,expression?} · brokeFlag
+     brokeConsequences?  (the big swing on the crack)
+     clampedBeat? · clampFlag? · clampConsequences?  (the backfire)
 
    HOTSPOT
      id · label · cursor(look|take|talk|use|go) · bounds{x,y,w,h} · isRepeatable
      gating? · action · customFailMessage? · showItemImage?
+     examine? · examineSeconds?  (hold-to-inspect; camera zooms + meter fills)
 
    HOTSPOT ACTION
-     type(goToScene|giveItem|setFlag|showText|meterChange|openBoard|useItem)
+     type(goToScene|giveItem|setFlag|showText|meterChange|openBoard|useItem|
+          patternPuzzle)
      targetSceneId? · itemGranted? · flagSet? · text? · meterChange? · itemConsumed?
+     patternPuzzle?{title,instruction,rows[],targetCount,payoffText,allowRetry?,
+                    wrongMessage?,rewardConsequences?,wrongSubmissionConsequences?,
+                    targetSceneId?,wrongTargetSceneId?}
 
    DIALOGUEBEAT
      id · characterId · text · expression? · conditionRule? · background?
      cinematic? · backgroundTransition · backgroundTransitionSpeed?
      audioUrl? · silent? · recalls?{memoryLogTag:line}
+     useCharacterAnimation? (default true; false = resting pose, no cycling)
 
    GATING
      requiresItems[] · requiresFlags[] · excludesItems[] · excludesFlags[]
@@ -1562,6 +2106,8 @@
 
    CHARACTER
      id · name · role · avatarUrl · trustMeter · voice{voiceName?,pitch?,rate?}
+     talkingFrames? · talkingFrameDuration? · talkingX? · talkingY?
+     talkingScale? · talkingFlip? · talkingRest?
 
    ITEM
      id · name · icon · iconUrl? · description · flavorText · isClue?

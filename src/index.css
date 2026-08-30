@@ -162,6 +162,27 @@ body,
   92%, 94% { filter: brightness(0.55) contrast(1.15); }
 }
 
+/* ---------- Stage 2D walkable character ---------- */
+.stage2d-idle { animation: stage2d-idle 2.6s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes stage2d-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2.5px); }
+}
+.stage2d-walk { animation: stage2d-walk 0.32s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes stage2d-walk {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-4px) rotate(1.5deg); }
+}
+.stage2d-ripple {
+  width: 26px;
+  height: 26px;
+  animation: stage2d-ripple 0.55s ease-out forwards;
+}
+@keyframes stage2d-ripple {
+  0% { opacity: 0.9; box-shadow: 0 0 0 0 rgba(42, 217, 217, 0.5); }
+  100% { opacity: 0; box-shadow: 0 0 0 22px rgba(42, 217, 217, 0); }
+}
+
 /* ---------- neon ---------- */
 .neon-flicker { animation: neon-flicker 4.2s linear infinite; }
 @keyframes neon-flicker {

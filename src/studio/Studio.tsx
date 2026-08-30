@@ -109,6 +109,7 @@ import type {
   Choice,
   CinematicSettings,
   Consequences,
+  Contradiction,
   CreditsSettings,
   CursorKind,
   ForegroundAnimation,
@@ -3423,6 +3424,74 @@ function FlagPicker({
   );
 }
 
+/** Compact editor for a contradiction's outcome consequences: one heat
+ * delta, one trust swing against the scene speaker, and any set flags. */
+function LieConsequences({
+  lie,
+  field,
+  story,
+  onChange,
+}: {
+  lie: Contradiction;
+  field: "contradictedConsequences" | "wrongConsequences";
+  story: Story;
+  onChange: (cons: Consequences | undefined) => void;
+}) {
+  const cons = lie[field];
+  const setCons = (next: Consequences) => onChange(Object.values(next).some((v) => Array.isArray(v) && v.length) ? next : undefined);
+  const heat = cons?.meterChanges?.find((m) => m.meter === "Suspicion")?.delta ?? 0;
+  const trust = cons?.trustChanges?.[0]?.delta ?? 0;
+  const trustChar = cons?.trustChanges?.[0]?.characterId ?? story.characters[0]?.id ?? "";
+  const setHeat = (v: number) => {
+    const list = (cons?.meterChanges ?? []).filter((m) => m.meter !== "Suspicion");
+    if (v !== 0) list.push({ meter: "Suspicion", delta: v });
+    setCons({ ...cons, meterChanges: list.length ? list : undefined });
+  };
+  const setTrust = (v: number) => {
+    const list = (cons?.trustChanges ?? []).filter((t) => t.characterId !== trustChar);
+    if (v !== 0) list.push({ characterId: trustChar, delta: v });
+    setCons({ ...cons, trustChanges: list.length ? list : undefined });
+  };
+  return (
+    <div className="space-y-1">
+      <input
+        type="number"
+        className={inputCls}
+        placeholder="Heat delta (e.g. -1 catch / +2 bluff)"
+        value={heat || ""}
+        onChange={(e) => setHeat(Number(e.target.value) || 0)}
+      />
+      <div className="flex gap-1">
+        <select
+          className={`${inputCls} w-24`}
+          value={trustChar}
+          onChange={(e) => {
+            const list = (cons?.trustChanges ?? []).map((t) => ({ ...t, characterId: e.target.value }));
+            setCons({ ...cons, trustChanges: list.length ? list : undefined });
+          }}
+        >
+          {story.characters.map((c) => (
+            <option key={c.id} value={c.id}>{c.name.split(" ")[0]}</option>
+          ))}
+        </select>
+        <input
+          type="number"
+          className={inputCls}
+          placeholder="Trust delta"
+          value={trust || ""}
+          onChange={(e) => setTrust(Number(e.target.value) || 0)}
+        />
+      </div>
+      <FlagPicker
+        value={cons?.setFlags}
+        suggestions={[]}
+        onChange={(v) => setCons({ ...cons, setFlags: v })}
+        placeholder="set flag…"
+      />
+    </div>
+  );
+}
+
 /** Single-flag input with a dropdown of every known flag in the story. */
 function FlagInput({
   value,
@@ -6036,7 +6105,12 @@ function StudioInner({
             </button>
           </div>
           <div className="grid grid-cols-4 border-b border-noir-600">
-            {(["scene", "beats", "hotspots", "choices", "test", "characters", "audio", "items", "flags", "briefing", "acts", "episodes", "media", "ai", "dialogueBox", "globalTitle"] as const).map((t) => (
+            {/* Tab order follows the build: build a SCENE (Scene → Beats →
+                Hotspots → Choices → its Audio), then the STORY SETUP it uses
+                (Game Objective → Characters → Items → Flags), then STRUCTURE
+                (Acts → Episodes) and the in-game look, then ASSETS, then ▶
+                Test. Story-wide tabs sit above the scene panels as before. */}
+            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -6049,18 +6123,18 @@ function StudioInner({
                   beats: "Beats",
                   hotspots: "Hotspots",
                   choices: "Choices",
-                  test: "▶ Test",
+                  audio: "🔊 Audio",
+                  briefing: "🎯 Game Objective",
                   characters: "Characters",
-                  audio: "Audio",
                   items: "Items",
                   flags: "🏷 Flags",
-                  briefing: "🎯 Game Objective",
                   acts: "🎭 Acts",
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
                   dialogueBox: "🎮 In-Game Theme",
                   globalTitle: "🎼 Newsstand Theme",
+                  test: "▶ Test",
                 }[t]}
               </button>
             ))}
@@ -6074,7 +6148,7 @@ function StudioInner({
                 <button onClick={() => setTab("characters")} className={`border p-1 ${story.characters.length ? "border-emerald-500/40 text-emerald-400" : "border-crimson/50 text-crimson"}`}>
                   2. Characters<br />{story.characters.length} total
                 </button>
-                <button onClick={() => setTab("items")} className="border border-gold/35 p-1 text-gold">
+                <button onClick={() => setTab("items")} className={`border p-1 ${story.items.length ? "border-emerald-500/40 text-emerald-400" : "border-gold/50 text-gold"}`}>
                   3. Items<br />{story.items.length} total
                 </button>
                 <button onClick={() => setTab("scene")} className={`border p-1 ${story.scenes.length >= 3 ? "border-emerald-500/40 text-emerald-400" : "border-gold/50 text-gold"}`}>
@@ -6862,7 +6936,7 @@ function StudioInner({
               </div>
             )}
 
-            {!scene && !["test", "characters", "items", "flags", "episodes", "media", "ai"].includes(tab) && (
+            {!scene && !["test", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai"].includes(tab) && (
               <p className="font-type text-xs text-paper/50">
                 Select a scene node on the canvas — or right-click the canvas to spawn a fresh one. Drag from a choice's pink
                 handle straight onto another scene to wire the plot.
@@ -7627,6 +7701,105 @@ function StudioInner({
                     <option value="storm">⛈️ Storm — rain, lightning &amp; thunder</option>
                   </select>
                 </Field>
+
+                {/* ---- Stage 2D — walkable character ---- */}
+                <CollapsibleSection id={`scene-stage2d-${scene.id}`} title="🚶 Stage 2D — walkable character">
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+                      <input
+                        type="checkbox"
+                        checked={!!scene.stage2d}
+                        onChange={(e) =>
+                          updateScene(scene.id, {
+                            stage2d: e.target.checked
+                              ? { spawn: { x: 50, y: 86 }, speed: 18, reach: 3.5, playerImage: "emoji:🕵️" }
+                              : undefined,
+                          })
+                        }
+                      />
+                      Player walks around this scene (click ground / WASD)
+                    </label>
+                    {scene.stage2d && (
+                      <>
+                        <p className="font-type text-[10px] leading-snug text-paper/55">
+                          In Play, click the ground to move (or arrow/WASD keys). Walking onto a hotspot zone
+                          triggers it exactly like clicking — gating, item pickups, shows and exits all still
+                          apply. Place hotspots where the player should walk to something.
+                        </p>
+                        <Field label="Character sprite (emoji:… or an image url / asset)">
+                          <input
+                            className={inputCls}
+                            value={scene.stage2d.playerImage ?? ""}
+                            placeholder="emoji:🕵️ or /img/… or asset:…"
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage2d: { ...scene.stage2d!, playerImage: e.target.value || undefined },
+                              })
+                            }
+                          />
+                        </Field>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label="Spawn X (%)">
+                            <input
+                              type="number" min={1} max={99} className={inputCls}
+                              value={scene.stage2d.spawn?.x ?? 50}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage2d: { ...scene.stage2d!, spawn: { x: Number(e.target.value) || 50, y: scene.stage2d!.spawn?.y ?? 86 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Spawn Y (%)">
+                            <input
+                              type="number" min={1} max={99} className={inputCls}
+                              value={scene.stage2d.spawn?.y ?? 86}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage2d: { ...scene.stage2d!, spawn: { x: scene.stage2d!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Walk speed (% width / sec)">
+                            <input
+                              type="number" min={4} max={60} className={inputCls}
+                              value={scene.stage2d.speed ?? 18}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage2d: { ...scene.stage2d!, speed: Number(e.target.value) || 18 },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Reach distance (%)">
+                            <input
+                              type="number" min={1} max={12} step={0.5} className={inputCls}
+                              value={scene.stage2d.reach ?? 3.5}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage2d: { ...scene.stage2d!, reach: Number(e.target.value) || 3.5 },
+                                })
+                              }
+                            />
+                          </Field>
+                        </div>
+                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+                          <input
+                            type="checkbox"
+                            checked={scene.stage2d.keyboard !== false}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage2d: { ...scene.stage2d!, keyboard: e.target.checked },
+                              })
+                            }
+                          />
+                          Arrow / WASD movement enabled
+                        </label>
+                      </>
+                    )}
+                  </div>
+                </CollapsibleSection>
 
                 {/* ---- Letterbox & entry transition (Telltale polish) ---- */}
                 <div className="border border-gold/40 bg-gold/5 p-2 space-y-2">
@@ -8787,6 +8960,242 @@ function StudioInner({
                         })
                       }
                     />
+                    </CollapsibleSection>
+
+                    {/* PRESS THE LIE — the contradiction verb. This beat is a
+                        false claim; the player presses and must present the
+                        evidence that breaks it. */}
+                    <CollapsibleSection id={`beat-${b.id}-lie`} title="🎯 Press the Lie (contradiction)">
+                      {!b.lie ? (
+                        <button
+                          onClick={() =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              const beat = s.dialogueBeats!.find((x) => x.id === b.id)!;
+                              beat.lie = {
+                                evidenceItemIds: [],
+                                contradictedFlag: `${scene.id.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_lie_broken`,
+                                caughtBeat: {
+                                  id: `b_${uid()}`,
+                                  characterId: b.characterId,
+                                  text: "That's not — how did you…? All right. You've got me.",
+                                  conditionRule: { requiresFlags: [] },
+                                },
+                              };
+                            })
+                          }
+                          className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                        >
+                          ＋ This line is a lie the player can catch
+                        </button>
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="font-type text-[10px] leading-snug text-paper/60">
+                            While this line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button.
+                            They open their satchel and must present the clue that proves it false. Right clue → the caught
+                            line plays and the flag sets; wrong clue → heat/trust cost, and they get only a few tries.
+                          </p>
+                          <Field label="The claim (what the player challenges — defaults to the line above)">
+                            <input
+                              className={inputCls}
+                              value={b.lie.claim ?? ""}
+                              placeholder={b.text.slice(0, 80)}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
+                                  lie.claim = e.target.value || undefined;
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Breaking evidence — the clue item(s) that prove this false (player must be HOLDING one)">
+                            <div className="space-y-1">
+                              {story.items.length === 0 && (
+                                <p className="font-type text-[10px] text-crimson">No items in this story yet — add a clue item first.</p>
+                              )}
+                              {story.items.map((it) => {
+                                const on = b.lie!.evidenceItemIds.includes(it.id);
+                                return (
+                                  <label key={it.id} className="flex items-center gap-1.5 font-type text-[11px] text-paper/85">
+                                    <input
+                                      type="checkbox"
+                                      checked={on}
+                                      onChange={(e) =>
+                                        mutate((d) => {
+                                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                                          const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
+                                          lie.evidenceItemIds = e.target.checked
+                                            ? [...lie.evidenceItemIds, it.id]
+                                            : lie.evidenceItemIds.filter((x) => x !== it.id);
+                                        })
+                                      }
+                                    />
+                                    {it.icon} {it.name}{it.isClue ? " 📌" : ""}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </Field>
+                          <Field label="Caught flag (set when the lie breaks — gate the aftermath on it)">
+                            <input
+                              className={inputCls}
+                              list={`flag-tags-${b.id}`}
+                              value={b.lie.contradictedFlag}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.contradictedFlag = e.target.value;
+                                })
+                              }
+                            />
+                            <datalist id={`flag-tags-${b.id}`}>
+                              {allFlags.filter((f) => f !== b.lie!.contradictedFlag).map((f) => (
+                                <option key={f} value={f} />
+                              ))}
+                            </datalist>
+                          </Field>
+                          <div className="border border-gold/30 bg-gold/5 p-2">
+                            <p className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-gold">Caught-in-a-lie reaction (plays when the right evidence lands)</p>
+                            <div className="grid grid-cols-2 gap-1">
+                              <Field label="Speaker">
+                                <select
+                                  className={inputCls}
+                                  value={b.lie.caughtBeat.characterId}
+                                  onChange={(e) =>
+                                    mutate((d) => {
+                                      const s = d.scenes.find((x) => x.id === scene.id)!;
+                                      s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.caughtBeat.characterId = e.target.value;
+                                    })
+                                  }
+                                >
+                                  <option value="narrator">🎙 Narrator (V.O.)</option>
+                                  {story.characters.map((c) => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <Field label="Gate (auto-set to the caught flag)">
+                                <span className="font-type text-[10px] text-paper/50">
+                                  requires: <b className="text-gold">{b.lie.contradictedFlag}</b>
+                                </span>
+                              </Field>
+                            </div>
+                            <Field label="Reaction line">
+                              <CommitTextArea
+                                className={`${inputCls} h-14 font-type`}
+                                value={b.lie.caughtBeat.text}
+                                onCommit={(next) =>
+                                  mutateLatest((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
+                                    lie.caughtBeat.text = next;
+                                    lie.caughtBeat.conditionRule = { requiresFlags: [lie.contradictedFlag] };
+                                  })
+                                }
+                              />
+                            </Field>
+                          </div>
+                          <Field label='"They will remember that" card on a successful catch (optional)'>
+                            <input
+                              className={inputCls}
+                              value={b.lie.rememberLine ?? ""}
+                              placeholder='e.g. Vera knows you’ve got her.'
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.rememberLine = e.target.value || undefined;
+                                })
+                              }
+                            />
+                          </Field>
+                          <div className="grid grid-cols-2 gap-1">
+                            <Field label="Composure damage (in an interrogation; 0 = none, 2+ cracks)">
+                              <input
+                                type="number" min={0} max={6}
+                                className={inputCls}
+                                value={b.lie.composureDamage ?? 0}
+                                onChange={(e) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.composureDamage = Number(e.target.value) || 0;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field label="Wrong-evidence guesses before they shut down (default 2)">
+                              <input
+                                type="number" min={1} max={9}
+                                className={inputCls}
+                                value={b.lie.wrongEvidenceLimit ?? 2}
+                                onChange={(e) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.wrongEvidenceLimit = Number(e.target.value) || 2;
+                                  })
+                                }
+                              />
+                            </Field>
+                          </div>
+                          <Field label="Bluff-called line (wrong evidence — defaults to a generic scoff)">
+                            <CommitTextArea
+                              className={`${inputCls} h-12 font-type`}
+                              value={b.lie.wrongBeat?.text ?? ""}
+                              onCommit={(next) =>
+                                mutateLatest((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
+                                  if (next.trim()) {
+                                    lie.wrongBeat = lie.wrongBeat ?? { id: `b_${uid()}`, characterId: b.characterId, text: "" };
+                                    lie.wrongBeat.text = next;
+                                  } else {
+                                    lie.wrongBeat = undefined;
+                                  }
+                                })
+                              }
+                            />
+                          </Field>
+                          <div className="grid grid-cols-2 gap-1">
+                            <Field label="Correct-catch consequences (trust + / heat − / flags)">
+                              <LieConsequences
+                                lie={b.lie}
+                                field="contradictedConsequences"
+                                story={story}
+                                onChange={(cons) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.contradictedConsequences = cons;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field label="Bluff-called consequences (heat + / trust −)">
+                              <LieConsequences
+                                lie={b.lie}
+                                field="wrongConsequences"
+                                story={story}
+                                onChange={(cons) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.wrongConsequences = cons;
+                                  })
+                                }
+                              />
+                            </Field>
+                          </div>
+                          <button
+                            onClick={() =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.dialogueBeats!.find((x) => x.id === b.id)!.lie = undefined;
+                              })
+                            }
+                            className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                          >
+                            ✕ Remove the lie
+                          </button>
+                        </div>
+                      )}
                     </CollapsibleSection>
                     </CollapsibleSection>
                   );

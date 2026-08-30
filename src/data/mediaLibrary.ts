@@ -398,11 +398,25 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     c.foregroundExtras?.forEach((e) => visit(e.image));
     c.parallaxLayers?.forEach((l) => visit(l.image));
   };
+  // A DialogueBeat carries audio/background/cinematic. The contradiction
+  // sub-beats (caught / bluff-called) are full beats nested inside a beat's
+  // `lie`, so walk them with the same visitor.
+  const visitBeatMedia = (
+    beat: { audioUrl?: string; background?: string; cinematic?: CinematicSettings },
+    visit: (value: string | undefined) => void,
+    cinematic: (c?: CinematicSettings) => void
+  ) => {
+    visit(beat.audioUrl);
+    visit(beat.background);
+    cinematic(beat.cinematic);
+  };
   story.scenes.forEach((sc) => {
     visit(sc.background);
     visit(sc.musicUrl);
     visit(sc.sceneAudioUrl);
     visit(sc.narrationAudioUrl);
+    // Stage 2D character sprite (only when it's an image url / asset:, not emoji:).
+    if (sc.stage2d?.playerImage && !sc.stage2d.playerImage.startsWith("emoji:")) visit(sc.stage2d.playerImage);
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
     sc.hotspots?.forEach((h) => visit(h.image));
@@ -410,6 +424,10 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
       visit(b.audioUrl);
       visit(b.background);
       cinematic(b.cinematic);
+      // A "press the lie" beat carries two extra DialogueBeats (the caught
+      // reaction and the bluff-called line) with their own media.
+      b.lie?.caughtBeat && visitBeatMedia(b.lie.caughtBeat, visit, cinematic);
+      b.lie?.wrongBeat && visitBeatMedia(b.lie.wrongBeat, visit, cinematic);
     });
   });
   story.items.forEach((i) => visit(i.iconUrl));
@@ -492,11 +510,18 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     c.foregroundExtras?.forEach((e) => apply(e, "image"));
     c.parallaxLayers?.forEach((l) => apply(l, "image"));
   };
+  const applyLieBeat = (beat?: { audioUrl?: string; background?: string; cinematic?: CinematicSettings }) => {
+    if (!beat) return;
+    apply(beat, "audioUrl");
+    apply(beat, "background");
+    applyCinematic(beat.cinematic);
+  };
   next.scenes.forEach((sc) => {
     apply(sc, "background");
     apply(sc, "musicUrl");
     apply(sc, "sceneAudioUrl");
     apply(sc, "narrationAudioUrl");
+    if (sc.stage2d?.playerImage) apply(sc.stage2d, "playerImage");
     applyCinematic(sc.cinematic);
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
@@ -506,6 +531,8 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
       apply(b, "audioUrl");
       apply(b, "background");
       applyCinematic(b.cinematic);
+      b.lie?.caughtBeat && applyLieBeat(b.lie.caughtBeat);
+      b.lie?.wrongBeat && applyLieBeat(b.lie.wrongBeat);
     });
   });
   next.items.forEach((i) => apply(i, "iconUrl"));
@@ -603,12 +630,30 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     return value;
   };
 
+  // Compact a contradiction sub-beat (the caught / bluff-called line), which
+  // is a full DialogueBeat nested inside a beat's `lie`.
+  const compactLieBeat = async (
+    beat: { audioUrl?: string; background?: string },
+    compactFn: (v: string | undefined, t: AssetType, n: string) => Promise<string | undefined>,
+    name: string
+  ) => {
+    beat.audioUrl = await compactFn(beat.audioUrl, "audio", `${name} contradiction`);
+    if (beat.background) {
+      const t: AssetType = beat.background.startsWith("video:") ? "video" : "image";
+      beat.background = (await compactFn(beat.background, t, `${name} contradiction shot`)) ?? beat.background;
+    }
+  };
+
   for (const sc of next.scenes) {
     const bgType: AssetType = sc.background.startsWith("video:") ? "video" : "image";
     sc.background = (await compact(sc.background, bgType, sc.title)) ?? IMAGE_FALLBACK;
     sc.musicUrl = await compact(sc.musicUrl, "audio", sc.title);
     sc.sceneAudioUrl = await compact(sc.sceneAudioUrl, "audio", sc.title);
     sc.narrationAudioUrl = await compact(sc.narrationAudioUrl, "audio", sc.title);
+    if (sc.stage2d?.playerImage && !sc.stage2d.playerImage.startsWith("emoji:")) {
+      const imgType: AssetType = sc.stage2d.playerImage.startsWith("video:") ? "video" : "image";
+      sc.stage2d.playerImage = (await compact(sc.stage2d.playerImage, imgType, `${sc.title} stage character`)) ?? sc.stage2d.playerImage;
+    }
     if (sc.credits?.montage?.length) {
       sc.credits.montage = (
         await Promise.all(sc.credits.montage.map((m) => compact(m, "image", `${sc.title} montage`)))
@@ -664,6 +709,9 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
           }
         }
       }
+      // The contradiction sub-beats carry their own audio/images.
+      if (b.lie?.caughtBeat) await compactLieBeat(b.lie.caughtBeat, compact, sc.title);
+      if (b.lie?.wrongBeat) await compactLieBeat(b.lie.wrongBeat, compact, sc.title);
     }
   }
   for (const it of next.items) {
@@ -880,6 +928,9 @@ export async function bundleVoiceFileRefs(
     sc.musicUrl = await bundleValue(sc.musicUrl);
     sc.sceneAudioUrl = await bundleValue(sc.sceneAudioUrl);
     sc.narrationAudioUrl = await bundleValue(sc.narrationAudioUrl);
+    if (sc.stage2d?.playerImage && !sc.stage2d.playerImage.startsWith("emoji:")) {
+      sc.stage2d.playerImage = (await bundleValue(sc.stage2d.playerImage)) ?? sc.stage2d.playerImage;
+    }
     if (sc.credits?.montage?.length) {
       sc.credits.montage = (
         await Promise.all(sc.credits.montage.map((m) => bundleValue(m)))
@@ -893,6 +944,16 @@ export async function bundleVoiceFileRefs(
       b.audioUrl = await bundleValue(b.audioUrl);
       b.background = await bundleValue(b.background);
       await applyCinematic(b.cinematic);
+      if (b.lie?.caughtBeat) {
+        b.lie.caughtBeat.audioUrl = await bundleValue(b.lie.caughtBeat.audioUrl);
+        b.lie.caughtBeat.background = await bundleValue(b.lie.caughtBeat.background);
+        await applyCinematic(b.lie.caughtBeat.cinematic);
+      }
+      if (b.lie?.wrongBeat) {
+        b.lie.wrongBeat.audioUrl = await bundleValue(b.lie.wrongBeat.audioUrl);
+        b.lie.wrongBeat.background = await bundleValue(b.lie.wrongBeat.background);
+        await applyCinematic(b.lie.wrongBeat.cinematic);
+      }
     }
   }
   for (const it of next.items) {
