@@ -22,6 +22,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { audio } from "../audio";
+import { CREDITS_PRESETS, CREDITS_PRESET_LIST, applyCreditsPreset, matchCreditsPreset } from "../credits";
 import {
   BODY_FONTS,
   defaultLensFlare,
@@ -7026,6 +7027,55 @@ function StudioInner({
                 {scene.nodeType === "credits" && (
                   <div className="space-y-2 border border-gold/40 bg-gold/5 p-2">
                     <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Credits intro</div>
+
+                    {/* Look presets — one click sets the whole style bundle.
+                        Authored text and montage stills are never touched. */}
+                    {(() => {
+                      const matchedPreset = matchCreditsPreset(scene.credits);
+                      return (
+                        <div className="space-y-1.5 border border-gold/25 bg-noir-950/40 p-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">Look presets</span>
+                            <span className="font-type text-[8px] text-paper/40">
+                              {matchedPreset ? "matches a preset" : "custom look"}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                            {CREDITS_PRESET_LIST.map((p) => {
+                              const isSel = matchedPreset === p.id;
+                              return (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  title={p.tagline}
+                                  onClick={() => updateScene(scene.id, { credits: applyCreditsPreset(p.id, scene.credits) })}
+                                  className={`flex flex-col items-start rounded border p-1.5 text-left transition-all ${
+                                    isSel
+                                      ? "border-gold bg-gold/15 shadow-[0_0_8px_rgba(232,178,60,0.3)]"
+                                      : "border-noir-700 bg-noir-950/70 hover:border-paper/40 hover:bg-noir-800"
+                                  }`}
+                                >
+                                  <div className="flex w-full items-center justify-between gap-1">
+                                    <span className="truncate font-pulp text-[8.5px] font-semibold text-paper">{p.name}</span>
+                                    <span
+                                      className="h-2 w-2 shrink-0 rounded-full border border-black/40"
+                                      style={{ backgroundColor: p.swatch, boxShadow: `0 0 4px ${p.swatch}` }}
+                                    />
+                                  </div>
+                                  <span className="mt-0.5 w-full truncate font-type text-[7.5px] text-paper/50">{p.badge}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <p className="pt-0.5 font-type text-[8.5px] italic leading-snug text-paper/50">
+                            {matchedPreset
+                              ? CREDITS_PRESETS[matchedPreset].tagline
+                              : "One click sets the typeface, motion, colours, gate weave and pacing — your title, credit lines and montage stills are kept. Every knob below stays editable."}
+                          </p>
+                        </div>
+                      );
+                    })()}
+
                     <Field label="Title">
                       <input
                         className={inputCls}

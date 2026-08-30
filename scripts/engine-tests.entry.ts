@@ -1216,6 +1216,143 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("session: throwing storage never propagates", !threw);
 }
 
+/* ================================================================== */
+/*  8. Credits-intro look presets (src/credits.ts — real code)         */
+/*                                                                     */
+/*  A preset is a LOOK, never CONTENT: applying one must overwrite every */
+/*  style knob (including resetting a knob another preset moved) while  */
+/*  leaving the authored title, subheading, credit lines and montage    */
+/*  stills alone. And the picker must be able to tell which preset a    */
+/*  node's knobs currently spell out.                                   */
+/* ================================================================== */
+{
+  const {
+    CREDITS_PRESETS,
+    CREDITS_PRESET_LIST,
+    CREDITS_LOOK_KEYS,
+    applyCreditsPreset,
+    matchCreditsPreset,
+    resolveCreditsLook,
+  } = await import("../src/credits");
+
+  // --- catalogue integrity -------------------------------------------------
+  const ids = CREDITS_PRESET_LIST.map((p) => p.id);
+  check("credits presets: list is not empty", CREDITS_PRESET_LIST.length > 0);
+  check("credits presets: every list entry resolves in CREDITS_PRESETS", ids.every((id) => !!CREDITS_PRESETS[id]));
+  check("credits presets: ids are unique", new Set(ids).size === ids.length);
+  check(
+    "credits presets: every entry is named and tagged",
+    CREDITS_PRESET_LIST.every((p) => !!p.name && !!p.badge && !!p.tagline && !!p.swatch),
+  );
+
+  // `applyCreditsPreset` merges with a spread, so a knob only gets RESET if the
+  // preset owns the key explicitly (look() fills every key, even to undefined).
+  check(
+    "credits presets: every preset owns every knob explicitly",
+    CREDITS_PRESET_LIST.every((p) => CREDITS_LOOK_KEYS.every((k) => Object.prototype.hasOwnProperty.call(p.look, k))),
+    CREDITS_PRESET_LIST.filter((p) => !CREDITS_LOOK_KEYS.every((k) => Object.prototype.hasOwnProperty.call(p.look, k))).map(
+      (p) => `${p.id}: missing ${CREDITS_LOOK_KEYS.filter((k) => !Object.prototype.hasOwnProperty.call(p.look, k)).join(",")}`,
+    ),
+  );
+
+  // Slider ranges in the Studio credits panel — a preset that dials a value
+  // outside them would leave the slider showing a number the author can't
+  // reproduce, so the preset would silently not round-trip through the UI.
+  const RANGES: Record<string, [number, number]> = {
+    cardSeconds: [1.2, 8],
+    montageSeconds: [2, 12],
+    stagger: [0, 2],
+    duration: [0.2, 2],
+    scrollDuration: [6, 120],
+  };
+  for (const p of CREDITS_PRESET_LIST) {
+    const r = resolveCreditsLook(p.look);
+    for (const [key, [min, max]] of Object.entries(RANGES)) {
+      const v = r[key as keyof typeof r] as number;
+      check(`credits preset ${p.id}: ${key} ${v} inside studio slider ${min}–${max}`, v >= min && v <= max, v);
+    }
+  }
+
+  // --- an untouched credits node IS the default preset ---------------------
+  check("credits presets: no settings matches the default look", matchCreditsPreset(undefined) === "pulp-default");
+  check("credits presets: empty settings matches the default look", matchCreditsPreset({}) === "pulp-default");
+  check(
+    "credits presets: an explicit default matches too",
+    matchCreditsPreset({ font: "pulp", style: "fade-up", gateWeave: "off" }) === "pulp-default",
+  );
+  // Colour normalisation: #FFF and #ffffff and #FFFFFF are the same knob.
+  check(
+    "credits presets: colour case/short-hex normalises",
+    matchCreditsPreset({ font: "modern", style: "fade-up", titleEntrance: "typewriter", titleColor: "#FFF", accentColor: "#E50914", stagger: 0.25, duration: 0.6 }) ===
+      "streaming-cold-open",
+  );
+
+  // --- applying a preset: content survives, the look is replaced -----------
+  const authored = {
+    title: "MIDNIGHT CONFESSION",
+    subtitle: "A Gaslight Reelworks picture",
+    lines: [
+      { role: "Directed by", name: "Sam Cole" },
+      { role: "Written by", name: "The City" },
+    ],
+    montage: ["gradient:linear-gradient(#000,#000)", "asset:abc123"],
+    montageLoop: false,
+    gateWeave: "projector",
+    scrollDuration: 90,
+    cardSeconds: 7.5,
+  } as const;
+
+  for (const p of CREDITS_PRESET_LIST) {
+    const out = applyCreditsPreset(p.id, { ...authored });
+    check(`credits preset ${p.id}: keeps the authored title`, out.title === authored.title, out.title);
+    check(`credits preset ${p.id}: keeps the authored subheading`, out.subtitle === authored.subtitle, out.subtitle);
+    check(
+      `credits preset ${p.id}: keeps the authored credit lines`,
+      JSON.stringify(out.lines) === JSON.stringify(authored.lines),
+      out.lines,
+    );
+    check(
+      `credits preset ${p.id}: keeps the montage stills`,
+      JSON.stringify(out.montage) === JSON.stringify(authored.montage),
+      out.montage,
+    );
+    check(
+      `credits preset ${p.id}: overwrites the look it owns`,
+      JSON.stringify(resolveCreditsLook(out)) === JSON.stringify(resolveCreditsLook(p.look)),
+      resolveCreditsLook(out),
+    );
+    check(`credits preset ${p.id}: node now matches that preset`, matchCreditsPreset(out) === p.id, matchCreditsPreset(out));
+    // Presets are mutually distinguishable — two of them can't resolve equal.
+    const twins = CREDITS_PRESET_LIST.filter((q) => q.id !== p.id && matchCreditsPreset(q.look) === p.id);
+    check(`credits preset ${p.id}: no other preset resolves to it`, twins.length === 0, twins.map((t) => t.id));
+  }
+
+  // Switching presets must RESET the knobs the old one moved, not stack them.
+  const rolled = applyCreditsPreset("pulp-default", applyCreditsPreset("rep-house-roll", { ...authored }));
+  check(
+    "credits presets: switching back to default resets scroll duration + weave",
+    rolled.scrollDuration === 24 && rolled.gateWeave === "off",
+    { scrollDuration: rolled.scrollDuration, gateWeave: rolled.gateWeave },
+  );
+  check(
+    "credits presets: switching back to default still keeps the content",
+    JSON.stringify(rolled.lines) === JSON.stringify(authored.lines) && JSON.stringify(rolled.montage) === JSON.stringify(authored.montage),
+  );
+
+  // --- the picker reads "custom look" once a knob is hand-tweaked ----------
+  const tweaked = { ...applyCreditsPreset("grindhouse-slam", {}), gateWeave: "off" as const };
+  check("credits presets: a hand-tweak clears the preset match", matchCreditsPreset(tweaked) === undefined);
+  const unknown = applyCreditsPreset("not-a-preset" as never, { ...authored });
+  check(
+    "credits presets: an unknown id is a no-op",
+    JSON.stringify(unknown) === JSON.stringify({ ...authored }),
+    unknown,
+  );
+  // An unknown id returns the settings as handed in, so the node's look is
+  // whatever it was — here a hand-made combination, matching no preset.
+  check("credits presets: unknown id changes nothing the picker sees", matchCreditsPreset(unknown) === undefined, matchCreditsPreset(unknown));
+}
+
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   for (const f of failures) console.log(`  ✖ ${f}`);
