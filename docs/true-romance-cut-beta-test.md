@@ -1,0 +1,103 @@
+# Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
+
+**Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
+**Beta date:** 2026-08-30 · **Status:** all approved fixes **merged into the production cut**; the throwaway beta duplicate has been deleted. Re-audit any time with `node scripts/beta/beta-harness.mjs` (6,086 states walked, 3,072 complete playthroughs, all 3 endings reachable, zero dead ends).
+
+---
+
+## 1. What shipped in this pass
+
+### Jack is no longer kind to David — David is one of Solomon's people
+David's character card now reads straight: *"Fourteen years Solomon Reyes's money man — the books, the skim, all of it. Then he stole from the one man in the county you don't steal from. The bakery was the story he told himself to keep his hands steady."* Jack's behavior matches:
+
+| Scene | Before | After |
+|---|---|---|
+| Warehouse (new) | Solomon treats Voss as a stranger who owed money | `nwt_w_sol9`: Solomon says David **counted his money for fourteen years**, skimmed the pile for fourteen months, and "the pile doesn't miss anything. I do inventory." |
+| Rental V.O. | "Part of him still thought he'd have to run. **I know that feeling from the inside.**" | Jack reads the bag like a cop: a man who counted a crime boss's money can't be caught holding the count. |
+| Rental | Jack: "Client list's competitive this week. **Try me.**" | "Don't worry. I've got my own ledger this week. Talk." |
+| Rental V.O. | "That's the one thing I'd take back… **I let him put the bag down.**" | He let him rest anyway — and names it "**the most expensive forty minutes I ever paid for**." |
+| Yard (bakery) | "My week's been full of stupid. Go ahead." / "You know how to bake?" | "My week's been full of stupid. **Make it quick.**" / "**That's a nice story. You don't know the first thing about bread, do you.**" |
+| Yard (killers arrive) | "Go. **I'll slow them down.**" … "**Don't thank me yet.**" | "**I'm not your lookout, David. Use it or don't.**" … David tries "Tell her—", Jack: "**I won't.**" |
+
+His "DAVID— no, no, no" at the shot stays (it's a man losing his only witness, not his friend), and the bakery stays on screen — but as David's self-mythology, which Jack sees through.
+
+### The days-of-week confusion — cleaned up
+The verifiable canon is: diner **Friday 11:47 p.m.** → pool hall Saturday → office/abduction Sunday ~1 a.m. → warehouse/laundromat Sunday night→Monday small hours → Vera at the office Monday 3 a.m. → pumps Tuesday morning → rental & killing Tuesday night → mill lot **Wednesday** night → pool hall Thursday → trade & final diner **Friday**. Lines that floated nonsense days or made no reference:
+
+- "Means you've got a client and now we've got a **Tuesday**" (Act 1, never paid off) → "Means you've got a client and now **you've got our full attention**."
+- "some part of you has known that **since Tuesday**" → "every single one of the days she hasn't called."
+- Denny: "doing her hair on a **Tuesday**" → "on a **workday and lying about it**" (and he now cops "I don't know what hat" before Gary can).
+- Jack's pumps V.O. "**It's a Tuesday** and you decide not to ask" → "**There's a night like that in every life — and you don't know you're in it until it's behind you.**" Same theme, no day stamp.
+- Rosa: "she's got him **by Tuesday**" → "inside a week."
+- Mill bag beat: "ready to leave **since Tuesday morning**" → just "ready before either of us gave her a reason to stay."
+
+Kept on purpose (these are the load-bearing countdown, and they're correct): every **Friday** in the Ted scene and the trade; "**Doc Sato sold it to them Tuesday**" (the leak — a fact); "**It's Wednesday.** / **It's Wednesday.**"; the Blue Cue 2 prose "**Thursday night**"; "**Tuesday night**" in Solomon's trade speech; the "bus at six, another one **till Tuesday**" idiom; the act tagline "It's Wednesday. Friday's coming."
+
+### The missing 48-hour ultimatum — now on screen
+Act Two's card promises "Solomon's forty-eight hours" but the warehouse scene cut from "Who said anything about letting you go" straight to escape. Four beats added to `nwt_warehouse`:
+
+- **`nwt_w_sol10`** — the terms, as a mortgage: "You find him. You bring me him, or the money, either one… Forty-eight hours. After that I stop being polite and start being owed." (And Moe cuts him loose after — "Not out of kindness — out of office hours," which also fixes the old "zip-tied chair escapes like an action hero" soft spot while keeping the four-seconds escape V.O.)
+- **`nwt_w_sol11a` / `nwt_w_sol11b`** — the name, gated. In the **named-client** branch Solomon reveals he **already had the name** ("it was mine already… which is why you're breathing — a man who gives his client up for nothing can't be used for anything; a man who does it to see a face? That man can be sent places") — that's now *why* he grants the two days. In the silent branch he explains the town tells him everything ("I own its debts… people confess to what they owe"), closing the Act One mystery of how Moe knew.
+- **`nwt_w_sol12`** — the deadline stamped: "Forty-eight hours from the moment that chair hits the ground… That's not a threat. That's the payment schedule."
+- **`nwt_wo_vo5b`** — Jack in the rain, clock ticking: "His forty-eight hours were running in my chest…" This is the dev-notes idea #5 (the gated name variant), adapted to the cut that actually exists; it was never previously merged.
+
+Rental line "that clock's down to about thirty" (arithmetically wrong — Sunday grab + 48h = Tuesday, hours not thirty) → "The clock's just about out — we might already be on borrowed time."
+
+### The $211k now changes hands on screen
+The unopened duffel never left the rental house in the old cut, yet Vera has the $211k in every ending. Two beats added to `nwt_yard` after the phone-buzzing hold: an SFX beat (the unopened bag dragged out and into a trunk in the rain) and Jack's V.O. — "Two hundred and eleven thousand dollars and it didn't occur me to leave it… I'd just been the one to drive the other one to her. She didn't ask me to. She didn't have to." Also fixes the 211 leak where Jack named the figure *before* David confesses it (he now says "you've got Solomon's money in a bag by the door"; the bags hotspot no longer prints the number).
+
+### Vera = Alabama (the dev's rewrite #4, applied in her own voice)
+Her confession used to claim "I tracked every dime" — impossible for the woman who twice says she never understood the mechanics. Now: "**Fourteen months of creeping around, being so careful I wasn't even allowed to know how careful. David moved the money. I tracked the shape of the empty spaces he left — never the numbers, he kept those between his teeth.**"
+
+### Continuity fixes
+- The warehouse escape shout "He's loose! Get the fuck—" was tagged to **Desh**, one scene after Jack says the guards are "not Moe and Desh — a different pair." Re-tagged narrator (unnamed guard).
+- "sitting around **this country**" → "this county" (he hid four hours north, same state).
+- "**Denny** told me at the pumps" named the two-hours-north gas-station bit player Blackwood Vera never met → nameless pumps clerk.
+- Mill scene: the back-seat bag V.O. played *after* Jack's closing "she was going to try to save me" — the scene summed up then kept talking. Bag beat moved ahead of the closing V.O. (dev note #3).
+
+### Flag cleanup
+Seven flags audited via full-graph walk. **Removed** (set but never read by anything — dead wiring): `nwt_asked_shape`, `nwt_told_her`, `nwt_david_protected_her` (set identically by both pool-hall exits — it was just "on exit"), plus the inert `meterChanges: { Suspicion +3 }` on the fight choice (Suspicion was never initialized or read). `nwt_named_client` **kept and promoted** — it now gates the two warehouse name-variant beats, so the Act One choice actually changes Act Two. All consumed flags have producers; zero orphaned.
+
+### Dev notes assessed and NOT applied (with reasons)
+- **"Rosa: three people knew her name… her, me, and you"** — can't port as written: Rosa didn't know Jack was even on the case until the 2 a.m. payphone call, and Sato (not one of her three) is the leak. The *idea* is covered by Solomon's new warehouse beats (he knew via the town/his debts) without contradicting the timeline.
+- **Rental "what's left to be scared of?" rewrite (dev note #2)** — checked against the actual cut: the line runs after David explains Vera going quiet, i.e. in the correct order in the shipped version. No change needed.
+- The "severed exchanges in nwt_cost" fixes (#1) — those were from the dev's own reordering of lines that don't exist in the shipped True cut; the Wed/Fri exchange is intact here.
+
+## 2. Machine audit
+
+`node scripts/beta/beta-harness.mjs` on the merged cut: 27 scenes, all reachable; zero dead ends; zero ungatable choices; all choice targets resolve; 3,072 complete playthroughs; She Stays 1,024 paths / Nobody's Witness 1,024 / A Stopped Watch 1,024; every flag consumed is producible; conditional beats order after their hotspots; both clues grantable; `tsc --noEmit` clean; 544/544 engine tests pass; production build passes; all 265 assets present. The validator's one warning ("no game-over ending") is the cut's declared NO DEAD ENDS rule — a waiver.
+
+## 3. Still open — your call, not defects
+1. **The swing-at-Moe branch** now only differs by the lip beat at the trade (and loses nothing). Option for a future pass: fighting costs Desh's "he never said her name" gift — violence costs information. Currently the moral is "it changes nothing," which is also a valid statement.
+2. **Vera's sin level.** She's still colder than Alabama (she chose arithmetic for eleven hours; "I hadn't decided"). The hung-up-phone version ("it rang three times… I told myself it was too late") remains a one-speech option if test audiences won't forgive her.
+3. **Anachronism note (do with as you please):** the self-checkout/barcode rants and "nineteen ninety-something" line sit ~1998-2005; the rest of the text (mill closed '09, 2011 furnace, father's watch 40 years old) dates the film ~2024. Nobody asked for this to change and the scene's the best comedy in the picture — flagging only.
+
+## 4. Music cue sheet — suggestions, True Romance / Tarantino style
+
+You already score the titles with `/nobodys-witness.mp3` and the pool hall with the draft beds. The cuts below are the licensed-record references I'd hand a music supervisor — diegetic-jukebox logic where possible (Tarantino rule: the characters should half-hear the song). Clearance is on you; all are placeholders for "this exact energy."
+
+| Scene | Suggested | Why it works |
+|---|---|---|
+| **Cold open** (fence, rain, gunshot) | Hans Zimmer — *"You're So Cool"* (True Romance theme), but low, slowed, under rain — the melody almost buried | The film's thesis is that motif arriving warm at the end; plant it broken at the start |
+| **Titles** | keep `/nobodys-witness.mp3` | It's yours and it's already doing the job |
+| **Blackwood Diner, Act 1** | keep the smoky jazz (`Midnight in the Rain2`), or Nino Rota-ish lounge — think *"Girl, You'll Be a Woman Soon"* energy if you ever want Vera's entrance needle-drop | Alabama walked into Clarence's booth in that register |
+| **Blue Cue, Act 1** (self-checkout rant) | a warped 7-inch country shuffle on the jukebox — George Jones *"He Stopped Loving Her Today"* or, for the joke, something cheery like John Prine *"Illegal Smile"* | Desh's rant over a sad country classic = the exact Pulp-Fiction-diner-in-a-pool-hall dissonance |
+| **Office night** (the folder) | low drone only; let the phone V.O. play dry | Silence makes the ambush land |
+| **Warehouse — Ted** | nothing. Heater hum. | Solomon polite with zero music is scarier than any score |
+| **Warehouse — the terms (new beats)** | one slow, ironic needle as Moe cuts him loose: Jim Reeves *"He'll Have to Go"* ("put your sweet lips a little closer to the phone") | A crooner over "the payment schedule" — Solomon administers to a love song |
+| **Laundromat / Rosa** | keep drone; one dryer-buzzer diegetic beat | Done |
+| **Three a.m. (Vera at the office)** | sparse piano — think *"Out of Reach"* Gabrels/Smith from the TR soundtrack, or a Chet Baker vocal like *"Almost Blue"* | The closest two people get in the story; one lamp, one pool of light |
+| **Pumps (Gary & Denny)** | a badly-tuned country radio *actually in the scene* — Merle Haggard *"If We Make It Through December"* or anything Bakersfield | It's diegetic, it's 2 a.m. radio, and "we were gonna make it" hangs over the glovebox marriage |
+| **Interlude (shoebox / watch)** | a single muted-trumpet jazz ballad — Chet Baker *"I Fall in Love Too Easily"* | The only omniscient scene; give it the film's warmest light and its loneliest horn |
+| **Rental / David's kitchen** | kettle ticking, nothing else, until the bakery speech — then a faint, wrong dream of a music box lilt | "Six tables and bread in the morning" should sound like a man remembering a life he never got to earn — and it cuts mid-phrase when headlights hit |
+| **The yard (killing)** | music cuts out entirely with the screen door. Crickets. The gunshot is the cue. Then: the Zimmer *"You're So Cool"* motif starts its return, sadder, under the bag-in-trunk beats | The theme's first real appearance is at the murder. That's the picture. |
+| **The call / Rosa's car** | rain and wipers only | Don't score confessions |
+| **Mill lot (the confession)** | long drone that thins to nearly nothing at "I hadn't decided" — then the *"You're So Cool"* motif quietly underneath the last V.O. ("she was going to try to save me") | The motif is now *hers* — and it lands wrong, which is right |
+| **Blue Cue 2** | same warped record as Act 1 (same jukebox, same song) — Jack's V.O. even notes it | Deliberate rhyme; the player should feel the joke curdle |
+| **The trade (Solomon's office)** | space heater only until "Take the deal off the table" — then, faintly, the Jim Reeves track from the warehouse callback | He softens to a love song both times; his humanity has a playlist |
+| **Final diner / She Walks In** | *"You're So Cool"* full statement, from Vera's footsteps to the end | Earn it here, exactly where True Romance does |
+| **SHE STAYS (gold)** | the motif keeps playing under "Doors" and the bookend — don't resolve it | The sentence finished; the town didn't |
+| **NOBODY'S WITNESS (walks)** | cut the music when the door bell shuts; ten seconds of fan-and-rain; then the cold coffee beat lands dry; let *"You're So Cool"* come in only for the empty-street bookend, minor | He drank the coffee; the melody gets no warmth |
+| **A STOPPED WATCH** | no music until Rosa leaves. Then a needle-drop with lyrics — Alabama-level directness: Chris Isaak *"Two Hearts"* (it's literally on the True Romance soundtrack) over the watch-in-hand and the one-figure bookend | You've earned one song that says it out loud |
+
+If licensing is impossible, the synth-composed equivalent is: one 4-note "You're So Cool"-style glockenspiel motif stated broken at the cold open, developed at the mill, stated whole at the final diner — plus the two diegetic country beds (pool hall, pumps) the warped-jukebox audio is already faking.
