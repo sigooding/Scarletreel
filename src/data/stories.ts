@@ -11,6 +11,7 @@ import { DEMO_CONVERSATION } from "./demoConversation";
 import { DEMO_SCENE_CRAFT } from "./demoSceneCraft";
 import { DEMO_STRUCTURE } from "./demoStructure";
 import { THE_LATE_SHIFT } from "./theLateShift";
+import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
 
 /**
  * The playable catalogue.
@@ -51,6 +52,7 @@ import { THE_LATE_SHIFT } from "./theLateShift";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  THE_LATE_SHIFT_REIMAGINED,
   THE_LATE_SHIFT,
   STUDIO_TUTORIAL,
   DEMO_CONVERSATION,
