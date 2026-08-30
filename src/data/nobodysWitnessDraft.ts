@@ -899,10 +899,6 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "x": 1320,
       "y": 1980
     },
-    "scene_525h8dd": {
-      "x": -100,
-      "y": 1160
-    },
     "nwd_follow_home": {
       "x": 1100,
       "y": 440
@@ -1180,7 +1176,6 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
           "text": "…",
           "targetSceneId": "nwd_titles",
           "attitudeTag": "Neutral",
-          "reply": true,
           "isRepeatable": false
         }
       ],
@@ -8672,7 +8667,7 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
         {
           "id": "nwd_m_go",
           "text": "Call the one person left who'd come.",
-          "targetSceneId": "scene_525h8dd",
+          "targetSceneId": "nwd_cost",
           "attitudeTag": "Neutral"
         },
         {
@@ -14534,30 +14529,5 @@ export const NOBODYS_WITNESS_DRAFT: Story = {
       "choices": [],
       "hotspots": []
     },
-    {
-      "id": "scene_525h8dd",
-      "title": "New Scene",
-      "background": "video:/uploads/nobodys-witness-draft/1787865290720-b0yb6lv.mp4",
-      "ambientAudio": "drone",
-      "prose": "The scene opens on...",
-      "choices": [
-        {
-          "id": "c_1fjgcsw",
-          "text": "New choice — click to edit",
-          "targetSceneId": "nwd_cost",
-          "attitudeTag": "Neutral"
-        }
-      ],
-      "hotspots": [],
-      "dialogueBeats": [],
-      "cinematic": {
-        "foregroundImage": "/uploads/nobodys-witness-draft/1787865322931-68i4eia.png",
-        "foregroundX": 27,
-        "foregroundY": 76,
-        "foregroundScale": 1.15,
-        "foregroundZoom": 3,
-        "foregroundZoomDuration": 80
-      }
-    }
   ]
 };
