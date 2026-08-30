@@ -15,8 +15,15 @@ import type { Story } from "../types";
  *      profanity stays (it's a Tarantino picture), the filler doesn't.
  *
  * Voice audio from the draft is intentionally dropped: every line was
- * rewritten, so the old recordings no longer match the words. Scene music
- * and the cold-open gunshot survive.
+ * rewritten, so the old recordings no longer match the words.
+ *
+ * Soundtrack (engine can hold one looping bed per scene — no mid-scene
+ * needle-drops). Cue sheet: docs/nwt-soundtrack.md
+ *   · /nobodys-witness.mp3 — titles + She Walks In + SHE STAYS
+ *   · /Midnight in the Rain2.mp3 — Act 1 diner jazz
+ *   · /nwt-bluecue-jukebox.mp3 — Blue Cue diegetic 7-inch
+ *   · musicMode: "none" — office, warehouse, Rosa, mill, yard, trade,
+ *     final diner, dry endings (silence is a cue)
  */
 
 export const NOBODYS_WITNESS_TRUE: Story = {
@@ -37,6 +44,15 @@ export const NOBODYS_WITNESS_TRUE: Story = {
     loseConditions: [
       "Nobody walks out of this story. The only question is what it costs them.",
     ],
+  },
+  dialogueBox: {
+    bodyFont: "type",
+    headingFont: "pulp",
+    hudTheme: "sepia-pulp",
+    accentColor: "#c8862f",
+    bordered: true,
+    backdropBlur: 2,
+    reserveLines: 3,
   },
   acts: [
     {
@@ -215,6 +231,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       nodeType: "cutscene",
       background: "/img/nw2/bg-coldopen-fence.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       hideSceneTitle: true,
       choiceDelaySeconds: 2,
       prose:
@@ -231,7 +248,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           characterId: "narrator",
           expression: "the cut",
           text: "(A gunshot. Somewhere behind the fence. Flat. Close. Like a door slamming.)",
-          audioUrl: "/uploads/nobodys-witness-draft/1787844883836-w8js3o3.wav",
+          audioUrl: "/nwt-gunshot.wav",
           silent: true,
         },
       ],
@@ -246,6 +263,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       nodeType: "credits",
       background: "/img/style/nw2-signature-a-neon80s.jpg",
       musicUrl: "/nobodys-witness.mp3",
+      musicMode: "track",
+      musicLevel: 0.6,
       musicFadeSeconds: 2,
       credits: {
         title: "NOBODY'S WITNESS",
@@ -285,7 +304,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blackwood Diner — 11:47",
       background: "/img/nw2/bg-diner-int.jpg",
       ambientAudio: "rain",
-      musicUrl: "/uploads/nobodys-witness-draft/1787847428747-cokhzj2.mp3",
+      musicUrl: "/Midnight in the Rain2.mp3",
+      musicMode: "track",
+      musicLevel: 0.45,
+      musicFadeSeconds: 2,
       letterbox: true,
       prose:
         "Rain on glass. A ceiling fan ticking in slow, lazy circles. Eleven forty-seven, same booth most nights, phone face-down on the table because I already know who isn't calling.",
@@ -406,6 +428,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blackwood Diner — 11:47",
       background: "/img/nw2/bg-diner-int.jpg",
       ambientAudio: "rain",
+      musicMode: "inherit",
       letterbox: true,
       prose: "",
       dialogueBeats: [
@@ -484,7 +507,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue Pool Hall",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
-      musicUrl: "/uploads/nobodys-witness-draft/1788024868121-4jwpy6y.mp3",
+      musicUrl: "/nwt-bluecue-jukebox.mp3",
+      musicMode: "track",
+      musicLevel: 0.4,
+      musicFadeSeconds: 1.6,
       letterbox: true,
       prose:
         "A pool hall off Route 9. Balls clacking, a jukebox playing something old and warped, ice in a glass somewhere. One lamp over the table, everything else in shadow.\n\nIt's called the Blue Cue. It isn't blue. The cue wasn't straight either.",
@@ -636,6 +662,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue — Out",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
+      musicMode: "inherit",
       letterbox: true,
       prose: "The lamp. The jukebox. The door, and rain behind it.",
       dialogueBeats: [
@@ -692,6 +719,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue — The Name",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
+      musicMode: "inherit",
       letterbox: true,
       prose: "The jukebox. Balls clacking. Nothing else changes at all.",
       dialogueBeats: [
@@ -764,6 +792,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "A Trail Too Clean to Trust",
       background: "/img/nw2/bg-office-night.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
+      musicFadeSeconds: 1.4,
       letterbox: true,
       prose:
         "A cramped office at night. One lamp, one pool of yellow light, everything past its edge black. The folder fanned out like a hand of cards. His face lit from below, tired.",
@@ -863,6 +893,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Man Who Curates Debts",
       background: "/img/nwd/ep1/warehouse.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "Zip-tied to a metal chair. Cold concrete. Motor oil and old rain. Shipping crates to the ceiling and one bare bulb doing all the work.",
@@ -1114,6 +1145,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Nobody Just Leaves",
       background: "/img/nwd/ep2/laundromat.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       partBreak: "Act One — The Woman Who Sold Herself Twice",
       letterbox: true,
       prose:
@@ -1445,6 +1477,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Pumps at Route 6",
       background: "/img/nwd/ep2/pumps-route6.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "A gas station off a two-lane road. Wind. One working pump ticking. A radio inside playing something country and badly tuned. Two men on a bench by the ice machine.\n\nNothing here advances the plot. That's the point.",
@@ -1642,6 +1675,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       nodeType: "cutscene",
       background: "/img/nwd/ep2/apartment-shoebox.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       hideSceneTitle: true,
       prose:
         "A smaller place than the one she dresses up for. Warmer light than anywhere else in this story has had. Nobody's watching her. That's the point.\n\nA shoebox on the bed: photographs, handwriting in the margins. A man's watch, stopped, the leather band cracked with age.",
@@ -1680,6 +1714,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Man Who Wasn't Missing",
       background: "/img/nwd/ep2/rental-kitchen.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "A quiet residential street. Crickets. Much less rain up here than Blackwood. A rental on a dead-end street — weekly rate, cash, under a name that isn't David Voss.\n\nKnocking. Didn't expect an answer. Got one.",
@@ -1816,7 +1851,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           isRepeatable: true,
           action: {
             type: "showText",
-            text: "Unpacked. Part of him still thought he'd have to run. One bag he never opened — and he kept it between himself and the door like a man who knows what two hundred grand of somebody else's money does to whoever's found with it.",
+            text: "Unpacked. One bag he never opened — and he kept it between himself and the door like a man who knows what Solomon's money does to whoever's found holding it.",
           },
         },
         {
@@ -1852,6 +1887,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Everything I Already Knew",
       background: "/img/nwd/ep2/yard-screen-door.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "The kitchen, later. Crickets outside. Quiet — deliberately, unbearably ordinary.",
@@ -1996,7 +2032,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_y_vo2",
           characterId: "jack",
           expression: "V.O. — the flatness is the injury",
-          text: "Six tables. Bread in the morning. One thing he'd have to be bad at first. I said don't thank me yet. Those were my words. I've got the rest of my life to find better ones, and it won't matter, because he's not in the room for them.",
+          text: "Six tables. Bread in the morning. One thing he'd have to be bad at first. I said I wouldn't. Those were my words. I've got the rest of my life to find better ones, and it won't matter, because he's not in the room for them.",
         },
       ],
       hotspots: [
@@ -2024,6 +2060,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Call",
       background: "/img/nwd/ep3/yard-call.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       partBreak: "Act Two — Nobody Just Leaves",
       letterbox: true,
       prose:
@@ -2153,6 +2190,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "What Rosa Knows",
       background: "/img/nw2/bg-rosa-car.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       letterbox: true,
       prose:
         "Rain, past midnight, four hours from home. A car idling at the curb with its lights off. Rosa heard the call go out on the scanner and was on the road before anyone thought to phone her. She never asks where he's been when it's bad. She just opens the door.",
@@ -2311,6 +2349,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Two Hundred and Eleven Thousand",
       background: "/img/nw2/bg-mill-lot.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       letterbox: true,
       prose:
         "An empty lot behind the shuttered mill — chain-link, wet gravel, one working sodium light buzzing. Rain, fine and constant. No traffic. Nothing.\n\nThe same kind of fence the story opened on. The town only has the one kind of night, and it reuses it.",
@@ -2631,6 +2670,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Cost",
       background: "/img/nw2/bg-rosa-car.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       letterbox: true,
       prose:
         "The mill lot, later. Rain. Jack alone where he stood — then headlights sweeping the gravel, and Rosa's car pulling up beside him.",
@@ -2847,7 +2887,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue, Again",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
-      musicUrl: "/uploads/nobodys-witness-draft/1788024868121-4jwpy6y.mp3",
+      musicUrl: "/nwt-bluecue-jukebox.mp3",
+      musicMode: "track",
+      musicLevel: 0.4,
+      musicFadeSeconds: 1.6,
       letterbox: true,
       prose:
         "The same pool hall. Same warped jukebox. Same balls clacking. Deliberately identical to Act One. Thursday night. One day left on her.",
@@ -3009,6 +3052,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue — Out the Hard Way",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
+      musicMode: "inherit",
       letterbox: true,
       prose:
         "The door. Rain behind it. Desh's voice a beat later — the way a man says a thing he's already decided he wants you to have. Thursday night.",
@@ -3036,6 +3080,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue — Doing Something About It",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
+      musicMode: "inherit",
       letterbox: true,
       prose:
         "The lamp. The jukebox, still playing. The sound of a man's mouth being opened by a glass — and then the silence afterward, which is the part that stays. Thursday night.",
@@ -3404,6 +3449,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       background: "/img/nw2/bg-diner-int.jpg",
       ambientAudio: "rain",
       musicUrl: "/nobodys-witness.mp3",
+      musicMode: "track",
+      musicLevel: 0.7,
       musicFadeSeconds: 3,
       letterbox: true,
       prose: "The door bell. Rain swelling, then muffled. Footsteps — the same unhurried walk from the first scene.",
@@ -3549,6 +3596,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       isEnding: true,
       background: "/img/nw2/bg-diner-int.jpg",
       musicUrl: "/nobodys-witness.mp3",
+      musicMode: "inherit",
+      musicLevel: 0.7,
       letterbox: true,
       prose: "Two days I'd had it. The booth between them, the bag on the vinyl, ten feet of the same rain.",
       dialogueBeats: [
@@ -3754,7 +3803,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Nobody's Witness",
       isEnding: true,
       background: "/img/nw2/bg-empty-booth.jpg",
-      musicUrl: "/nobodys-witness.mp3",
+      musicMode: "none",
+      musicFadeSeconds: 1.8,
       letterbox: true,
       prose: "The fan. The rain. The bag on the vinyl seat, close enough to pick up fast. Neither of them touching it.",
       dialogueBeats: [
@@ -3848,7 +3898,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "A Stopped Watch",
       isEnding: true,
       background: "/img/nw2/bg-empty-booth.jpg",
-      musicUrl: "/nobodys-witness.mp3",
+      musicMode: "none",
       letterbox: true,
       prose: "The Blackwood Diner. Rain on the window. The ceiling fan. The booth opposite him stays empty.",
       dialogueBeats: [

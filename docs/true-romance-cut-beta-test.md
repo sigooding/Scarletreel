@@ -1,7 +1,7 @@
 # Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
 
 **Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
-**Beta date:** 2026-08-30 · **Status:** all approved fixes **merged into the production cut** plus the two optional improvements built in §1 — the throwaway beta duplicate has been deleted. Re-audit any time with `node scripts/beta/beta-harness.mjs` (6,086 states walked, 2,560 complete playthroughs, all 3 endings reachable, zero dead ends).
+**Beta date:** 2026-08-30 · **Status:** production cut. Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs`. Cue sheet: `docs/nwt-soundtrack.md`.
 
 ---
 
@@ -76,6 +76,27 @@ Seven flags audited via full-graph walk. **Removed** (set but never read by anyt
 ## 2. Machine audit
 
 `node scripts/beta/beta-harness.mjs` on the merged cut: 29 scenes, all reachable; zero dead ends; all choice targets resolve; 2,560 complete playthroughs; She Stays 512 paths / Nobody's Witness 1,024 / A Stopped Watch 1,024; every flag consumed is producible; conditional beats order after their hotspots; both clues grantable; `tsc --noEmit` clean; 544/544 engine tests pass; production build passes; all 265 assets present. The only warnings are the cut's declared NO DEAD ENDS rule ("no game-over ending") and the advisory that every exit from "She Walks In" is gated — that's by design, since each branch always has exactly one available exit (tell/keep for the peaceful path, nothing-to-give-her for the violent path).
+
+## 2b. Production pass (this commit)
+
+Leftover copy from the $200k / "don't thank me yet" draft:
+
+- `nwt_y_vo2` — Jack no longer quotes a line he never said. Now: "I said I wouldn't."
+- `nwt_r_hs_bags` — no longer prints "two hundred grand" before David confesses the number.
+
+Soundtrack (engine inherit bug: a scene without `musicMode: "none"` keeps the previous bed, so the Blue Cue jukebox used to follow Jack into the office, warehouse, rental, and yard):
+
+- Titles + She Walks In + SHE STAYS: `/nobodys-witness.mp3`
+- Act 1 diner: `/Midnight in the Rain2.mp3` (track, 0.45)
+- Blue Cue (both visits): `/nwt-bluecue-jukebox.mp3` (track, 0.4)
+- Office / warehouse / laundromat / pumps / interlude / rental / yard / call / Rosa / mill / cost / trade / final diner / dry endings: `musicMode: "none"`
+- Cold-open gunshot: `/nwt-gunshot.wav`
+- HUD: `dialogueBox` sepia-pulp (same as Late Shift / Final Draft)
+- Newsstand Play button and `#play` hash target the True Romance cut; badge reads **★ Production — True Romance Cut**
+- `CONTENT_REVISION` 36 retires cached True-cut Studio snapshots
+- `package.json` version `1.0.0`
+
+Licensed needle-drop references stay in §4 and `docs/nwt-soundtrack.md`. The engine cannot start a new bed mid-scene, so Zimmer / Chet Baker / Chris Isaak remain supervisor notes, not files.
 
 ## 3. Still open — your call, not defects
 1. **Anachronism note (do with as you please):** the self-checkout/barcode rants and "nineteen ninety-something" line sit ~1998-2005; the rest of the text (mill closed '09, 2011 furnace, father's watch 40 years old) dates the film ~2024. Nobody asked for this to change and the scene's the best comedy in the picture — flagging only.
