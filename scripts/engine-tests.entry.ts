@@ -1228,9 +1228,11 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 {
   const {
     CREDITS_PRESETS,
+    CREDITS_PRESET_GROUPS,
     CREDITS_PRESET_LIST,
     CREDITS_LOOK_KEYS,
     applyCreditsPreset,
+    creditsLookSummary,
     matchCreditsPreset,
     resolveCreditsLook,
   } = await import("../src/credits");
@@ -1241,8 +1243,55 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("credits presets: every list entry resolves in CREDITS_PRESETS", ids.every((id) => !!CREDITS_PRESETS[id]));
   check("credits presets: ids are unique", new Set(ids).size === ids.length);
   check(
-    "credits presets: every entry is named and tagged",
-    CREDITS_PRESET_LIST.every((p) => !!p.name && !!p.badge && !!p.tagline && !!p.swatch),
+    "credits presets: every entry is named, tagged and filed under a group",
+    CREDITS_PRESET_LIST.every((p) => !!p.name && !!p.badge && !!p.tagline && !!p.swatch && !!p.group),
+    CREDITS_PRESET_LIST.filter((p) => !p.name || !p.badge || !p.tagline || !p.swatch || !p.group).map((p) => p.id),
+  );
+
+  // The Studio picker renders one section per group; a preset filed under an
+  // unknown group would vanish from the grid, and an empty group would ship
+  // a dead header.
+  const groupIds = new Set(CREDITS_PRESET_GROUPS.map((g) => g.id));
+  check(
+    "credits presets: every preset files under a known group",
+    CREDITS_PRESET_LIST.every((p) => groupIds.has(p.group)),
+    CREDITS_PRESET_LIST.filter((p) => !groupIds.has(p.group)).map((p) => `${p.id}:${p.group}`),
+  );
+  check(
+    "credits presets: every group has at least one preset",
+    CREDITS_PRESET_GROUPS.every((g) => CREDITS_PRESET_LIST.some((p) => p.group === g.id)),
+    CREDITS_PRESET_GROUPS.filter((g) => !CREDITS_PRESET_LIST.some((p) => p.group === g.id)).map((g) => g.id),
+  );
+  // The list feeds the grouped picker, so each group should appear as one
+  // contiguous run — no group restarting after another has begun.
+  const groupRun = CREDITS_PRESET_LIST.map((p) => p.group);
+  const runs = groupRun.filter((g, i) => i === 0 || groupRun[i - 1] !== g);
+  check(
+    "credits presets: groups are contiguous in the list so the picker sections read clean",
+    new Set(runs).size === runs.length,
+    runs,
+  );
+
+  // The picker's knob read-out: names the face and the presentation for a
+  // cards look, and spells the roll length for a scroll look.
+  const ghSummary = creditsLookSummary(CREDITS_PRESETS["grindhouse-slam"].look);
+  check(
+    "credits presets: look summary names the typeface and card motion",
+    ghSummary.includes("Bebas") && ghSummary.includes("cards/slam") && ghSummary.includes("hard cuts"),
+    ghSummary,
+  );
+  const scrollSummary = creditsLookSummary(CREDITS_PRESETS["rep-house-roll"].look);
+  check(
+    "credits presets: look summary spells the scroll length",
+    scrollSummary.includes("scroll 32s") && scrollSummary.includes("projector weave"),
+    scrollSummary,
+  );
+  check(
+    "credits presets: look summary mentions a list entrance only where it matters",
+    creditsLookSummary(CREDITS_PRESETS["streaming-cold-open"].look).includes("typewriter") &&
+      !creditsLookSummary(CREDITS_PRESETS["grindhouse-slam"].look).includes("slam in") &&
+      !creditsLookSummary(CREDITS_PRESETS["grindhouse-slam"].look).includes("typewriter"),
+    creditsLookSummary(CREDITS_PRESETS["streaming-cold-open"].look),
   );
 
   // `applyCreditsPreset` merges with a spread, so a knob only gets RESET if the

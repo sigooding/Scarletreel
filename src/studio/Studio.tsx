@@ -22,7 +22,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { audio } from "../audio";
-import { CREDITS_PRESETS, CREDITS_PRESET_LIST, applyCreditsPreset, matchCreditsPreset } from "../credits";
+import { CREDITS_PRESETS, CREDITS_PRESET_GROUPS, CREDITS_PRESET_LIST, applyCreditsPreset, creditsLookSummary, matchCreditsPreset } from "../credits";
 import {
   BODY_FONTS,
   defaultLensFlare,
@@ -165,6 +165,18 @@ const BACKGROUNDS = [
 ];
 
 const AMBIENTS = ["none", "rain", "jazz", "drone", "tension"];
+
+/** The title-sequence faces as CSS variables — used by the credits preset
+ * picker to render each card's name in the very typeface the look dials in.
+ * Inline vars rather than `font-*` classes so the map stays data-driven. */
+const CREDITS_FONT_VAR: Record<string, string> = {
+  pulp: "var(--font-pulp)",
+  poster: "var(--font-poster)",
+  elegant: "var(--font-elegant)",
+  epic: "var(--font-epic)",
+  modern: "var(--font-modern)",
+  type: "var(--font-type)",
+};
 const METERS: MeterKey[] = ["Sultry", "Aggressive", "Clever", "Suspicion"];
 
 function bgStyle(bg: string): React.CSSProperties {
@@ -7029,7 +7041,10 @@ function StudioInner({
                     <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Credits intro</div>
 
                     {/* Look presets — one click sets the whole style bundle.
-                        Authored text and montage stills are never touched. */}
+                        Authored text and montage stills are never touched.
+                        Grouped into sections, and every card previews itself:
+                        the preset's own typeface, title colour and a one-line
+                        knob read-out. */}
                     {(() => {
                       const matchedPreset = matchCreditsPreset(scene.credits);
                       return (
@@ -7037,36 +7052,64 @@ function StudioInner({
                           <div className="flex items-center justify-between">
                             <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">Look presets</span>
                             <span className="font-type text-[8px] text-paper/40">
-                              {matchedPreset ? "matches a preset" : "custom look"}
+                              {matchedPreset ? (
+                                <>
+                                  matches: <b className="text-gold/90">{CREDITS_PRESETS[matchedPreset].name}</b>
+                                </>
+                              ) : (
+                                "custom look"
+                              )}
                             </span>
                           </div>
-                          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                            {CREDITS_PRESET_LIST.map((p) => {
-                              const isSel = matchedPreset === p.id;
-                              return (
-                                <button
-                                  key={p.id}
-                                  type="button"
-                                  title={p.tagline}
-                                  onClick={() => updateScene(scene.id, { credits: applyCreditsPreset(p.id, scene.credits) })}
-                                  className={`flex flex-col items-start rounded border p-1.5 text-left transition-all ${
-                                    isSel
-                                      ? "border-gold bg-gold/15 shadow-[0_0_8px_rgba(232,178,60,0.3)]"
-                                      : "border-noir-700 bg-noir-950/70 hover:border-paper/40 hover:bg-noir-800"
-                                  }`}
-                                >
-                                  <div className="flex w-full items-center justify-between gap-1">
-                                    <span className="truncate font-pulp text-[8.5px] font-semibold text-paper">{p.name}</span>
-                                    <span
-                                      className="h-2 w-2 shrink-0 rounded-full border border-black/40"
-                                      style={{ backgroundColor: p.swatch, boxShadow: `0 0 4px ${p.swatch}` }}
-                                    />
-                                  </div>
-                                  <span className="mt-0.5 w-full truncate font-type text-[7.5px] text-paper/50">{p.badge}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
+                          {CREDITS_PRESET_GROUPS.map((g) => {
+                            const presets = CREDITS_PRESET_LIST.filter((p) => p.group === g.id);
+                            if (!presets.length) return null;
+                            return (
+                              <div key={g.id}>
+                                <div className="mb-1 flex items-baseline justify-between gap-2">
+                                  <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/45">{g.label}</span>
+                                  <span className="truncate font-type text-[7.5px] italic text-paper/30">{g.blurb}</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                                  {presets.map((p) => {
+                                    const isSel = matchedPreset === p.id;
+                                    const sampleColor = p.look.titleColor ?? p.swatch;
+                                    return (
+                                      <button
+                                        key={p.id}
+                                        type="button"
+                                        title={p.tagline}
+                                        onClick={() => updateScene(scene.id, { credits: applyCreditsPreset(p.id, scene.credits) })}
+                                        className={`relative flex flex-col items-start rounded border p-1.5 text-left transition-all ${
+                                          isSel
+                                            ? "border-gold bg-gold/15 shadow-[0_0_8px_rgba(232,178,60,0.3)]"
+                                            : "border-noir-700 bg-noir-950/70 hover:border-paper/40 hover:bg-noir-800"
+                                        }`}
+                                      >
+                                        {isSel && <span className="absolute right-1 top-1 text-[8px] text-gold">✓</span>}
+                                        {/* The look's own typeface + title colour —
+                                            the card is its own preview. */}
+                                        <span
+                                          className="block w-full truncate text-[13px] leading-tight uppercase"
+                                          style={{
+                                            fontFamily: CREDITS_FONT_VAR[p.look.font ?? "pulp"] ?? CREDITS_FONT_VAR.pulp,
+                                            color: sampleColor,
+                                            textShadow: `0 0 7px ${sampleColor}55`,
+                                          }}
+                                        >
+                                          {p.name}
+                                        </span>
+                                        <span className="mt-0.5 w-full truncate font-type text-[7.5px] text-paper/50">{p.badge}</span>
+                                        <span className="mt-0.5 block w-full truncate font-type text-[7px] text-paper/35" title={creditsLookSummary(p.look)}>
+                                          {creditsLookSummary(p.look)}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
                           <p className="pt-0.5 font-type text-[8.5px] italic leading-snug text-paper/50">
                             {matchedPreset
                               ? CREDITS_PRESETS[matchedPreset].tagline
