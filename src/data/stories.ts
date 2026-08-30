@@ -6,6 +6,7 @@ import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
 import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
+import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
 import { SCREENING_ROOM } from "./screeningRoom";import { STUDIO_TUTORIAL } from "./studioTutorial";
 import { NEON_DINER } from "./neonDiner";
 import { DEMO_CONVERSATION } from "./demoConversation";
@@ -54,6 +55,7 @@ import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  NOBODYS_WITNESS_FINAL,
   NOBODYS_WITNESS_NEW,
   THE_LATE_SHIFT_REDUX,
   THE_LATE_SHIFT_REIMAGINED,
