@@ -334,5 +334,138 @@ ok(leftoverDraftMusic.length === 0, `no draft-upload music paths (${leftoverDraf
 ok(!JSON.stringify(S).includes("don't thank me yet"), `no leftover "don't thank me yet"`);
 ok(!JSON.stringify(S).includes("two hundred grand"), `no leftover "two hundred grand"`);
 
+/* ── 12. Act Three endings audit ─────────────────────────────
+   Answers the beta question: do ALL playthroughs end on Act
+   Three, in the same style of dialogue? Style = the cut's
+   authored ending contract, checked structurally per ending:
+     · a true ending (isEnding, no choices) in the Act 3 spine
+     · complete endingData (tier / headline / recap)
+     · the cut's spare register: Jack V.O. beats, silent
+       parenthetical narrator beats, letterbox
+     · the bookend: final beat is a silent narrator screen
+       beat, "same as the first frame" (main street, neon)
+     · the 11:47 clock rhyme stays monotonic (no clock beat
+       earlier than the one before it, no arrival after the
+       first clock the ending stamps)                                  */
+section("12. Act Three endings audit — all playthroughs end on act 3, same style");
+const ACT3_SCENES = new Set([
+  "nwt_call", "nwt_rosa", "nwt_mill", "nwt_cost", "nwt_bluecue2",
+  "nwt_bluecue_walk", "nwt_bluecue_fight", "nwt_trade", "nwt_diner2",
+  "nwt_vera", "nwt_end_stays", "nwt_end_walks", "nwt_end_watch",
+]);
+const endings = S.scenes.filter((s) => s.isEnding);
+const act3Endings = endings.filter((e) => ACT3_SCENES.has(e.id));
+ok(
+  act3Endings.length === endings.length,
+  `every ending scene is in the Act 3 spine (${endings.length} endings, ${act3Endings.length} in act 3)`
+);
+// every complete playthrough (section 3) ends at one of these act-3 endings
+ok(
+  endings.every((e) => (endingReach.get(e.id) ?? 0) > 0) &&
+    act3Endings.length === endings.length,
+  `all ${paths} complete playthroughs end on act 3 (${[...act3Endings.map((e) => `${e.title}: ${endingReach.get(e.id)}`)].join(" / ")})`
+);
+
+const WORD_NUM: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+};
+const compoundNum = (w: string): number | null => {
+  const parts = w.split("-").filter(Boolean);
+  if (parts.length < 1 || parts.length > 2) return null;
+  let v = 0;
+  for (const p of parts) {
+    const n = WORD_NUM[p];
+    if (n === undefined) return null;
+    v += n;
+  }
+  return v;
+};
+/** Minutes since 11:00 p.m. from the cut's clock phrases. */
+const clockMinutes = (text: string): number[] => {
+  const out: number[] = [];
+  const t = text.toLowerCase();
+  for (const m of t.matchAll(/\b(eleven|twelve) ([a-z][a-z-]*)\b/g)) {
+    const hour = m[1] === "eleven" ? 0 : 60; // 11 p.m. = 0, 12 p.m. = 60
+    const mins = compoundNum(m[2]);
+    if (mins === null || mins > 59) continue;
+    out.push(hour + mins);
+  }
+  if (/\bgone one\b/.test(t)) out.push(121); // "till gone one" ≈ 12:01 a.m.
+  return out;
+};
+const fmtClock = (min: number): string => {
+  const h24 = (23 + Math.floor(min / 60)) % 24; // 0 = 11 p.m.
+  const hh = h24 % 12 === 0 ? 12 : h24 % 12;
+  const ap = h24 < 12 ? "a.m." : "p.m.";
+  return `${hh}:${String(min % 60).padStart(2, "0")} ${ap}`;
+};
+
+for (const e of act3Endings) {
+  const beats = e.dialogueBeats ?? [];
+  const last = beats[beats.length - 1];
+  const jackVo = beats.filter((b) => b.characterId === "jack" && /V\.O\./.test(b.expression ?? "")).length;
+  const silentNarr = beats.filter((b) => b.characterId === "narrator" && b.silent).length;
+  const words = beats.map((b) => b.text ?? "").join(" ").split(/\s+/).filter(Boolean).length;
+  const ed = e.endingData;
+  const bookendOk =
+    !!last && last.characterId === "narrator" && !!last.silent &&
+    /same as the first frame/i.test(last.text ?? "") &&
+    /neon smearing teal and magenta/i.test(last.text ?? "");
+
+  ok(
+    e.choices?.length === 0 && e.letterbox === true,
+    `${e.id} is a true ending (no exits, letterboxed)`
+  );
+  ok(
+    !!ed && !!ed.headline && ed.headline === ed.headline.toUpperCase() &&
+      !!ed.recap && ed.recap.length >= 20 &&
+      (ed.tier === "victory-gold" || ed.tier === "victory-silver" || ed.tier === "gameover"),
+    `${e.id} has complete endingData (tier: ${ed?.tier}, headline: "${ed?.headline}")`
+  );
+  ok(jackVo >= 1 && silentNarr >= 3, `${e.id} keeps the spare register (Jack V.O. ×${jackVo}, silent narrator beats ×${silentNarr})`);
+  ok(bookendOk, `${e.id} closes on the main-street bookend (silent narrator, "same as the first frame")`);
+  ok(words >= 150 && beats.length >= 10, `${e.id} is a full scene, not a stub (${beats.length} beats, ${words} words)`);
+
+  // clock rhyme monotonicity within the ending
+  const clocks: { where: string; at: number }[] = [];
+  for (const b of beats) clocks.push(...clockMinutes(b.text ?? "").map((at) => ({ where: b.id, at: at! })));
+  let mono = true;
+  for (let i = 1; i < clocks.length; i++) if (clocks[i].at < clocks[i - 1].at) mono = false;
+  ok(mono, `${e.id} clock beats monotonic (${clocks.map((c) => `${c.where}@${fmtClock(c.at)}`).join(" → ") || "no clock beats"})`);
+
+  // "She Walks In" arrival must not land after the first clock SHE STAYS stamps
+  if (e.id === "nwt_end_stays") {
+    const vera = byId("nwt_vera");
+    const faVo1 = (vera.dialogueBeats ?? []).find((b) => b.id === "nwt_fa_vo1");
+    const m = faVo1?.text?.match(/\b([a-z]+(?:-[a-z]+)*) minutes later the door bell/i);
+    if (m) {
+      const later = compoundNum(m[1].toLowerCase()) ?? parseInt(m[1], 10);
+      const arrived = 47 + later; // call placed at 11:47
+      const firstStamp = clocks[0]?.at;
+      ok(
+        typeof firstStamp === "number" && arrived <= firstStamp,
+        `She Walks In arrival (11:47 + ${later} min = 11:${String(arrived).padStart(2, "0")}) lands on or before SHE STAYS' first clock stamp (11:${String(firstStamp).padStart(2, "0")})`
+      );
+    } else {
+      ok(false, "nwt_fa_vo1 arrival line missing");
+    }
+  }
+}
+
+// Vera's True Romance register in Act 3: the cut's documented floor is 4
+let veraAct3Profanity = 0;
+for (const id of ACT3_SCENES) {
+  const sc = sceneById.get(id);
+  if (!sc) continue;
+  for (const b of sc.dialogueBeats ?? []) {
+    if (b.characterId !== "vera") continue;
+    for (const m of (b.text ?? "").matchAll(/\b(fuck(?:ing|er|ed|s)?|goddamn|god damn|damn|shit)\b/gi)) {
+      if (/^god ?damn/i.test(m[0]) || m[0].startsWith("fuck")) veraAct3Profanity++;
+    }
+  }
+}
+ok(veraAct3Profanity >= 4, `Vera's Act 3 register intact (True Romance profanity ×${veraAct3Profanity}, documented floor 4)`);
+
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 if (fail) process.exit(1);

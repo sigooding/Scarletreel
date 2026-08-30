@@ -1,7 +1,7 @@
 # Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
 
 **Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
-**Beta date:** 2026-08-30 · **Status:** production cut. Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs`. Cue sheet: `docs/nwt-soundtrack.md`.
+**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (see §2c). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`.
 
 ---
 
@@ -97,6 +97,29 @@ Soundtrack (engine inherit bug: a scene without `musicMode: "none"` keeps the pr
 - `package.json` version `1.0.0`
 
 Licensed needle-drop references stay in §4 and `docs/nwt-soundtrack.md`. The engine cannot start a new bed mid-scene, so Zimmer / Chet Baker / Chris Isaak remain supervisor notes, not files.
+
+## 2c. Re-audit — Act Three question ("do all playthroughs end on act 3, same style of dialogue?")
+
+**Question posed:** are all playthroughs ending on Act Three, in the same style of dialogue — or not?
+**Answer: yes.** A second full beta pass (this commit) added a machine audit — harness **section 12, "Act Three endings audit"** — so the answer is re-verifiable, not just asserted. Result: **72 passed, 0 failed.**
+
+- **All 2,560 complete playthroughs end on Act Three**, at one of exactly three endings: `She Stays` (512 paths), `Nobody's Witness` (1,024), `A Stopped Watch` (1,024). Zero dead ends; every scene reachable. No playthrough can stop short, and there is no Act One/Two exit to a terminal.
+- **All three endings are the same *style* of dialogue.** Each is a true ending (no choices, letterboxed) carrying a complete `endingData` (tier / headline / recap), written in the cut's spare register (Jack V.O. + silent parenthetical narrator beats), and **each closes on the same device**: a silent-narrator main-street bookend ("same as the first frame. Neon smearing teal and magenta"). They differ only in tier, score, and which character speaks last — that's the intended variation, not a drift in voice.
+  - `She Stays` — gold, 31 beats / 537 words, Vera last ("Doors."), theme keeps playing.
+  - `Nobody's Witness` — silver, 12 beats / 440 words, Jack last (drinks the cold coffee), cut at the door bell.
+  - `A Stopped Watch` — silver, 23 beats / 489 words, Rosa last (delivers the watch), unscored.
+- **Clock-rhyme integrity** is now checked per ending (the 11:47 booth time must stay monotonic into the ending's own stamps) — see the one bug this caught below.
+- **Vera's True Romance register** is still intact in Act Three (×4 documented profanity floor held).
+
+### One bug found and fixed
+The re-audit's clock check caught a real continuity slip in **`nwt_fa_vo1`** ("She Walks In"): it read **"Twenty-two minutes later the door bell."** The call is placed at 11:47, so a 22-minute walk means Vera arrives 12:09 a.m. — *after* the SHE STAYS ending stamps "Eleven forty-nine" and "eleven fifty-one" (the bag going back down). She can't be put down at 11:51 if she arrives at 12:09.
+
+**Fix:** "Twenty-two minutes" → **"Two minutes."** Now the arrival (11:49) lands exactly on the ending's first clock stamp, and "I said one hour… two minutes later the door bell — nobody in this town has hurried for anything in fifty years" reads sharper, not looser. The 11:47 → 11:49 → 11:51 rhyme the recap ("eleven fifty-one on a Friday") is built on is now internally consistent.
+
+The harness gained this as a permanent regression check (`She Walks In arrival … lands on or before SHE STAYS' first clock stamp`) — it **fails** on the old "Twenty-two" text and **passes** on "Two." All day-of-week references were re-swept against the §1 keep-list and remain clean.
+
+### Production gates (re-run this pass)
+`node scripts/beta/beta-harness.mjs` → 72/72 · `npx tsc --noEmit` → clean · `npm test` → engine 544/544 + import/export round-trip end-to-end · `npm run build` → single-file build OK. `package.json` 1.0.0, `CONTENT_REVISION` 36, newsstand badge **★ Production — True Romance Cut**, Play button + `#play` hash → this cut.
 
 ## 3. Still open — your call, not defects
 1. **Anachronism note (do with as you please):** the self-checkout/barcode rants and "nineteen ninety-something" line sit ~1998-2005; the rest of the text (mill closed '09, 2011 furnace, father's watch 40 years old) dates the film ~2024. Nobody asked for this to change and the scene's the best comedy in the picture — flagging only.
