@@ -10,6 +10,7 @@ import { NEON_DINER } from "./neonDiner";
 import { DEMO_CONVERSATION } from "./demoConversation";
 import { DEMO_SCENE_CRAFT } from "./demoSceneCraft";
 import { DEMO_STRUCTURE } from "./demoStructure";
+import { THE_LATE_SHIFT } from "./theLateShift";
 
 /**
  * The playable catalogue.
@@ -50,6 +51,7 @@ import { DEMO_STRUCTURE } from "./demoStructure";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  THE_LATE_SHIFT,
   STUDIO_TUTORIAL,
   DEMO_CONVERSATION,
   DEMO_SCENE_CRAFT,
