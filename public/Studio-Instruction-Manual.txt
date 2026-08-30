@@ -178,20 +178,25 @@
       cuts is the classic look). Defaults fall back to the scene's prose
       line-by-line.
 
-      LOOK PRESETS — at the top of the credits panel, ten one-click looks
+      LOOK PRESETS — at the top of the credits panel, sixteen one-click looks
       bundle every style knob at once (typeface, card motion, title entrance,
       title + accent colour, presentation style, the three timing sliders,
-      gate weave, montage pacing): PULP DEFAULT (also the reset button),
-      GRINDHOUSE SLAM, NOIR '40S, SILENT INTERTITLE, PRESTIGE AWARDS,
-      EPIC ROADSHOW, NEON NIGHT, REP-HOUSE ROLL, STREAMING COLD OPEN and
-      VHS MIDNIGHT. A preset writes the LOOK and never the CONTENT — your
-      title, subheading, credit lines and montage stills are carried through
-      untouched. Every knob below the grid stays editable, and the panel
-      tells you whether the node currently "matches a preset" or reads
-      "custom look" once you have hand-tweaked it. Switching presets is
-      clean: the new look replaces the whole bundle rather than stacking on
-      the old one. Presets live in src/credits.ts and are covered by the
-      engine tests.
+      gate weave, montage pacing). They are filed into four sections: START
+      HERE (PULP DEFAULT — also the reset button), WORN PRINT (GRINDHOUSE
+      SLAM, SATURDAY MATINEE, NOIR '40S, SILENT INTERTITLE, REP-HOUSE ROLL,
+      VHS MIDNIGHT), PRESTIGE & POLISH (PRESTIGE AWARDS, EPIC ROADSHOW,
+      CANDLELIGHT GOTHIC, COLD WAR DOSSIER, DAYTIME DRAMA, FINAL BOW) and
+      MODERN & ELECTRIC (STREAMING COLD OPEN, NEON NIGHT, GIALLO FLASH).
+      Each card previews itself — the preset's own typeface and title
+      colour, a one-line knob read-out under the name (hover for the full
+      story), and the panel header tells you which preset the node
+      currently "matches" or reads "custom look" once you have hand-tweaked
+      it. A preset writes the LOOK and never the CONTENT — your title,
+      subheading, credit lines and montage stills are carried through
+      untouched. Every knob below the grid stays editable, and switching
+      presets is clean: the new look replaces the whole bundle rather than
+      stacking on the old one. Presets live in src/credits.ts and are
+      covered by the engine tests.
 
    CUTSCENE NODE
       Adds a full-screen video/storyboard cutscene node. Hides the main HUD and
