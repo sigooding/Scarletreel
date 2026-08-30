@@ -23,7 +23,7 @@ let pass = 0;
 let fail = 0;
 const ok = (cond: boolean, msg: string) => {
   if (cond) { pass++; console.log(`  ✔ ${msg}`); }
-  else { fail++; console.log(`  �’ FAIL: ${msg}`); }
+  else { fail++; console.log(`  ✗ FAIL: ${msg}`); }
 };
 const section = (t: string) => console.log(`\n──────── ${t} ────────`);
 
@@ -122,7 +122,7 @@ while (queue.length) {
   }
 
   const choices = sc.choices ?? [];
-  if (choices.length === 0) { deadEnds++; console.log(`  �’ DEAD END at non-ending scene: ${sc.id} (path: ${w.path.join(" > ")})`); continue; }
+  if (choices.length === 0) { deadEnds++; console.log(`  ✗ DEAD END at non-ending scene: ${sc.id} (path: ${w.path.join(" > ")})`); continue; }
   for (const sub of subsets) {
     const st = stateFor(sub.flags);
     st.inventory = [...sub.items];
@@ -292,6 +292,47 @@ for (const e of S.scenes.filter(s => s.isEnding)) {
     console.log(`    items: ${[...sample.items].join(", ") || "(none)"}`);
   }
 }
+
+
+/* ── 11. Production soundtrack wiring ───────────────────────── */
+section("11. Soundtrack cue sheet");
+const SILENT = new Set([
+  "nwt_coldopen", "nwt_office", "nwt_warehouse", "nwt_warehouse_out",
+  "nwt_laundromat", "nwt_threeam", "nwt_pumps", "nwt_interlude",
+  "nwt_rental", "nwt_yard", "nwt_call", "nwt_rosa", "nwt_mill",
+  "nwt_cost", "nwt_trade", "nwt_diner2", "nwt_end_walks", "nwt_end_watch",
+]);
+const THEME = "/nobodys-witness.mp3";
+const DINER_JAZZ = "/Midnight in the Rain2.mp3";
+const JUKEBOX = "/nwt-bluecue-jukebox.mp3";
+const TRACKED: Record<string, string> = {
+  nwt_titles: THEME,
+  nwt_diner: DINER_JAZZ,
+  nwt_bluecue: JUKEBOX,
+  nwt_bluecue2: JUKEBOX,
+  nwt_vera: THEME,
+  nwt_end_stays: THEME,
+};
+const INHERIT = new Set([
+  "nwt_diner_take", "nwt_bluecue_out", "nwt_bluecue_named",
+  "nwt_bluecue_walk", "nwt_bluecue_fight",
+]);
+const leftoverDraftMusic: string[] = [];
+for (const sc of S.scenes) {
+  const url = sc.musicUrl ?? "";
+  if (url.includes("/uploads/nobodys-witness-draft/")) leftoverDraftMusic.push(`${sc.id} ${url}`);
+  if (SILENT.has(sc.id)) {
+    ok(sc.musicMode === "none", `${sc.id} is scored silent (musicMode none)`);
+  } else if (TRACKED[sc.id]) {
+    ok(sc.musicUrl === TRACKED[sc.id], `${sc.id} plays ${TRACKED[sc.id]}`);
+    ok(sc.musicMode === "track" || sc.musicMode === "inherit", `${sc.id} starts or keeps its bed`);
+  } else if (INHERIT.has(sc.id)) {
+    ok((sc.musicMode ?? "inherit") === "inherit" && !sc.musicUrl, `${sc.id} inherits the previous bed`);
+  }
+}
+ok(leftoverDraftMusic.length === 0, `no draft-upload music paths (${leftoverDraftMusic.join("; ") || "none"})`);
+ok(!JSON.stringify(S).includes("don't thank me yet"), `no leftover "don't thank me yet"`);
+ok(!JSON.stringify(S).includes("two hundred grand"), `no leftover "two hundred grand"`);
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 if (fail) process.exit(1);

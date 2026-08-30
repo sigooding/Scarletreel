@@ -45,7 +45,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "35";
+const CONTENT_REVISION = "36";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -270,6 +270,10 @@ const REVISION_RESETS: Record<string, string[]> = {
   // `asset:` refs and the pre-update graph — would otherwise shadow the
   // shipped story, so retire it.
   "35": ["nobodys-witness-draft"],
+  // r36: Nobody's Witness True Romance cut is production — soundtrack cue
+  // sheet, sepia-pulp HUD, leftover-copy fixes. Retire any Studio snapshot
+  // so the shipped graph and musicMode wiring win.
+  "36": ["nobodys-witness-true"],
 };
 
 function migrateLegacyStoryStorage() {
@@ -506,7 +510,10 @@ export default function App() {
     } else if (location.hash === "#studio" || new URLSearchParams(location.search).get("studio")) {
       setMode({ kind: "studio" });
     } else if (location.hash === "#play" || new URLSearchParams(location.search).get("play")) {
-      const flagship = STORIES.find((s) => s.id === "nobodys-witness-flagship") ?? STORIES[0];
+      const flagship =
+        STORIES.find((s) => s.id === "nobodys-witness-true") ??
+        STORIES.find((s) => s.id === "nobodys-witness-flagship") ??
+        STORIES[0];
       if (flagship) {
         void resolveStoryMedia(flagship).then((resolved) => {
           setMode({ kind: "play", story: resolved, primedMusic: null });
@@ -991,7 +998,7 @@ export default function App() {
                   onClick={() => play(stories[0] ?? catalog[0])}
                   className="border-2 border-gold bg-gold/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold shadow-[0_0_20px_rgba(232,178,60,0.3)] hover:bg-gold/25 transition-all hover:scale-105"
                 >
-                  ▶ Play Nobody's Witness (Dynamic Lens Flare)
+                  ▶ Play Nobody's Witness: True Romance Cut
                 </button>
                 <button
                   onClick={() => setMode({ kind: "studio" })}
@@ -1046,7 +1053,9 @@ export default function App() {
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-noir-950 via-transparent" />
                       <div className="absolute left-2 top-2 border border-gold/70 bg-noir-950/85 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold">
-                        {s.id === "nobodys-witness"
+                        {s.id === "nobodys-witness-true"
+                          ? "★ Production — True Romance Cut"
+                          : s.id === "nobodys-witness"
                           ? "★ Flagship — Graphic Novel"
                           : s.id === "low-midnight"
                           ? "⭐ New — Neon Noir Horror"
