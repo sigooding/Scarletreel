@@ -2381,8 +2381,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_m_v5",
           characterId: "vera",
-          expression: "measured, factual — the way people recite things they've rehearsed alone",
-          text: "Two hundred and eleven thousand dollars. Fourteen months of creeping around, being so careful I wasn't even allowed to know how careful. David moved the money. I tracked the shape of the empty spaces he left — never the numbers, he kept those between his teeth. I picked the date. I built the folder. I picked you.",
+          expression: "measured, factual — the way people recite things they've rehearsed alone, and then it starts to come out wrong",
+          text: "Two hundred and eleven thousand dollars. I picked the date. I built the folder. I picked you. That's my homework. Fourteen months of creeping around, being so careful I wasn't even allowed to know how careful. David moved the money. I tracked the shape of the empty spaces he left — never the numbers, he kept those between his teeth. I didn't know the first fucking thing about the books. I knew the part that mattered: there'd be a bag I could put my hand on and a town I could stop owing. And I killed him with HOMEWORK, Jack. That's not even a thing a person gets to be. There isn't a word for what I am.",
         },
         {
           id: "nwt_m_j5",
@@ -2392,20 +2392,20 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_m_v6",
           characterId: "vera",
-          expression: "simply",
-          text: "Because you're the only man in Blackwood who doesn't work for Solomon and doesn't want to.",
+          expression: "simply, and then the charm slides off it",
+          text: "I picked a man because he looked lonely enough to say yes. That's the whole reason, honey. I'm not gonna hand you the pretty version now that you've heard the other one.",
         },
         {
           id: "nwt_m_j6",
           characterId: "jack",
-          expression: "quiet",
+          expression: "quiet, not angry",
           text: "That's not a compliment. That's a spec sheet.",
         },
         {
           id: "nwt_m_v7",
           characterId: "vera",
           expression: "not denying it",
-          text: "No. It's not a compliment.",
+          text: "Yeah. I told myself it was a good reason all week. It wasn't a good reason. It was the only reason I had.",
         },
         {
           id: "nwt_m_j7",
@@ -2448,6 +2448,12 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           characterId: "vera",
           expression: "even",
           text: "Because if I'd told him, he'd have run. And if he'd run with the money, I'd have had nothing. That's what I'd been telling myself all week — and it might've been enough if I'd let it ring out. I hung up before anybody answered, and then I told myself the arithmetic made it a decision. It didn't. I was scared. That's the more honest version.",
+        },
+        {
+          id: "nwt_m_v10b",
+          characterId: "vera",
+          expression: "cutting herself off, furious about it",
+          text: "And don't you look at me like that. God damn it. This is what fine looks like, Jack. You've never seen me any other way, and you're not gonna start now.",
         },
         {
           id: "nwt_m_v11",
@@ -2561,7 +2567,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v21",
           characterId: "vera",
           expression: "not looking at him",
-          text: "I've already cost one man everything he had. I'm standing here doing the math on the second one.",
+          text: "I've already cost one man everything he had. I'm standing here doing the fucking math on the second one.",
         },
         {
           id: "nwt_m_j15",
@@ -2675,6 +2681,12 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           characterId: "rosa",
           expression: "still not looking at him",
           text: "All of it. The two-eleven plus what her father still owed. He's calling it one number now. Two hundred and twenty-two thousand. He gave her till Friday.",
+        },
+        {
+          id: "nwt_ct_r4b",
+          characterId: "rosa",
+          expression: "flat, not unkind",
+          text: "And your forty-eight went out this morning. I know you know. You've been carrying that thing around dead on your back all day and you never once said it. That's not stealth, Jack. That's just where you put the weight.",
         },
         {
           id: "nwt_ct_j3",
@@ -3011,7 +3023,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_bw_vo1",
           characterId: "jack",
           expression: "V.O. — spare, breaking",
-          text: "Two hundred and eleven thousand dollars in a bag, eleven hours where she could have called him — and at the end of it, he still wouldn't say her name. I've thought about which one of us that makes the fool. I keep getting the same answer and I keep not liking it.",
+          text: "Two hundred and eleven thousand dollars in a bag, eleven hours with his number in her hand. And tonight she told me the part that got me wasn't the killing. It was that she called. Three rings, and she hung up before anybody answered — and then she told herself the arithmetic made it a decision. It didn't. And at the end of it, he still wouldn't say her name. I keep trying to make it a better story for her. I keep getting the same answer. I've thought about which one of us that makes the fool. I keep not liking it.",
         },
       ],
       choices: [
