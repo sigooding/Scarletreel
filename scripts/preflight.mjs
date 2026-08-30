@@ -103,21 +103,31 @@ function walk(story, avoidEndings = true) {
       if (ne.length) navs = ne;
     }
     const nav = navs.sort((a, b) => (idx.get(b.targetSceneId) ?? 0) - (idx.get(a.targetSceneId) ?? 0))[0];
-    const pick = nav ?? usable.find((c) => c.reply);
+    if (nav) {
+      used.add(`${sc.id}:${nav.id}`);
+      if (nav.exclusiveGroup) (sc.choices ?? []).filter((o) => o.exclusiveGroup === nav.exclusiveGroup).forEach((o) => used.add(`${sc.id}:${o.id}`));
+      state = applyConsequences(story, nav.consequences, state);
+      if (nav.memoryLog) state = { ...state, memories: { ...state.memories, [nav.memoryLog]: nav.text } };
+      cur = nav.targetSceneId;
+      continue;
+    }
+    // No navigation choice yet — on a stage node the exit is a walk-to door
+    // hotspot, not a choice. Only consider hotspots that actually route
+    // somewhere (give-item / show-text markers must not be mistaken for exits).
+    const routes = (sc.hotspots ?? []).filter((h) => h.action.targetSceneId || h.action.patternPuzzle?.targetSceneId);
+    const hs = routes.find((h) => !used.has(`${sc.id}:${h.id}`) && meetsGating(h.gating, state));
+    if (hs) {
+      used.add(`${sc.id}:${hs.id}`);
+      const target = hs.action.targetSceneId || hs.action.patternPuzzle?.targetSceneId;
+      if (target) {
+        cur = target;
+        continue;
+      }
+    }
+    const pick = usable.find((c) => c.reply);
     if (!pick && sc.autoAdvanceTargetSceneId) {
       cur = sc.autoAdvanceTargetSceneId;
       continue;
-    }
-    if (!pick && sc.hotspots?.length) {
-      const hs = sc.hotspots.find((h) => !used.has(`${sc.id}:${h.id}`) && meetsGating(h.gating, state));
-      if (hs) {
-        used.add(`${sc.id}:${hs.id}`);
-        const target = hs.action.targetSceneId || hs.action.patternPuzzle?.targetSceneId;
-        if (target) {
-          cur = target;
-          continue;
-        }
-      }
     }
     if (!pick) return { ending: null, visited, stuck: sc.id };
     used.add(`${sc.id}:${pick.id}`);
