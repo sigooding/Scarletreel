@@ -39,3 +39,15 @@ Clearance is on you. These are the True Romance / Tarantino energies the beds ar
 | A STOPPED WATCH, after Rosa | Chris Isaak *Two Hearts* (on the TR soundtrack) | One song that says it out loud — **not wired** |
 
 If licensing never happens, the synth equivalent is: one 4-note glockenspiel motif (broken at the titles, whole at She Walks In) plus the two diegetic beds already in the build (diner jazz, Blue Cue jukebox).
+
+## If you license only three tracks
+
+1. **The motif** — *You're So Cool* for: cold open (broken), yard (sadder), mill (wrong), final diner + SHE STAYS (whole). Drop it in as `/music/youre-so-cool.mp3`; the five wiring points are marked in the table above.
+2. **Jim Reeves — *He'll Have to Go*** — warehouse terms + the faint callback in the trade. The two scenes that turn Solomon human.
+3. **Chris Isaak — *Two Hearts*** — A STOPPED WATCH only. One needle-drop at the end of the picture.
+
+## Housekeeping
+
+- `/nobodys-witness.mp3` is a ~32 kbps encode. Fine as a bed, but if it carries the hero moment (final diner / She Walks In), re-render it at 128+ kbps — it is the track people will remember.
+- `/Midnight in the Rain2.mp3` (128 kbps, ~4:39) is the canonical diner jazz.
+- The Blue Cue bed and the gunshot already ship as `/nwt-bluecue-jukebox.mp3` and `/nwt-gunshot.wav` — no `/uploads/` references remain in the cut.
