@@ -1,7 +1,7 @@
 # Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
 
 **Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
-**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (see §2c). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`.
+**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (two sittings: §2c Act Three endings audit — all playthroughs end on Act Three, one clock fix; §5 Studio canvas completed to a 29-slot serpentine). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`.
 
 ---
 
@@ -155,3 +155,20 @@ You already score the titles with `/nobodys-witness.mp3` and the pool hall with 
 | **A STOPPED WATCH** | no music until Rosa leaves. Then a needle-drop with lyrics — Alabama-level directness: Chris Isaak *"Two Hearts"* (it's literally on the True Romance soundtrack) over the watch-in-hand and the one-figure bookend | You've earned one song that says it out loud |
 
 If licensing is impossible, the synth-composed equivalent is: one 4-note "You're So Cool"-style glockenspiel motif stated broken at the cold open, developed at the mill, stated whole at the final diner — plus the two diegetic country beds (pool hall, pumps) the warped-jukebox audio is already faking.
+
+---
+
+## 5. Beta pass 2 — second sitting, same day
+
+Re-ran the full gate on the production cut: beta harness 12/12 (same 6,086 states / 2,560 plays), `tsc --noEmit` clean, 544/544 engine tests, import/export round trip, preflight, production build, `npm run check` (264/264 playable assets), dev-server boot smoke test.
+
+### 5a. Studio canvas: four scenes stacked at the origin — fixed
+`story.layout` had 25 entries for 29 scenes. The continuation/branch nodes added by the earlier fixes — `nwt_diner_take`, `nwt_bluecue_out`, `nwt_bluecue_named`, `nwt_warehouse_out` — had no slot, so Studio rendered them piled at (0, 0). The layout is now a complete 29-slot serpentine in the same visual grammar (left→right then right→left rows, branches trailing their parent, the endings fanning out below Vera). The coldopen/titles/diner cards keep their original slots; everything downstream shifts one row-band to absorb the four new nodes. Player-facing play is unaffected — the in-game route chart is journey-based, not canvas-based.
+
+### 5b. Music wiring — independently re-derived, confirmed, no further changes
+The three misalignments this sitting set out to fix (office inheriting the pool-hall jukebox, the walks ending carrying the full motif past the door bell, and the Act 1 diner playing a buried draft-upload bed) were **already corrected by the production pass**: the diner plays `/Midnight in the Rain2.mp3` (track, level 0.45), the office and every dry scene carry explicit `musicMode: "none"`, the jukebox bed lives at `/nwt-bluecue-jukebox.mp3`, the gunshot at `/nwt-gunshot.wav`, and NOBODY'S WITNESS cuts at the door (fade 1.8s). Verified end-to-end against the cue sheet — wiring now matches it exactly, including A STOPPED WATCH going `none` (the engine can't drop a song mid-scene after Rosa leaves; silence is the correct authoring choice). Cue sheet: `docs/nwt-soundtrack.md`.
+
+### 5c. Still open — your call, not defects
+1. **The anachronism note (§3.1) still stands** — self-checkout/barcode rants sit ~1998–2005 while the mill/furnace/watch math dates the film ~2024. Left alone; it's the best comedy in the picture.
+2. **"Doc" has no surname at first mention.** The rental V.O. says "Doc came through on the motel"; every later mention is "Doc Sato" (mill confession, final diner, A STOPPED WATCH). If Doc is Sato, one surname at first mention would prime the load-bearing confession; if Doc is a *different* contact, the nickname is confusingly identical. Either way it wants one clarifying word — not changed because the canon timeline around Tuesday is load-bearing.
+3. **A STOPPED WATCH** wants the licensed *"Two Hearts"* needle-drop once Rosa leaves; without clearance the scene runs silent (see the cue sheet's licensed-reference table).
