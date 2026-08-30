@@ -12,10 +12,26 @@
  */
 import {
   applyConsequences,
+  applyLieCaught,
+  applyLieWrong,
+  beatLie,
   combineItems,
   collectFlags,
   collectMemoryTags,
   composureRemaining,
+  DEFAULT_WRONG_EVIDENCE_LIMIT,
+  evidenceBreaksLie,
+  everyDialogueBeat,
+  lieCanStillPress,
+  lieWrongLine,
+  wrongEvidenceLimit,
+  STAGE2D_DEFAULT_REACH,
+  STAGE2D_DEFAULT_SPEED,
+  stepStagePos,
+  hotspotCenter,
+  posReachesHotspot,
+  hotspotAtPoint,
+  clampStagePos,
   createInitialState,
   effectiveChoiceGating,
   examineZoom,
@@ -43,7 +59,7 @@ import {
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { NEON_DINER } from "../src/data/neonDiner";
-import type { Choice, EpisodeProgress, GameSave, JourneyStep, SceneNode, Story } from "../src/types";
+import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, Story } from "../src/types";
 
 let passed = 0;
 const failures: string[] = [];
@@ -281,6 +297,513 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("validator: warns on recall key that is neither memory nor flag", ghostGates.length >= 1, issues);
   const realFlagWarns = issues.filter((i) => /real_flag/.test(i.message));
   check("validator: accepts a real flag as recall key", realFlagWarns.length === 0, realFlagWarns);
+}
+
+/* ---- craft audit: the story-craft linter checks --------------------
+ * These detect the mechanical signatures of a story that can be walked but
+ * never lands: a flag that changes nothing, a promise the story forgets, a
+ * deadline that costs nothing, two answers that are the same answer twice,
+ * and a long run of scenes where the player is never asked a thing. */
+{
+  const endScene = (id: string): SceneNode => ({
+    id,
+    title: id === "e" ? "End" : `End ${id}`,
+    background: "",
+    prose: "",
+    isEnding: true,
+    endingData: { tier: "victory-gold", headline: "H", recap: "R" },
+  });
+  const craftStory = (scenes: SceneNode[], extra: Partial<Story> = {}): Story => ({
+    id: "craft",
+    title: "Craft",
+    tagline: "",
+    coverImage: "",
+    startSceneId: scenes[0].id,
+    scenes: [...scenes, endScene("e")],
+    items: [],
+    characters: [],
+    ...extra,
+  });
+  const craftIssues = (scenes: SceneNode[], extra?: Partial<Story>) => validateStory(craftStory(scenes, extra));
+  const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+  // (a) A flag set by a choice but never read is dead — unless a gate, a beat
+  // recall, or a flag note gives it a payoff.
+  {
+    const dead: SceneNode = {
+      id: "s",
+      title: "Set",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Do the thing", targetSceneId: "e", consequences: { setFlags: ["ghost_flag"] } },
+      ],
+    };
+    const warned = craftIssues([dead]);
+    check("craft: dead set-flag is warned", has(warned, /"ghost_flag" is set but never read/), warned);
+    check("craft: dead set-flag attaches to the producer scene", warned.some((i) => /is set but never read/.test(i.message) && i.sceneId === "s"));
+
+    const paid: SceneNode = {
+      id: "s",
+      title: "Set",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Do the thing", targetSceneId: "e", consequences: { setFlags: ["live_flag"] } },
+        { id: "c2", text: "The payoff", targetSceneId: "e", gating: { requiresFlags: ["live_flag"] } },
+      ],
+    };
+    check("craft: flag read by a gate is not dead", !has(craftIssues([paid]), /"live_flag" is set but never read/));
+
+    const recalled: SceneNode = {
+      id: "s",
+      title: "Set",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "Do the thing", targetSceneId: "e", consequences: { setFlags: ["recall_flag"] } }],
+      dialogueBeats: [{ id: "b", characterId: "narrator", text: "Hello.", recalls: { recall_flag: "Yes, you did the thing." } }],
+    };
+    check("craft: flag read by a beat recall is not dead", !has(craftIssues([recalled]), /"recall_flag" is set but never read/));
+
+    // A noted flag is a journal entry — the player reads it in "Story so far".
+    check(
+      "craft: flag with a flagNote is not flagged dead",
+      !has(craftIssues([dead], { flagNotes: { ghost_flag: "You did the thing." } }), /"ghost_flag" is set but never read/)
+    );
+    // Interrogation crack/clamp flags are read by the engine itself.
+    const interrogated: SceneNode = {
+      id: "s",
+      title: "Press",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "p1", text: "Press her", reply: true, attitudeTag: "Aggressive" },
+        { id: "p2", text: "Press harder", reply: true, attitudeTag: "Clever" },
+        { id: "go", text: "Leave it", targetSceneId: "e" },
+      ],
+      dialogueBeats: [{ id: "b", characterId: "narrator", text: "Sit down." }],
+      interrogation: {
+        characterId: "narrator",
+        brokeFlag: "she_broke",
+        clampFlag: "she_clamped",
+        brokeBeat: { id: "br", characterId: "narrator", text: "I'll talk." },
+      },
+    };
+    check(
+      "craft: interrogation crack/clamp flags are not dead (engine reads them)",
+      !has(craftIssues([interrogated]), /"(she_broke|she_clamped)" is set but never read/)
+    );
+    // Deduction-board connection flags are read by the board at runtime.
+    const boardIssues = craftIssues([
+      { id: "s", title: "Board", background: "", prose: "", choices: [{ id: "c", text: "Link", targetSceneId: "e" }] },
+    ], {
+      items: [{ id: "clue1", name: "Coin", icon: "🪙", description: "", flavorText: "" }],
+      characters: [{ id: "v", name: "Vince", role: "Suspect", avatarUrl: "", trustMeter: 0 }],
+      deduction: { suspectIds: ["v"], connections: [{ a: "clue1", b: "v", flagSet: "board_link", revelation: "R" }] },
+    });
+    check("craft: deduction connection flag is not dead", !has(boardIssues, /"board_link" is set but never read/));
+  }
+
+  // (b) A flag that is cleared but never set does nothing — a flag starts
+  // unset, so the clear can never fire.
+  {
+    const cleared: SceneNode = {
+      id: "s",
+      title: "Clear",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "Take it back", targetSceneId: "e", consequences: { clearFlags: ["never_set_flag"] } }],
+    };
+    check("craft: clear-without-set is warned", has(craftIssues([cleared]), /"never_set_flag" is cleared somewhere but never set/));
+    const setThenCleared: SceneNode = {
+      id: "s",
+      title: "Clear",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Give it up", targetSceneId: "e", consequences: { setFlags: ["set_flag"] } },
+        { id: "c2", text: "Take it back", targetSceneId: "e", gating: { requiresFlags: ["set_flag"] }, consequences: { clearFlags: ["set_flag"] } },
+      ],
+    };
+    check("craft: clear of a set flag is fine", !has(craftIssues([setThenCleared]), /cleared somewhere but never set/));
+  }
+
+  // (c) A memoryLog tag nobody recalls, and a "will remember that" card with
+  // nothing behind it — the promise with no payoff.
+  {
+    const forgotten: SceneNode = {
+      id: "s",
+      title: "Talk",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "I never liked her.", targetSceneId: "e", memoryLog: "opinion" }],
+    };
+    check("craft: un-recalled memory tag is warned", has(craftIssues([forgotten]), /Memory "opinion" is recorded by a choice but never recalled/));
+
+    const recalledTag: SceneNode = {
+      id: "s",
+      title: "Talk",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "I never liked her.", targetSceneId: "e", memoryLog: "opinion_recalled" }],
+      dialogueBeats: [{ id: "b", characterId: "narrator", text: "Sure.", recalls: { opinion_recalled: "You said: {said}" } }],
+    };
+    check("craft: recalled memory tag is fine", !has(craftIssues([recalledTag]), /never recalled/));
+
+    const gatedMemory: SceneNode = {
+      id: "s",
+      title: "Talk",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "I never liked her.", targetSceneId: "e", memoryLog: "opinion_gated" },
+        { id: "c2", text: "Payoff", targetSceneId: "e", gating: { requiresMemories: ["opinion_gated"] } },
+      ],
+    };
+    check("craft: memory tag read by a remembers-gate is fine", !has(craftIssues([gatedMemory]), /never recalled/));
+
+    // item: keys recorded by the present verb are self-describing.
+    const present: SceneNode = {
+      id: "s",
+      title: "Present",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "Show the coin", targetSceneId: "e", presentItem: "coin" }],
+    };
+    const presentIssues = craftIssues([present], {
+      items: [{ id: "coin", name: "Coin", icon: "🪙", description: "", flavorText: "" }],
+      scenes: [
+        present,
+        { id: "g", title: "Grant", background: "", prose: "", hotspots: [{ id: "h", label: "Coin", bounds: { x: 0, y: 0, w: 5, h: 5 }, cursor: "take", action: { type: "setFlag" } }] },
+        endScene("e"),
+      ],
+    });
+    check("craft: present-item memory key is not flagged", !has(presentIssues, /item:coin/));
+
+    const emptyPromise: SceneNode = {
+      id: "s",
+      title: "Talk",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "Cross your arms.", targetSceneId: "e", rememberLine: "Lydia will remember that." }],
+    };
+    check("craft: rememberLine with no payload is warned", has(craftIssues([emptyPromise]), /shows a "will remember that" card but tags no memory/));
+
+    // In an episodic season every recorded choice lands on the episode-end
+    // "defining choices" card, so un-recalled memories are not dead.
+    const seasonIssues = craftIssues([forgotten], {
+      episodes: [{ id: "ep1", title: "Chapter One", sceneIds: ["s", "e"], startSceneId: "s" }],
+    });
+    check("craft: un-recalled memory in a season is fine (end-card highlights)", !has(seasonIssues, /Memory "opinion" is recorded/));
+    const paidPromise: SceneNode = {
+      id: "s",
+      title: "Talk",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "I trusted you.", targetSceneId: "e", memoryLog: "trust_betrayed", rememberLine: "Lydia will remember that." }],
+      dialogueBeats: [{ id: "b", characterId: "narrator", text: "…", recalls: { trust_betrayed: "You told her you trusted her." } }],
+    };
+    check("craft: rememberLine carrying a memory is fine", !has(craftIssues([paidPromise]), /tags no memory/));
+  }
+
+  // (d) A quick-time deadline whose expiry cannot change what happens — the
+  // fake timer. Hesitation must be a real branch.
+  {
+    const fakeNav: SceneNode = {
+      id: "s",
+      title: "QTE",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "Duck!", targetSceneId: "e", quickTime: true, timeLimitSeconds: 4 }],
+    };
+    check("craft: QTE with no timeout branch is warned", has(craftIssues([fakeNav]), /changes nothing when the timer runs out/));
+
+    const fakeReply: SceneNode = {
+      id: "s",
+      title: "QTE",
+      background: "",
+      prose: "",
+      choices: [{ id: "c1", text: "Answer her!", reply: true, quickTime: true, timeLimitSeconds: 4 }],
+    };
+    check("craft: quick-time reply with no timeout consequences is warned", has(craftIssues([fakeReply]), /changes nothing when the timer runs out/));
+
+    const realBranch: SceneNode = {
+      id: "s",
+      title: "QTE",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Swing!", targetSceneId: "e", quickTime: true, timeLimitSeconds: 4, timedOutTargetSceneId: "hesitated" },
+      ],
+    };
+    check("craft: QTE with a distinct timeout scene is fine", !has(craftIssues([realBranch, { id: "hesitated", title: "Hesitated", background: "", prose: "", choices: [{ id: "h", text: "On", targetSceneId: "e" }] }]), /changes nothing when the timer runs out/));
+
+    const sameSceneButConsequences: SceneNode = {
+      id: "s",
+      title: "QTE",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Speak!", reply: true, quickTime: true, timeLimitSeconds: 4, timedOutConsequences: { setFlags: ["you_hesitated"] } },
+        { id: "c2", text: "On", targetSceneId: "e", gating: { requiresFlags: ["you_hesitated"] }, hidden: true },
+      ],
+    };
+    check("craft: QTE with timeout consequences is fine even in place", !has(craftIssues([sameSceneButConsequences]), /changes nothing when the timer runs out/));
+  }
+
+  // (e) Two visible choices that answer identically — the same decision in a
+  // hat. Different destination, attitude, effects or memory makes them real.
+  {
+    const twins: SceneNode = {
+      id: "s",
+      title: "Ask",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Walk in the front door.", targetSceneId: "e" },
+        { id: "c2", text: "Enter through the entrance.", targetSceneId: "e" },
+      ],
+    };
+    check("craft: identical choice twins are warned", has(craftIssues([twins]), /same decision twice/));
+
+    const differentAttitude: SceneNode = {
+      id: "s",
+      title: "Ask",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Ask nicely.", targetSceneId: "e", attitudeTag: "Sultry" },
+        { id: "c2", text: "Demand it.", targetSceneId: "e", attitudeTag: "Aggressive" },
+      ],
+    };
+    check("craft: same destination but different attitude is fine", !has(craftIssues([differentAttitude]), /same decision twice/));
+
+    const remembered: SceneNode = {
+      id: "s",
+      title: "Ask",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Take the left.", targetSceneId: "e", memoryLog: "went_left" },
+        { id: "c2", text: "Take the right.", targetSceneId: "e" },
+      ],
+    };
+    check("craft: twin words but one is remembered is fine", !has(craftIssues([remembered]), /same decision twice/));
+
+    const differentEffect: SceneNode = {
+      id: "s",
+      title: "Ask",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Take the money.", targetSceneId: "e", consequences: { setFlags: ["took_money"] } },
+        { id: "c2", text: "Leave the money.", targetSceneId: "e", consequences: { setFlags: ["refused_money"] } },
+      ],
+    };
+    check("craft: twin words but different consequences is fine", !has(craftIssues([differentEffect]), /same decision twice/));
+
+    const twinReplies: SceneNode = {
+      id: "s",
+      title: "Ask",
+      background: "",
+      prose: "",
+      choices: [
+        { id: "c1", text: "Sure.", reply: true },
+        { id: "c2", text: "Yeah.", reply: true },
+        { id: "c3", text: "Enough talking.", targetSceneId: "e" },
+      ],
+    };
+    check("craft: identical in-place replies are warned", has(craftIssues([twinReplies]), /same decision twice/));
+  }
+
+  // (g) Four or more reachable scenes in a row with no choice, hotspot or
+  // interrogation — a passive corridor where the player only clicks Continue.
+  {
+    // Build p0→p1→p2→p3→p4→ending: p0 asks a choice, then four passive
+    // auto-advancing scenes the player can only click through.
+    const chain: SceneNode[] = [
+      { id: "p0", title: "p0", background: "", prose: "…", choices: [{ id: "go", text: "Walk on", targetSceneId: "p1" }] },
+      { id: "p1", title: "p1", background: "", prose: "…", autoAdvanceTargetSceneId: "p2" },
+      { id: "p2", title: "p2", background: "", prose: "…", autoAdvanceTargetSceneId: "p3" },
+      { id: "p3", title: "p3", background: "", prose: "…", autoAdvanceTargetSceneId: "p4" },
+      { id: "p4", title: "p4", background: "", prose: "…", autoAdvanceTargetSceneId: "e" },
+    ];
+    const warned = craftIssues(chain);
+    check("craft: a 4-scene passive corridor is warned", has(warned, /scenes in a row with no choice, hotspot or interrogation/), warned);
+    check("craft: corridor warning attaches to the corridor's first scene", warned.some((i) => /in a row with no choice/.test(i.message) && i.sceneId === "p1"));
+
+    // A credits or cutscene set-piece in the middle breaks the corridor —
+    // those are authored non-interactive, not pacing dead zones.
+    const withSetPiece: SceneNode[] = [
+      { id: "p0", title: "p0", background: "", prose: "…", choices: [{ id: "go", text: "Walk on", targetSceneId: "p1" }] },
+      { id: "p1", title: "p1", background: "", prose: "…", autoAdvanceTargetSceneId: "title" },
+      { id: "title", title: "Title", background: "", prose: "", nodeType: "credits", autoAdvanceTargetSceneId: "p2" },
+      { id: "p2", title: "p2", background: "", prose: "…", autoAdvanceTargetSceneId: "p3" },
+      { id: "p3", title: "p3", background: "", prose: "…", autoAdvanceTargetSceneId: "e" },
+    ];
+    check("craft: a credits set-piece breaks the passive corridor", !has(craftIssues(withSetPiece), /in a row with no choice/));
+
+    // An interactive beat in the middle breaks it too.
+    const withBeat: SceneNode[] = [
+      { id: "p0", title: "p0", background: "", prose: "…", choices: [{ id: "go", text: "Walk on", targetSceneId: "p1" }] },
+      { id: "p1", title: "p1", background: "", prose: "…", autoAdvanceTargetSceneId: "p2" },
+      { id: "p2", title: "p2", background: "", prose: "…", autoAdvanceTargetSceneId: "p3" },
+      {
+        id: "p3",
+        title: "p3",
+        background: "",
+        prose: "…",
+        autoAdvanceTargetSceneId: "e",
+        hotspots: [{ id: "look", label: "Look", bounds: { x: 0, y: 0, w: 5, h: 5 }, cursor: "look", action: { type: "showText", text: "A clue." } }],
+      },
+    ];
+    check("craft: a hotspot mid-run breaks the passive corridor", !has(craftIssues(withBeat), /in a row with no choice/));
+  }
+}
+
+/* ---- stage 2d movement helpers ------------------------------------- */
+{
+  check("stage2d: default speed/reach are positive", STAGE2D_DEFAULT_SPEED > 0 && STAGE2D_DEFAULT_REACH > 0);
+  check("stage2d: clampStagePos keeps points inside the plate", JSON.stringify(clampStagePos(120, -5)) === JSON.stringify({ x: 99, y: 1 }));
+
+  // A step that overshoots the target snaps to it and reports arrival.
+  const start = { x: 50, y: 80 };
+  const near = stepStagePos(start, { x: 52, y: 80 }, 18, 1, 16 / 9);
+  check("stage2d: a big enough step arrives", near.arrived === true && near.x === 52 && near.y === 80, near);
+
+  // A short step moves but doesn't arrive, covering less than speed*dt.
+  const far = stepStagePos(start, { x: 80, y: 80 }, 18, 0.1, 16 / 9);
+  check("stage2d: a short step advances toward the target", !far.arrived && far.x > start.x && far.x < 80, far);
+
+  // Aspect correction: at a wide plate, a pure-vertical target moves far
+  // less in y% than the raw speed would suggest.
+  const upWide = stepStagePos({ x: 50, y: 80 }, { x: 50, y: 40 }, 18, 0.1, 2.0);
+  const upTall = stepStagePos({ x: 50, y: 80 }, { x: 50, y: 40 }, 18, 0.1, 0.8);
+  check("stage2d: vertical step is aspect-corrected (wide < tall in y%)", (80 - upWide.y) < (80 - upTall.y), { wideDy: 80 - upWide.y, tallDy: 80 - upTall.y });
+
+  const hs: Hotspot = {
+    id: "desk",
+    label: "Desk",
+    bounds: { x: 40, y: 50, w: 20, h: 20 },
+    cursor: "take",
+    action: { type: "giveItem", itemGranted: "i" },
+  };
+  const center = hotspotCenter(hs);
+  check("stage2d: hotspot center is the middle of its bounds", center.x === 50 && center.y === 60, center);
+  check("stage2d: at the center the character reaches the hotspot", posReachesHotspot(center, hs, STAGE2D_DEFAULT_REACH, 16 / 9));
+  check("stage2d: far away the hotspot is out of reach", !posReachesHotspot({ x: 5, y: 90 }, hs, STAGE2D_DEFAULT_REACH, 16 / 9));
+  check("stage2d: hotspotAtPoint finds a zone under a point", hotspotAtPoint([hs], { x: 45, y: 55 })?.id === "desk");
+  check("stage2d: hotspotAtPoint misses empty plate", hotspotAtPoint([hs], { x: 5, y: 5 }) === null);
+  // Topmost zone wins on overlap.
+  const onTop: Hotspot = { ...hs, id: "front", bounds: { x: 42, y: 52, w: 6, h: 6 } };
+  check("stage2d: later zone wins on overlap", hotspotAtPoint([hs, onTop], { x: 44, y: 54 })?.id === "front");
+}
+
+/* ---- press the lie (contradiction verb) ---------------------------- */
+{
+  // The lie helpers: only named evidence that the player actually HELD
+  // breaks the claim; everything else is a called bluff.
+  const lie: Contradiction = {
+    evidenceItemIds: ["receipt"],
+    contradictedFlag: "alibi_broken",
+    caughtBeat: { id: "caught", characterId: "sus", text: "How did you get that?", conditionRule: { requiresFlags: ["alibi_broken"] } },
+    wrongBeat: { id: "wrong", characterId: "sus", text: "That means nothing." },
+    wrongEvidenceLimit: 2,
+    contradictedConsequences: { trustChanges: [{ characterId: "sus", delta: 2 }], meterChanges: [{ meter: "Suspicion", delta: -1 }] },
+    wrongConsequences: { trustChanges: [{ characterId: "sus", delta: -1 }], meterChanges: [{ meter: "Suspicion", delta: 1 }] },
+  };
+  check("lie: named + held evidence breaks it", evidenceBreaksLie(lie, ["receipt", "coin"], "receipt") === true);
+  check("lie: named evidence NOT held doesn't break", evidenceBreaksLie(lie, ["coin"], "receipt") === false);
+  check("lie: held but un-named item is a bluff", evidenceBreaksLie(lie, ["coin", "receipt"], "coin") === false);
+  check("lie: default wrong limit is 2", DEFAULT_WRONG_EVIDENCE_LIMIT === 2);
+  check("lie: explicit limit respected", wrongEvidenceLimit(lie) === 2);
+  check("lie: can press under the limit", lieCanStillPress(lie, 1) === true);
+  check("lie: shuts at the limit", lieCanStillPress(lie, 2) === false);
+  check("lie: wrong line falls back to authored bluff beat", lieWrongLine(lie).includes("means nothing"));
+  check("lie: wrong line defaults when no wrongBeat", lieWrongLine({ ...lie, wrongBeat: undefined }).length > 0);
+
+  // applyLieCaught sets the flag and runs the swing; applyLieWrong costs trust.
+  const s0: GlobalState = {
+    activeFlags: new Set<string>(),
+    inventory: [],
+    meters: { Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 2 },
+    characterTrust: { sus: 0 },
+    memories: {},
+  };
+  const storyForLie: Story = {
+    id: "lie",
+    title: "Lie",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "s",
+    scenes: [],
+    items: [],
+    characters: [{ id: "sus", name: "Sus", role: "", avatarUrl: "", trustMeter: 0 }],
+  };
+  const caught = applyLieCaught(storyForLie, lie, s0);
+  check("lie: caught sets the contradicted flag", caught.activeFlags.has("alibi_broken"));
+  check("lie: caught swings trust", caught.characterTrust.sus === 2);
+  check("lie: caught lowers heat", caught.meters.Suspicion === 1);
+  const wrong = applyLieWrong(storyForLie, lie, s0);
+  check("lie: bluff costs trust", wrong.characterTrust.sus === -1);
+  check("lie: bluff raises heat", wrong.meters.Suspicion === 3);
+  check("lie: bluff does not set the flag", !wrong.activeFlags.has("alibi_broken"));
+
+  // everyDialogueBeat includes the nested caught/wrong beats.
+  const claimBeat: DialogueBeat = { id: "claim", characterId: "sus", text: "I was home.", lie };
+  const withBeats: Story = { ...storyForLie, scenes: [{ id: "s", title: "S", background: "", prose: "", dialogueBeats: [claimBeat] }] };
+  const all = everyDialogueBeat(withBeats);
+  check("lie: everyDialogueBeat walks the nested caught + wrong beats", all.some((b) => b.id === "caught") && all.some((b) => b.id === "wrong"), all.map((b) => b.id));
+  check("lie: beatLie reads the contradiction off a beat", beatLie(claimBeat)?.contradictedFlag === "alibi_broken");
+
+  // collectFlags/collectMemoryTags see the runtime-set caught flag.
+  check("lie: collectFlags includes the caught flag", collectFlags(withBeats).includes("alibi_broken"));
+
+  // Validator: a well-formed lie raises no lie errors; missing evidence /
+  // missing flag / ungated caught beat are caught.
+  const item = { id: "receipt", name: "Motel Receipt", icon: "🧾", description: "", flavorText: "", isClue: true };
+  const lieScene = (beat: DialogueBeat): SceneNode => ({
+    id: "s",
+    title: "S",
+    background: "",
+    prose: "",
+    dialogueBeats: [beat],
+    choices: [{ id: "go", text: "On", targetSceneId: "e" }],
+    hotspots: [{ id: "h", label: "Receipt", bounds: { x: 0, y: 0, w: 5, h: 5 }, cursor: "take", action: { type: "giveItem", itemGranted: "receipt" } }],
+  });
+  const goodStory: Story = {
+    ...storyForLie,
+    items: [item],
+    scenes: [lieScene(claimBeat), { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } }],
+  };
+  const goodIssues = validateStory(goodStory);
+  check("lie: a well-formed contradiction raises no lie error/warning", !goodIssues.some((i) => /press-the-lie/i.test(i.message)), goodIssues.filter((i) => /press-the-lie/i.test(i.message)));
+
+  const noEvidence: SceneNode = {
+    ...lieScene(claimBeat),
+    dialogueBeats: [{ id: "claim2", characterId: "sus", text: "Lie.", lie: { ...lie, evidenceItemIds: [] } }],
+  };
+  const noEvidenceIssues = validateStory({ ...goodStory, scenes: [noEvidence, goodStory.scenes[1]] });
+  check("lie: missing breaking evidence is an error", noEvidenceIssues.some((i) => /names no breaking evidence/.test(i.message)));
+
+  const ghostEvidence: SceneNode = {
+    ...lieScene(claimBeat),
+    dialogueBeats: [{ id: "claim3", characterId: "sus", text: "Lie.", lie: { ...lie, evidenceItemIds: ["ghost_item"] } }],
+  };
+  const ghostIssues = validateStory({ ...goodStory, scenes: [ghostEvidence, goodStory.scenes[1]] });
+  check("lie: unknown evidence item is an error", ghostIssues.some((i) => /evidence item "ghost_item"/.test(i.message)));
+
+  const ungated: SceneNode = {
+    ...lieScene(claimBeat),
+    dialogueBeats: [{
+      id: "claim4",
+      characterId: "sus",
+      text: "Lie.",
+      lie: { ...lie, caughtBeat: { id: "c2", characterId: "sus", text: "Caught." } },
+    }],
+  };
+  const ungatedIssues = validateStory({ ...goodStory, scenes: [ungated, goodStory.scenes[1]] });
+  check("lie: caught beat not gated on the caught flag is a warning", ungatedIssues.some((i) => /isn't gated on "alibi_broken"/.test(i.message)));
 }
 
 // Regression: checkGate used to run TWICE in the hotspot loop, so one

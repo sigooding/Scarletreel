@@ -347,57 +347,24 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
             <p>The tab preview updates live for colours, fonts and size — set it once and every scene matches.</p>
           </Section>
 
-          <Section title="5b · Color grade, film stock & parallax">
+          <Section title="5e · Press the Lie — catch a character in a contradiction">
             <p>
-              In the Cinematic Image Controls (Scene tab):
+              Turn a dialogue line into a false claim the player must <b>prove</b>, not just read. On a beat, open{" "}
+              <b>🎯 Press the Lie (contradiction)</b> and tick <b>“This line is a lie the player can catch.”</b> While that
+              line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button: they open
+              their satchel and must present the clue that proves the statement false.
             </p>
             <ul className="list-disc space-y-1 pl-5">
-              <li><b>🎨 Color grade</b> — one-click director looks on any camera mode (and on a beat's replacement background): <b>Nolan IMAX</b> (cold desaturated steel/teal), <b>Tarantino 35mm</b> (hot warm bleach-bypass), <b>Spielberg golden hour</b> (amber magic hour), <b>1940s Noir</b> (high-contrast black &amp; white). It is a filter + split-tone wash, so video cutscenes still get the wash.</li>
-              <li><b>🎞 Film grade</b> — 35mm print emulation: moving grain, gate weave, highlight halation bloom, flicker and occasional scratches, with a strength slider. Sits above the color grade like the physical print.</li>
-              <li><b>🌆 Parallax depth</b> — the camera subtly follows the cursor; the plate drifts slowest, the foreground fastest. <b>Mid-ground planes</b> (transparent cutouts or a gradient fog layer) shift by their own depth % for a diorama feel. Idle sway plays when the mouse is still; reduced-motion users get a locked frame. Try it live on the camera preview — it responds to your mouse.</li>
+              <li><b>Breaking evidence</b> — tick only the item(s) that ACTUALLY disprove the claim. Every other held item is a bluff the speaker calls. Handing the player many clues is fine; they still have to pick the one that matters.</li>
+              <li><b>Caught flag</b> — set when the lie breaks; the <b>caught reaction</b> beat auto-gates on it (the Check warns if you forget) and plays as the very next line. Gate follow-up choices/beat on the flag.</li>
+              <li><b>Bluff-called line + limit</b> — what they say when shown the wrong thing, and how many misses (default 2) before the claim shuts for the scene. Misses cost trust / raise heat via the consequences.</li>
+              <li><b>Inside an interrogation</b> — set <b>composure damage</b> and a proven lie shatters the suspect's composure (2+ cracks them), running the normal crack-vs-clamp resolution by trust.</li>
+              <li>Always give a failed press a way OUT (an ungated exit choice) so a shut-down claim can't soft-lock.</li>
             </ul>
             <p>
-              See them in action in <b>Demo Lab: Scene Craft</b> — “Take Three — The Grade” and “Take Four — Parallax Depth” — each with a 📝 step-by-step note.
+              See <b>Demo Lab: Press the Lie</b> — the pawn ticket breaks the alibi, the signed bar tab cracks the back-room
+              interrogation, and the charred matchbook is a deliberate red herring. Each scene carries a 📝 note.
             </p>
-          </Section>
-
-          <Section title="5c · Insert shots that end a scene (after-beat routing) & duplicating stories">
-            <p>
-              By default a beat's <b>replacement background</b> plays for that one line and the picture reverts to the scene plate
-              when the dialogue ends. If you want an insert shot to <b>lead somewhere</b> — a cutscene built from beats, an
-              ending card, or just a straight cut with no flash back to the scene image — give the beat an <b>“After this beat — cut to scene”</b>:
-            </p>
-            <ul className="list-disc space-y-1 pl-5">
-              <li><b>Where:</b> on the beat in the Dialogue tab. It only fires on the <b>LAST visible beat</b> of the scene — put it on your final line (the validator warns if you don't).</li>
-              <li><b>⏱ Auto</b> — after the line finishes typing, hold for the timer (default 1.6s) then cut automatically. <b>This is the timer that guarantees the beat is read</b> before the scene changes; a live “⏱ cut in Ns” shows. It pauses while the menu is open.</li>
-              <li><b>▸ Continue</b> — no timer: the ▸ Continue pill / Space advances straight into the next scene, so the player controls the cut.</li>
-              <li>The insert background fades <b>directly</b> into the next scene — it never reverts to the scene plate. Part-break charts, act cards, endings and music crossfades all work normally through the route.</li>
-            </ul>
-            <p>
-              <b>Recommended workflow for a cutscene from stills:</b> make one short scene per shot (or per line), give each its
-              background/grade, and chain them with after-beat routes — that's more flexible than cramming one scene, because each
-              link can branch, chart and end independently. If the scene also has auto-advance, the beat route wins while a beat is
-              live — no timer conflict.
-            </p>
-            <p>
-              <b>⧉ Duplicate Story</b> (toolbar) copies the whole current case into a brand-new, independent story — every scene, beat,
-              hotspot, choice and wire gets fresh ids so nothing collides, the title gets “(copy)”, and the canvas is offset. Use it to
-              branch from an existing case or to experiment without touching the original; built-ins are copied, never edited in place.
-            </p>
-          </Section>
-
-          <Section title="5d · In-game theme (HUD colours, fonts & text size)">
-            <p>
-              The <b>🎮 In-Game Theme</b> tab styles the whole case, story-wide:
-            </p>
-            <ul className="list-disc space-y-1 pl-5">
-              <li><b>HUD colour scheme</b> — one-click palettes (Classic Noir, Neon Rain, Sepia Pulp, Midnight Teal, Venetian Red, Ghost Green) that re-tint the accents, nameplates, meters and choice focus; or set <b>custom accent/danger</b> colours by hand. The stage uses CSS variables so the whole game subtree follows instantly.</li>
-              <li><b>Body font</b> — the prose/dialogue reading face (Newsreader, Playfair, Josefin Sans, Cinzel, Bebas, Alfa Slab); <b>heading font</b> — nameplates and HUD labels.</li>
-              <li><b>Reading text size</b> — 80%–140% scale; the reserved line height scales with it so the panel stays stable.</li>
-              <li><b>Minimal HUD</b> — fades the scene-label/lead readouts until you hover, for a cleaner frame.</li>
-              <li>The <b>Dialogue panel</b> section still sets the backdrop image, opacity, tint, blur and bordered card look.</li>
-            </ul>
-            <p>The tab preview updates live for colours, fonts and size — set it once and every scene matches.</p>
           </Section>
 
           <Section title="6 · Hotspots — actions on the scene art">
@@ -409,6 +376,14 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               Only <i>goToScene</i> / <i>useItem</i> need a target — a giveItem/setFlag hotspot legitimately stays in place
               (that's how you author lockpicks, safes and ciphers). Gate a hotspot to lock it; the <b>custom fail
               message</b> replaces the generic “locked up tighter…” hint.
+            </p>
+            <p>
+              <b>🚶 Stage 2D — walkable character (Scene tab).</b> Tick <b>“Player walks around this scene”</b> and the plate
+              becomes a stage: the player clicks the ground to move (a 🕵️ sprite/emoji walks there) or uses arrow / WASD keys.
+              Walking onto a hotspot zone fires it <b>through the same hotspot action</b> — give-item pickups, show-text, exits
+              and gating all behave identically; it's only the input that changes from click-the-zone to walk-to-the-zone.
+              Set the spawn point, walk speed, reach distance and sprite (image / <code>emoji:…</code>). Put hotspots where the
+              player should walk to something. Try the office in <b>Demo Lab: Press the Lie</b>.
             </p>
           </Section>
 

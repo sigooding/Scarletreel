@@ -22,9 +22,15 @@ import {
   currentEpisode,
   effectiveChoiceGating,
   episodeOfScene,
+  evidenceBreaksLie,
   examineZoom,
+  applyLieCaught,
+  applyLieWrong,
+  beatLie,
   interrogationOutcome,
   isPressingReply,
+  lieCanStillPress,
+  lieWrongLine,
   pressComposure,
   pressReaction,
   steadyComposure,
@@ -73,6 +79,7 @@ import {
   plateStyle,
 } from "./Episode";
 import { Flowchart } from "./Flowchart";
+import { Stage2D } from "./Stage2D";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
 import { RouteMap } from "./RouteMap";
@@ -2841,6 +2848,14 @@ function CasePlayer({
   const [iqSteadyKey, setIqSteadyKey] = useState(0);
   const [iqReaction, setIqReaction] = useState<{ text: string; key: number } | null>(null);
   const [iqStamp, setIqStamp] = useState<{ kind: "broke" | "clamped"; key: number } | null>(null);
+
+  /* PRESS THE LIE — the contradiction verb. While a beat carrying a `lie` is
+   * on screen the player can press the speaker and must produce the evidence
+   * that breaks the claim. `lieWrong` counts bad guesses per beat (reset on a
+   * scene change); `pressLie` opens the evidence bag on a specific beat. */
+  const [pressLieBeat, setPressLieBeat] = useState<DialogueBeat | null>(null);
+  const [lieWrong, setLieWrong] = useState<Record<string, number>>({});
+  const [lieBluff, setLieBluff] = useState<{ beatId: string; text: string; key: number } | null>(null);
   useEffect(() => {
     if (!examCard) return;
     const t = window.setTimeout(() => {
@@ -3200,6 +3215,11 @@ function CasePlayer({
       setExpiredChoices(new Set());
       setChoiceClocks({});
       qtHeartbeatFired.current = new Set();
+      // Press-the-lie: a new scene clears the open evidence bag and the
+      // per-claim wrong-guess counts (a fresh scene is a fresh chance).
+      setPressLieBeat(null);
+      setLieWrong({});
+      setLieBluff(null);
       // Cinematic hold: a scene with `choiceDelaySeconds` keeps its choices (and
       // on credits/cutscene nodes, its continue button) locked until the timer
       // elapses. Only applied on first entry — revisits stay snappy.
@@ -3807,7 +3827,20 @@ function CasePlayer({
       if (stateRef.current.activeFlags.has(q.brokeFlag)) beats.push(q.brokeBeat);
       if (q.clampFlag && q.clampedBeat && stateRef.current.activeFlags.has(q.clampFlag)) beats.push(q.clampedBeat);
     }
-    return beats.filter((b) => meetsGating(b.conditionRule, stateRef.current));
+    const visible = beats.filter((b) => meetsGating(b.conditionRule, stateRef.current));
+    // A broken lie's caught beat plays immediately AFTER the claim beat it
+    // answers. It's authored on beat.lie.caughtBeat (and gated on the caught
+    // flag, so it only appears once the player presents the right evidence),
+    // so splice it in right after its claim beat rather than letting its
+    // authored position in the queue decide.
+    const out: DialogueBeat[] = [];
+    for (const b of visible) {
+      out.push(b);
+      if (b.lie && stateRef.current.activeFlags.has(b.lie.contradictedFlag)) {
+        out.push(b.lie.caughtBeat);
+      }
+    }
+    return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene, entrySeq, sceneId, beatsSignature]);
 
@@ -3892,6 +3925,16 @@ function CasePlayer({
   const currentBeatText = currentBeat
     ? resolveBeatText(currentBeat, state.memories, state.activeFlags, story.flagNotes)
     : "";
+
+  // Press-the-lie state for the beat on screen: the lie exists, it isn't
+  // already broken, and the player still has wrong-guess chances left.
+  const currentLie = beatLie(currentBeat);
+  const currentLieBroken = !!(currentLie && state.activeFlags.has(currentLie.contradictedFlag));
+  const currentLieWrongCount = currentBeat ? lieWrong[currentBeat.id] ?? 0 : 0;
+  const currentLieShut = !!currentLie && !lieCanStillPress(currentLie, currentLieWrongCount);
+  const canPressLie = !!currentBeat && beatDone && !!currentLie && !currentLieBroken && !currentLieShut;
+  const currentLieWrongShown =
+    lieBluff && currentBeat && lieBluff.beatId === currentBeat.id ? lieBluff.text : null;
 
   // noTypewriter scenes show their prose instantly; the dialogue must match.
   // Otherwise the first line types out behind a "skip" control and reads as a
@@ -4693,6 +4736,127 @@ function CasePlayer({
     }
   }, [state.activeFlags, story, pushToast]);
 
+  /* -------- press the lie (contradiction verb) --------
+   * The player presents a held item against a beat's false claim. The right
+   * evidence breaks the lie (caught beat, flag set, trust/heat swing, and in
+   * an interrogation a chunk of composure gone); the wrong evidence is a
+   * bluff the speaker calls — heat/trust cost, one fewer chance to press. */
+  const pressLieWithItem = useCallback(
+    (beat: DialogueBeat, itemId: string) => {
+      const lie = beat.lie;
+      if (!lie) return;
+      const held = stateRef.current.inventory.map((i) => i.id);
+      const correct = evidenceBreaksLie(lie, held, itemId);
+      const itemName = story.items.find((i) => i.id === itemId)?.name ?? "that";
+      const speaker = story.characters.find((c) => c.id === beat.characterId);
+      const speakerName = speaker?.name?.split(" ")[0] ?? "They";
+
+      if (correct) {
+        audio.success();
+        audio.stinger();
+        setRemember(
+          lie.rememberLine
+            ? { line: lie.rememberLine, key: (remember?.key ?? 0) + 1 }
+            : remember
+        );
+        // In an interrogation, a proven contradiction can shatter composure —
+        // reuse the crack/clamp resolution so the suspect breaks or clamps.
+        const q = scene?.interrogation;
+        const resolved = q
+          ? stateRef.current.activeFlags.has(q.brokeFlag) || (q.clampFlag && stateRef.current.activeFlags.has(q.clampFlag))
+          : true;
+        let shatterOutcome: "broke" | "clamped" | null = null;
+        let composureTarget: number | null = null;
+        if (q && lie.composureDamage && !resolved) {
+          const initial = q.composure ?? 3;
+          const live = iqComposure[sceneId] ?? initial;
+          composureTarget = Math.max(0, live - lie.composureDamage);
+          if (composureTarget === 0) {
+            // Trust AFTER the lie's own swing decides crack vs clamp, exactly
+            // as a breaking press does in pickChoice.
+            const projected = applyLieCaught(story, lie, stateRef.current);
+            shatterOutcome = interrogationOutcome(q, projected.characterTrust[q.characterId] ?? 0);
+          }
+        }
+        // Composer FX for a shatter happen outside the state updater so it
+        // stays pure; the gauge goes to zero and the stamp slams.
+        if (q && shatterOutcome) {
+          setIqComposure((c) => ({ ...c, [sceneId]: 0 }));
+          setIqStamp((prev) => ({ kind: shatterOutcome!, key: (prev?.key ?? 0) + 1 }));
+        }
+        // A SINGLE state write: the lie is caught, and if the contradiction
+        // shattered composure the crack/clamp lands in the same update — so
+        // the lie's consequences are applied exactly once.
+        setState((s) => {
+          let next = applyLieCaught(story, lie, s);
+          if (q && shatterOutcome) {
+            if (!next.activeFlags.has(q.brokeFlag) && !(q.clampFlag && next.activeFlags.has(q.clampFlag))) {
+              const flag = shatterOutcome === "broke" ? q.brokeFlag : q.clampFlag;
+              if (flag) next = { ...next, activeFlags: new Set(next.activeFlags).add(flag) };
+              const cons = shatterOutcome === "broke" ? q.brokeConsequences : q.clampConsequences;
+              if (cons) next = applyConsequences(story, cons, next);
+            }
+          }
+          return next;
+        });
+        // Composure FX for a hit that doesn't shatter (or the gauge update).
+        if (q && composureTarget !== null) {
+          if (shatterOutcome) {
+            const name = story.characters.find((c) => c.id === q.characterId)?.name ?? "The suspect";
+            if (shatterOutcome === "broke") {
+              pushToast(`${name} breaks.`, "success");
+            } else {
+              audio.fail();
+              pushToast(`${name} clamps down.`, "fail");
+            }
+          } else {
+            setIqComposure((c) => ({ ...c, [sceneId]: composureTarget! }));
+            setIqPressKey((k) => k + 1);
+            audio.press();
+            setIqReaction((prev) => ({ text: pressReaction(q, composureTarget!), key: (prev?.key ?? 0) + 1 }));
+          }
+        }
+        pushToast(`Caught in the lie — ${speakerName} can't talk around ${itemName}.`, "success");
+        setPressLieBeat(null);
+        setLieBluff(null);
+        // The caught beat is spliced in right AFTER this claim beat in
+        // visibleBeats, so step into it (it types fresh on arrival).
+        setBeatDone(false);
+        setBeatIdx((i) => i + 1);
+        return;
+      }
+
+      // Wrong evidence — the bluff is called.
+      audio.fail();
+      const key = beat.id;
+      const wrongCount = (lieWrong[key] ?? 0) + 1;
+      setLieWrong((m) => ({ ...m, [key]: wrongCount }));
+      setState((s) => applyLieWrong(story, lie, s));
+      const shut = !lieCanStillPress(lie, wrongCount);
+      setLieBluff({
+        beatId: beat.id,
+        text: lieWrongLine(lie),
+        key: (lieBluff?.key ?? 0) + 1,
+      });
+      const cons = lie.wrongConsequences;
+      if (cons?.trustChanges?.length) {
+        cons.trustChanges.forEach((t) => {
+          const ch = story.characters.find((c) => c.id === t.characterId);
+          if (ch && t.delta < 0) pushToast(`✖ ${ch.name.split(" ")[0]} likes you less (${t.delta}).`, "fail");
+        });
+      }
+      if (cons?.meterChanges?.some((m) => m.meter === "Suspicion" && m.delta > 0)) {
+        const sus = cons.meterChanges.find((m) => m.meter === "Suspicion")!;
+        pushToast(`🔥 Heat rising (+${sus.delta}).`, "fail");
+      }
+      if (shut) {
+        pushToast(`${speakerName} calls your bluff and shuts down. You've lost the chance to press this.`, "fail");
+        setPressLieBeat(null);
+      }
+    },
+    [story, scene, sceneId, iqComposure, lieWrong, lieBluff, remember, pushToast]
+  );
+
   /* -------- hotspots -------- */
   const completeHotspot = useCallback(
     (hs: Hotspot, baseState?: GlobalState) => {
@@ -5317,6 +5481,21 @@ function CasePlayer({
         const resolved = state.activeFlags.has(q.brokeFlag) || (q.clampFlag && state.activeFlags.has(q.clampFlag));
         return live === 1 && !resolved ? <div className="iq-critical-vignette pointer-events-none absolute inset-0 z-[43]" aria-hidden /> : null;
       })()}
+
+      {/* STAGE 2D — a controllable character walks the plate; walking onto a
+          hotspot fires it through activateHotspot. In a 2D scene the click
+          layer sits ABOVE the hotspot buttons so clicks walk there instead
+          of teleporting; the zones are still drawn underneath as targets. */}
+      {scene.stage2d && sceneReady && !scene.isEnding && !overlay && (
+        <Stage2D
+          key={`stage-${sceneId}`}
+          settings={scene.stage2d}
+          hotspots={visibleHotspots}
+          unlocked={(hs) => meetsGating(hs.gating, state)}
+          onInteract={(hs) => activateHotspot(hs)}
+          active={sceneReady && !overlay}
+        />
+      )}
 
       {/* Hotspots become available once the scene setup has been read, including
           while dialogue plays. The dialogue panel sits above them and stops
@@ -6293,7 +6472,40 @@ function CasePlayer({
                     </button>
                   </div>
                 ) : (
-                  <div className="mt-2 flex items-center gap-1.5">
+                  <div className="mt-2 flex flex-col items-center gap-1.5">
+                    {/* PRESS THE LIE — when the line is a false claim the
+                        player can challenge it with evidence. Only shows on a
+                        pressable beat; once broken it's gone (the caught beat
+                        plays as the next line), and too many bluffs shut it. */}
+                    {currentLie && !currentLieBroken && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!beatDone) {
+                            setBeatDone(true);
+                            return;
+                          }
+                          if (!canPressLie) return;
+                          if (state.inventory.length === 0) {
+                            pushToast("You're holding nothing to press them with — find evidence first.", "fail");
+                            return;
+                          }
+                          audio.stinger();
+                          setPressLieBeat(currentBeat);
+                        }}
+                        disabled={!canPressLie}
+                        className={`beat-ctl ${currentLieShut ? "opacity-40" : "border-crimson text-crimson hover:bg-crimson/20 animate-pulse"}`}
+                        title={currentLieShut ? "They called your bluff — this claim is shut" : "Challenge this statement with a piece of evidence"}
+                      >
+                        🎯 {currentLieShut ? "they shut you down" : "Press them on that"}
+                      </button>
+                    )}
+                    {currentLieWrongShown && (
+                      <p className="max-w-xl font-type text-[12px] italic text-crimson/90" key={lieBluff?.key}>
+                        {currentLieWrongShown}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-1.5">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -6324,6 +6536,7 @@ function CasePlayer({
                     >
                       🎤
                     </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -6903,6 +7116,48 @@ function CasePlayer({
           }}
           onClose={() => setPatternPuzzle(null)}
         />
+      )}
+
+      {pressLieBeat?.lie && (
+        <Modal title="Press them — present your evidence" onClose={() => setPressLieBeat(null)} wide>
+          <p className="mb-1 font-pulp text-[10px] uppercase tracking-widest text-crimson">
+            The claim you're challenging
+          </p>
+          <p className="mb-3 border-l-2 border-crimson/60 pl-3 font-type text-sm italic text-paper/90">
+            “{pressLieBeat.lie.claim?.trim() || resolveBeatText(pressLieBeat, state.memories, state.activeFlags, story.flagNotes)}”
+          </p>
+          <p className="mb-2 font-type text-xs text-paper/60">
+            Produce the clue that proves it false. Present the wrong thing and they call your bluff —
+            it costs you, and you only get a few tries before they shut down.
+          </p>
+          {state.inventory.length === 0 ? (
+            <p className="font-type text-sm text-gold">Your satchel is empty — go find evidence first.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {state.inventory.map((item) => {
+                const isEvidence = pressLieBeat.lie!.evidenceItemIds.includes(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => pressLieWithItem(pressLieBeat, item.id)}
+                    className={`flex items-center gap-2 border-2 p-2 text-left transition-transform hover:scale-[1.02] ${
+                      isEvidence ? "border-gold/50 bg-gold/10" : "border-paper/25 bg-noir-700 hover:border-crimson/60"
+                    }`}
+                    title={item.description}
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center border border-paper/30 bg-noir-950 text-2xl">
+                      {item.iconUrl ? <img src={assetUrl(item.iconUrl)} alt="" className="h-full w-full object-cover" /> : item.icon}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-pulp text-[11px] uppercase tracking-wide text-paper/90">{item.name}</span>
+                      {item.isClue && <span className="block text-[9px] uppercase tracking-widest text-crimson">📌 clue</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Modal>
       )}
 
       {overlay?.type === "board" && (

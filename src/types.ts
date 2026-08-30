@@ -175,6 +175,45 @@ export interface Choice {
   consumePresentedItem?: boolean;
 }
 
+/** A catch-them-in-a-lie beat. Authored on a DialogueBeat via `beat.lie`:
+ * while that line is on screen the player may press the speaker and must
+ * produce the single piece of evidence that proves the claim false. The
+ * contradiction verb — "you said you were home, but this motel receipt…" */
+export interface Contradiction {
+  /** Shown above the evidence bag when pressing (what is being challenged).
+   * Falls back to the beat's own line when blank. */
+  claim?: string;
+  /** The item ids that break the claim. Usually exactly ONE clue; accept a
+   * few so alternate evidence can crack the same lie (the player still has
+   * to hold one of them). */
+  evidenceItemIds: string[];
+  /** The beat that plays when the correct evidence is produced — the
+   * speaker caught. It is injected into the dialogue queue as the next line
+   * after the claim, the same way a reply unlocks a gated beat. */
+  caughtBeat: DialogueBeat;
+  /** Flag set when the lie is broken — gate the rest of the confrontation
+   * (choices, beats, routes) on it. */
+  contradictedFlag: string;
+  /** The payoff swing on a correct press (trust up, heat down, a memory of
+   * the win…). */
+  contradictedConsequences?: Consequences;
+  /** Line shown when the player presents evidence that doesn't break the
+   * claim — the speaker calls the bluff. Defaults to a generic scoff. */
+  wrongBeat?: DialogueBeat;
+  /** How many wrong pieces of evidence the player may show before the claim
+   * shuts for the scene (default 2 — one bad guess, one last chance). */
+  wrongEvidenceLimit?: number;
+  /** The cost of a bluff that gets called (usually heat up / trust down). */
+  wrongConsequences?: Consequences;
+  /** In an interrogation scene, a correct press also breaks this much
+   * composure (default 0 — the press stands on its own). 2+ is a
+   * contradiction that cracks a suspect open. */
+  composureDamage?: number;
+  /** Optional Telltale-style card when the lie lands (e.g. "Vera knows
+   * you've got her."). */
+  rememberLine?: string;
+}
+
 export interface DialogueBeat {
   id: string;
   characterId: string;
@@ -215,6 +254,21 @@ export interface DialogueBeat {
    * the `{said}` placeholder to echo the player's exact words. When several
    * memories are present, the first matching tag in insertion order wins. */
   recalls?: Record<string, string>;
+
+  /** PRESS THE LIE — the contradiction verb. When this beat is a line the
+   * speaker wants to hold onto (a false claim), the player gets a 🎯 "Press
+   * them on that" affordance: they open the evidence bag and must produce
+   * the ONE clue that breaks the statement. The right evidence plays the
+   * caught beat, swings trust/meters, and sets a flag the rest of the scene
+   * (and story) can gate on. The wrong evidence is a BLUFF the speaker calls
+   * — it costs trust and draws heat, and after `wrongEvidenceLimit` misses
+   * the claim cannot be pressed again this scene (you blew your chance).
+   *
+   * This is the detective core: instead of clicking through every hotspot,
+   * the player must have PAID ATTENTION and hold the evidence that matters.
+   * It composes with the interrogation (a correct press can dump composure)
+   * and with the corkboard (it can set a link flag). */
+  lie?: Contradiction;
 
   /* ---- AFTER THIS BEAT: route to another scene ----
    * Normally a beat's replacement background reverts to the scene plate when
@@ -762,6 +816,26 @@ export interface Interrogation {
   clampConsequences?: Consequences;
 }
 
+/** Settings for a STAGE 2D walkable scene. The player walks a small
+ * character around the scene plate; reaching a hotspot fires it through
+ * the normal interaction path. Everything else (the reel, choices,
+ * consequences, dialogue) is untouched — this is a movement/presentation
+ * layer over the same scene data. */
+export interface Stage2DSettings {
+  /** The character sprite. An image url / `asset:` token, or an emoji
+   * glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
+  playerImage?: string;
+  /** Spawn point in scene percentages (0–100). Defaults to bottom-centre. */
+  spawn?: { x: number; y: number };
+  /** Walk speed as a percentage of scene WIDTH per second (default ~18). */
+  speed?: number;
+  /** How close (in scene-% of width) the character must get to a hotspot
+   * centre to fire it (default ~3). */
+  reach?: number;
+  /** Allow arrow-key / WASD movement as well as click-to-walk (default true). */
+  keyboard?: boolean;
+}
+
 export interface SceneNode {
   id: string;
   title: string;
@@ -825,6 +899,15 @@ export interface SceneNode {
   hideSceneTitle?: boolean;
   /** visual particle overlay; if undefined, falls back to legacy auto-matching based on ambient audio */
   particles?: "none" | "rain" | "smoke" | "storm";
+  /** STAGE 2D — a controllable character you walk around this scene. When
+   * present, the scene plate becomes a walkable stage: click the ground to
+   * move (or use the arrow / WASD keys), and walking the character onto a
+   * hotspot triggers it through the SAME interaction path as clicking
+   * (gating, give-item, show-text, go-to-scene all still apply). It is a
+   * presentation mode layered over the reel — the state model, choices and
+   * consequences are unchanged. Omit it for the classic point-and-click
+   * scene. */
+  stage2d?: Stage2DSettings;
   /** cinematic camera motion applied to the scene background image */
   cinematic?: CinematicSettings;
   /** Show Telltale-style letterbox bars (top/bottom black bands) over the scene. */

@@ -1,6 +1,8 @@
 import type {
   Choice,
   Consequences,
+  Contradiction,
+  DialogueBeat,
   EndingLog,
   Episode,
   EpisodeProgress,
@@ -584,6 +586,30 @@ export function storyEdges(story: Story): StoryEdge[] {
   return edges;
 }
 
+/** Every DialogueBeat in a story that a writer or engine can read — the
+ * scene's own beats PLUS the two beats nested inside a "press the lie"
+ * contradiction (the caught-in-a-lie reaction and the bluff-called line).
+ * Collectors/walkers that read beats for flags, memories or gates must use
+ * this so a flag/memory referenced only on a lie beat isn't treated as
+ * nonexistent (the same reason Interrogation beats get lifted by hand). */
+export function everyDialogueBeat(story: Story): DialogueBeat[] {
+  const out: DialogueBeat[] = [];
+  story.scenes.forEach((sc) => {
+    (sc.dialogueBeats ?? []).forEach((b) => {
+      out.push(b);
+      if (b.lie) {
+        out.push(b.lie.caughtBeat);
+        if (b.lie.wrongBeat) out.push(b.lie.wrongBeat);
+      }
+    });
+  });
+  return out;
+}
+
+/** The Contradiction on a beat, if any (helper for readability at call sites). */
+export const beatLie = (beat: DialogueBeat | null | undefined): import("./types").Contradiction | undefined =>
+  beat?.lie;
+
 export function collectFlags(story: Story): string[] {
   const flags = new Set<string>();
   const fromGate = (g?: Gating) => {
@@ -612,7 +638,18 @@ export function collectFlags(story: Story): string[] {
         fromConsequences(pp.wrongSubmissionConsequences);
       }
     });
-    sc.dialogueBeats?.forEach((b) => fromGate(b.conditionRule));
+    sc.dialogueBeats?.forEach((b) => {
+      fromGate(b.conditionRule);
+      // The contradiction: its caught flag is set by the engine at runtime
+      // (like an interrogation crack), and both outcome swings set flags.
+      if (b.lie) {
+        flags.add(b.lie.contradictedFlag);
+        fromConsequences(b.lie.contradictedConsequences);
+        fromConsequences(b.lie.wrongConsequences);
+        fromGate(b.lie.caughtBeat.conditionRule);
+        b.lie.wrongBeat && fromGate(b.lie.wrongBeat.conditionRule);
+      }
+    });
     sc.onEnterActions?.forEach((a) => fromConsequences(a.consequences));
     // Interrogation outcomes set flags the ENGINE applies at runtime (on the
     // crack / clamp), not any authored consequence — lift them so the Flags
@@ -645,6 +682,15 @@ export function collectMemoryTags(story: Story): string[] {
     sc.dialogueBeats?.forEach((b) => {
       fromGate(b.conditionRule);
       Object.keys(b.recalls ?? {}).forEach((t) => tags.add(t));
+      // A contradiction's reaction beats can gate on and recall memories too.
+      if (b.lie) {
+        fromGate(b.lie.caughtBeat.conditionRule);
+        Object.keys(b.lie.caughtBeat.recalls ?? {}).forEach((t) => tags.add(t));
+        if (b.lie.wrongBeat) {
+          fromGate(b.lie.wrongBeat.conditionRule);
+          Object.keys(b.lie.wrongBeat.recalls ?? {}).forEach((t) => tags.add(t));
+        }
+      }
     });
   });
   (story.episodes ?? []).forEach((ep) => ep.recapLines?.forEach((l) => fromGate(l.gating)));
@@ -829,6 +875,127 @@ export function pressReaction(q: { pressReactions?: string[]; composure?: number
   // index 0 = just below full, deeper = closer to the edge
   const idx = Math.min((q.pressReactions?.length ?? DEFAULT_PRESS_REACTIONS.length) - 1, Math.max(0, initial - 1 - composureNow));
   return q.pressReactions?.[idx] ?? DEFAULT_PRESS_REACTIONS[Math.min(idx, DEFAULT_PRESS_REACTIONS.length - 1)];
+}
+
+/* ---------------------- press the lie (contradiction) ----------------- */
+
+/** Default wrong-evidence guesses before a claim shuts for the scene. */
+export const DEFAULT_WRONG_EVIDENCE_LIMIT = 2;
+
+/** Does a held item break this lie? Only the items named as evidence count;
+ *  every other item is a bluff the speaker calls. */
+export function evidenceBreaksLie(lie: Contradiction, heldItemIds: string[], presentedItemId: string): boolean {
+  const held = new Set(heldItemIds);
+  if (!lie.evidenceItemIds.includes(presentedItemId)) return false;
+  return held.has(presentedItemId);
+}
+
+/** The number of wrong guesses that shut the claim for the scene. */
+export const wrongEvidenceLimit = (lie: Contradiction): number =>
+  Math.max(0, lie.wrongEvidenceLimit ?? DEFAULT_WRONG_EVIDENCE_LIMIT);
+
+/** After `wrongCount` bad guesses, can the claim still be pressed? */
+export function lieCanStillPress(lie: Contradiction, wrongCount: number): boolean {
+  return wrongCount < wrongEvidenceLimit(lie);
+}
+
+/** The line a speaker barks when the player shows evidence that doesn't hold. */
+export const lieWrongLine = (lie: Contradiction): string =>
+  lie.wrongBeat?.text?.trim() ||
+  "You wave that around like it means something. It doesn't. Try again with the real thing — if you've got it.";
+
+/** Apply a SUCCESSFUL contradiction: run the payoff consequences, set the
+ * caught flag (so the rest of the scene can gate on the lie being broken),
+ * and return the next state. Mirrors how an interrogation crack is applied
+ * in the same state write as the press that caused it. */
+export function applyLieCaught(story: Story, lie: Contradiction, s: GlobalState): GlobalState {
+  let next = applyConsequences(story, lie.contradictedConsequences, s);
+  next = { ...next, activeFlags: new Set(next.activeFlags).add(lie.contradictedFlag) };
+  return next;
+}
+
+/** Apply a CALLED BLUFF: run the wrong-guess consequences (usually heat up /
+ * trust down). */
+export function applyLieWrong(story: Story, lie: Contradiction, s: GlobalState): GlobalState {
+  return applyConsequences(story, lie.wrongConsequences, s);
+}
+
+/* ------------------------- stage 2d movement ------------------------ */
+
+/** Default walk speed: scene-width % per second. */
+export const STAGE2D_DEFAULT_SPEED = 18;
+/** Default reach distance: scene-width % within which a hotspot fires. */
+export const STAGE2D_DEFAULT_REACH = 3.5;
+
+/** Clamp a 0–100 percentage point into the plate. */
+export const clampStagePos = (x: number, y: number): { x: number; y: number } => ({
+  x: clamp(x, 1, 99),
+  y: clamp(y, 1, 99),
+});
+
+/** Move one frame toward a target. x is percentage of scene width, y of
+ * height, so the y component is corrected by the viewport aspect ratio
+ * (w/h) or the character would stride much faster vertically on a wide
+ * plate. Pure + unit-tested; the React stage drives it from rAF. */
+export function stepStagePos(
+  pos: { x: number; y: number },
+  target: { x: number; y: number },
+  speed: number,
+  dtSeconds: number,
+  aspect: number
+): { x: number; y: number; arrived: boolean } {
+  const s = speed <= 0 ? STAGE2D_DEFAULT_SPEED : speed;
+  const dx = target.x - pos.x;
+  const a = aspect > 0 ? aspect : 16 / 9;
+  // x in width-%, y in height-% — convert y into width-% units so the step
+  // magnitude is uniform. (y * a) maps height-% to a width-%-equivalent.
+  const dyEquiv = (target.y - pos.y) * a;
+  const dist = Math.hypot(dx, dyEquiv);
+  const maxStep = s * dtSeconds;
+  if (dist <= maxStep || dist === 0) {
+    return { x: target.x, y: target.y, arrived: true };
+  }
+  const nx = pos.x + (dx / dist) * maxStep;
+  // Convert the width-% step back to height-% for y.
+  const ny = pos.y + ((dyEquiv / dist) * maxStep) / a;
+  return { x: nx, y: ny, arrived: false };
+}
+
+/** The centre of a hotspot zone in scene percentages. */
+export function hotspotCenter(h: Hotspot): { x: number; y: number } {
+  return { x: h.bounds.x + h.bounds.w / 2, y: h.bounds.y + h.bounds.h / 2 };
+}
+
+/** Is a stage position within `reach` (scene-width %) of a hotspot's
+ * centre? Used by the walkable stage to decide when walking onto a zone
+ * should fire it. */
+export function posReachesHotspot(
+  pos: { x: number; y: number },
+  h: Hotspot,
+  reach: number,
+  aspect: number
+): boolean {
+  const c = hotspotCenter(h);
+  const a = aspect > 0 ? aspect : 16 / 9;
+  const dx = pos.x - c.x;
+  const dy = (pos.y - c.y) * a;
+  return Math.hypot(dx, dy) <= reach;
+}
+
+/** The topmost hotspot zone containing a plate point (percentages), or
+ * null. This is how the walkable stage turns a click into either a
+ * walk-to-hotspot destination (a zone) or a ground point (empty plate). */
+export function hotspotAtPoint(
+  hotspots: Hotspot[],
+  p: { x: number; y: number }
+): Hotspot | null {
+  for (let i = hotspots.length - 1; i >= 0; i--) {
+    const h = hotspots[i];
+    if (p.x >= h.bounds.x && p.x <= h.bounds.x + h.bounds.w && p.y >= h.bounds.y && p.y <= h.bounds.y + h.bounds.h) {
+      return h;
+    }
+  }
+  return null;
 }
 
 /* --------------------------- relationships --------------------------- */
@@ -1066,6 +1233,30 @@ export function validateStory(story: Story): ValidationIssue[] {
         if (!recallKeys.has(tag))
           issues.push({ severity: "warning", sceneId: sc.id, message: `Beat "…${beat.text.slice(0, 18)}…" is gated on memory/flag "${tag}" but no choice sets that memoryLog tag and no such flag exists.` });
       });
+      // "Press the lie" audit. The contradiction beats must speak (valid
+      // character or narrator), the evidence must be real items, and a lie
+      // with no evidence can never be broken.
+      if (beat.lie) {
+        const lie = beat.lie;
+        const lieBeatOk = (b: DialogueBeat, label: string) => {
+          if (b.characterId !== "narrator" && !characterIds.has(b.characterId))
+            issues.push({ severity: "error", sceneId: sc.id, message: `Press-the-lie ${label} beat on "…${beat.text.slice(0, 16)}…" is spoken by missing character "${b.characterId}".` });
+        };
+        lieBeatOk(lie.caughtBeat, "caught");
+        if (lie.wrongBeat) lieBeatOk(lie.wrongBeat, "bluff-called");
+        if (!lie.evidenceItemIds.length)
+          issues.push({ severity: "error", sceneId: sc.id, message: `Press-the-lie beat "…${beat.text.slice(0, 16)}…" names no breaking evidence — the player can never catch the lie. Pick the clue item that proves it false.` });
+        lie.evidenceItemIds.forEach((itemId) => {
+          if (!itemIds.has(itemId))
+            issues.push({ severity: "error", sceneId: sc.id, message: `Press-the-lie beat "…${beat.text.slice(0, 16)}…" needs evidence item "${itemId}", which doesn't exist.` });
+        });
+        if (!lie.contradictedFlag?.trim())
+          issues.push({ severity: "error", sceneId: sc.id, message: `Press-the-lie beat "…${beat.text.slice(0, 16)}…" has no caught flag — set one so the rest of the scene can gate on the lie being broken.` });
+        // The caught beat should usually gate on its own flag so it doesn't
+        // also appear as an ordinary line before the player presses.
+        if (!lie.caughtBeat.conditionRule?.requiresFlags?.includes(lie.contradictedFlag))
+          issues.push({ severity: "warning", sceneId: sc.id, message: `Press-the-lie caught beat ("…${lie.caughtBeat.text.slice(0, 16)}…") isn't gated on "${lie.contradictedFlag}" — gate it so the reaction only plays once the player breaks the lie.` });
+      }
     });
     // After-beat routes only fire on the LAST visible beat. Flag a route that
     // is authored on a beat followed by another (ungated) beat so it doesn't
@@ -1225,7 +1416,11 @@ export function validateStory(story: Story): ValidationIssue[] {
       if (c.presentItem) required.add(c.presentItem);
     });
     sc.hotspots?.forEach((h) => h.gating?.requiresItems?.forEach((i) => required.add(i)));
-    sc.dialogueBeats?.forEach((b) => b.conditionRule?.requiresItems?.forEach((i) => required.add(i)));
+    sc.dialogueBeats?.forEach((b) => {
+      b.conditionRule?.requiresItems?.forEach((i) => required.add(i));
+      // The contradiction can only be won with a held clue — it's required.
+      b.lie?.evidenceItemIds.forEach((i) => required.add(i));
+    });
   });
   (story.episodes ?? []).forEach((ep) => ep.recapLines?.forEach((l) => l.gating?.requiresItems?.forEach((i) => required.add(i))));
   required.forEach((i) => {
@@ -1249,7 +1444,19 @@ export function validateStory(story: Story): ValidationIssue[] {
       hotspot.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
     });
     sc.onEnterActions?.forEach((action) => action.consequences?.setFlags?.forEach((flag) => grantableFlags.add(flag)));
-    sc.dialogueBeats?.forEach((beat) => beat.conditionRule?.requiresFlags?.forEach((flag) => requiredFlags.add(flag)));
+    sc.dialogueBeats?.forEach((beat) => {
+      beat.conditionRule?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+      // Press-the-lie: the caught flag is set by the engine when the player
+      // presents the right evidence (like an interrogation crack), so it's
+      // grantable; its caught/wrong beats' gates and outcome swings are real.
+      if (beat.lie) {
+        grantableFlags.add(beat.lie.contradictedFlag);
+        beat.lie.contradictedConsequences?.setFlags?.forEach((flag) => grantableFlags.add(flag));
+        beat.lie.wrongConsequences?.setFlags?.forEach((flag) => grantableFlags.add(flag));
+        beat.lie.caughtBeat.conditionRule?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+        beat.lie.wrongBeat?.conditionRule?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+      }
+    });
     // Interrogation outcomes are set by the engine at the crack/clamp, not by
     // any authored consequence — treat them as grantable so gates on the
     // broke/clamp flags don't false-positive as impossible.
@@ -1270,6 +1477,279 @@ export function validateStory(story: Story): ValidationIssue[] {
   Object.keys(story.flagNotes ?? {}).forEach((flag) => {
     if (!knownFlags.has(flag))
       issues.push({ severity: "warning", sceneId: null, message: `Flag note for "${flag}" doesn't match any flag used in the story.` });
+  });
+
+  /* ---------------- craft audit ----------------
+   * The checks above prove the graph CAN be walked. These look for the
+   * mechanical signatures of a story that walks but never LANDS: a flag that
+   * is set and changes nothing, a "she will remember that" with nothing to
+   * remember, a deadline that can't alter what happens, two answers that are
+   * the same answer in a hat, and long stretches where the player is never
+   * asked a thing. That is the discipline Nobody's Witness keeps by hand in
+   * its backward-design ledger; the linter keeps it for everyone else.
+   * Producers/consumers are walked by hand (like the collectors above) so
+   * each issue can name the scene it came from. */
+  const flagProducers = new Map<string, string[]>();
+  const flagClearers = new Map<string, string[]>();
+  const flagConsumers = new Map<string, string[]>();
+  const tagProducers = new Map<string, string[]>();
+  const tagConsumers = new Map<string, string[]>();
+  const addSource = (map: Map<string, string[]>, key: string, sceneId: string | null) => {
+    const list = map.get(key);
+    if (list) {
+      if (sceneId && !list.includes(sceneId)) list.push(sceneId);
+    } else map.set(key, sceneId ? [sceneId] : [""]);
+  };
+  const walkGatingCraft = (g: Gating | undefined, sceneId: string | null) => {
+    if (!g) return;
+    [...(g.requiresFlags ?? []), ...(g.excludesFlags ?? []), ...(g.requiresMemories ?? [])].forEach((key) =>
+      addSource(flagConsumers, key, sceneId)
+    );
+    // requiresMemories may also key off a memoryLog tag — record it as a tag
+    // consumer too; the dead-tag check ignores plain flags.
+    g.requiresMemories?.forEach((t) => addSource(tagConsumers, t, sceneId));
+  };
+  const walkConsequencesCraft = (c: Consequences | undefined, sceneId: string | null) => {
+    c?.setFlags?.forEach((f) => addSource(flagProducers, f, sceneId));
+    c?.clearFlags?.forEach((f) => addSource(flagClearers, f, sceneId));
+  };
+  story.scenes.forEach((sc) => {
+    sc.choices?.forEach((c) => {
+      walkGatingCraft(c.gating, sc.id);
+      walkConsequencesCraft(c.consequences, sc.id);
+      walkConsequencesCraft(c.timedOutConsequences, sc.id);
+      if (c.memoryLog) addSource(tagProducers, c.memoryLog, sc.id);
+      if (c.presentItem) addSource(tagProducers, `item:${c.presentItem}`, sc.id);
+    });
+    sc.hotspots?.forEach((h) => {
+      walkGatingCraft(h.gating, sc.id);
+      if (h.action.flagSet) addSource(flagProducers, h.action.flagSet, sc.id);
+      walkConsequencesCraft(h.action.patternPuzzle?.rewardConsequences, sc.id);
+      walkConsequencesCraft(h.action.patternPuzzle?.wrongSubmissionConsequences, sc.id);
+    });
+    sc.onEnterActions?.forEach((a) => {
+      walkGatingCraft(a.conditionRule, sc.id);
+      walkConsequencesCraft(a.consequences, sc.id);
+    });
+    sc.dialogueBeats?.forEach((b) => {
+      walkGatingCraft(b.conditionRule, sc.id);
+      // A recall key is a memoryLog tag OR a story flag — consume it as both
+      // so either producer recognises the payoff.
+      Object.keys(b.recalls ?? {}).forEach((key) => {
+        addSource(flagConsumers, key, sc.id);
+        addSource(tagConsumers, key, sc.id);
+      });
+      // Press-the-lie: the engine sets contradictedFlag when the lie breaks
+      // (like an interrogation crack), reads it to know the claim is won, and
+      // the caught beat normally gates on it. Walk both reactions' gates and
+      // both outcome swings so their flags count as produced/consumed.
+      if (b.lie) {
+        const lie = b.lie;
+        addSource(flagProducers, lie.contradictedFlag, sc.id);
+        addSource(flagConsumers, lie.contradictedFlag, sc.id);
+        walkConsequencesCraft(lie.contradictedConsequences, sc.id);
+        walkConsequencesCraft(lie.wrongConsequences, sc.id);
+        walkGatingCraft(lie.caughtBeat.conditionRule, sc.id);
+        Object.keys(lie.caughtBeat.recalls ?? {}).forEach((key) => {
+          addSource(flagConsumers, key, sc.id);
+          addSource(tagConsumers, key, sc.id);
+        });
+        if (lie.wrongBeat) {
+          walkGatingCraft(lie.wrongBeat.conditionRule, sc.id);
+          Object.keys(lie.wrongBeat.recalls ?? {}).forEach((key) => {
+            addSource(flagConsumers, key, sc.id);
+            addSource(tagConsumers, key, sc.id);
+          });
+        }
+      }
+    });
+    if (sc.interrogation) {
+      // The engine reads these flags itself: it selects the crack/clamp beat
+      // and gates the interrogation HUD on them. They are both produced and
+      // consumed by the runtime, so they never need an authored gate.
+      addSource(flagProducers, sc.interrogation.brokeFlag, sc.id);
+      addSource(flagConsumers, sc.interrogation.brokeFlag, sc.id);
+      if (sc.interrogation.clampFlag) {
+        addSource(flagProducers, sc.interrogation.clampFlag, sc.id);
+        addSource(flagConsumers, sc.interrogation.clampFlag, sc.id);
+      }
+      walkConsequencesCraft(sc.interrogation.brokeConsequences, sc.id);
+      walkConsequencesCraft(sc.interrogation.clampConsequences, sc.id);
+    }
+  });
+  // Corkboard connection flags are produced and read by the deduction board
+  // at runtime (solved connections / "case cracked" tally).
+  story.deduction?.connections.forEach((c) => {
+    addSource(flagProducers, c.flagSet, null);
+    addSource(flagConsumers, c.flagSet, null);
+  });
+  // A flag with an authored flagNote is read by the player: it renders in the
+  // Case File "Story so far" readout. Notes are therefore intentional story
+  // breadcrumbs — a noted flag that never gates content is a journal entry,
+  // not a dead wire. An UNNOTED flag that changes nothing is the real miss:
+  // the player acted, and the world never said so or bent.
+  Object.keys(story.flagNotes ?? {}).forEach((flag) => addSource(flagConsumers, flag, null));
+  (story.episodes ?? []).forEach((ep) => {
+    ep.recapLines?.forEach((line) => walkGatingCraft(line.gating, null));
+  });
+  // A "Previously on…" that replays the player's own lines consumes every
+  // recorded memory in the season. In a season, every memoryLog/rememberLine
+  // choice also lands on the episode-end card as a "your defining choices"
+  // highlight, so in episodic stories recorded memories have an audience by
+  // construction — don't nag about them.
+  const memoryHasAudience = isEpisodic(story) || (story.episodes ?? []).some((ep) => ep.recapFromMemories);
+
+  // (a) Flags that are set but never read — the silent dead payoff. This is
+  // the automated backward-design ledger: if a flag never gates a scene,
+  // feeds a beat recall, or clears a condition, the player's action that set
+  // it changed nothing about the story.
+  flagProducers.forEach((where, flag) => {
+    if (flagConsumers.has(flag)) return;
+    issues.push({
+      severity: "warning",
+      sceneId: where[0] || null,
+      message: `Flag "${flag}" is set but never read — no gate, beat recall, recap or flag-note depends on it, so nothing the player does with it changes a scene, a line, or the journal. Wire it to a payoff, give it a flag note, or remove it.`,
+    });
+  });
+  // (b) Flags that are cleared but never set — the clear can never fire (the
+  // flag starts unset), so whatever it was meant to take away is still there.
+  flagClearers.forEach((where, flag) => {
+    if (flagProducers.has(flag)) return;
+    issues.push({
+      severity: "warning",
+      sceneId: where[0] || null,
+      message: `Flag "${flag}" is cleared somewhere but never set anywhere — a flag starts unset, so that clear does nothing. Set it first (or delete the clear).`,
+    });
+  });
+  // (c) Memory tags that are recorded but never recalled — "the character
+  // remembers what you said" with no scene where they do. Present-item keys
+  // (item:<id>) are self-describing and skip this.
+  tagProducers.forEach((where, tag) => {
+    if (tag.startsWith("item:") || tagConsumers.has(tag) || memoryHasAudience) return;
+    issues.push({
+      severity: "warning",
+      sceneId: where[0] || null,
+      message: `Memory "${tag}" is recorded by a choice but never recalled — no later beat echoes it and no gate remembers it, so the player's words leave no trace. Add a recall/remembers gate or drop the memoryLog tag.`,
+    });
+  });
+  // (d) A "X will remember that" card with nothing behind it. The card is a
+  // PROMISE; with no memory tag, no presented item and no state change, the
+  // story has recorded nothing it could possibly remember.
+  const choiceCarriesPayload = (c: Choice): boolean =>
+    !!c.memoryLog ||
+    !!c.presentItem ||
+    (c.consequences ? Object.values(c.consequences).some((v) => Array.isArray(v) && v.length > 0) : false) ||
+    (c.timedOutConsequences ? Object.values(c.timedOutConsequences).some((v) => Array.isArray(v) && v.length > 0) : false);
+  story.scenes.forEach((sc) => {
+    sc.choices?.forEach((c) => {
+      if (c.rememberLine && !choiceCarriesPayload(c))
+        issues.push({
+          severity: "warning",
+          sceneId: sc.id,
+          message: `Choice "${c.text.slice(0, 26)}…" shows a "will remember that" card but tags no memory and changes no state — there is nothing to remember. Give it a memoryLog tag (a later beat can then recall it) or consequences.`,
+        });
+    });
+  });
+  // (e) Fake deadlines: a quick-time prompt whose expiry cannot change what
+  // happens. The engine routes a timeout to timedOutTargetSceneId ?? target,
+  // so a QTE with no distinct timeout scene and no timeout consequences —
+  // including a quick-time REPLY (replies answer in place) — plays out
+  // identically whether the player reacts or freezes. Hesitation must be a
+  // real branch, or the timer is just decoration.
+  const consequencesKey = (c?: Consequences): string =>
+    JSON.stringify({
+      setFlags: [...(c?.setFlags ?? [])].sort(),
+      clearFlags: [...(c?.clearFlags ?? [])].sort(),
+      addItems: [...(c?.addItems ?? [])].sort(),
+      removeItems: [...(c?.removeItems ?? [])].sort(),
+      meterChanges: [...(c?.meterChanges ?? [])].map((m) => `${m.meter}:${m.delta}`).sort(),
+      trustChanges: [...(c?.trustChanges ?? [])].map((t) => `${t.characterId}:${t.delta}`).sort(),
+    });
+  story.scenes.forEach((sc) => {
+    sc.choices?.forEach((c) => {
+      if (!c.quickTime) return;
+      const timeoutLandsSame = c.reply || (c.timedOutTargetSceneId ?? c.targetSceneId) === c.targetSceneId;
+      const timeoutChangesNothing = consequencesKey(c.timedOutConsequences) === consequencesKey(undefined);
+      if (timeoutLandsSame && timeoutChangesNothing)
+        issues.push({
+          severity: "warning",
+          sceneId: sc.id,
+          message: `Quick-time choice "${c.text.slice(0, 26)}…" changes nothing when the timer runs out — hesitation lands on the same${c.reply ? " reply" : " scene"} with no timeout consequences. A deadline that costs nothing trains players to ignore every timer: route the timeout elsewhere or give it "hesitated" consequences.`,
+        });
+    });
+  });
+  // (f) The same decision in a hat: two visible, ungated choices that answer
+  // identically — same destination (or both in-place replies), same attitude,
+  // same effects, no memory of either. Players feel the illusion immediately.
+  story.scenes.forEach((sc) => {
+    const pickable = (sc.choices ?? []).filter(
+      (c) => !c.hidden && !c.gating && !effectiveChoiceGating(c) && (c.reply || !!c.targetSceneId)
+    );
+    for (let i = 0; i < pickable.length; i++) {
+      for (let j = i + 1; j < pickable.length; j++) {
+        const a = pickable[i];
+        const b = pickable[j];
+        if (a.reply !== b.reply) continue;
+        if (!a.reply && a.targetSceneId !== b.targetSceneId) continue;
+        if ((a.attitudeTag ?? "Neutral") !== (b.attitudeTag ?? "Neutral")) continue;
+        if (consequencesKey(a.consequences) !== consequencesKey(b.consequences)) continue;
+        if (a.memoryLog || b.memoryLog || a.presentItem || b.presentItem) continue;
+        issues.push({
+          severity: "warning",
+          sceneId: sc.id,
+          message: `Choices "${a.text.slice(0, 22)}…" and "${b.text.slice(0, 22)}…" are the same decision twice — same destination, same attitude, same effects, and neither is remembered. Merge them, or make the two answers lead (or cost) something different.`,
+        });
+      }
+    }
+  });
+  // (g) Passive corridors: a run of scenes with no choice, hotspot or
+  // interrogation where the player only clicks Continue. Credits/cutscene
+  // nodes are authored non-interactive set-pieces and break the chain; notes
+  // aren't real scenes. Flag runs of PASSIVE_RUN_MIN or more.
+  const PASSIVE_RUN_MIN = 4;
+  const isPassiveScene = (sc: SceneNode): boolean => {
+    if (sc.nodeType === "note" || sc.nodeType === "cutscene" || sc.nodeType === "credits") return false;
+    if (sc.isEnding || sc.interrogation) return false;
+    if ((sc.choices ?? []).length > 0) return false;
+    if ((sc.hotspots ?? []).length > 0) return false;
+    return true;
+  };
+  const outByScene = new Map<string, StoryEdge[]>();
+  edges.forEach((e) => {
+    const list = outByScene.get(e.source) ?? [];
+    list.push(e);
+    outByScene.set(e.source, list);
+  });
+  const sceneByIdMap = new Map(story.scenes.map((s) => [s.id, s]));
+  const corridorReported = new Set<string>();
+  reachable.forEach((startId) => {
+    const startScene = sceneByIdMap.get(startId);
+    if (!startScene || !isPassiveScene(startScene)) return;
+    const chain: string[] = [];
+    const guard = new Set<string>();
+    let cur: string | undefined = startId;
+    while (cur) {
+      if (guard.has(cur)) break;
+      guard.add(cur);
+      const sc = sceneByIdMap.get(cur);
+      if (!sc || !isPassiveScene(sc)) break;
+      chain.push(cur);
+      // Passive scenes only leave via auto edges (auto-advance, after-beat).
+      // More than one distinct destination is a junction — stop counting.
+      const nextIds: string[] = (outByScene.get(cur) ?? []).filter((e) => ids.has(e.target)).map((e) => e.target);
+      const nextSet = new Set(nextIds);
+      if (nextSet.size !== 1) break;
+      cur = nextIds[0];
+    }
+    if (chain.length >= PASSIVE_RUN_MIN && !corridorReported.has(chain[0])) {
+      chain.forEach((id) => corridorReported.add(id));
+      const names = chain.slice(0, 4).map((id) => `"${sceneByIdMap.get(id)?.title ?? id}"`).join(" → ");
+      issues.push({
+        severity: "warning",
+        sceneId: chain[0],
+        message: `${chain.length} scenes in a row with no choice, hotspot or interrogation (${names}${chain.length > 4 ? " …" : ""}) — the player is only clicking Continue. Ask something mid-run, or collapse the stretch into a cutscene/credits node.`,
+      });
+    }
   });
 
   /* ---------------- acts ----------------

@@ -31,8 +31,9 @@ export const DEMO_CONVERSATION: Story = {
     dc_sidle: { x: 440, y: 60 },
     dc_club: { x: 440, y: 220 },
     dc_evidence: { x: 440, y: 400 },
-    dc_ending_gold: { x: 880, y: 140 },
-    dc_ending_cold: { x: 880, y: 340 },
+    dc_alibi: { x: 880, y: 40 },
+    dc_ending_gold: { x: 1300, y: 140 },
+    dc_ending_cold: { x: 1300, y: 340 },
   },
   briefing: {
     objective: "Learn the dialogue tools by talking to Frankie: reply in place, get remembered, and show evidence.",
@@ -48,6 +49,7 @@ export const DEMO_CONVERSATION: Story = {
     dc_asked_hard: "You opened the interview with a hard press.",
     dc_asked_shadow: "You asked about the man in the shadow of the bar.",
     dc_showed_envelope: "You showed Frankie the envelope before leaving.",
+    dc_alibi_broken: "You caught Frankie in a lie with the register slip.",
   },
   characters: [
     {
@@ -66,6 +68,14 @@ export const DEMO_CONVERSATION: Story = {
       icon: "✉️",
       description: "A cream envelope with Frankie's name on the flap, sealed with black wax.",
       flavorText: "It was sitting on the desk like it was meant to be found.",
+      isClue: true,
+    },
+    {
+      id: "dc_slip",
+      name: "Bar Register Slip",
+      icon: "🧾",
+      description: "A carbon-copy register slip: two drinks and a phone call logged to Frankie's tab at 2:07 a.m.",
+      flavorText: "Says he was standing right here. Last night. At the hour he claims he was home.",
       isClue: true,
     },
   ],
@@ -95,6 +105,14 @@ export const DEMO_CONVERSATION: Story = {
           isRepeatable: false,
           showItemImage: true,
           action: { type: "giveItem", itemGranted: "dc_envelope" },
+        },
+        {
+          id: "dc_hs_slip",
+          label: "A carbon-copy register slip tucked under the blotter",
+          bounds: { x: 8, y: 58, w: 14, h: 18 },
+          cursor: "take",
+          isRepeatable: false,
+          action: { type: "giveItem", itemGranted: "dc_slip" },
         },
       ],
       choices: [
@@ -213,6 +231,47 @@ export const DEMO_CONVERSATION: Story = {
           expression: "pointing",
           text: "Here's the thing, detective: talk is free in my place, but it don't prove nothing. If you've got paper on me — an envelope, a ledger page, a photograph — you put it on the bar. Otherwise we're just two people enjoying the music.",
         },
+        {
+          id: "dc_club_lie",
+          characterId: "dc_frankie",
+          expression: "shrugging",
+          text: "And don't go looking for me in any of this. Last night? I was home in my rooms by eleven, door locked, stone cold sober. Didn't come near the club. Ask anyone.",
+          // PRESS THE LIE: the 🎯 button appears on this line. The player must
+          // produce the register slip (or be wrong and lose the chance).
+          lie: {
+            claim: "Frankie claims he was home by eleven and never came near the club last night.",
+            evidenceItemIds: ["dc_slip"],
+            contradictedFlag: "dc_alibi_broken",
+            caughtBeat: {
+              id: "dc_club_lie_caught",
+              characterId: "dc_frankie",
+              conditionRule: { requiresFlags: ["dc_alibi_broken"] },
+              text: "He reads the carbon slip twice, and the smile drains out of him. \"…two drinks and a phone call, two-oh-seven. That's my tab. My HANDWRITING.\" He sets it down slow. \"Alright, detective. You didn't just walk in here — you walked in READY. What do you want to know?\"",
+            },
+            wrongBeat: {
+              id: "dc_club_lie_wrong",
+              characterId: "dc_frankie",
+              text: "He doesn't even look at it. \"An envelope with my NAME on it? I've got a hundred of those. That doesn't put me in the bar last night. Try again with something that actually means something — if you've got it.\"",
+            },
+            wrongEvidenceLimit: 2,
+            contradictedConsequences: {
+              trustChanges: [{ characterId: "dc_frankie", delta: 2 }],
+              meterChanges: [{ meter: "Clever", delta: 1 }],
+            },
+            wrongConsequences: {
+              trustChanges: [{ characterId: "dc_frankie", delta: -1 }],
+              meterChanges: [{ meter: "Suspicion", delta: 1 }],
+            },
+            rememberLine: "Frankie Voss knows you've caught him in a lie.",
+          },
+        },
+        {
+          id: "dc_club_after_lie",
+          characterId: "dc_frankie",
+          expression: "guarded",
+          conditionRule: { requiresFlags: ["dc_alibi_broken"] },
+          text: "You want the truth? Fine. The twelfth, the money, the man by the jukebox — that's a conversation for the back booth, not the bar. Come on. You've earned it.",
+        },
       ],
       hotspots: [],
       choices: [
@@ -225,10 +284,81 @@ export const DEMO_CONVERSATION: Story = {
           consequences: { setFlags: ["dc_asked_hard"], meterChanges: [{ meter: "Suspicion", delta: 1 }] },
         },
         {
+          id: "dc_club_to_alibi",
+          text: "\"Home by eleven, were you?\" — corner him about last night.",
+          targetSceneId: "dc_alibi",
+          attitudeTag: "Clever",
+        },
+        {
           id: "dc_club_to_evidence",
           text: "Reach into your coat — you've got paper to show.",
           targetSceneId: "dc_evidence",
           attitudeTag: "Clever",
+        },
+      ],
+    },
+
+    /* ── SCENE 3b — PRESS THE LIE (contradiction verb) ─────────────── */
+    {
+      id: "dc_alibi",
+      title: "The Alibi",
+      note:
+        "STEP 3b — PRESS THE LIE (the contradiction verb). This beat's line is a FALSE CLAIM and carries a 🎯 'Press the Lie' panel (Dialogue tab → beat → '🎯 Press the Lie'). " +
+        "① Tick 'This line is a lie the player can catch'. ② Pick the BREAKING EVIDENCE — here the Bar Register Slip (the office hotspot gives it; without it the player has nothing to show). " +
+        "③ Write the CAUGHT reaction — it auto-gates on the caught flag, so it only plays when the right evidence lands. ④ The WRONG line + wrong consequences fire on a bad guess, and after the wrong-limit they shut down. " +
+        "▶ Play: take BOTH clues from the office, hit 🎯 on Frankie's alibi, and present the register slip — the envelope is a deliberate red herring.",
+      background: "/img/bg-club.jpg",
+      ambientAudio: "tension",
+      prose:
+        "The bar noise drops around the two of you. Frankie polishes the same glass he's polished all night and gives you an answer he's had ready since before you walked in.",
+      dialogueBeats: [
+        {
+          id: "dc_alibi_claim",
+          characterId: "dc_frankie",
+          expression: "easy-smile",
+          text: "Last night? Home by eleven. Door locked, radio off, all alone. You can check — there's not a slip of paper in this city puts me near the club after midnight.",
+          lie: {
+            claim: "Frankie says he was home by eleven with nothing to put him near the club.",
+            evidenceItemIds: ["dc_slip"],
+            contradictedFlag: "dc_alibi_broken",
+            caughtBeat: {
+              id: "dc_alibi_caught",
+              characterId: "dc_frankie",
+              conditionRule: { requiresFlags: ["dc_alibi_broken"] },
+              text: "His eyes lock on the carbon slip. He goes very still. \"Two-oh-seven a.m. Two drinks. A phone call.\" A breath. \"That's my handwriting.\" He folds the rag slowly. \"You actually DID your homework. The back booth, detective. Before I change my mind.\"",
+            },
+            wrongBeat: {
+              id: "dc_alibi_wrong",
+              characterId: "dc_frankie",
+              text: "He smirks. \"A wax envelope? Sweetheart, half the city's got my name on paper. That doesn't put me at this bar at two in the morning. Bring me something with a TIME on it, or sit down and drink.\"",
+            },
+            wrongEvidenceLimit: 2,
+            contradictedConsequences: {
+              trustChanges: [{ characterId: "dc_frankie", delta: 2 }],
+              meterChanges: [{ meter: "Clever", delta: 1 }],
+            },
+            wrongConsequences: {
+              trustChanges: [{ characterId: "dc_frankie", delta: -1 }],
+              meterChanges: [{ meter: "Suspicion", delta: 1 }],
+            },
+            rememberLine: "Frankie Voss knows you've caught him in a lie.",
+          },
+        },
+      ],
+      hotspots: [],
+      choices: [
+        {
+          id: "dc_alibi_caught_to_evidence",
+          text: "Take him to the back booth.",
+          targetSceneId: "dc_evidence",
+          attitudeTag: "Clever",
+          gating: { requiresFlags: ["dc_alibi_broken"] },
+        },
+        {
+          id: "dc_alibi_cold",
+          text: "Leave him to his glass and walk.",
+          targetSceneId: "dc_ending_cold",
+          attitudeTag: "Neutral",
         },
       ],
     },
