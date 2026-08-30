@@ -53,7 +53,8 @@ export type HotspotActionType =
   | "meterChange"
   | "openBoard"
   | "useItem"
-  | "patternPuzzle";
+  | "patternPuzzle"
+  | "startDialogue";
 
 export interface HotspotAction {
   type: HotspotActionType;
@@ -66,6 +67,9 @@ export interface HotspotAction {
   itemConsumed?: string;
   /** for patternPuzzle hotspots: the puzzle configuration */
   patternPuzzle?: import("./game/PatternPuzzleTypes").PatternPuzzleConfig;
+  /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
+   * a conversation. This action needs no payload of its own — the scene's
+   * beats ARE the payload. Any flagSet / meterChange here still applies. */
 }
 
 export interface Hotspot {
@@ -816,24 +820,62 @@ export interface Interrogation {
   clampConsequences?: Consequences;
 }
 
-/** Settings for a STAGE 2D walkable scene. The player walks a small
- * character around the scene plate; reaching a hotspot fires it through
- * the normal interaction path. Everything else (the reel, choices,
- * consequences, dialogue) is untouched — this is a movement/presentation
- * layer over the same scene data. */
-export interface Stage2DSettings {
-  /** The character sprite. An image url / `asset:` token, or an emoji
-   * glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
+/**
+ * A STAGE node — the Telltale-style walkable exploration scene.
+ *
+ * A stage node plays nothing like a standard node: there is no prose panel
+ * and nothing to read before acting. The player walks a character around a
+ * floor (click-to-walk and/or WASD/arrows), interactables render as
+ * Telltale-style markers, and walking up to a marker fires it through the
+ * SAME action path a clicked hotspot uses (gating, give-item, show-text,
+ * use-item, exits — all unchanged). A marker whose action is
+ * `startDialogue` (a character, usually drawn with the hotspot's image)
+ * starts the scene's conversation — its dialogueBeats play in the normal
+ * cinematic dialogue panel, ending in the scene's choices (give them
+ * timeLimitSeconds for genuine Telltale "decide NOW" pressure). Exit
+ * markers are ordinary goToScene hotspots: you walk to the door to leave.
+ *
+ * Prose on a stage node is intentionally NOT shown in play — narrative
+ * lives in short caption lines (`showText` actions and `enterCaption`),
+ * the way a Telltale scene speaks through what you do, not paragraphs.
+ */
+export interface StageSettings {
+  /** The player character sprite. An image url / `asset:` token, or an emoji
+   *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
   playerImage?: string;
-  /** Spawn point in scene percentages (0–100). Defaults to bottom-centre. */
+  /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
+   *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
+   *  procedurally instead. Frame 0 doubles as the idle pose. */
+  walkFrames?: string[];
+  /** Seconds each walk frame holds (default 0.14). */
+  walkFrameDuration?: number;
+  /** Spawn point in scene percentages (0–100). Defaults to bottom-centre,
+   *  clamped onto the floor band. */
   spawn?: { x: number; y: number };
   /** Walk speed as a percentage of scene WIDTH per second (default ~18). */
   speed?: number;
-  /** How close (in scene-% of width) the character must get to a hotspot
-   * centre to fire it (default ~3). */
+  /** How close (in scene-% of width) the character must get to a marker to
+   *  fire it (default ~4). */
   reach?: number;
   /** Allow arrow-key / WASD movement as well as click-to-walk (default true). */
   keyboard?: boolean;
+  /** The walkable floor band, as % of plate height from the top of the
+   *  screen. Default { top: 62, bottom: 94 }. Clicks outside the band walk
+   *  to the nearest edge of it. */
+  floor?: { top: number; bottom: number };
+  /** Perspective: how much SMALLER the character is drawn at the top of the
+   *  floor vs the bottom, 0–0.9 (default 0.35). 0 = flat, no depth scaling. */
+  depthScale?: number;
+  /** Base scale of the player sprite (default 1). */
+  playerScale?: number;
+  /** When interaction labels show on markers:
+   *  - "proximity" (default): labels fade in as the character approaches
+   *  - "always": every marker wears its label (busy but explicit)
+   *  - "none": reticles only — pure Die Hard pan-and-scan confidence */
+  hints?: "proximity" | "always" | "none";
+  /** A caption bar line shown once when the scene begins — the stage
+   *  equivalent of an opening narration beat (auto-fades, never blocks). */
+  enterCaption?: string;
 }
 
 export interface SceneNode {
@@ -843,10 +885,13 @@ export interface SceneNode {
    * scene's node card. Studio metadata only; the game never renders it. */
   note?: string;
   /** standard, credits (no HUD, big typography), cutscene (no HUD, full-screen video),
-   * or note — an author placeholder ("Missing Scene Here"): wired into the graph
+   * stage (a Telltale-style WALKABLE exploration scene — no prose panel, the
+   * player walks a character around a floor and interacts by approaching
+   * things; conversations play via startDialogue markers), or note — an
+   * author placeholder ("Missing Scene Here"): wired into the graph
    * on both sides but bypassed in play (the game follows its single outgoing
    * route straight through). */
-  nodeType?: "standard" | "credits" | "cutscene" | "note";
+  nodeType?: "standard" | "credits" | "cutscene" | "stage" | "note";
   /** Marks this scene as the END OF A PART. On leaving it, the game shows the
    * route flowchart for the part just played before continuing. The string is
    * the part's display name (e.g. "Part 3 — Two Hundred and Eleven Thousand").
@@ -899,15 +944,13 @@ export interface SceneNode {
   hideSceneTitle?: boolean;
   /** visual particle overlay; if undefined, falls back to legacy auto-matching based on ambient audio */
   particles?: "none" | "rain" | "smoke" | "storm";
-  /** STAGE 2D — a controllable character you walk around this scene. When
-   * present, the scene plate becomes a walkable stage: click the ground to
-   * move (or use the arrow / WASD keys), and walking the character onto a
-   * hotspot triggers it through the SAME interaction path as clicking
-   * (gating, give-item, show-text, go-to-scene all still apply). It is a
-   * presentation mode layered over the reel — the state model, choices and
-   * consequences are unchanged. Omit it for the classic point-and-click
-   * scene. */
-  stage2d?: Stage2DSettings;
+  /** STAGE NODES — the Telltale walkable-stage configuration. When the
+   * scene's nodeType is "stage" this drives the whole scene: the player
+   * walks a character around `stage.floor`, interactable markers fire
+   * hotspots through the normal action path, `startDialogue` markers open
+   * the conversation, exits are goToScene markers. Ignored on other node
+   * types. */
+  stage?: StageSettings;
   /** cinematic camera motion applied to the scene background image */
   cinematic?: CinematicSettings;
   /** Show Telltale-style letterbox bars (top/bottom black bands) over the scene. */
@@ -917,6 +960,9 @@ export interface SceneNode {
   transition?: "fade" | "fade-black" | "cut";
   /** Seconds for the scene entry transition (default 0.5). */
   transitionSpeed?: number;
+  /** The opening prose. NOT rendered on stage nodes (narrative there is
+   * captions: `stage.enterCaption` + showText markers) — keep it "" and put
+   * anything author-facing in `note`. */
   prose: string;
   dialogueBeats?: DialogueBeat[];
   hotspots?: Hotspot[];

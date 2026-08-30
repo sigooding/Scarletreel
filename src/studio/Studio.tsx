@@ -46,6 +46,7 @@ import {
   characterOpinion,
   clamp,
   collectFlags,
+  normalizeLegacyStory,
   collectMemoryTags,
   deepClone,
   effectiveChoiceGating,
@@ -58,6 +59,7 @@ import {
   episodeOfScene,
   unassignedScenes,
   seasonEpisodes,
+  stageFloor as stageFloorOf,
   storyEdges,
   uid,
   validateStory,
@@ -185,6 +187,152 @@ function bgStyle(bg: string): React.CSSProperties {
   if (resolved.startsWith("gradient:")) return { background: resolved.slice(9) };
   if (resolved.startsWith("video:")) return { background: "#0c0c14" };
   return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
+}
+
+/**
+ * StageFloorEditor — the walkable-stage authoring plate. Drag the floor
+ * band's top/bottom edges, the spawn dot, and any marker to reposition it;
+ * everything writes straight back into the scene. Markers sit at a
+ * hotspot's base (bottom-centre of its zone), exactly where the game draws
+ * them, so what you lay out here is what plays.
+ */
+function StageFloorEditor({
+  background,
+  media,
+  floor,
+  spawn,
+  hotspots,
+  onFloor,
+  onSpawn,
+  onMoveMarker,
+  selectedHotspotId,
+  onSelectHotspot,
+}: {
+  background: string;
+  media: (v?: string) => string | undefined;
+  floor: { top: number; bottom: number };
+  spawn: { x: number; y: number };
+  hotspots: { id: string; label: string; cursor: string; bounds: { x: number; y: number; w: number; h: number } }[];
+  onFloor: (top: number, bottom: number) => void;
+  onSpawn: (x: number, y: number) => void;
+  onMoveMarker: (hotspotId: string, cx: number, baseY: number) => void;
+  selectedHotspotId?: string | null;
+  onSelectHotspot?: (id: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<null | { kind: "floor-top" | "floor-bottom" | "spawn" | { hsId: string }; offX: number }>(null);
+
+  const pct = (e: React.PointerEvent) => {
+    const r = ref.current!.getBoundingClientRect();
+    return {
+      x: Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)),
+      y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
+    };
+  };
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  const marker = (h: { bounds: { x: number; y: number; w: number; h: number } }) => ({
+    x: h.bounds.x + h.bounds.w / 2,
+    y: h.bounds.y + h.bounds.h,
+  });
+
+  return (
+    <div
+      ref={ref}
+      className="relative aspect-video w-full touch-none select-none overflow-hidden border border-noir-600"
+      style={bgStyle(media(background) ?? background)}
+      onPointerDown={(e) => {
+        const kind = (e.target as HTMLElement).dataset.drag;
+        if (!kind) return;
+        if (kind.startsWith("hs:")) {
+          const hs = hotspots.find((h) => h.id === kind.slice(3));
+          if (!hs) return;
+          drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x };
+          onSelectHotspot?.(hs.id);
+        } else {
+          drag.current = { kind: kind as "floor-top" | "floor-bottom" | "spawn", offX: 0 };
+        }
+        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+      }}
+      onPointerMove={(e) => {
+        if (!drag.current) return;
+        const p = pct(e);
+        const d = drag.current;
+        if (d.kind === "spawn") {
+          onSpawn(round1(Math.min(99, Math.max(1, p.x))), round1(Math.min(100, Math.max(0, p.y))));
+        } else if (d.kind === "floor-top") {
+          onFloor(round1(Math.min(floor.bottom - 4, Math.max(0, p.y))), floor.bottom);
+        } else if (d.kind === "floor-bottom") {
+          onFloor(floor.top, round1(Math.min(100, Math.max(floor.top + 4, p.y))));
+        } else if (typeof d.kind === "object") {
+          const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
+          if (!hs) return;
+          const w = hs.bounds.w;
+          const cx = Math.min(100 - w / 2, Math.max(w / 2, p.x - d.offX));
+          const baseY = Math.min(100, Math.max(0, p.y));
+          onMoveMarker(hs.id, round1(cx), round1(baseY));
+        }
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+      }}
+    >
+      {/* above-floor / below-floor shading */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 bg-black/55" style={{ height: `${floor.top}%` }} />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55" style={{ height: `${100 - floor.bottom}%` }} />
+      <div
+        className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
+        style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
+      />
+      {/* floor edge handles */}
+      <div
+        data-drag="floor-top"
+        className="absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+        style={{ top: `calc(${floor.top}% - 6px)` }}
+        title="Drag: floor top"
+      >
+        <span className="h-1 w-full bg-neon/70" />
+      </div>
+      <div
+        data-drag="floor-bottom"
+        className="absolute inset-x-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+        style={{ top: `calc(${floor.bottom}% - 6px)` }}
+        title="Drag: floor bottom"
+      >
+        <span className="h-1 w-full bg-neon/70" />
+      </div>
+      {/* markers — one per hotspot, at its zone base */}
+      {hotspots.map((h) => {
+        const m = marker(h);
+        const sel = selectedHotspotId === h.id;
+        return (
+          <div
+            key={h.id}
+            data-drag={`hs:${h.id}`}
+            className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
+              sel ? "text-neon" : "text-gold"
+            }`}
+            style={{ left: `${m.x}%`, top: `${m.y}%` }}
+            title={`${h.label} — drag to move`}
+          >
+            <span className="whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
+              {h.label.slice(0, 22)}
+            </span>
+            <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
+          </div>
+        );
+      })}
+      {/* spawn dot */}
+      <div
+        data-drag="spawn"
+        className="absolute z-30 flex h-6 w-6 -translate-x-1/2 -translate-y-full cursor-move items-end justify-center"
+        style={{ left: `${spawn.x}%`, top: `${spawn.y}%` }}
+        title="Drag: character spawn point"
+      >
+        <span className="text-lg leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">🕵️</span>
+      </div>
+    </div>
+  );
 }
 
 const draftKey = (id: string) => `scarlet-studio-draft-${id}`;
@@ -404,6 +552,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           >
             {scene.nodeType === "credits" && "🎬 CREDITS · "}
             {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
+            {scene.nodeType === "stage" && "🚶 STAGE · "}
             {isStart && "★ START · "}
             {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
             {scene.title}
@@ -4510,6 +4659,48 @@ function StudioInner({
     audio.pickup();
   };
 
+  const addStageScene = (fx: number, fy: number) => {
+    const id = `scene_${uid()}`;
+    mutate((d) => {
+      d.scenes.push({
+        id,
+        title: "Walkable Stage",
+        nodeType: "stage",
+        background: BACKGROUNDS[8],
+        ambientAudio: "drone",
+        prose: "",
+        stage: {
+          playerImage: "emoji:🕵️",
+          spawn: { x: 50, y: 86 },
+          speed: 18,
+          reach: 4,
+          keyboard: true,
+          floor: { top: 62, bottom: 94 },
+          depthScale: 0.35,
+          hints: "proximity",
+          enterCaption: "The room, in one line — what the player should feel walking in.",
+        },
+        choices: [],
+        hotspots: [
+          {
+            id: `hs_${uid()}`,
+            label: "The way out",
+            bounds: { x: 84, y: 72, w: 12, h: 20 },
+            cursor: "go",
+            isRepeatable: true,
+            action: { type: "goToScene", targetSceneId: "" },
+          },
+        ],
+        dialogueBeats: [],
+      });
+      d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
+    });
+    setSelectedId(id);
+    setTab("scene");
+    say("Walkable Stage created — a Telltale-style exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
+    audio.pickup();
+  };
+
   const addNoteScene = (fx: number, fy: number) => {
     const id = `scene_${uid()}`;
     mutate((d) => {
@@ -5419,13 +5610,15 @@ function StudioInner({
       const text = await file.text();
       const storyBundle: Story = JSON.parse(text);
       if (!storyBundle.scenes || !storyBundle.startSceneId) throw new Error("bad");
-      
+
       if (Array.isArray(storyBundle.assets) && storyBundle.assets.length > 0) {
         await importStoryAssets(storyBundle.id, storyBundle.assets);
       }
-      
+
       const { assets, ...cleanedStory } = storyBundle;
-      commit(await compactStoryMedia(cleanedStory));
+      // Old exports carried the bolt-on `stage2d` layer; imports map it to the
+      // stage NODE so those cases keep walking.
+      commit(await compactStoryMedia(normalizeLegacyStory(cleanedStory)));
       say(`Imported "${cleanedStory.title}" with ${assets?.length ?? 0} assets.`);
     } catch {
       say("That file isn't a valid reel. Tragic.");
@@ -5523,6 +5716,13 @@ function StudioInner({
           title="Add borderline full-screen video/storyboard cutscene (No main HUD)"
         >
           🎥 Cutscene
+        </button>
+        <button
+          onClick={() => addStageScene(80 + Math.random() * 200, 80 + Math.random() * 200)}
+          className="btn-tool"
+          title="Add a Telltale-style walkable stage — the player walks a character around the floor and interacts by approaching markers"
+        >
+          🚶 Stage
         </button>
         <button
           onClick={() => addEndScene(560 + Math.random() * 200, 120 + Math.random() * 80)}
@@ -5907,6 +6107,16 @@ function StudioInner({
                 }}
               >
                 🎥 Add cutscene here
+              </button>
+              <button
+                role="menuitem"
+                className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700 text-gold"
+                onClick={() => {
+                  addStageScene(menu.fx, menu.fy);
+                  setMenu(null);
+                }}
+              >
+                🚶 Add walkable stage here
               </button>
               <button
                 role="menuitem"
@@ -7030,6 +7240,7 @@ function StudioInner({
                     <option value="standard">📁 Standard Game Scene (with HUD)</option>
                     <option value="credits">🎬 Opening Credits (Centered text, NO HUD)</option>
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
+                    <option value="stage">🚶 Walkable Stage (Telltale-style exploration)</option>
                   </select>
                 </Field>
                 </CollapsibleSection>
@@ -7702,50 +7913,115 @@ function StudioInner({
                   </select>
                 </Field>
 
-                {/* ---- Stage 2D — walkable character ---- */}
-                <CollapsibleSection id={`scene-stage2d-${scene.id}`} title="🚶 Stage 2D — walkable character">
+                {/* ---- Stage node — Telltale-style walkable exploration ---- */}
+                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (Telltale-style)">
                   <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
-                      <input
-                        type="checkbox"
-                        checked={!!scene.stage2d}
-                        onChange={(e) =>
+                    {scene.nodeType !== "stage" ? (
+                      <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
+                        These settings only run on a <b>🚶 Walkable Stage</b> node — set <b>Node Layout Type</b> above to
+                        "🚶 Walkable Stage". A stage scene has <b>no prose panel</b>: the player walks a character around
+                        the floor, walks up to interaction markers to use them, talks via 🗣 Start-conversation markers,
+                        and exits by walking to a door marker.
+                      </p>
+                    ) : !scene.stage ? (
+                      <button
+                        className="btn-tool w-full"
+                        onClick={() =>
                           updateScene(scene.id, {
-                            stage2d: e.target.checked
-                              ? { spawn: { x: 50, y: 86 }, speed: 18, reach: 3.5, playerImage: "emoji:🕵️" }
-                              : undefined,
+                            stage: {
+                              playerImage: "emoji:🕵️",
+                              spawn: { x: 50, y: 86 },
+                              speed: 18,
+                              reach: 4,
+                              keyboard: true,
+                              floor: { top: 62, bottom: 94 },
+                              depthScale: 0.35,
+                              hints: "proximity",
+                            },
                           })
                         }
-                      />
-                      Player walks around this scene (click ground / WASD)
-                    </label>
-                    {scene.stage2d && (
+                      >
+                        ＋ Add stage settings (floor, spawn, character)
+                      </button>
+                    ) : (
                       <>
                         <p className="font-type text-[10px] leading-snug text-paper/55">
-                          In Play, click the ground to move (or arrow/WASD keys). Walking onto a hotspot zone
-                          triggers it exactly like clicking — gating, item pickups, shows and exits all still
-                          apply. Place hotspots where the player should walk to something.
+                          Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. Markers sit where
+                          the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
+                          narrative is the caption below + 💬 show-text markers.
                         </p>
+                        <StageFloorEditor
+                          background={scene.background}
+                          media={media}
+                          floor={
+                            stageFloorOf(scene.stage)
+                          }
+                          spawn={{ x: scene.stage.spawn?.x ?? 50, y: scene.stage.spawn?.y ?? 90 }}
+                          hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds }))}
+                          selectedHotspotId={null}
+                          onFloor={(top, bottom) =>
+                            updateScene(scene.id, { stage: { ...scene.stage!, floor: { top, bottom } } })
+                          }
+                          onSpawn={(x, y) => updateScene(scene.id, { stage: { ...scene.stage!, spawn: { x, y } } })}
+                          onMoveMarker={(hsId, cx, baseY) =>
+                            updateScene(scene.id, {
+                              hotspots: (scene.hotspots ?? []).map((h) =>
+                                h.id === hsId
+                                  ? { ...h, bounds: { ...h.bounds, x: Math.round((cx - h.bounds.w / 2) * 10) / 10, y: Math.round((baseY - h.bounds.h) * 10) / 10 } }
+                                  : h
+                              ),
+                            })
+                          }
+                        />
+                        <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
+                          <textarea
+                            className={`${inputCls} h-14 font-type`}
+                            value={scene.stage.enterCaption ?? ""}
+                            placeholder="One short line — what the player should feel walking in."
+                            onChange={(e) =>
+                              updateScene(scene.id, { stage: { ...scene.stage!, enterCaption: e.target.value || undefined } })
+                            }
+                          />
+                        </Field>
                         <Field label="Character sprite (emoji:… or an image url / asset)">
                           <input
                             className={inputCls}
-                            value={scene.stage2d.playerImage ?? ""}
+                            value={scene.stage.playerImage ?? ""}
                             placeholder="emoji:🕵️ or /img/… or asset:…"
                             onChange={(e) =>
                               updateScene(scene.id, {
-                                stage2d: { ...scene.stage2d!, playerImage: e.target.value || undefined },
+                                stage: { ...scene.stage!, playerImage: e.target.value || undefined },
                               })
                             }
                           />
+                        </Field>
+                        <Field label="Walk-cycle frames (one image url / asset: per line, optional)">
+                          <textarea
+                            className={`${inputCls} h-16 font-type`}
+                            value={(scene.stage.walkFrames ?? []).join("\n")}
+                            placeholder={"/img/walk1.png\n/img/walk2.png\n/img/walk3.png"}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: {
+                                  ...scene.stage!,
+                                  walkFrames: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
+                                },
+                              })
+                            }
+                          />
+                          <p className="mt-1 font-type text-[9px] text-paper/40">
+                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Leave empty for the
+                            procedural bob.
+                          </p>
                         </Field>
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input
                               type="number" min={1} max={99} className={inputCls}
-                              value={scene.stage2d.spawn?.x ?? 50}
+                              value={scene.stage.spawn?.x ?? 50}
                               onChange={(e) =>
                                 updateScene(scene.id, {
-                                  stage2d: { ...scene.stage2d!, spawn: { x: Number(e.target.value) || 50, y: scene.stage2d!.spawn?.y ?? 86 } },
+                                  stage: { ...scene.stage!, spawn: { x: Number(e.target.value) || 50, y: scene.stage!.spawn?.y ?? 86 } },
                                 })
                               }
                             />
@@ -7753,10 +8029,10 @@ function StudioInner({
                           <Field label="Spawn Y (%)">
                             <input
                               type="number" min={1} max={99} className={inputCls}
-                              value={scene.stage2d.spawn?.y ?? 86}
+                              value={scene.stage.spawn?.y ?? 86}
                               onChange={(e) =>
                                 updateScene(scene.id, {
-                                  stage2d: { ...scene.stage2d!, spawn: { x: scene.stage2d!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
+                                  stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
                                 })
                               }
                             />
@@ -7764,10 +8040,10 @@ function StudioInner({
                           <Field label="Walk speed (% width / sec)">
                             <input
                               type="number" min={4} max={60} className={inputCls}
-                              value={scene.stage2d.speed ?? 18}
+                              value={scene.stage.speed ?? 18}
                               onChange={(e) =>
                                 updateScene(scene.id, {
-                                  stage2d: { ...scene.stage2d!, speed: Number(e.target.value) || 18 },
+                                  stage: { ...scene.stage!, speed: Number(e.target.value) || 18 },
                                 })
                               }
                             />
@@ -7775,27 +8051,92 @@ function StudioInner({
                           <Field label="Reach distance (%)">
                             <input
                               type="number" min={1} max={12} step={0.5} className={inputCls}
-                              value={scene.stage2d.reach ?? 3.5}
+                              value={scene.stage.reach ?? 4}
                               onChange={(e) =>
                                 updateScene(scene.id, {
-                                  stage2d: { ...scene.stage2d!, reach: Number(e.target.value) || 3.5 },
+                                  stage: { ...scene.stage!, reach: Number(e.target.value) || 4 },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Floor top (%)">
+                            <input
+                              type="number" min={0} max={98} className={inputCls}
+                              value={scene.stage.floor?.top ?? 62}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, floor: { top: Number(e.target.value) || 0, bottom: scene.stage!.floor?.bottom ?? 94 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Floor bottom (%)">
+                            <input
+                              type="number" min={2} max={100} className={inputCls}
+                              value={scene.stage.floor?.bottom ?? 94}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, floor: { top: scene.stage!.floor?.top ?? 62, bottom: Number(e.target.value) || 94 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Depth shrink at floor top (0–0.9)">
+                            <input
+                              type="number" min={0} max={0.9} step={0.05} className={inputCls}
+                              value={scene.stage.depthScale ?? 0.35}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, depthScale: Number(e.target.value) },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Sprite scale (default 1)">
+                            <input
+                              type="number" min={0.3} max={3} step={0.1} className={inputCls}
+                              value={scene.stage.playerScale ?? 1}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerScale: Number(e.target.value) || undefined },
                                 })
                               }
                             />
                           </Field>
                         </div>
+                        <Field label="Interaction labels on markers">
+                          <select
+                            className={inputCls}
+                            value={scene.stage.hints ?? "proximity"}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
+                              })
+                            }
+                          >
+                            <option value="proximity">Proximity — labels fade in as you approach</option>
+                            <option value="always">Always — every marker wears its label</option>
+                            <option value="none">None — reticles only (hover to peek)</option>
+                          </select>
+                        </Field>
                         <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
                           <input
                             type="checkbox"
-                            checked={scene.stage2d.keyboard !== false}
+                            checked={scene.stage.keyboard !== false}
                             onChange={(e) =>
                               updateScene(scene.id, {
-                                stage2d: { ...scene.stage2d!, keyboard: e.target.checked },
+                                stage: { ...scene.stage!, keyboard: e.target.checked },
                               })
                             }
                           />
                           Arrow / WASD movement enabled
                         </label>
+                        <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
+                          <b className="text-cyan-neon">The Telltale loop:</b> Hotspots tab lays the markers (💬
+                          show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
+                          for doors). The Beats tab is the conversation a 🗣 marker starts; give the scene's choices{" "}
+                          <b>time limits</b> for real "decide now" pressure.
+                        </p>
                       </>
                     )}
                   </div>
@@ -7883,6 +8224,13 @@ function StudioInner({
                 </p>
                 </CollapsibleSection>
                 <CollapsibleSection id={`scene-${scene.id}-prose`} title="📜 Prose, pacing & structure">
+                {scene.nodeType === "stage" && (
+                  <p className="mb-2 border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
+                    🚶 <b>Stage nodes never show prose.</b> Anything typed here stays author-only — put the scene's
+                    opening line in <b>🚶 Walkable Stage → "Caption on scene entry"</b>, and its narration into 💬
+                    show-text markers.
+                  </p>
+                )}
                 <Field label="Prose (narrator)">
                   <textarea
                     className={`${inputCls} h-28 font-type`}
@@ -9342,6 +9690,7 @@ function StudioInner({
                             { v: "showText", label: "💬 Show text" },
                             { v: "openBoard", label: "📌 Open corkboard" },
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
+                            { v: "startDialogue", label: "🗣 Start conversation (stage)" },
                           ].map((t) => (
                             <option key={t.v} value={t.v}>{t.label}</option>
                           ))}

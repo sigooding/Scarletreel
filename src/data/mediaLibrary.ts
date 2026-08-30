@@ -415,8 +415,10 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     visit(sc.musicUrl);
     visit(sc.sceneAudioUrl);
     visit(sc.narrationAudioUrl);
-    // Stage 2D character sprite (only when it's an image url / asset:, not emoji:).
-    if (sc.stage2d?.playerImage && !sc.stage2d.playerImage.startsWith("emoji:")) visit(sc.stage2d.playerImage);
+    // Stage node sprites — the walker and its walk-cycle frames (image
+    // url / asset: only, not emoji:).
+    if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) visit(sc.stage.playerImage);
+    sc.stage?.walkFrames?.forEach(visit);
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
     sc.hotspots?.forEach((h) => visit(h.image));
@@ -521,7 +523,8 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     apply(sc, "musicUrl");
     apply(sc, "sceneAudioUrl");
     apply(sc, "narrationAudioUrl");
-    if (sc.stage2d?.playerImage) apply(sc.stage2d, "playerImage");
+    if (sc.stage?.playerImage) apply(sc.stage, "playerImage");
+    if (sc.stage?.walkFrames?.length) sc.stage.walkFrames = sc.stage.walkFrames.map((f) => resolveMediaValue(f, map) ?? f);
     applyCinematic(sc.cinematic);
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
@@ -650,9 +653,14 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     sc.musicUrl = await compact(sc.musicUrl, "audio", sc.title);
     sc.sceneAudioUrl = await compact(sc.sceneAudioUrl, "audio", sc.title);
     sc.narrationAudioUrl = await compact(sc.narrationAudioUrl, "audio", sc.title);
-    if (sc.stage2d?.playerImage && !sc.stage2d.playerImage.startsWith("emoji:")) {
-      const imgType: AssetType = sc.stage2d.playerImage.startsWith("video:") ? "video" : "image";
-      sc.stage2d.playerImage = (await compact(sc.stage2d.playerImage, imgType, `${sc.title} stage character`)) ?? sc.stage2d.playerImage;
+    if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) {
+      const imgType: AssetType = sc.stage.playerImage.startsWith("video:") ? "video" : "image";
+      sc.stage.playerImage = (await compact(sc.stage.playerImage, imgType, `${sc.title} stage character`)) ?? sc.stage.playerImage;
+    }
+    if (sc.stage?.walkFrames?.length) {
+      sc.stage.walkFrames = await Promise.all(
+        sc.stage.walkFrames.map(async (f) => (await compact(f, "image", `${sc.title} stage walk frame`)) ?? f)
+      );
     }
     if (sc.credits?.montage?.length) {
       sc.credits.montage = (
@@ -928,8 +936,11 @@ export async function bundleVoiceFileRefs(
     sc.musicUrl = await bundleValue(sc.musicUrl);
     sc.sceneAudioUrl = await bundleValue(sc.sceneAudioUrl);
     sc.narrationAudioUrl = await bundleValue(sc.narrationAudioUrl);
-    if (sc.stage2d?.playerImage && !sc.stage2d.playerImage.startsWith("emoji:")) {
-      sc.stage2d.playerImage = (await bundleValue(sc.stage2d.playerImage)) ?? sc.stage2d.playerImage;
+    if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) {
+      sc.stage.playerImage = (await bundleValue(sc.stage.playerImage)) ?? sc.stage.playerImage;
+    }
+    if (sc.stage?.walkFrames?.length) {
+      sc.stage.walkFrames = await Promise.all(sc.stage.walkFrames.map(async (f) => (await bundleValue(f)) ?? f));
     }
     if (sc.credits?.montage?.length) {
       sc.credits.montage = (

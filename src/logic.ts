@@ -17,6 +17,7 @@ import type {
   RecapLine,
   SceneNode,
   SeasonLog,
+  StageSettings,
   Story,
   UnlockedEnding,
 } from "./types";
@@ -922,10 +923,114 @@ export function applyLieWrong(story: Story, lie: Contradiction, s: GlobalState):
 
 /* ------------------------- stage 2d movement ------------------------ */
 
+/** Icon shown for each hotspot cursor verb (markers, hotspot labels). */
+export const CURSOR_ICON: Record<string, string> = { look: "👁", take: "✋", talk: "💬", use: "⚙", go: "➜" };
+
 /** Default walk speed: scene-width % per second. */
 export const STAGE2D_DEFAULT_SPEED = 18;
 /** Default reach distance: scene-width % within which a hotspot fires. */
-export const STAGE2D_DEFAULT_REACH = 3.5;
+export const STAGE2D_DEFAULT_REACH = 4;
+/** Default walkable floor band (y % of plate height). */
+export const STAGE_DEFAULT_FLOOR = { top: 62, bottom: 94 };
+/** Default depth shrink at the top of the floor (0–0.9). */
+export const STAGE_DEFAULT_DEPTH_SCALE = 0.35;
+
+
+/** The effective floor band of a stage scene, with defaults filled and the
+ *  band sanitised (top strictly above bottom, both inside the plate). */
+export function stageFloor(settings: StageSettings | undefined): { top: number; bottom: number } {
+  const f = settings?.floor;
+  const top = clamp(Number(f?.top ?? STAGE_DEFAULT_FLOOR.top), 0, 98);
+  const bottom = clamp(Number(f?.bottom ?? STAGE_DEFAULT_FLOOR.bottom), 2, 100);
+  return bottom - top >= 4 ? { top, bottom } : { top: clamp(bottom - 8, 0, 98), bottom };
+}
+
+/** Clamp a point into the floor band (x also kept off the plate edges).
+ *  Clicks above/below the band walk to its nearest edge — the cursor always
+ *  lands somewhere the character can stand. */
+export function clampToFloor(x: number, y: number, floor: { top: number; bottom: number }): { x: number; y: number } {
+  return { x: clamp(x, 1, 99), y: clamp(y, floor.top, floor.bottom) };
+}
+
+/** Perspective scale of a sprite standing at y within the floor band:
+ *  1 at the bottom of the band, shrinking to (1 - depthScale) at the top. */
+export function stageDepthScale(
+  y: number,
+  floor: { top: number; bottom: number },
+  depthScale: number
+): number {
+  const d = clamp(depthScale, 0, 0.9);
+  const span = floor.bottom - floor.top;
+  if (span <= 0) return 1;
+  const t = clamp((y - floor.top) / span, 0, 1); // 0 top → 1 bottom
+  return 1 - d * (1 - t);
+}
+
+/** Where a hotspot's stage MARKER stands: the bottom-centre of its zone
+ *  (a thing sits ON the ground), clamped into the floor band so the
+ *  character can always walk to it. */
+export function stageMarkerPoint(
+  h: Hotspot,
+  floor: { top: number; bottom: number }
+): { x: number; y: number } {
+  return clampToFloor(h.bounds.x + h.bounds.w / 2, h.bounds.y + h.bounds.h, floor);
+}
+
+/** Is a stage position within `reach` (scene-width %) of a marker point? */
+export function posReachesMarker(
+  pos: { x: number; y: number },
+  marker: { x: number; y: number },
+  reach: number,
+  aspect: number
+): boolean {
+  const a = aspect > 0 ? aspect : 16 / 9;
+  const dx = pos.x - marker.x;
+  const dy = (pos.y - marker.y) * a;
+  return Math.hypot(dx, dy) <= reach;
+}
+
+/** How long (ms) a caption bar holds a line — short enough to feel like a
+ *  subtitle, long enough to actually read. Used by stage captions. */
+export function stageCaptionMs(text: string): number {
+  const chars = Math.max(1, (text ?? "").trim().length);
+  return clamp(2400 + chars * 55, 3000, 9000);
+}
+
+/**
+ * Convert a legacy export's per-scene `stage2d` bolt-on into the stage
+ * NODE shape. Old .reel.json files (and any hand-written story data from
+ * before the stage node existed) carry `stage2d: { playerImage, spawn,
+ * speed, reach, keyboard }` on an otherwise standard scene; imports map it
+ * to `nodeType: "stage"` + `stage` so old cases keep walking. Returned
+ * unchanged when there is nothing to convert.
+ */
+export function normalizeLegacyStory<T extends { scenes: { stage2d?: unknown; stage?: unknown; nodeType?: string }[] }>(story: T): T {
+  let touched = false;
+  const scenes = story.scenes.map((sc) => {
+    if (!sc.stage2d || sc.stage) return sc;
+    const legacy = sc.stage2d as {
+      playerImage?: string;
+      spawn?: { x: number; y: number };
+      speed?: number;
+      reach?: number;
+      keyboard?: boolean;
+    };
+    touched = true;
+    const { stage2d: _drop, ...rest } = sc as typeof sc & { stage2d?: unknown };
+    return {
+      ...rest,
+      nodeType: "stage",
+      stage: {
+        playerImage: legacy.playerImage,
+        spawn: legacy.spawn,
+        speed: legacy.speed,
+        reach: legacy.reach,
+        keyboard: legacy.keyboard,
+      },
+    };
+  });
+  return touched ? { ...story, scenes } : story;
+}
 
 /** Clamp a 0–100 percentage point into the plate. */
 export const clampStagePos = (x: number, y: number): { x: number; y: number } => ({
@@ -1095,6 +1200,48 @@ export function validateStory(story: Story): ValidationIssue[] {
     if (!ids.has(e.target))
       issues.push({ severity: "error", sceneId: e.source, message: `Dangling link → missing scene "${e.target}" (${e.label}).` });
   });
+
+  // ---- STAGE nodes (Telltale-style walkable scenes) ----
+  for (const sc of story.scenes) {
+    if (sc.nodeType !== "stage") {
+      if (sc.stage)
+        issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}" carries Stage settings but is not a Stage node — set Node Layout Type to "🚶 Walkable Stage" or the settings do nothing.` });
+      continue;
+    }
+    const label = `Stage "${sc.title}"`;
+    if (!sc.stage)
+      issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has no Stage settings (floor, spawn, character) — the scene plays as a plain plate with no walker. Open the Scene tab → 🚶 Walkable Stage.` });
+    if ((sc.prose ?? "").trim())
+      issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has prose, but stage nodes never show the prose panel. Move it into "Caption on scene entry" (Scene tab → 🚶 Walkable Stage) or showText hotspots.` });
+    // A stage scene the player can never leave is a soft-lock: exits must be
+    // walk-to markers (goToScene hotspots) or an auto-advance — a choice
+    // only appears after a conversation, so it can't be the only way out.
+    if (!sc.isEnding) {
+      const doorOut = (sc.hotspots ?? []).some((h) => h.action.type === "goToScene" && h.action.targetSceneId);
+      if (!doorOut && !sc.autoAdvanceTargetSceneId && !(sc.choices ?? []).some((c) => c.targetSceneId))
+        issues.push({ severity: "error", sceneId: sc.id, message: `${label} has no way out. Add a hotspot with action "→ Go to scene" (a door/exit marker the player walks to), or an auto-advance target.` });
+    }
+    if ((sc.hotspots ?? []).some((h) => h.action.type === "startDialogue") && (sc.dialogueBeats ?? []).length === 0)
+      issues.push({ severity: "error", sceneId: sc.id, message: `${label} has a "Start conversation" marker but no dialogue beats — write the conversation in the Beats tab or the marker does nothing.` });
+    if ((sc.dialogueBeats ?? []).length > 0 && !(sc.hotspots ?? []).some((h) => h.action.type === "startDialogue"))
+      issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has dialogue beats but no "Start conversation" (🗣) hotspot — nobody can trigger the conversation. Add a talk marker (Hotspots tab → action type "🗣 Start conversation").` });
+    if (sc.stage) {
+      const f = stageFloor(sc.stage);
+      if (f.bottom <= f.top + 2)
+        issues.push({ severity: "warning", sceneId: sc.id, message: `${label} floor band is thinner than ~4% of the plate — give the character room to walk (Scene tab → floor top/bottom).` });
+      const spawn = sc.stage.spawn;
+      if (spawn && (spawn.y < f.top - 0.5 || spawn.y > f.bottom + 0.5))
+        issues.push({ severity: "warning", sceneId: sc.id, message: `${label} spawn point sits outside the walkable floor band — the character snaps to the floor edge on entry.` });
+      if ((sc.stage.walkFrames?.length ?? 0) === 1)
+        issues.push({ severity: "warning", sceneId: sc.id, message: `${label} walk cycle has a single frame — add at least 2 frames or clear the list to use the procedural bob.` });
+    }
+    // Conversations that end in nothing: a stage conversation with no
+    // choices and no after-beat route just closes — fine — but if the ONLY
+    // exits are choices the player must talk to leave; surface that
+    // deliberately-authored pattern as a heads-up, not an error.
+    if (!sc.isEnding && !(sc.hotspots ?? []).some((h) => h.action.type === "goToScene") && (sc.choices ?? []).some((c) => c.targetSceneId) && (sc.dialogueBeats ?? []).length > 0)
+      issues.push({ severity: "warning", sceneId: sc.id, message: `${label} exits only through choices, which appear after a conversation — the player must talk before they can leave. That can be exactly right; just make sure it's on purpose.` });
+  }
 
   // Reachability. In a season every episode is its own entry point — the
   // player reaches episode two through the season handoff, not through a scene
