@@ -5316,7 +5316,20 @@ function StudioInner({
         failed += 1;
         failures.push(`${job.characterName}: ${(err as Error).message}`);
         const msg = (err as Error).message || "";
-        if (msg.includes("401") || msg.includes("refused") || msg.includes("422")) break;
+        // Fatal for the whole batch: bad key, missing voice, model mismatch,
+        // out of credits. Continuing would burn the same failure on every line.
+        if (
+          msg.includes("401") ||
+          msg.includes("403") ||
+          msg.includes("400") ||
+          msg.includes("404") ||
+          msg.includes("refused") ||
+          msg.includes("422") ||
+          msg.includes("No ElevenLabs") ||
+          msg.includes("voice not found")
+        ) {
+          break;
+        }
         // Rate limit: brief back-off then continue with the next line.
         if (msg.includes("429") || msg.includes("Rate limited")) await new Promise((r) => setTimeout(r, 4000));
       }

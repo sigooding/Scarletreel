@@ -139,3 +139,16 @@ the Beats-tab UI mirrors it into React state (`voiceModel`, re-read on every
 tab switch) to keep the live cost preview and the insert-cue list in sync.
 Per-model rates are `ELEVENLABS_CREDITS_PER_CHAR` / `ELEVENLABS_USD_PER_1K`
 in `src/studio/aiVoice.ts`.
+
+### ElevenLabs HTTP 400 on Generate MP3 / batch
+
+`synthesizeElevenLabs` in `src/studio/aiVoice.ts` builds model-aware
+`voice_settings`: **Eleven v3 omits `use_speaker_boost` and `speed`** (the
+product guide marks both unsupported on v3; sending them with the default
+`eleven_v3` model was a common source of bare `ElevenLabs error 400`).
+v2/turbo still send the full set. Continuity uses the TTS endpoint's real
+`previous_text` / `next_text` fields (batch already collects them). Error
+bodies shaped `{ detail: { status, message } }` are formatted so the alert
+shows e.g. `voice_not_found: A voice for the voice_id … was not found`
+instead of an empty status. Batch aborts on 400/401/403/404/422 so one bad
+voice ID does not burn the whole scene.
