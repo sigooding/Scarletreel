@@ -178,6 +178,21 @@
       cuts is the classic look). Defaults fall back to the scene's prose
       line-by-line.
 
+      LOOK PRESETS — at the top of the credits panel, ten one-click looks
+      bundle every style knob at once (typeface, card motion, title entrance,
+      title + accent colour, presentation style, the three timing sliders,
+      gate weave, montage pacing): PULP DEFAULT (also the reset button),
+      GRINDHOUSE SLAM, NOIR '40S, SILENT INTERTITLE, PRESTIGE AWARDS,
+      EPIC ROADSHOW, NEON NIGHT, REP-HOUSE ROLL, STREAMING COLD OPEN and
+      VHS MIDNIGHT. A preset writes the LOOK and never the CONTENT — your
+      title, subheading, credit lines and montage stills are carried through
+      untouched. Every knob below the grid stays editable, and the panel
+      tells you whether the node currently "matches a preset" or reads
+      "custom look" once you have hand-tweaked it. Switching presets is
+      clean: the new look replaces the whole bundle rather than stacking on
+      the old one. Presets live in src/credits.ts and are covered by the
+      engine tests.
+
    CUTSCENE NODE
       Adds a full-screen video/storyboard cutscene node. Hides the main HUD and
       plays a video background. Used for cinematic beats (e.g. a talking-head
