@@ -197,6 +197,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
     nwt_mill: { x: 1160, y: 440 },
     nwt_cost: { x: 1440, y: 440 },
     nwt_bluecue2: { x: 1720, y: 440 },
+    nwt_bluecue_walk: { x: 1960, y: 440 },
+    nwt_bluecue_fight: { x: 1960, y: 640 },
     nwt_trade: { x: 1720, y: 640 },
     nwt_diner2: { x: 1440, y: 640 },
     nwt_vera: { x: 1160, y: 640 },
@@ -2341,7 +2343,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_m_j1",
           characterId: "jack",
-          text: "I don't know.",
+          text: "He's dead.",
         },
         {
           id: "nwt_m_v2",
@@ -2427,7 +2429,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v9",
           characterId: "vera",
           expression: "flat — and she volunteers it. He hasn't asked.",
-          text: "I knew Solomon had the address before you did. Doc Sato sold it to them Tuesday. Six hundred dollars. I found out about eleven hours before you got there. I could have called David. I had the number. I didn't.",
+          text: "I knew Solomon had the address before you did. Doc Sato sold it to them Tuesday. Six hundred dollars. I found out about eleven hours before you got there. I had his number. I called it. It rang three times, and I told myself it was too late, and I put it down.",
         },
         {
           id: "nwt_m_s2",
@@ -2445,7 +2447,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v10",
           characterId: "vera",
           expression: "even",
-          text: "Because if I called him, he'd have run. And if he ran with the money, I'd have had nothing. And I hadn't finished deciding what I was willing to lose. He had eleven hours, and I spent every one of them thinking about myself.",
+          text: "Because if I'd told him, he'd have run. And if he'd run with the money, I'd have had nothing. That's what I'd been telling myself all week — and it might've been enough if I'd let it ring out. I hung up before anybody answered, and then I told myself the arithmetic made it a decision. It didn't. I was scared. That's the more honest version.",
         },
         {
           id: "nwt_m_v11",
@@ -2494,7 +2496,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v16",
           characterId: "vera",
           expression: "honest, and it's worse than a lie",
-          text: "I hadn't decided.",
+          text: "I hadn't. I kept telling myself I would — when he was safe, when the money was somewhere nobody could touch it. He had eleven hours, and I spent them not doing the hard part: deciding. That's not a better answer, Jack. It's the same one with a door on it.",
         },
         {
           id: "nwt_m_j11",
@@ -2957,18 +2959,6 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           text: "Moe's jacket sat wrong on him all night. Heavy on one side, the way a shoulder sits when it's carrying something nobody asked it to carry into a room. Nobody in here mentioned it. That's how I knew it was for me.",
         },
         {
-          id: "nwt_b_desh5",
-          characterId: "desh",
-          expression: "calling after him, and he means it",
-          text: "Hey — Morrow. For what it's worth. He didn't give her up. They asked him where she was and he wouldn't say. Six hundred bucks got us the house. Nothing got us her.",
-        },
-        {
-          id: "nwt_b_vo5",
-          characterId: "jack",
-          expression: "V.O. — spare, breaking",
-          text: "Two hundred and eleven thousand dollars in a bag, eleven hours where she could have called him — and at the end of it, he still wouldn't say her name. I've thought about which one of us that makes the fool. I keep getting the same answer and I keep not liking it.",
-        },
-        {
           id: "nwt_b_moe8",
           characterId: "moe",
           expression: "last line, to Desh, casual, back to it",
@@ -2989,16 +2979,107 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_b_go",
           text: "Turn. Walk out.",
-          targetSceneId: "nwt_trade",
+          targetSceneId: "nwt_bluecue_walk",
           attitudeTag: "Neutral",
         },
         {
           id: "nwt_b_fight",
           text: "Do something about it.",
-          targetSceneId: "nwt_trade",
+          targetSceneId: "nwt_bluecue_fight",
           attitudeTag: "Aggressive",
           consequences: { setFlags: ["nwt_violence"] },
         },
+      ],
+    },
+
+    {
+      id: "nwt_bluecue_walk",
+      title: "The Blue Cue — Out the Hard Way",
+      background: "/img/nw2/bg-poolhall.jpg",
+      ambientAudio: "jazz",
+      letterbox: true,
+      prose:
+        "The door. Rain behind it. Desh's voice a beat later — the way a man says a thing he's already decided he wants you to have. Thursday night.",
+      dialogueBeats: [
+        {
+          id: "nwt_bw_desh1",
+          characterId: "desh",
+          expression: "calling after him, and he means it",
+          text: "Hey — Morrow. For what it's worth. He didn't give her up. They asked him where she was and he wouldn't say. Six hundred bucks got us the house. Nothing got us her.",
+        },
+        {
+          id: "nwt_bw_vo1",
+          characterId: "jack",
+          expression: "V.O. — spare, breaking",
+          text: "Two hundred and eleven thousand dollars in a bag, eleven hours where she could have called him — and at the end of it, he still wouldn't say her name. I've thought about which one of us that makes the fool. I keep getting the same answer and I keep not liking it.",
+        },
+      ],
+      choices: [
+        { id: "nwt_bw_go", text: "The office above the feed store.", targetSceneId: "nwt_trade", attitudeTag: "Neutral" },
+      ],
+    },
+
+    {
+      id: "nwt_bluecue_fight",
+      title: "The Blue Cue — Doing Something About It",
+      background: "/img/nw2/bg-poolhall.jpg",
+      ambientAudio: "jazz",
+      letterbox: true,
+      prose:
+        "The lamp. The jukebox, still playing. The sound of a man's mouth being opened by a glass — and then the silence afterward, which is the part that stays. Thursday night.",
+      dialogueBeats: [
+        {
+          id: "nwt_bf_s1",
+          characterId: "narrator",
+          expression: "the glass coming off the bar",
+          text: "(The glass is the closest thing. It comes off the bar and it's fast — faster than it should be for a man who's been polite all night. Moe takes it on the mouth without moving his hands. The room doesn't help. Nobody stops anybody. They've seen this before.)",
+          silent: true,
+        },
+        {
+          id: "nwt_bf_m1",
+          characterId: "moe",
+          expression: "dabbing his lip with a bar napkin, not looking up",
+          text: "Okay.",
+        },
+        {
+          id: "nwt_bf_j1",
+          characterId: "jack",
+          expression: "breathing hard, not done",
+          text: "That's it?",
+        },
+        {
+          id: "nwt_bf_m2",
+          characterId: "moe",
+          expression: "flat, no heat",
+          text: "For now.",
+        },
+        {
+          id: "nwt_bf_d1",
+          characterId: "desh",
+          expression: "quiet, the first time his face closes",
+          text: "Hey — Morrow. There's a thing I was gonna—",
+        },
+        {
+          id: "nwt_bf_m3",
+          characterId: "moe",
+          expression: "not looking up",
+          text: "Desh. No. He didn't want it.",
+        },
+        {
+          id: "nwt_bf_d2",
+          characterId: "desh",
+          expression: "a beat — then he does what Moe says",
+          text: "...Okay.",
+        },
+        {
+          id: "nwt_bf_vo1",
+          characterId: "jack",
+          expression: "V.O. — spare, flat, the damage arriving late",
+          text: "I'd swung on a man who told me he'd feel bad about hitting me back, and the price was a sentence I didn't know existed. Desh had opened his mouth to hand me something — a thing Moe shut down before the sentence came out. I never found out what it was. I never asked. And I've got a feeling, from the look David had at the back door, that it was the one thing I'd have wanted.",
+        },
+      ],
+      choices: [
+        { id: "nwt_bf_go", text: "Leave before he changes his mind.", targetSceneId: "nwt_trade", attitudeTag: "Aggressive" },
       ],
     },
 
@@ -3410,8 +3491,16 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_fa_vo3",
           characterId: "jack",
+          conditionRule: { excludesFlags: ["nwt_violence"] },
           expression: "V.O. — spare. Rain. The fan.",
           text: "One piece of information left that was mine to give or keep. Two days I'd had it. Desh's voice, and a man in a kitchen who wouldn't say her name.",
+        },
+        {
+          id: "nwt_fa_vo4",
+          characterId: "jack",
+          conditionRule: { requiresFlags: ["nwt_violence"] },
+          expression: "V.O. — spare. Rain. The fan. Flatter.",
+          text: "Two days I'd had it and never got it. Desh had opened his mouth in the Blue Cue and Moe shut him before the sentence came out. I'd bought that silence with a glass to the mouth of a man who'd have said yes to my swing. There wasn't anything left to give her. There was only what I'd already delivered.",
         },
       ],
       choices: [
@@ -3420,12 +3509,24 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           text: "Tell her. They asked him where she was. He wouldn't say.",
           targetSceneId: "nwt_end_stays",
           attitudeTag: "Sultry",
+          gating: { excludesFlags: ["nwt_violence"] },
+          hidden: true,
         },
         {
           id: "nwt_fa_keep",
           text: "Keep it. Some things you only get once.",
           targetSceneId: "nwt_end_walks",
           attitudeTag: "Neutral",
+          gating: { excludesFlags: ["nwt_violence"] },
+          hidden: true,
+        },
+        {
+          id: "nwt_fa_nothing",
+          text: "There's nothing to give her. Let her go.",
+          targetSceneId: "nwt_end_walks",
+          attitudeTag: "Neutral",
+          gating: { requiresFlags: ["nwt_violence"] },
+          hidden: true,
         },
       ],
     },
@@ -3485,7 +3586,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_es_v3",
           characterId: "vera",
           expression: "breaking, loud for the first time",
-          text: "Eleven hours. I had eleven fucking hours and his number, and I sat there doing arithmetic, Jack—",
+          text: "Eleven hours. I had eleven fucking hours and his number, Jack. I called it. Three rings. I hung up before anybody answered — then I sat there doing arithmetic.",
         },
         {
           id: "nwt_es_j4",
@@ -3648,8 +3749,16 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_ew_vo1",
           characterId: "jack",
+          conditionRule: { excludesFlags: ["nwt_violence"] },
           expression: "V.O. — spare",
           text: "She didn't ask. I didn't tell. I let the two days stay between us where I'd put them — and I'm keeping them there now. Some things you only get once, and I've decided the yard was one of them.",
+        },
+        {
+          id: "nwt_ew_vo1b",
+          characterId: "jack",
+          conditionRule: { requiresFlags: ["nwt_violence"] },
+          expression: "V.O. — spare, flatter",
+          text: "She didn't ask. There wasn't anything to tell — or there had been, and I'd priced it out of the room in a pool hall. I let the two days sit where they'd put them, and I'm keeping them there now. Some things you never got, and by the time you want them, the man who'd have handed them over has already closed his mouth.",
         },
         {
           id: "nwt_ew_s1",

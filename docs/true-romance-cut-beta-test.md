@@ -1,7 +1,7 @@
 # Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
 
 **Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
-**Beta date:** 2026-08-30 · **Status:** all approved fixes **merged into the production cut**; the throwaway beta duplicate has been deleted. Re-audit any time with `node scripts/beta/beta-harness.mjs` (6,086 states walked, 3,072 complete playthroughs, all 3 endings reachable, zero dead ends).
+**Beta date:** 2026-08-30 · **Status:** all approved fixes **merged into the production cut** plus the two optional improvements built in §1 — the throwaway beta duplicate has been deleted. Re-audit any time with `node scripts/beta/beta-harness.mjs` (6,086 states walked, 2,560 complete playthroughs, all 3 endings reachable, zero dead ends).
 
 ---
 
@@ -58,6 +58,12 @@ Her confession used to claim "I tracked every dime" — impossible for the woman
 ### Flag cleanup
 Seven flags audited via full-graph walk. **Removed** (set but never read by anything — dead wiring): `nwt_asked_shape`, `nwt_told_her`, `nwt_david_protected_her` (set identically by both pool-hall exits — it was just "on exit"), plus the inert `meterChanges: { Suspicion +3 }` on the fight choice (Suspicion was never initialized or read). `nwt_named_client` **kept and promoted** — it now gates the two warehouse name-variant beats, so the Act One choice actually changes Act Two. All consumed flags have producers; zero orphaned.
 
+### The two optional improvements — now applied
+
+**Swinging on Moe now costs a kindness.** The Blue Cue 2 gift (Desh: "He didn't give her up…") no longer auto-plays before the choice. Walk out and Desh still hands it to you, and SHE STAYS stays open. Fight, and the scene breaks into a new `nwt_bluecue_fight`: Moe takes the glass, Desh starts to say the line, and Moe cuts him off ("Desh. No. He didn't want it."). Jack never learns David protected her, so `nwt_vera` only offers "There's nothing to give her" and routes to NOBODY'S WITNESS. The violent branch still gets Moe's lip beat in the trade, but now also gets Jack's V.O. in the fight and in She Walks: *"…the price was a sentence I didn't know existed."* This is the thematically exact version — violence doesn't hurt you here, it shuts you out of a kindness.
+
+**Vera's sin level softened to the hung-up-phone version.** The "eleven hours of arithmetic" is now "I called it. Three rings. I hung up before anybody answered — then I told myself the arithmetic made it a decision." It's still eleven hours and still her fault, but the sin is weakness and fear rather than cold calculation. `nwt_m_v16` ("It's the same one with a door on it") and the SHE STAYS confessional both updated. Same plot; the confession still lands hard.
+
 ### Dev notes assessed and NOT applied (with reasons)
 - **"Rosa: three people knew her name… her, me, and you"** — can't port as written: Rosa didn't know Jack was even on the case until the 2 a.m. payphone call, and Sato (not one of her three) is the leak. The *idea* is covered by Solomon's new warehouse beats (he knew via the town/his debts) without contradicting the timeline.
 - **Rental "what's left to be scared of?" rewrite (dev note #2)** — checked against the actual cut: the line runs after David explains Vera going quiet, i.e. in the correct order in the shipped version. No change needed.
@@ -65,12 +71,12 @@ Seven flags audited via full-graph walk. **Removed** (set but never read by anyt
 
 ## 2. Machine audit
 
-`node scripts/beta/beta-harness.mjs` on the merged cut: 27 scenes, all reachable; zero dead ends; zero ungatable choices; all choice targets resolve; 3,072 complete playthroughs; She Stays 1,024 paths / Nobody's Witness 1,024 / A Stopped Watch 1,024; every flag consumed is producible; conditional beats order after their hotspots; both clues grantable; `tsc --noEmit` clean; 544/544 engine tests pass; production build passes; all 265 assets present. The validator's one warning ("no game-over ending") is the cut's declared NO DEAD ENDS rule — a waiver.
+`node scripts/beta/beta-harness.mjs` on the merged cut: 29 scenes, all reachable; zero dead ends; all choice targets resolve; 2,560 complete playthroughs; She Stays 512 paths / Nobody's Witness 1,024 / A Stopped Watch 1,024; every flag consumed is producible; conditional beats order after their hotspots; both clues grantable; `tsc --noEmit` clean; 544/544 engine tests pass; production build passes; all 265 assets present. The only warnings are the cut's declared NO DEAD ENDS rule ("no game-over ending") and the advisory that every exit from "She Walks In" is gated — that's by design, since each branch always has exactly one available exit (tell/keep for the peaceful path, nothing-to-give-her for the violent path).
 
 ## 3. Still open — your call, not defects
-1. **The swing-at-Moe branch** now only differs by the lip beat at the trade (and loses nothing). Option for a future pass: fighting costs Desh's "he never said her name" gift — violence costs information. Currently the moral is "it changes nothing," which is also a valid statement.
-2. **Vera's sin level.** She's still colder than Alabama (she chose arithmetic for eleven hours; "I hadn't decided"). The hung-up-phone version ("it rang three times… I told myself it was too late") remains a one-speech option if test audiences won't forgive her.
-3. **Anachronism note (do with as you please):** the self-checkout/barcode rants and "nineteen ninety-something" line sit ~1998-2005; the rest of the text (mill closed '09, 2011 furnace, father's watch 40 years old) dates the film ~2024. Nobody asked for this to change and the scene's the best comedy in the picture — flagging only.
+1. **Anachronism note (do with as you please):** the self-checkout/barcode rants and "nineteen ninety-something" line sit ~1998-2005; the rest of the text (mill closed '09, 2011 furnace, father's watch 40 years old) dates the film ~2024. Nobody asked for this to change and the scene's the best comedy in the picture — flagging only.
+
+Both of the previous open items are now applied in §1: the swing-at-Moe branch costs Desh's gift, and Vera's sin level is the hung-up-phone version. If you want the colder Vera back (the eleven-hours-of-arithmetic version), that's a two-line revert — say the word.
 
 ## 4. Music cue sheet — suggestions, True Romance / Tarantino style
 
