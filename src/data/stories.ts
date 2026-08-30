@@ -16,6 +16,7 @@ import { DEMO_STRUCTURE } from "./demoStructure";
 import { THE_LATE_SHIFT } from "./theLateShift";
 import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
 import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
+import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
 
 /**
  * The playable catalogue.
@@ -61,6 +62,7 @@ import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  NOBODYS_WITNESS_TRUE,
   NOBODYS_WITNESS_FINAL,
   NOBODYS_WITNESS_NEW,
   THE_LATE_SHIFT_REDUX,
