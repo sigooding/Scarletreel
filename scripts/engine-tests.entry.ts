@@ -1830,8 +1830,14 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   let st = createInitialState(S);
 
   // The story validates cleanly and is registered in the catalogue.
-  check("ft2: story validates (no errors)", validateStory(S).filter((i) => i.severity === "error").length === 0, validateStory(S).slice(0, 4));
+  const ft2Issues = validateStory(S);
+  check("ft2: story validates (no errors)", ft2Issues.filter((i) => i.severity === "error").length === 0, ft2Issues.slice(0, 4));
   check("ft2: starts on the credits", S.startSceneId === "ft2_credits" && byId.get("ft2_credits")!.nodeType === "credits");
+  // No false "every exit is gated" warnings: the dumpster's only exit (climb)
+  // is gated on ft2_free, which the lid-punch sets in the same room; the bar
+  // leaves through an UNGATED walk-off edge — both must read as open.
+  const gatedWarnings = ft2Issues.filter((i) => i.severity === "warning" && /Every exit from .* is gated/.test(i.message));
+  check("ft2: no false 'every exit is gated' warnings", gatedWarnings.length === 0, gatedWarnings.map((w) => w.sceneId));
 
   // NEW SPRITE + POSES: the player sprite is a sheet with the pose animations
   // the hotspots drive, and every transient pose is a known animation.

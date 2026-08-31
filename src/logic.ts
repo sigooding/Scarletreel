@@ -864,6 +864,40 @@ export function effectiveChoiceGating(c: Choice): Gating | undefined {
   return { ...c.gating, requiresItems: items };
 }
 
+/** Whether a gate's requirements can be satisfied WITHOUT leaving the scene —
+ * some hotspot in the same room sets the flag / hands over the item. This
+ * turns the classic "do X to unlock the door" pattern (punch the dumpster lid
+ * → climb out) from a scary "every exit is gated" warning into the open door
+ * it actually is. Meters, trust, memories and excludes need state from outside
+ * the room, so a gate that leans on them is judged NOT locally satisfiable
+ * (conservative — the advisory stays). */
+export function gateSatisfiableLocally(gating: Gating | undefined, scene: SceneNode): boolean {
+  if (!gating) return true;
+  const flags = gating.requiresFlags ?? [];
+  const items = gating.requiresItems ?? [];
+  const nonLocal =
+    (gating.excludesFlags?.length ?? 0) > 0 ||
+    (gating.excludesItems?.length ?? 0) > 0 ||
+    (gating.minMeters && Object.keys(gating.minMeters).length > 0) ||
+    (gating.maxMeters && Object.keys(gating.maxMeters).length > 0) ||
+    (gating.minTrust && Object.keys(gating.minTrust).length > 0) ||
+    (gating.requiresMemories?.length ?? 0) > 0;
+  if (nonLocal) return false;
+  if (flags.length === 0 && items.length === 0) return true;
+  const setFlags = new Set<string>();
+  const grantItems = new Set<string>();
+  (scene.hotspots ?? []).forEach((h) => {
+    if (h.action.flagSet) setFlags.add(h.action.flagSet);
+    if (h.action.itemGranted) grantItems.add(h.action.itemGranted);
+    (h.action.topics ?? []).forEach((t) => { if (t.flagSet) setFlags.add(t.flagSet); });
+  });
+  Object.values(scene.stage?.exitEdges ?? {}).forEach((e) => { if (e?.flagSet) setFlags.add(e.flagSet); });
+  const all = gating.requiresAll !== false;
+  const flagsOk = all ? flags.every((f) => setFlags.has(f)) : flags.some((f) => setFlags.has(f));
+  const itemsOk = all ? items.every((i) => grantItems.has(i)) : items.some((i) => grantItems.has(i));
+  return flagsOk && itemsOk;
+}
+
 /** The choice's consequences with the presented item removed when the choice
  * hands it over (consumePresentedItem). Flashing an item leaves it in the
  * satchel. */
@@ -2148,7 +2182,13 @@ export function validateStory(story: Story): ValidationIssue[] {
         // A choice that presents an item is effectively gated (you must hold
         // the item), even when it carries no authored gate of its own.
         ...(sc.choices ?? []).map((choice) => !effectiveChoiceGating(choice)),
-        ...(sc.hotspots ?? []).filter(routesSomewhere).map((hotspot) => !hotspot.gating),
+        // A walk-to / walk-off exit is open when its gate is empty OR can be
+        // satisfied from within the room itself (e.g. punch the lid → climb
+        // out), so the classic unlock-the-door pattern isn't flagged.
+        ...(sc.hotspots ?? []).filter(routesSomewhere).map((hotspot) => gateSatisfiableLocally(hotspot.gating, sc)),
+        ...Object.values(sc.stage?.exitEdges ?? {})
+          .filter((e) => !!e?.targetSceneId)
+          .map((e) => gateSatisfiableLocally(e?.gating, sc)),
       ].some(Boolean);
       if (!hasOpenExit)
         issues.push({ severity: "warning", sceneId: sc.id, message: `Every exit from "${sc.title}" is gated. Confirm the required item or flag can be obtained first.` });
