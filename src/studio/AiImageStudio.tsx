@@ -118,7 +118,7 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
     setForgeError(null);
     try {
       const sheet = await forgeSpriteSheet(imageDataUrl, kind);
-      const up = await uploadDataUrlAsset(storyId, `sprite-sheet-${kind}-${Date.now()}.png`, "image", sheet.dataUrl);
+      const up = await uploadDataUrlAsset(storyId, `sprite-sheet-${kind}-${Date.now()}.png`, "image", sheet.dataUrl, "sprites");
       const image = up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl;
       const json = JSON.stringify(
         { image, frameWidth: sheet.frameWidth, frameHeight: sheet.frameHeight, animations: sheet.animations, pixelated: false },

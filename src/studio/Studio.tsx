@@ -3439,6 +3439,76 @@ function CharacterEditor({
                     onUpdate(next);
                   }}
                 />
+                {/* ---- alternate sheets: outfits / moods / poses ---- */}
+                {(c.talkingSheet || (c.talkingSheets ?? []).length > 0) && (
+                  <div className="mt-1 space-y-1 border border-purple-400/25 bg-purple-400/5 p-1.5">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-purple-300">🎭 Alternate sheets (outfits · moods · poses)</div>
+                    <p className="font-type text-[8px] leading-snug text-paper/45">
+                      Give a variant a name (e.g. <b>raincoat</b>, <b>furious</b>), then type that same name into a
+                      dialogue beat's <b>expression</b> field — while this character speaks that beat, the variant's
+                      sheet takes over. Every other beat uses the main sheet above.
+                    </p>
+                    {(c.talkingSheets ?? []).map((v, vi) => (
+                      <div key={vi} className="space-y-1 border border-noir-700 p-1.5">
+                        <div className="flex items-center gap-1">
+                          <input
+                            className="flex-1 border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-purple-300 outline-none"
+                            value={v.name}
+                            placeholder="variant name (matches beat expression)…"
+                            onChange={(e) => {
+                              const next = deepClone(story);
+                              next.characters.find((x) => x.id === c.id)!.talkingSheets![vi].name = e.target.value;
+                              onUpdate(next);
+                            }}
+                          />
+                          <button
+                            className="shrink-0 border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                            onClick={() => {
+                              const next = deepClone(story);
+                              const ch = next.characters.find((x) => x.id === c.id)!;
+                              ch.talkingSheets = (ch.talkingSheets ?? []).filter((_, j) => j !== vi);
+                              if (!ch.talkingSheets.length) delete ch.talkingSheets;
+                              onUpdate(next);
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <SpriteSheetControls
+                          value={v.sheet}
+                          storyId={story.id}
+                          preset={TALKING_PRESET}
+                          onChange={(sheet) => {
+                            const next = deepClone(story);
+                            const ch = next.characters.find((x) => x.id === c.id)!;
+                            if (sheet) ch.talkingSheets![vi].sheet = sheet;
+                            else {
+                              ch.talkingSheets = (ch.talkingSheets ?? []).filter((_, j) => j !== vi);
+                              if (!ch.talkingSheets.length) delete ch.talkingSheets;
+                            }
+                            onUpdate(next);
+                          }}
+                        />
+                      </div>
+                    ))}
+                    <button
+                      className="border border-purple-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-purple-300 hover:bg-purple-400/10"
+                      onClick={() => {
+                        const next = deepClone(story);
+                        const ch = next.characters.find((x) => x.id === c.id)!;
+                        const seed = ch.talkingSheet ?? ch.talkingSheets?.[0]?.sheet;
+                        if (!seed) return;
+                        ch.talkingSheets = [
+                          ...(ch.talkingSheets ?? []),
+                          { name: `variant ${(ch.talkingSheets?.length ?? 0) + 1}`, sheet: deepClone(seed) },
+                        ];
+                        onUpdate(next);
+                      }}
+                    >
+                      ＋ Add alternate sheet
+                    </button>
+                  </div>
+                )}
               </div>
 
               <Field label="Resting pose (shown when they're on scene but NOT speaking)">
@@ -3581,6 +3651,14 @@ function CharacterEditor({
                 <Field label={`Frame time ${(c.talkingFrameDuration ?? 0.16).toFixed(2)}s`}>
                   <input type="range" min={0.04} max={0.6} step={0.02} className="w-full accent-pink-500" value={c.talkingFrameDuration ?? 0.16}
                     onChange={(e) => { const next = deepClone(story); next.characters.find((x) => x.id === c.id)!.talkingFrameDuration = Number(e.target.value); onUpdate(next); }} />
+                </Field>
+                <Field label={`Visibility when NOT speaking ${Math.round((c.talkingDim ?? 0.72) * 100)}% (100% = never fades)`}>
+                  <input type="range" min={0.2} max={1} step={0.02} className="w-full accent-pink-500" value={c.talkingDim ?? 0.72}
+                    onChange={(e) => {
+                      const next = deepClone(story);
+                      next.characters.find((x) => x.id === c.id)!.talkingDim = Number(e.target.value);
+                      onUpdate(next);
+                    }} />
                 </Field>
               </div>
               <label className="flex items-center gap-2 text-[9px] text-paper/55">

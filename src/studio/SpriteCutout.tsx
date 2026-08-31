@@ -142,8 +142,8 @@ export function SpriteCutoutLab({ storyId }: { storyId: string }) {
     setStatus(null);
     try {
       const dataUrl = out.toDataURL("image/png");
-      const result = await uploadDataUrlAsset(storyId, `${name.trim() || "sprite cutout"}.png`, "image", dataUrl);
-      setStatus(result.success ? `✓ saved to media library (${out.width}×${out.height})` : `⚠ ${result.error ?? "save failed"}`);
+      const result = await uploadDataUrlAsset(storyId, `${name.trim() || "sprite cutout"}.png`, "image", dataUrl, "sprites");
+      setStatus(result.success ? `✓ saved to media library ▸ 📁 sprites (${out.width}×${out.height})` : `⚠ ${result.error ?? "save failed"}`);
     } catch (err) {
       setStatus(`⚠ ${err instanceof Error ? err.message : "save failed"}`);
     } finally {

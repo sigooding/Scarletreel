@@ -101,11 +101,11 @@ export function ImagePicker({
     const out: Item[] = [];
     if (includeGradients) for (const g of GRADIENT_PRESETS) out.push({ kind: "gradient", ...g });
     if (includeBuiltins) for (const b of builtinImages) out.push({ kind: "builtin", value: b.url, label: b.label });
-    for (const a of uploads)
+    for (const a of [...uploads].sort((x, y) => (x.folder ?? "\uffff").localeCompare(y.folder ?? "\uffff") || x.name.localeCompare(y.name)))
       out.push({
         kind: "upload",
         value: returnReference ? `asset:${a.id}` : a.dataUrl,
-        label: a.name,
+        label: a.folder ? `📁 ${a.folder} / ${a.name}` : a.name,
         src: a.dataUrl,
       });
     return out;

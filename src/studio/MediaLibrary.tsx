@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaAsset, AssetType } from "../types";
-import { loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets, ASSET_LIMITS, ASSET_TOTAL_LIMIT } from "../data/mediaLibrary";
+import { loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets, ASSET_LIMITS, ASSET_TOTAL_LIMIT, setAssetFolder } from "../data/mediaLibrary";
 import { listVoiceFilesForCharacter, voiceSlug, type VoiceFileEntry } from "./voiceFiles";
 import { ImagePicker } from "./ImagePicker";
 import builtinAudio from "virtual:builtin-audio";
@@ -400,22 +400,53 @@ export function MediaLibrary({ storyId }: { storyId: string }) {
               {icon} {label} ({items.length})
             </div>
             <div className="space-y-2">
-              {items.map((asset) => (
-                <div key={asset.id} className="border border-noir-700 bg-noir-900/50 p-1.5">
-                  <div className="flex items-center gap-2">
-                    {type === "image" && <img src={asset.dataUrl} alt={asset.name} className="h-8 w-8 shrink-0 object-cover" />}
-                    <span className="flex-1 truncate font-type text-[10px] text-paper/80">{asset.name}</span>
-                    <span className="shrink-0 font-type text-[9px] text-paper/40">
-                      {asset.size > 1024 * 1024 ? `${(asset.size / 1024 / 1024).toFixed(1)}MB` : `${(asset.size / 1024).toFixed(0)}KB`}
-                    </span>
-                    <button onClick={() => handleDelete(asset.id)} className="shrink-0 text-[10px] text-crimson hover:underline">
-                      Delete
-                    </button>
+              {/* folders first (sprites etc.), then unfiled — so generated
+                  sheets/cutouts are always easy to find again */}
+              {[...new Set(items.map((a) => a.folder ?? ""))]
+                .sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)))
+                .map((folder) => (
+                  <div key={folder || "(unfiled)"} className="space-y-1">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-amber-300/80">
+                      {folder ? `📁 ${folder}` : items.some((a) => a.folder) ? "📄 unfiled" : null}
+                    </div>
+                    {items
+                      .filter((a) => (a.folder ?? "") === folder)
+                      .map((asset) => (
+                        <div key={asset.id} className="border border-noir-700 bg-noir-900/50 p-1.5">
+                          <div className="flex items-center gap-2">
+                            {type === "image" && <img src={asset.dataUrl} alt={asset.name} className="h-8 w-8 shrink-0 object-cover" />}
+                            <span className="flex-1 truncate font-type text-[10px] text-paper/80">{asset.name}</span>
+                            <select
+                              className="w-20 shrink-0 border border-noir-600 bg-noir-950 px-1 py-0.5 font-type text-[8px] text-paper/60"
+                              value={asset.folder ?? ""}
+                              title="Move to folder"
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "__new__") {
+                                  const name = prompt("New folder name:")?.trim();
+                                  if (name) void setAssetFolder(storyId, asset.id, name);
+                                } else void setAssetFolder(storyId, asset.id, v || undefined);
+                              }}
+                            >
+                              <option value="">unfiled</option>
+                              {[...new Set(assets.map((a) => a.folder).filter(Boolean))].map((f) => (
+                                <option key={f} value={f}>📁 {f}</option>
+                              ))}
+                              <option value="__new__">+ new folder…</option>
+                            </select>
+                            <span className="shrink-0 font-type text-[9px] text-paper/40">
+                              {asset.size > 1024 * 1024 ? `${(asset.size / 1024 / 1024).toFixed(1)}MB` : `${(asset.size / 1024).toFixed(0)}KB`}
+                            </span>
+                            <button onClick={() => handleDelete(asset.id)} className="shrink-0 text-[10px] text-crimson hover:underline">
+                              Delete
+                            </button>
+                          </div>
+                          {type === "audio" && <audio controls src={asset.dataUrl} className="mt-1 h-8 w-full" />}
+                          {type === "video" && <video controls src={asset.dataUrl} className="mt-1 h-28 w-full object-cover" />}
+                        </div>
+                      ))}
                   </div>
-                  {type === "audio" && <audio controls src={asset.dataUrl} className="mt-1 h-8 w-full" />}
-                  {type === "video" && <video controls src={asset.dataUrl} className="mt-1 h-28 w-full object-cover" />}
-                </div>
-              ))}
+                ))}
             </div>
           </div>
         );

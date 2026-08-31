@@ -1005,6 +1005,9 @@ export interface MediaAsset {
   id: string;
   name: string;
   type: AssetType;
+  /** optional library folder ("sprites", "backgrounds", …) so generated and
+   * uploaded assets can be grouped and found again; unfiled when unset */
+  folder?: string;
   /** portable base64 data URL used for export/import and browser fallback */
   dataUrl: string;
   /** desktop-only playable copy written to the game media folder */
@@ -1049,6 +1052,15 @@ export interface Character {
    * are untouched and take effect again the moment the sheet is cleared.
    * Position/scale/flip still come from talkingX/Y/Scale/Flip. */
   talkingSheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Alternate talking sheets — outfits, moods, poses. While this character
+   * is the ACTIVE SPEAKER and the current beat's `expression` matches a
+   * variant's name (case-insensitive), that variant's sheet replaces
+   * `talkingSheet` for the beat; everyone else (and beats with no matching
+   * expression) uses the default sheet. */
+  talkingSheets?: { name: string; sheet: import("./game/spriteSheet").SpriteSheet }[];
+  /** opacity of the sprite while some OTHER character is speaking
+   * (0.2–1, default 0.72 — lower = more see-through). */
+  talkingDim?: number;
   /** mirror the sprite horizontally (face left) so two speakers can face
    * each other across the frame. */
   talkingFlip?: boolean;

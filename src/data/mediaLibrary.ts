@@ -442,6 +442,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     c.talkingFrames?.forEach(visit);
     visit(c.talkingRest);
     visit(c.talkingSheet?.image);
+    c.talkingSheets?.forEach((v) => visit(v.sheet?.image));
   });
   story.acts?.forEach((a) => visit(a.titleCardImage));
   story.episodes?.forEach((ep) => {
@@ -554,6 +555,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     if (c.talkingFrames?.length) c.talkingFrames = c.talkingFrames.map((f) => resolveMediaValue(f, map) ?? f);
     if (c.talkingRest) c.talkingRest = resolveMediaValue(c.talkingRest, map) ?? c.talkingRest;
     if (c.talkingSheet) apply(c.talkingSheet, "image");
+    c.talkingSheets?.forEach((v) => { if (v.sheet) apply(v.sheet, "image"); });
   });
   next.acts?.forEach((a) => apply(a, "titleCardImage"));
   next.episodes?.forEach((ep) => {
@@ -574,7 +576,8 @@ export async function uploadDataUrlAsset(
   storyId: string,
   name: string,
   type: AssetType,
-  dataUrl: string
+  dataUrl: string,
+  folder?: string
 ): Promise<{ success: boolean; assetId?: string; error?: string }> {
   const comma = dataUrl.indexOf(",");
   const base64Length = Math.max(0, dataUrl.length - comma - 1);
@@ -584,6 +587,7 @@ export async function uploadDataUrlAsset(
     id,
     name,
     type,
+    ...(folder ? { folder } : {}),
     dataUrl,
     fileUrl,
     size: Math.round((base64Length * 3) / 4),
@@ -591,6 +595,26 @@ export async function uploadDataUrlAsset(
   };
   const result = await addAsset(storyId, asset);
   return { success: result.success, assetId: result.success ? asset.id : undefined, error: result.error };
+}
+
+/** Move an asset to a library folder (empty/undefined = unfiled). */
+export async function setAssetFolder(storyId: string, assetId: string, folder?: string): Promise<void> {
+  const assets = await loadAssets(storyId);
+  const asset = assets.find((a) => a.id === assetId);
+  if (!asset) return;
+  const next: MediaAsset = { ...asset };
+  if (folder && folder.trim()) next.folder = folder.trim();
+  else delete next.folder;
+  // Direct put (not addAsset): the asset already counts toward the quota, so
+  // re-running the size checks would double-count it.
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put({ ...next, storyId } satisfies StoredAsset);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  notify(storyId);
 }
 
 /** Convert any embedded base64 `data:` URLs inside a story into `asset:<id>`
@@ -753,6 +777,10 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     c.talkingRest = (await compact(c.talkingRest, "image", `${c.name} resting`)) || undefined;
     if (c.talkingSheet?.image)
       c.talkingSheet.image = (await compact(c.talkingSheet.image, "image", `${c.name} talking sheet`)) ?? c.talkingSheet.image;
+    for (const v of c.talkingSheets ?? []) {
+      if (v.sheet?.image)
+        v.sheet.image = (await compact(v.sheet.image, "image", `${c.name} sheet: ${v.name}`)) ?? v.sheet.image;
+    }
   }
   for (const a of next.acts ?? []) {
     a.titleCardImage = await compact(a.titleCardImage, "image", a.title || a.label || "act");
@@ -1006,6 +1034,9 @@ export async function bundleVoiceFileRefs(
     }
     c.talkingRest = await bundleValue(c.talkingRest);
     if (c.talkingSheet?.image) c.talkingSheet.image = (await bundleValue(c.talkingSheet.image)) ?? c.talkingSheet.image;
+    for (const v of c.talkingSheets ?? []) {
+      if (v.sheet?.image) v.sheet.image = (await bundleValue(v.sheet.image)) ?? v.sheet.image;
+    }
   }
   for (const a of next.acts ?? []) {
     a.titleCardImage = await bundleValue(a.titleCardImage);

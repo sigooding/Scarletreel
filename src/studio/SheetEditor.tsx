@@ -211,7 +211,7 @@ export function SpriteSheetControls({
       });
       const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset));
       const base = file.name.replace(/\.[a-z0-9]+$/i, "") || "sheet";
-      const up = await uploadDataUrlAsset(storyId, `sheet-${base}.png`, "image", sheet.dataUrl);
+      const up = await uploadDataUrlAsset(storyId, `sheet-${base}.png`, "image", sheet.dataUrl, "sprites");
       onChange({
         image: up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl,
         frameWidth: sheet.frameWidth,

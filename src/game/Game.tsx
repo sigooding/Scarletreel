@@ -1054,6 +1054,7 @@ function StageSprite({
   scale,
   flip,
   dim,
+  dimOpacity,
 }: {
   frames: string[];
   rest?: string;
@@ -1065,6 +1066,8 @@ function StageSprite({
   scale: number;
   flip: boolean;
   dim: boolean;
+  /** opacity while another character speaks (default 0.72) */
+  dimOpacity?: number;
 }) {
   const useSheet = sheetDrawable(sheet);
   const cycle = !useSheet && animate && frames.length > 1;
@@ -1101,7 +1104,7 @@ function StageSprite({
         bottom: `${y}%`,
         transform: `translateX(-50%)${flip ? " scaleX(-1)" : ""}`,
         height: `${heightPct}%`,
-        opacity: dim ? 0.72 : 1,
+        opacity: dim ? Math.min(1, Math.max(0.2, dimOpacity ?? 0.72)) : 1,
         transition: "opacity .3s ease",
       }}
     >
@@ -5706,12 +5709,19 @@ function CasePlayer({
           {onStage.map((c) => {
           const isActive = c.id === activeSpeakerId;
           const frames = (c.talkingFrames ?? []).filter(Boolean);
+          // Alternate sheet (outfit/mood/pose): while this character speaks a
+          // beat whose `expression` matches a variant name, that sheet takes
+          // over; everyone else keeps their default sheet.
+          const expr = isActive ? (currentBeat?.expression ?? "").trim().toLowerCase() : "";
+          const variant = expr
+            ? c.talkingSheets?.find((v) => v.name.trim().toLowerCase() === expr)?.sheet
+            : undefined;
           return (
             <StageSprite
               key={c.id}
               frames={frames}
               rest={c.talkingRest}
-              sheet={c.talkingSheet}
+              sheet={variant ?? c.talkingSheet}
               animate={isActive && animateActive}
               frameDuration={c.talkingFrameDuration ?? 0.16}
               x={c.talkingX ?? 50}
@@ -5719,6 +5729,7 @@ function CasePlayer({
               scale={c.talkingScale ?? 1}
               flip={!!c.talkingFlip}
               dim={!isActive}
+              dimOpacity={c.talkingDim}
             />
           );
           })}
