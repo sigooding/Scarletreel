@@ -108,12 +108,23 @@ export const DEMO_LIE: Story = {
         "② Each hotspot below is a 'take' marker with action Give item; the stage draws them as gold reticles at the zone's base and the character walks to them. " +
         "③ There are THREE items on purpose: the 🎟 Pawn Ticket breaks lie #1, the 🧾 Bar Tab breaks lie #2, and the 🔥 Matchbook is a RED HERRING — it shows in the evidence bag but proves nothing. " +
         "④ The exit is a DOOR MARKER: a hotspot with action '→ Go to scene' (cursor 'go') — on a stage node choices only appear after a conversation, so exits must be walk-to markers. " +
-        "⑤ The lesson: handing the player every clue doesn't make it easy; they still have to pick the one that matters. ▶ Play: walk the floor, grab all three, then walk out the door to confront her.",
+        "⑤ The lesson: handing the player every clue doesn't make it easy; they still have to pick the one that matters. " +
+        "⑥ The walker here uses stage.playerSheet — ONE sprite-sheet image sliced into a frame grid with named 'walk'/'idle' animations (it beats loose walkFrames files: proper standing pose, one download). ▶ Play: walk the floor, grab all three, then walk out the door to confront her.",
       background: "/img/bg-office.jpg",
       ambientAudio: "rain",
       nodeType: "stage",
       stage: {
-        playerImage: "emoji:🕵️",
+        playerImage: "emoji:🕵️", // fallback if the sheet fails to load
+        playerSheet: {
+          image: "/assets/sprites/gumshoe-walk.png",
+          frameWidth: 114,
+          frameHeight: 192,
+          animations: {
+            idle: { frames: [1] },
+            walk: { frames: [0, 1, 2, 3], fps: 8 },
+          },
+          pixelated: true,
+        },
         spawn: { x: 50, y: 88 },
         speed: 20,
         reach: 4,

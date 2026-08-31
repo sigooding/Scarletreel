@@ -419,6 +419,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     // url / asset: only, not emoji:).
     if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) visit(sc.stage.playerImage);
     sc.stage?.walkFrames?.forEach(visit);
+    visit(sc.stage?.playerSheet?.image);
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
     sc.hotspots?.forEach((h) => visit(h.image));
@@ -526,6 +527,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     apply(sc, "narrationAudioUrl");
     if (sc.stage?.playerImage) apply(sc.stage, "playerImage");
     if (sc.stage?.walkFrames?.length) sc.stage.walkFrames = sc.stage.walkFrames.map((f) => resolveMediaValue(f, map) ?? f);
+    if (sc.stage?.playerSheet) apply(sc.stage.playerSheet, "image");
     applyCinematic(sc.cinematic);
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
@@ -658,6 +660,10 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) {
       const imgType: AssetType = sc.stage.playerImage.startsWith("video:") ? "video" : "image";
       sc.stage.playerImage = (await compact(sc.stage.playerImage, imgType, `${sc.title} stage character`)) ?? sc.stage.playerImage;
+    }
+    if (sc.stage?.playerSheet?.image) {
+      sc.stage.playerSheet.image =
+        (await compact(sc.stage.playerSheet.image, "image", `${sc.title} walker sheet`)) ?? sc.stage.playerSheet.image;
     }
     if (sc.stage?.walkFrames?.length) {
       sc.stage.walkFrames = await Promise.all(
@@ -944,6 +950,9 @@ export async function bundleVoiceFileRefs(
     sc.narrationAudioUrl = await bundleValue(sc.narrationAudioUrl);
     if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) {
       sc.stage.playerImage = (await bundleValue(sc.stage.playerImage)) ?? sc.stage.playerImage;
+    }
+    if (sc.stage?.playerSheet?.image) {
+      sc.stage.playerSheet.image = (await bundleValue(sc.stage.playerSheet.image)) ?? sc.stage.playerSheet.image;
     }
     if (sc.stage?.walkFrames?.length) {
       sc.stage.walkFrames = await Promise.all(sc.stage.walkFrames.map(async (f) => (await bundleValue(f)) ?? f));

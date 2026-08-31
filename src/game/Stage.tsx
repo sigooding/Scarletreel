@@ -14,6 +14,8 @@ import {
 } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
+import { SheetSprite } from "./SheetSprite";
+import { sheetAnim } from "./spriteSheet";
 
 /**
  * Stage — the walkable layer of a STAGE node (Telltale-style exploration).
@@ -86,6 +88,9 @@ export function Stage({
   const frameClock = useRef(0);
   const frameDur = Math.max(0.04, settings.walkFrameDuration ?? 0.14);
   const walkFrames = (settings.walkFrames ?? []).filter(Boolean);
+  // A sprite sheet (one image, gridded frames) beats loose walkFrames when
+  // it actually has a drawable animation.
+  const hasSheet = !!settings.playerSheet && !!sheetAnim(settings.playerSheet, "walk", ["idle"]);
 
   const aspect = () => {
     const el = plateRef.current;
@@ -359,8 +364,16 @@ export function Stage({
           zIndex: 50 + Math.round(pos.y),
         }}
       >
-        <div className={walking && walkFrames.length < 2 ? "stage2d-walk" : walking ? "" : "stage2d-idle"}>
-          {walkFrames.length > 0 ? (
+        <div className={walking && walkFrames.length < 2 && !hasSheet ? "stage2d-walk" : walking ? "" : "stage2d-idle"}>
+          {hasSheet ? (
+            <SheetSprite
+              sheet={settings.playerSheet!}
+              anim={walking ? "walk" : "idle"}
+              fallbacks={walking ? ["idle"] : ["walk"]}
+              height={96}
+              className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+            />
+          ) : walkFrames.length > 0 ? (
             <img
               src={assetUrl(walkFrames[walking ? frameIdx % walkFrames.length : 0])}
               alt=""

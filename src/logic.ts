@@ -1,3 +1,4 @@
+import { spriteSheetIssues } from "./game/spriteSheet";
 import type {
   Choice,
   Consequences,
@@ -1279,6 +1280,10 @@ export function validateStory(story: Story): ValidationIssue[] {
         issues.push({ severity: "warning", sceneId: sc.id, message: `${label} spawn point sits outside the walkable floor band — the character snaps to the floor edge on entry.` });
       if ((sc.stage.walkFrames?.length ?? 0) === 1)
         issues.push({ severity: "warning", sceneId: sc.id, message: `${label} walk cycle has a single frame — add at least 2 frames or clear the list to use the procedural bob.` });
+      if (sc.stage.playerSheet)
+        spriteSheetIssues(sc.stage.playerSheet, "walker sprite sheet").forEach((msg) =>
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label} ${msg}` })
+        );
     }
     // Conversations that end in nothing: a stage conversation with no
     // choices and no after-beat route just closes — fine — but if the ONLY

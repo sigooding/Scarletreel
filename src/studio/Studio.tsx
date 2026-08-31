@@ -8059,6 +8059,86 @@ function StudioInner({
                             procedural bob.
                           </p>
                         </Field>
+                        {/* ---- sprite-sheet walker (one image, gridded frames) ---- */}
+                        <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            One image holding a grid of frames (left→right, top→bottom, starting at 0). Beats loose
+                            frame files: define “walk” and “idle” and the walker animates and stands still properly.
+                            Overrides the sprite/walk-frame fields above while set.
+                          </p>
+                          <Field label="Sheet image (url / asset: — clear to remove)">
+                            <ImagePicker
+                              value={scene.stage.playerSheet?.image}
+                              storyId={story.id}
+                              includeGradients={false}
+                              onChange={(v) =>
+                                updateScene(scene.id, {
+                                  stage: v
+                                    ? {
+                                        ...scene.stage!,
+                                        playerSheet: {
+                                          frameWidth: 32,
+                                          frameHeight: 48,
+                                          animations: { idle: { frames: [0] }, walk: { frames: [0, 1, 2, 3], fps: 10 } },
+                                          ...(scene.stage!.playerSheet ?? {}),
+                                          image: v,
+                                        },
+                                      }
+                                    : { ...scene.stage!, playerSheet: undefined },
+                                })
+                              }
+                              placeholder="Pick the sprite sheet…"
+                            />
+                          </Field>
+                          {scene.stage.playerSheet && (() => {
+                            const sheet = scene.stage.playerSheet;
+                            const patchSheet = (patch: Partial<typeof sheet>) =>
+                              updateScene(scene.id, { stage: { ...scene.stage!, playerSheet: { ...sheet, ...patch } } });
+                            const framesOf = (name: string) => (sheet.animations?.[name]?.frames ?? []).join(", ");
+                            const setAnim = (name: string, csv: string, fps?: number) => {
+                              const frames = csv.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n >= 0);
+                              const animations = { ...sheet.animations };
+                              if (frames.length) animations[name] = { ...(animations[name] ?? {}), frames, ...(fps ? { fps } : {}) };
+                              else delete animations[name];
+                              patchSheet({ animations });
+                            };
+                            return (
+                              <>
+                                <div className="grid grid-cols-3 gap-1">
+                                  <Field label="Frame width (px)">
+                                    <input type="number" min={1} className={inputCls} value={sheet.frameWidth}
+                                      onChange={(e) => patchSheet({ frameWidth: Math.max(1, parseInt(e.target.value, 10) || 1) })} />
+                                  </Field>
+                                  <Field label="Frame height (px)">
+                                    <input type="number" min={1} className={inputCls} value={sheet.frameHeight}
+                                      onChange={(e) => patchSheet({ frameHeight: Math.max(1, parseInt(e.target.value, 10) || 1) })} />
+                                  </Field>
+                                  <Field label="Walk fps">
+                                    <input type="number" min={1} max={30} className={inputCls}
+                                      value={sheet.animations?.walk?.fps ?? 10}
+                                      onChange={(e) => setAnim("walk", framesOf("walk") || "0,1,2,3", Math.max(1, parseInt(e.target.value, 10) || 10))} />
+                                  </Field>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1">
+                                  <Field label='"walk" frames (e.g. 0, 1, 2, 3)'>
+                                    <input className={inputCls} defaultValue={framesOf("walk")} placeholder="0, 1, 2, 3"
+                                      onBlur={(e) => setAnim("walk", e.target.value, sheet.animations?.walk?.fps)} />
+                                  </Field>
+                                  <Field label='"idle" frames (e.g. 0)'>
+                                    <input className={inputCls} defaultValue={framesOf("idle")} placeholder="0"
+                                      onBlur={(e) => setAnim("idle", e.target.value, sheet.animations?.idle?.fps)} />
+                                  </Field>
+                                </div>
+                                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                                  <input type="checkbox" checked={!!sheet.pixelated}
+                                    onChange={(e) => patchSheet({ pixelated: e.target.checked || undefined })} />
+                                  Pixel art (crisp nearest-neighbour scaling)
+                                </label>
+                              </>
+                            );
+                          })()}
+                        </div>
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input

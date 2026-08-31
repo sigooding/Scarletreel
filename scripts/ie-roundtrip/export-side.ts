@@ -96,6 +96,19 @@ scene0.hotspots = [
   },
 ];
 
+// Stage-node walker media: single sprite, loose walk frames, and the sprite sheet.
+scene0.stage = {
+  ...(scene0.stage ?? {}),
+  playerImage: await up("image", "stage-player", png("stage-player")),
+  walkFrames: [await up("image", "stage-walk0", png("stage-walk0"))],
+  playerSheet: {
+    image: await up("image", "stage-sheet", png("stage-sheet")),
+    frameWidth: 32,
+    frameHeight: 48,
+    animations: { idle: { frames: [0] }, walk: { frames: [0, 1, 2, 3], fps: 10 } },
+  },
+};
+
 // Dialogue beats (incl. a per-beat background override).
 const beats: DialogueBeat[] = [
   {
@@ -273,6 +286,15 @@ seeded.push(legacy.episodes[0].titleCardMusicUrl!);
 legacy.coverImage = raw("cover");
 legacy.dialogueBox = { ...(legacy.dialogueBox ?? {}), backgroundImage: raw("dlgbox") };
 legacy.map = { locations: [{ id: "lg-loc", label: "Old Pier", targetSceneId: legacy.scenes[0].id, x: 20, y: 80 }], backgroundImage: raw("map-bg") };
+legacy.scenes[0].stage = {
+  ...(legacy.scenes[0].stage ?? {}),
+  playerSheet: {
+    image: raw("stage-sheet"),
+    frameWidth: 32,
+    frameHeight: 48,
+    animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 8 } },
+  },
+};
 
 const compactedLegacy = await compactStoryMedia(legacy);
 const legacyJson = JSON.stringify(compactedLegacy);

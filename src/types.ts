@@ -844,6 +844,11 @@ export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
    *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
   playerImage?: string;
+  /** Sprite-sheet walker — ONE image holding a grid of frames plus named
+   *  animations ("walk" while moving, "idle" at rest; either falls back to
+   *  the other). Takes precedence over walkFrames/playerImage when set.
+   *  See src/game/spriteSheet.ts. */
+  playerSheet?: import("./game/spriteSheet").SpriteSheet;
   /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
    *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
    *  procedurally instead. Frame 0 doubles as the idle pose. */

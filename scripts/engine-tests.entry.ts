@@ -67,6 +67,8 @@ import {
   type GlobalState,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
+import { sheetAnim, sheetCols, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
+import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, Story } from "../src/types";
 
@@ -2166,6 +2168,88 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     validateStory({ ...S, map: undefined }).some((i) => i.sceneId === "b" && /unreachable/.test(i.message))
   );
   check("map flags: collectFlags sees map gate flags", collectFlags(S).includes("tip") && collectFlags(S).includes("deep"));
+}
+
+/* ================================================================== *
+ *  sprite sheets — frame maths, animation fallback, validator wiring
+ * ================================================================== */
+{
+  const sheet: SpriteSheet = {
+    image: "/assets/sprites/gumshoe-walk.png",
+    frameWidth: 114,
+    frameHeight: 192,
+    animations: {
+      idle: { frames: [1] },
+      walk: { frames: [0, 1, 2, 3], fps: 8 },
+      slump: { frames: [3, 2], loop: false },
+    },
+  };
+
+  // -- grid maths ------------------------------------------------------------
+  check("sheet: cols from image width", sheetCols(sheet, 456) === 4);
+  check("sheet: cols never collapses to 0 on a too-narrow image", sheetCols(sheet, 50) === 1);
+  check("sheet: frame 0 sits at the origin", JSON.stringify(sheetFramePos(0, 4)) === JSON.stringify({ col: 0, row: 0 }));
+  check("sheet: frame 5 wraps to row 1 col 1", JSON.stringify(sheetFramePos(5, 4)) === JSON.stringify({ col: 1, row: 1 }));
+
+  // -- named-animation lookup with fallbacks ----------------------------------
+  check("sheet: exact animation name wins", sheetAnim(sheet, "walk")?.frames.length === 4);
+  check("sheet: missing name falls back in order", sheetAnim(sheet, "run", ["walk"])?.frames[3] === 3);
+  const idleOnly: SpriteSheet = { ...sheet, animations: { idle: { frames: [0] } } };
+  check("sheet: no match falls back to first defined animation", sheetAnim(idleOnly, "walk")?.frames[0] === 0);
+  check("sheet: empty animations yields null", sheetAnim({ ...sheet, animations: {} }, "walk") === null);
+
+  // -- frame stepping: looping and hold-last ----------------------------------
+  const walk = sheet.animations.walk;
+  check("sheet: t=0 is the first frame", sheetFrameAt(walk, 0) === 0);
+  check("sheet: fps drives stepping", sheetFrameAt(walk, 0.13) === 1); // 8fps → frame 1 at 125ms
+  check("sheet: looping wraps past the end", sheetFrameAt(walk, 0.5) === 0); // frame 4 → wraps
+  const slump = sheet.animations.slump;
+  check("sheet: loop:false holds the last frame", sheetFrameAt(slump, 9) === 2);
+  check("sheet: default fps is 8", sheetFrameAt({ frames: [0, 1] }, 0.13) === 1);
+
+  // -- validator --------------------------------------------------------------
+  check("sheet issues: a well-formed sheet is clean", spriteSheetIssues(sheet, "walker").length === 0);
+  check(
+    "sheet issues: missing image is caught",
+    spriteSheetIssues({ ...sheet, image: "" }, "walker").some((m) => /image/.test(m))
+  );
+  check(
+    "sheet issues: zero frame size is caught",
+    spriteSheetIssues({ ...sheet, frameWidth: 0 }, "walker").some((m) => /frame size/.test(m))
+  );
+  check(
+    "sheet issues: an empty animation is caught",
+    spriteSheetIssues({ ...sheet, animations: { walk: { frames: [] } } }, "walker").some((m) => /no frames/.test(m))
+  );
+  check(
+    "sheet issues: negative frame index is caught",
+    spriteSheetIssues({ ...sheet, animations: { walk: { frames: [-1] } } }, "walker").some((m) => /negative/.test(m))
+  );
+  check(
+    "sheet issues: no walk/idle animation warns",
+    spriteSheetIssues({ ...sheet, animations: { dance: { frames: [0] } } }, "walker").some((m) => /walk|idle/.test(m))
+  );
+
+  // -- story validator wiring: stage.playerSheet problems surface as warnings --
+  const stageStory: Story = {
+    id: "sheet-v", title: "SV", subtitle: "", coverTagline: "", startSceneId: "st",
+    characters: [], items: [], meters: {}, scenes: [
+      {
+        id: "st", title: "Floor", nodeType: "stage", prose: "", background: "",
+        stage: {
+          playerSheet: { image: "", frameWidth: 0, frameHeight: 48, animations: {} },
+          floor: { top: 60, bottom: 90 },
+        },
+        hotspots: [{ id: "d", label: "Door", bounds: { x: 80, y: 60, w: 10, h: 20 }, cursor: "go", action: { type: "goToScene", targetSceneId: "end" } }],
+        dialogueBeats: [], choices: [],
+      } as unknown as SceneNode,
+      { id: "end", title: "End", nodeType: "ending", prose: "Done.", background: "", hotspots: [], dialogueBeats: [], choices: [], endingData: { tier: "best", epilogue: "" } } as unknown as SceneNode,
+    ],
+  } as unknown as Story;
+  const sheetIssues = validateStory(stageStory).filter((i) => /sprite sheet/i.test(i.message));
+  check("sheet validator wiring: bad playerSheet surfaces as story warnings", sheetIssues.length >= 2, sheetIssues.length);
+  check("sheet validator wiring: sheet problems are warnings, not errors", sheetIssues.every((i) => i.severity === "warning"));
+  check("sheet validator wiring: warnings attach to the stage scene", sheetIssues.every((i) => i.sceneId === "st"));
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

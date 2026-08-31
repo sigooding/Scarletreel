@@ -173,6 +173,11 @@ function assetRefs(story) {
     (sc.cinematic?.foregroundImage?.startsWith("/") && refs.add(sc.cinematic.foregroundImage));
     [sc.musicUrl, sc.sceneAudioUrl, sc.narrationAudioUrl].forEach((u) => u?.startsWith("/") && refs.add(u));
     (sc.dialogueBeats ?? []).forEach((b) => b.audioUrl?.startsWith("/") && refs.add(b.audioUrl));
+    if (sc.stage) {
+      sc.stage.playerImage?.startsWith("/") && refs.add(sc.stage.playerImage);
+      (sc.stage.walkFrames ?? []).forEach((f) => f.startsWith("/") && refs.add(f));
+      sc.stage.playerSheet?.image?.startsWith("/") && refs.add(sc.stage.playerSheet.image);
+    }
   });
   story.characters.forEach((c) => c.avatarUrl?.startsWith("/") && refs.add(c.avatarUrl));
   story.items.forEach((i) => i.iconUrl?.startsWith("/") && refs.add(i.iconUrl));
