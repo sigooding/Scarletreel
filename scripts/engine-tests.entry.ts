@@ -85,6 +85,7 @@ import {
   verbsForScene,
   wrongVerbLine,
   VERB_IDS,
+  CORE_VERB_IDS,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
@@ -2806,7 +2807,31 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   const authored: SceneNode = { ...room, stage: { ...room.stage!, verbs: ["talk", "go"] } };
   check("coin: the author's verb list wins, in canonical order", verbsForScene(authored).join(",") === "talk,go");
   check("coin: a room with no coin still resolves nothing", verbsForScene({ ...room, stage: { spawn: { x: 1, y: 1 } } }).length > 0);
-  check("coin: the five verbs are the five cursors", VERB_IDS.join(",") === "look,take,talk,use,go");
+  check("coin: the seven verbs are the seven cursors", VERB_IDS.join(",") === "look,take,talk,use,go,kick,punch");
+  check("coin: the core five stay the default", CORE_VERB_IDS.join(",") === "look,take,talk,use,go");
+
+  // The EXTRA body-verbs (kick / punch) are OPT-IN per room: without
+  // stage.extendedVerbs they never leak into the coin, even if a hotspot
+  // answers them — so a visual novel or classic case is untouched.
+  const kickRoom: SceneNode = {
+    id: "kickroom",
+    title: "Kickroom",
+    stage: { verbCoin: true, spawn: { x: 10, y: 90 } },
+    hotspots: [
+      { id: "door", label: "door", bounds: { x: 50, y: 50, w: 10, h: 30 }, cursor: "kick", action: { type: "showText", text: "Boom." } },
+    ],
+  };
+  check("coin: kick does not appear unless the room opts in",
+    !verbsForScene(kickRoom).includes("kick"), verbsForScene(kickRoom));
+  check("coin: opting in via extendedVerbs adds kick",
+    verbsForScene({ ...kickRoom, stage: { ...kickRoom.stage!, extendedVerbs: true } }).includes("kick"));
+  check("coin: an explicit verbs list can name kick without the flag",
+    verbsForScene({ ...kickRoom, stage: { ...kickRoom.stage!, verbs: ["kick", "punch"] } }).join(",") === "kick,punch");
+  check("coin: a room that opts in but uses only core verbs stays core",
+    verbsForScene({ ...room, stage: { ...room.stage!, extendedVerbs: true } }).join(",") === "look,take,use",
+    verbsForScene({ ...room, stage: { ...room.stage!, extendedVerbs: true } }));
+  check("coin: punch resolves against an object that answers it",
+    resolveVerbAction({ ...bench, verbs: { ...bench.verbs, punch: { type: "showText", text: "Pow." } } }, "punch").ok === true);
 
   // The prototype uses it.
   const adv = THROTTLE_ASH;
@@ -2923,7 +2948,7 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("cursor: a sheet makes an animated cursor", anim.animated === true && anim.css === "none");
   check("cursor: a sheet beats a static image", resolveCursor({ cursorArt: { use: { image: "/x.png", sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0], fps: 1 } } } } } }, "use").animated === true);
 
-  check("cursor: every slot is offered to the author", CURSOR_SLOTS.join(",") === "default,look,take,talk,use,go");
+  check("cursor: every slot is offered to the author", CURSOR_SLOTS.join(",") === "default,look,take,talk,use,go,kick,punch");
   check("cursor: the prototype ships cursor art", !!THROTTLE_ASH.cursorArt?.look?.image && !!THROTTLE_ASH.cursorArt?.default?.image);
   check("cursor: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
 

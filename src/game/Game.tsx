@@ -5862,7 +5862,13 @@ function CasePlayer({
         const stageEl = (
           <Stage
             key={`stage-${sceneId}`}
-            settings={scene.stage}
+            settings={{
+              ...scene.stage,
+              // Story-wide walker default (In-game theme → 🚶 Player character);
+              // a scene's own sprite overrides it.
+              playerSheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
+              playerImage: scene.stage.playerImage ?? story.playerSprite?.image,
+            }}
             hotspots={visibleHotspots}
             unlocked={(hs) => meetsGating(hs.gating, state)}
             onInteract={(hs, ctx) => activateHotspot(hs, ctx)}
@@ -5871,7 +5877,7 @@ function CasePlayer({
             onVerbChange={setCoinVerb}
             {...(hasOccluders ? { onPosChange: setWalkerFeet } : {})}
             {...(dropRequest ? { dropRequest } : {})}
-            verbs={scene.stage.verbCoin ? verbsForScene(scene) : undefined}
+            verbs={scene.stage.verbCoin || scene.stage.objectVerbMenu ? verbsForScene(scene) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
           />
         );

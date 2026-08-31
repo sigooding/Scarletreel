@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Hotspot, StageSettings } from "../types";
-import { CURSOR_ICON } from "../logic";
+import { CURSOR_ICON, hotspotAnswersVerb } from "../logic";
 import {
   STAGE2D_DEFAULT_REACH,
   STAGE2D_DEFAULT_SPEED,
@@ -120,26 +120,65 @@ export function Stage({
   // the loop the same frame it vanishes from the plate.
   const hotspotsRef = useRef(hotspots);
   hotspotsRef.current = hotspots;
-  const [facing, setFacing] = useState<1 | -1>(1);
+  /** The walker's facing direction: horizontal (left/right) flips the sprite
+   *  via scaleX; up/down use DIRECTIONAL animations when the sheet defines
+   *  them ("walk-up" / "walk-down" / "idle-up" / "idle-down") and otherwise
+   *  fall back to the side sprite — so existing sheets keep working unchanged. */
+  type Dir = "left" | "right" | "up" | "down";
+  const [dir, setDir] = useState<Dir>("right");
+  /** Which way is the walker heading, given a step vector (y grows downward). */
+  const dirOf = (dx: number, dy: number): Dir => {
+    if (dx === 0 && dy === 0) return dir;
+    return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy < 0 ? "up" : "down");
+  };
+  /** Resolve the sprite-sheet animation + flip for a facing, with graceful
+   *  fallbacks so a sheet that only knows "walk"/"idle" still plays (side
+   *  sprite, un-flipped for up/down — the classic single-sheet behaviour). */
+  const dirAnim = (d: Dir, moving: boolean): { anim: string; fallbacks: string[]; flip: boolean } => {
+    if (d === "up") return moving
+      ? { anim: "walk-up", fallbacks: ["walk", "idle"], flip: false }
+      : { anim: "idle-up", fallbacks: ["idle", "walk"], flip: false };
+    if (d === "down") return moving
+      ? { anim: "walk-down", fallbacks: ["walk", "idle"], flip: false }
+      : { anim: "idle-down", fallbacks: ["idle", "walk"], flip: false };
+    return moving
+      ? { anim: "walk", fallbacks: ["idle"], flip: d === "left" }
+      : { anim: "idle", fallbacks: ["walk"], flip: d === "left" };
+  };
   const [walking, setWalking] = useState(false);
   const [frameIdx, setFrameIdx] = useState(0);
   const [ripple, setRipple] = useState<{ x: number; y: number; key: number } | null>(null);
   const [nearId, setNearId] = useState<string | null>(null);
   // VERB COIN — the selected verb and, for USE, the armed item. Both are
   // mirrored into refs because the rAF loop fires interactions.
-  const coinOn = !!verbs && verbs.length > 0;
+  // `verbMode` = verbs drive the firing (either the verb-first coin OR the
+  // object-first menu); `coinOn` = the bottom-left coin RAIL specifically.
+  const verbMode = !!verbs && verbs.length > 0;
+  const objectMenu = settings.objectVerbMenu === true;
+  const coinOn = verbMode && !objectMenu;
   const [verb, setVerb] = useState<VerbId>(verbs?.[0] ?? "look");
   const [heldItem, setHeldItem] = useState<string | null>(null);
   const verbRef = useRef<VerbId>(verbs?.[0] ?? "look");
   const heldRef = useRef<string | null>(null);
   verbRef.current = verb;
   heldRef.current = heldItem;
+  // OBJECT-FIRST verb menu (Full Throttle's "skull"): click an object and a
+  // small pie menu of the verbs it answers pops up next to it. `menu` holds the
+  // open object + its marker point; `menuUse` is the object whose USE was
+  // picked and is waiting for an inventory item to arm.
+  const [menu, setMenu] = useState<{ hs: Hotspot; x: number; y: number } | null>(null);
+  const [menuUse, setMenuUse] = useState<Hotspot | null>(null);
+  /** The verbs an object answers, for the menu (respects the room's verb list). */
+  const menuVerbs = (hs: Hotspot): VerbId[] => {
+    const room = verbs ?? [];
+    return room.filter((v) => v === "use" ? (hs.acceptsItems?.length ? true : hotspotAnswersVerb(hs, v)) : hotspotAnswersVerb(hs, v));
+  };
   /** The marker the player explicitly clicked, with the verb it was clicked
    *  with — so a coin room only fires what was aimed at, never a brushed
    *  past marker. */
   const pendingRef = useRef<{ hotspotId: string; verb: VerbId; itemId?: string } | null>(null);
-  const coinRef = useRef(coinOn);
-  coinRef.current = coinOn;
+  const coinRef = useRef(verbMode);
+  coinRef.current = verbMode;
   // The selected verb is the cursor in a coin room — hand it to the parent so
   // its art can follow the mouse.
   const verbCbRef = useRef(onVerbChange);
@@ -235,13 +274,13 @@ export function Stage({
         } else {
           next = clampToFloor(want.x, want.y, floor);
         }
-        if (kb !== 0) setFacing(kb > 0 ? 1 : -1);
+        if (kb !== 0 || vf !== 0) setDir(dirOf(kb, vf));
         moved = next.x !== cur.x || next.y !== cur.y;
       } else if (targetRef.current) {
         const t = targetRef.current;
         const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings), dt, a);
         next = clampToFloor(r.x, r.y, floor);
-        if (Math.abs(t.x - cur.x) > 0.5) setFacing(t.x > cur.x ? 1 : -1);
+        if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
         moved = true;
         if (r.arrived) arrived = true;
       }
@@ -363,12 +402,25 @@ export function Stage({
     firedRef.current.clear();
     const route = stageRoute(cur, { x: tx, y: ty }, obstacles, floor);
     if (route.length) {
-      setFacing(hs.bounds.x + hs.bounds.w / 2 >= cur.x ? 1 : -1);
+      setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur.x, m.y - cur.y));
       if (followRoute(route)) return;
     }
     // No route (walled off) — fall back to walking straight at it.
     targetRef.current = { x: tx, y: ty, hotspotId: hs.id };
-    setFacing(hs.bounds.x + hs.bounds.w / 2 >= cur.x ? 1 : -1);
+    setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur.x, m.y - cur.y));
+  };
+
+  /** Object-first menu: the player picked a verb for the open object. USE on
+   *  an object that accepts items first arms one from the inventory; otherwise
+   *  it acts directly. Closes the menu and walks the character over. */
+  const pickVerb = (hs: Hotspot, v: VerbId, itemId?: string) => {
+    if (v === "use" && (hs.acceptsItems?.length ?? 0) > 0 && !itemId) {
+      setMenuUse(hs);
+      return;
+    }
+    setMenu(null);
+    setMenuUse(null);
+    walkToMarker(hs, { verb: v, itemId: v === "use" ? itemId : undefined });
   };
 
   // An item dropped on a scene object: walk over, then USE it there.
@@ -397,6 +449,9 @@ export function Stage({
       style={{ pointerEvents: active ? "auto" : "none", ...(cursorStyle ?? {}) }}
       onPointerDown={(e) => {
         if (!active) return;
+        // Anywhere else dismisses the object-first menu.
+        setMenu(null);
+        setMenuUse(null);
         const p = platePoint(e);
         const floorPoint = clampToFloor(p.x, p.y, floor);
         audio.click();
@@ -406,7 +461,12 @@ export function Stage({
         // their fallback (and the walk-shortcut for touch users).
         const hit = hotspotAtPoint(hotspotsRef.current, p);
         if (hit) {
-          walkToMarker(hit);
+          if (objectMenu && !coinOn) {
+            const m = stageMarkerPoint(hit, floor);
+            setMenu({ hs: hit, x: m.x, y: m.y });
+          } else {
+            walkToMarker(hit);
+          }
         } else {
           // Empty floor: just walk — routed around the furniture. The fired
           // set persists, so brushed-past markers don't re-rattle on every
@@ -510,12 +570,19 @@ export function Stage({
                 e.stopPropagation();
                 if (!active) return;
                 audio.click();
-                walkToMarker(hs);
+                if (objectMenu && !coinOn) {
+                  // OBJECT-FIRST: click the object → a pie menu of its verbs
+                  // pops up next to it (Full Throttle's "skull").
+                  setMenu({ hs, x: m.x, y: m.y });
+                  setMenuUse(null);
+                } else {
+                  walkToMarker(hs);
+                }
               }}
               onClick={() => {
                 // Keyboard activation (Enter on a focused marker) — the
                 // pointer path is handled above; this is idempotent.
-                if (active) walkToMarker(hs);
+                if (active && !(objectMenu && !coinOn)) walkToMarker(hs);
               }}
               onMouseEnter={() => active && audio.hover()}
             >
@@ -529,6 +596,61 @@ export function Stage({
           </div>
         );
       })}
+
+      {/* OBJECT-FIRST VERB MENU — a small pie of the verbs THIS object
+          answers, popped up at the object (Full Throttle's "skull"). USE
+          expands to the inventory when the object accepts items. */}
+      {objectMenu && menu && active ? (
+        <div
+          className="pointer-events-auto absolute z-[78] -translate-x-1/2"
+          style={{ left: `${menu.x}%`, top: `${Math.max(8, menu.y - 8)}%`, transform: "translate(-50%,-100%)" }}
+        >
+          <div className="flex flex-col items-center gap-1.5 rounded border border-noir-700 bg-noir-950/92 p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.6)] backdrop-blur-sm">
+            <span className="max-w-[160px] truncate px-1 font-pulp text-[8px] uppercase tracking-widest text-paper/50">{menu.hs.label}</span>
+            <div className="flex flex-wrap justify-center gap-1">
+              {menuVerbs(menu.hs).map((v) => (
+                <button
+                  key={v}
+                  aria-label={VERB_LABEL[v]}
+                  className="flex min-w-[40px] flex-col items-center rounded border px-1.5 py-1 font-pulp text-[9px] uppercase tracking-wide transition-colors border-noir-700 bg-noir-900/85 text-paper/80 hover:border-gold hover:text-gold"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    audio.click();
+                    pickVerb(menu.hs, v);
+                  }}
+                >
+                  <span className="text-sm leading-none" aria-hidden>{VERB_ICON[v]}</span>
+                  {v}
+                </button>
+              ))}
+            </div>
+            {menuUse && menuUse.id === menu.hs.id ? (
+              <div className="flex max-w-[200px] flex-wrap justify-center gap-1 border-t border-noir-700 pt-1">
+                {((inventory ?? []).length
+                  ? inventory!
+                  : []).map((it) => (
+                    <button
+                      key={it.id}
+                      className="flex items-center gap-1 rounded border border-noir-700 bg-noir-900/85 px-1.5 py-1 font-type text-[10px] text-paper/80 hover:border-gold hover:text-gold"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        audio.click();
+                        pickVerb(menu.hs, "use", it.id);
+                      }}
+                    >
+                      <span aria-hidden>{it.icon ?? "📦"}</span> {it.name}
+                    </button>
+                  ))}
+                {(inventory ?? []).length === 0 ? (
+                  <span className="px-1 font-type text-[9px] italic text-paper/40">Nothing to use here — nothing in your pockets.</span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* VERB COIN — bottom-left, the way a LucasArts room puts it. Pick a
           verb, then click the object; USE arms an inventory item first. */}
@@ -597,50 +719,57 @@ export function Stage({
         </div>
       ) : null}
 
-      {/* the player character — outer handles position + facing (scaleX) +
-          depth scale, inner handles the idle/walk bob so the transforms
-          don't fight. z-index tracks the feet so the party overlaps like
-          people standing in a room, not like stickers. */}
-      <div
-        className="pointer-events-none absolute z-[52]"
-        style={{
-          left: `${pos.x}%`,
-          top: `${pos.y}%`,
-          transform: `translate(-50%,-92%) scaleX(${facing}) scale(${playerDepth})`,
-          zIndex: 50 + Math.round(pos.y),
-        }}
-      >
-        <div className={walking && walkFrames.length < 2 && !hasSheet ? "stage2d-walk" : walking ? "" : "stage2d-idle"}>
-          {hasSheet ? (
-            <SheetSprite
-              sheet={settings.playerSheet!}
-              anim={walking ? "walk" : "idle"}
-              fallbacks={walking ? ["idle"] : ["walk"]}
-              height={96}
-              freezeOnFallback={!walking}
-              className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
-            />
-          ) : walkFrames.length > 0 ? (
-            <img
-              src={assetUrl(walkFrames[walking ? frameIdx % walkFrames.length : 0])}
-              alt=""
-              className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
-              draggable={false}
-            />
-          ) : settings.playerImage && !isEmoji ? (
-            <img
-              src={assetUrl(settings.playerImage)}
-              alt=""
-              className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
-              draggable={false}
-            />
-          ) : (
-            <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]">{emoji}</span>
-          )}
-          {/* ground shadow (not mirrored or bobbed) */}
-          <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${facing})` }} />
-        </div>
-      </div>
+      {/* the player character — outer handles position + facing (scaleX for
+          left/right, directional anims for up/down) + depth scale, inner
+          handles the idle/walk bob so the transforms don't fight. z-index
+          tracks the feet so the party overlaps like people standing in a
+          room, not like stickers. */}
+      {(() => {
+        const da = dirAnim(dir, walking);
+        const flip = da.flip ? -1 : 1;
+        return (
+          <div
+            className="pointer-events-none absolute z-[52]"
+            style={{
+              left: `${pos.x}%`,
+              top: `${pos.y}%`,
+              transform: `translate(-50%,-92%) scaleX(${flip}) scale(${playerDepth})`,
+              zIndex: 50 + Math.round(pos.y),
+            }}
+          >
+            <div className={walking && walkFrames.length < 2 && !hasSheet ? "stage2d-walk" : walking ? "" : "stage2d-idle"}>
+              {hasSheet ? (
+                <SheetSprite
+                  sheet={settings.playerSheet!}
+                  anim={da.anim}
+                  fallbacks={da.fallbacks}
+                  height={96}
+                  freezeOnFallback={!walking}
+                  className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+                />
+              ) : walkFrames.length > 0 ? (
+                <img
+                  src={assetUrl(walkFrames[walking ? frameIdx % walkFrames.length : 0])}
+                  alt=""
+                  className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+                  draggable={false}
+                />
+              ) : settings.playerImage && !isEmoji ? (
+                <img
+                  src={assetUrl(settings.playerImage)}
+                  alt=""
+                  className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+                  draggable={false}
+                />
+              ) : (
+                <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]">{emoji}</span>
+              )}
+              {/* ground shadow (not mirrored or bobbed) */}
+              <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${flip})` }} />
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

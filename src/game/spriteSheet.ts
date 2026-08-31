@@ -8,6 +8,12 @@
  *
  * Conventions the engine looks up by name:
  *   - stage walker: "walk" while moving, "idle" at rest
+ *   - stage walker (optional DIRECTIONAL sprites): "walk-up" / "walk-down" /
+ *     "idle-up" / "idle-down" — a walker facing away (up, back to camera) or
+ *     toward (down, at the camera) uses these when present, else falls back to
+ *     the side "walk"/"idle" (the classic single-sheet behaviour). Left/right
+ *     is still the side sprite mirrored via scaleX, so "walk-left"/"walk-right"
+ *     are deliberately NOT used.
  * Fallback: a missing name falls back through `fallbacks`, then to the
  * first animation defined on the sheet, so a sheet with only "walk" still
  * renders at rest (frozen on the animation's first frame).

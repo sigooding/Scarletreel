@@ -4,10 +4,17 @@
 
 export type MeterKey = "Sultry" | "Aggressive" | "Clever" | "Suspicion";
 export type AttitudeTag = "Sultry" | "Aggressive" | "Clever" | "Neutral";
-export type CursorKind = "look" | "take" | "talk" | "use" | "go";
-/** A VERB COIN verb — the same five verbs the cursor can carry, because in a
+/** The five CORE cursors/verbs every game kind shares: look, take, talk, use,
+ *  go. Plus two EXTRA body-verbs — kick and punch — that a point-and-click can
+ *  OPT IN to (see StageSettings.extendedVerbs). They exist on the cursor type
+ *  so a hotspot can be authored as `cursor: "kick"`, but they never surface in
+ *  a room's coin unless that room opts in, so a visual novel or a classic
+ *  noir-rail case is completely unaffected. */
+export type CursorKind = "look" | "take" | "talk" | "use" | "go" | "kick" | "punch";
+/** A VERB COIN verb — the same verbs the cursor can carry, because in a
  *  point-and-click the verb IS the cursor. See Hotspot.verbs /
- *  StageSettings.verbCoin and docs/adventure-mode.md. */
+ *  StageSettings.verbCoin / StageSettings.extendedVerbs and
+ *  docs/adventure-mode.md. */
 export type VerbId = CursorKind;
 
 export interface MeterChange {
@@ -906,6 +913,21 @@ export interface StageSettings {
   verbCoin?: boolean;
   /** Which verbs the coin offers. Defaults to every verb the room uses. */
   verbs?: import("./types").VerbId[];
+  /** OPT-IN for the two EXTRA body-verbs (👢 kick · 👊 punch). When true, the
+   *  coin will offer them — derived from the room's hotspots, the same way the
+   *  five core verbs are. Off (default), the coin is exactly the classic five
+   *  (look / take / talk / use / go) regardless of what the hotspots answer.
+   *  Listing them explicitly in `verbs` always wins over this flag. This keeps
+   *  the extra verbs a per-ROOM choice, so a visual novel or a classic case
+   *  never sees them unless it asks. See docs/adventure-mode.md. */
+  extendedVerbs?: boolean;
+  /** OPT-IN — OBJECT-FIRST verb menu (Full Throttle's "skull"): instead of
+   *  picking a verb from the bottom coin and then the object, the player
+   *  CLICKS an object first and a small pie-style menu of the verbs THAT
+   *  object answers pops up next to it; pick a verb to act. USE expands to
+   *  the inventory when the object accepts items. Off (default): the classic
+   *  flow (and the verb-first coin) is unchanged. See docs/adventure-mode.md. */
+  objectVerbMenu?: boolean;
   /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
    *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
    *  procedurally instead. Frame 0 doubles as the idle pose. */
@@ -1286,6 +1308,12 @@ export interface Story {
   scenes: SceneNode[];
   items: Item[];
   characters: Character[];
+  /** Story-wide walker appearance — the In-game theme's 🚶 "Player character"
+   *  setting. Every 🚶 stage scene uses it as its default walker; a scene that
+   *  sets its own stage.playerSheet / playerImage overrides it. Lets a story
+   *  define its protagonist ONCE (e.g. a Ben-like biker) instead of per room.
+   *  Purely additive: stories that never set it behave exactly as before. */
+  playerSprite?: { image?: string; sheet?: import("./game/spriteSheet").SpriteSheet };
   deduction?: DeductionBoard;
   /** Optional travel map: flag/item/meter-gated destinations the player can
    * jump to from the 🗺 map screen. See StoryMap. */

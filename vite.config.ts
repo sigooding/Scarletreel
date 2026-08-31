@@ -173,6 +173,24 @@ export default defineConfig({
     // Accept the Arena live-preview host (e.g. <port>-<sandboxId>.e2b.app)
     // instead of rejecting it with a 403.
     allowedHosts: true,
+    // ⚠ Do NOT full-page-reload on files the APP writes at runtime. The Studio
+    // auto-saves ElevenLabs voice MP3s to public/voices/ and uploads to
+    // public/uploads/ (and the desktop shell mirrors media under game-media/).
+    // Vite's default watcher reloads the whole page whenever anything under
+    // public/ changes, so every generated voice line or dropped image looked
+    // like "the preview keeps restarting" — a server-side Vite behaviour, not a
+    // game bug. Ignoring these paths stops the reload while the files are still
+    // served fresh from disk. See docs/dev-server-reload-notes.md.
+    watch: {
+      ignored: [
+        "**/public/uploads/**",
+        "**/public/voices/**",
+        "**/game-media/**",
+        // Huge exported .reel.json drafts at the repo root (tens of MB) — never
+        // relevant to a page reload, but they churn the watcher if rewritten.
+        "**/*.reel.json",
+      ],
+    },
   },
   preview: {
     host: "0.0.0.0",

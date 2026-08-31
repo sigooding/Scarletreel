@@ -993,27 +993,34 @@ export function applyLieWrong(story: Story, lie: Contradiction, s: GlobalState):
 /* ------------------------- stage 2d movement ------------------------ */
 
 /** Icon shown for each hotspot cursor verb (markers, hotspot labels). */
-export const CURSOR_ICON: Record<string, string> = { look: "👁", take: "✋", talk: "💬", use: "⚙", go: "➜" };
+export const CURSOR_ICON: Record<string, string> = { look: "👁", take: "✋", talk: "💬", use: "⚙", go: "➜", kick: "👢", punch: "👊" };
 
 /* ============================================================
    VERB COIN — "pick the verb, then the object"
    ------------------------------------------------------------
    The point-and-click interaction model: the player chooses a verb
-   (look / take / talk / use / go), optionally arms an inventory item for
-   USE, then clicks an object. One object can therefore answer several
-   verbs instead of needing one overlapping hotspot per verb.
+   (look / take / talk / use / go — plus the opt-in body verbs kick /
+   punch), optionally arms an inventory item for USE, then clicks an
+   object. One object can therefore answer several verbs instead of
+   needing one overlapping hotspot per verb.
    ============================================================ */
 
-export type VerbId = "look" | "take" | "talk" | "use" | "go";
+export type VerbId = CursorKind;
 
-/** The five verbs, in the order the coin shows them. */
-export const VERB_IDS: VerbId[] = ["look", "take", "talk", "use", "go"];
+/** The five core verbs every game kind shares — and the default coin. */
+export const CORE_VERB_IDS: VerbId[] = ["look", "take", "talk", "use", "go"];
+/** The two extra body-verbs, opt-in per room (StageSettings.extendedVerbs). */
+export const EXTRA_VERB_IDS: VerbId[] = ["kick", "punch"];
+/** Every verb, in the order the coin shows them. */
+export const VERB_IDS: VerbId[] = [...CORE_VERB_IDS, ...EXTRA_VERB_IDS];
 export const VERB_LABEL: Record<VerbId, string> = {
   look: "Look at",
   take: "Pick up",
   talk: "Talk to",
   use: "Use",
   go: "Go to",
+  kick: "Kick",
+  punch: "Punch",
 };
 export const VERB_ICON: Record<VerbId, string> = {
   look: "👁",
@@ -1021,6 +1028,8 @@ export const VERB_ICON: Record<VerbId, string> = {
   talk: "💬",
   use: "⚙",
   go: "➜",
+  kick: "👢",
+  punch: "👊",
 };
 
 /** House-style "that doesn't work" lines, per verb. */
@@ -1030,6 +1039,8 @@ export const DEFAULT_VERB_RESPONSES: Record<VerbId, string[]> = {
   talk: ["Talking to furniture is how the last guy ended up in the county home.", "It doesn't answer. You feel better anyway.", "No conversation in it."],
   use: ["That does nothing. Nothing at all.", "Tried it. Nothing. Not even a noise.", "Wrong tool, wrong thing, wrong hour."],
   go: ["No way out that way but a long walk and a bad idea.", "That's not an exit. That's a wall someone painted.", "You could go that way. You'd come right back."],
+  kick: ["You give it a kick. It kicks back by not moving.", "That's how you break a boot and get nothing for it.", "Kicking it doesn't help. It's not that kind of problem."],
+  punch: ["You take a swing. The air and your knuckles regret it.", "Punching that solves nothing and hurts plenty.", "That's a wall, not a punching bag."],
 };
 
 /** A verb-coin response line. `seed` varies the pick so repeating a failed
@@ -1049,7 +1060,13 @@ export function wrongVerbLine(
 
 /** Which verbs a room's coin offers: the author's list if set, otherwise
  *  every verb the room actually uses (hotspot cursors, extra verb actions,
- *  and USE whenever anything in the room accepts an item). */
+ *  and USE whenever anything in the room accepts an item).
+ *
+ *  The two EXTRA body-verbs (kick / punch) are OPT-IN: they only appear when
+ *  the room sets `stage.extendedVerbs` (or lists them in `stage.verbs`). So a
+ *  classic case or a visual novel — anything without a verb coin, or with a
+ *  coin that never opts in — is untouched, and kick/punch can't leak into a
+ *  room that didn't ask for them. */
 export function verbsForScene(scene: { stage?: StageSettings; hotspots?: Hotspot[] } | undefined | null): VerbId[] {
   if (!scene) return [];
   const authored = scene.stage?.verbs;
@@ -1057,13 +1074,15 @@ export function verbsForScene(scene: { stage?: StageSettings; hotspots?: Hotspot
     const clean = VERB_IDS.filter((v) => authored.includes(v));
     if (clean.length) return clean;
   }
+  const extended = scene.stage?.extendedVerbs === true;
+  const allowed = extended ? VERB_IDS : CORE_VERB_IDS;
   const set = new Set<VerbId>();
   for (const hs of scene.hotspots ?? []) {
     if ((VERB_IDS as string[]).includes(hs.cursor)) set.add(hs.cursor as VerbId);
     for (const v of Object.keys(hs.verbs ?? {}) as VerbId[]) set.add(v);
     if (hs.acceptsItems?.length) set.add("use");
   }
-  return VERB_IDS.filter((v) => set.has(v));
+  return VERB_IDS.filter((v) => set.has(v) && allowed.includes(v));
 }
 
 export interface VerbResolution {
@@ -1159,7 +1178,7 @@ export function stageDepthScale(
    ============================================================ */
 
 export type CursorSlot = CursorKind | "default";
-export const CURSOR_SLOTS: CursorSlot[] = ["default", "look", "take", "talk", "use", "go"];
+export const CURSOR_SLOTS: CursorSlot[] = ["default", "look", "take", "talk", "use", "go", "kick", "punch"];
 
 export interface ResolvedCursor {
   /** The art to draw (undefined = keep the game's system cursor). */
