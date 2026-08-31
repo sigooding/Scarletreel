@@ -39,6 +39,7 @@ import {
   isEpisodic,
   mapAvailable,
   mapLocationsView,
+  mapReplacedChoiceIds,
   meetsGating,
   METER_LABELS,
   nextEpisode,
@@ -4379,7 +4380,12 @@ function CasePlayer({
   /* -------- choices -------- */
   const availableChoices = useMemo(() => {
     if (!scene?.choices) return [];
+    // Travel-map absorption (opt-in): pure travel choices an unlocked pin
+    // duplicates disappear from the rail — the "🗺 Open the map" action
+    // below stands in for all of them.
+    const absorbed = mapReplacedChoiceIds(story, scene, state);
     return scene.choices.filter((c) => {
+      if (absorbed.has(c.id)) return false;
       if (expiredChoices.has(c.id)) return false;
       if (!choiceRepeats(c) && usedChoices.has(`${sceneId}:${c.id}`)) return false;
       // "hidden" choices stay invisible until their gate is met (sequential
@@ -4389,7 +4395,11 @@ function CasePlayer({
       if (c.hidden && !meetsGating(effectiveChoiceGating(c), state)) return false;
       return true;
     });
-  }, [scene, sceneId, expiredChoices, usedChoices, state]);
+  }, [scene, sceneId, expiredChoices, usedChoices, state, story]);
+  const travelViaMap = useMemo(
+    () => (scene && interactive && !scene.isEnding ? mapReplacedChoiceIds(story, scene, state).size : 0),
+    [scene, interactive, story, state]
+  );
 
   const hasUsableChoice = availableChoices.some((c) => meetsGating(effectiveChoiceGating(c), state) && (c.reply || !!c.targetSceneId));
 
@@ -5315,12 +5325,13 @@ function CasePlayer({
     if (openChoice) return `Time to decide: "${openChoice.text.slice(0, 50)}${openChoice.text.length > 50 ? "…" : ""}"`;
     const lockedChoice = availableChoices.find((c) => effectiveChoiceGating(c));
     if (lockedChoice) return `Locked: ${gatingHint(effectiveChoiceGating(lockedChoice), story) ?? "you need something more."}`;
+    if (travelViaMap > 0) return "Open the travel map (T) — your next stop is a pin away.";
     if (hasValidAutoAdvance) {
       const showTimer = !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0;
       return `The reel advances automatically${showTimer ? ` in ${autoAdvanceRemaining}s` : ""}.`;
     }
     return "Search the scene carefully — mouse over the picture for hidden hotspots.";
-  }, [scene, proseAcknowledged, inBeats, currentBeat, story, visibleHotspots, state, availableChoices, hasValidAutoAdvance, autoAdvanceRemaining]);
+  }, [scene, proseAcknowledged, inBeats, currentBeat, story, visibleHotspots, state, availableChoices, travelViaMap, hasValidAutoAdvance, autoAdvanceRemaining]);
 
   /**
    * Anti-softlock diagnostic. Looks at everything the player could still do in
@@ -5331,13 +5342,16 @@ function CasePlayer({
     if (!scene || scene.isEnding) return false;
     if (!interactive) return false;
     if (hasValidAutoAdvance) return false;
+    // Travel absorbed by the map IS a way out — the "🗺 Open the map" action
+    // stands in for the hidden choices, so this is not a dead end.
+    if (travelViaMap > 0) return false;
     const anyHotspot = visibleHotspots.some((hs) => meetsGating(hs.gating, state));
     const anyChoice = availableChoices.some((c) => meetsGating(effectiveChoiceGating(c), state));
     const anyCraft = state.inventory.some((a) =>
       state.inventory.some((b) => a.id !== b.id && combineItems(story, a, b))
     );
     return !anyHotspot && !anyChoice && !anyCraft;
-  }, [scene, interactive, hasValidAutoAdvance, visibleHotspots, currentBeat, availableChoices, state, story]);
+  }, [scene, interactive, hasValidAutoAdvance, visibleHotspots, currentBeat, availableChoices, travelViaMap, state, story]);
 
   /* -------- crafting -------- */
   const handleCombine = useCallback(
@@ -6943,6 +6957,22 @@ function CasePlayer({
                 })}
               </div>
             </>
+          )}
+
+          {/* Travel absorbed by the map: the road out lives on the 🗺 screen. */}
+          {travelViaMap > 0 && (
+            <div className="mt-2" role="menu" aria-label="Travel">
+              <button
+                onClick={() => setOverlay({ type: "map" })}
+                className="group flex w-full items-center gap-2 border border-gold/50 bg-noir-950/95 px-3 py-2 text-left transition-colors hover:border-gold hover:bg-gold/10"
+              >
+                <span aria-hidden>🗺</span>
+                <span className="min-w-0 flex-1 font-body text-sm text-paper/90 group-hover:text-paper">
+                  Open the map — pick your next stop
+                </span>
+                <span className="shrink-0 font-pulp text-[9px] uppercase tracking-widest text-paper/40">T</span>
+              </button>
+            </div>
           )}
 
           {/* Auto beat-route timer is intentionally hidden for a clean

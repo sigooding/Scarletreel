@@ -6,6 +6,7 @@ import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
 import { TINTIN_MERIDIAN } from "./tintinMeridian";
+import { KINGFISHER_JOB } from "./kingfisherJob";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
 import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
 import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
@@ -85,4 +86,5 @@ export const STORIES: Story[] = [
   PATTERN_PUZZLE_DEMO,
   MAP_DEMO,
   TINTIN_MERIDIAN,
+  KINGFISHER_JOB,
 ];

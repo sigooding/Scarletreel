@@ -110,6 +110,22 @@ function walk(story, avoidEndings = true) {
         state = applyConsequences(story, eff, state);
       }
     }
+    // Press-the-lie pass — a competent player who HOLDS the breaking evidence
+    // presses the lie when the beat plays: the caught flag + consequences
+    // land in the walker's state, so contradiction-gated gold roads are
+    // walked and verified instead of silently skipped.
+    for (const b of sc.dialogueBeats ?? []) {
+      const lie = b.lie;
+      if (!lie?.contradictedFlag) continue;
+      const key = `${sc.id}:lie:${b.id}`;
+      if (used.has(key)) continue;
+      const evid = lie.evidenceItemIds ?? [];
+      if (evid.length && evid.some((id) => (state.inventory ?? []).some((it) => it.id === id))) {
+        used.add(key);
+        state = applyConsequences(story, { setFlags: [lie.contradictedFlag] }, state);
+        if (lie.contradictedConsequences) state = applyConsequences(story, lie.contradictedConsequences, state);
+      }
+    }
     // effectiveChoiceGating folds a presentItem requirement into the gate, so
     // the walker can't "show" an item it never picked up (game parity).
     const gateOf = (c) => (effectiveChoiceGating ? effectiveChoiceGating(c) : c.gating);

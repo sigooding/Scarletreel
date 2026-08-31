@@ -1109,6 +1109,14 @@ export interface StoryMap {
   title?: string;
   /** Map artwork (url / gradient: / asset:). The pins are placed on this. */
   backgroundImage?: string;
+  /** Opt-in: let the map ABSORB pure travel choices. When true, a choice
+   * whose only job is navigating to a scene an UNLOCKED pin also reaches is
+   * hidden in play, and the choice rail shows one "🗺 Open the map" action
+   * instead — one road out, not two buttons for the same journey. Choices
+   * with any side effect (flags, meters, items, memory, replies, timers,
+   * presented evidence) are NEVER absorbed, and locked pins never absorb a
+   * choice. Default false: authored choices win unless you opt in. */
+  replaceTravelChoices?: boolean;
   locations: MapLocation[];
 }
 

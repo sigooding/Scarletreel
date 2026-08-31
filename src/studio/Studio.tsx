@@ -10868,6 +10868,27 @@ function MapEditor({ story, onUpdate }: { story: Story; onUpdate: (s: Story) => 
           onChange={(v) => setMap({ backgroundImage: v })} placeholder="Pick the map image…" />
       </Field>
 
+      {/* ---- map absorbs pure travel choices ---- */}
+      <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
+        <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={!!map.replaceTravelChoices}
+            onChange={(e) => setMap({ replaceTravelChoices: e.target.checked || undefined })}
+          />
+          <span>🗺 Map absorbs travel choices</span>
+        </label>
+        <p className="font-type text-[9px] leading-snug text-paper/45">
+          When on, a choice whose ONLY job is going to a scene an unlocked pin also reaches is hidden in
+          play — the choice rail shows a single “🗺 Open the map” action instead, so travel has one home.
+          Safety rails: choices that set flags, move meters, give items, reply in place, present evidence
+          or run a timer are NEVER absorbed (the map applies no consequences), and a locked pin never
+          absorbs a choice — the authored line stays until the pin is earned. Your choices are untouched
+          in the draft; this is purely a play-time swap.
+        </p>
+      </div>
+
       {/* click-to-place preview */}
       <div>
         <div className="mb-1 flex items-center justify-between">

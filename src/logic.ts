@@ -116,6 +116,47 @@ export function mapAvailable(story: Story): boolean {
   return (story.map?.locations?.length ?? 0) > 0 && !story.dialogueBox?.hideMap;
 }
 
+/** A choice whose ONLY job is walking somewhere: it navigates, and carries
+ *  no consequences, memory, reply behaviour, presented item, timer or group
+ *  semantics. Only these are safe for the travel map to absorb — replacing
+ *  anything richer would silently delete authored side effects (map travel
+ *  applies none). */
+export function choiceIsPureTravel(c: Choice): boolean {
+  if (!c.targetSceneId || c.reply) return false;
+  const cq = c.consequences as Record<string, unknown> | undefined;
+  const hasConsequences = !!cq && Object.values(cq).some((v) => v !== undefined && v !== null);
+  return (
+    !hasConsequences &&
+    !c.memoryLog &&
+    !c.rememberLine &&
+    !c.presentItem &&
+    !c.quickTime &&
+    !c.timeLimitSeconds &&
+    !c.exclusiveGroup &&
+    !c.timedOutTargetSceneId &&
+    !c.timedOutConsequences
+  );
+}
+
+/** Which of this scene's choices the travel map replaces right now (an
+ *  opt-in via map.replaceTravelChoices): pure-travel choices whose target an
+ *  UNLOCKED pin also reaches. The choice rail hides these and shows a single
+ *  "Open the map" action instead — one road out, not two buttons for the
+ *  same journey. A locked pin never absorbs a choice (the choice may be the
+ *  only way in until the pin's gate is earned), and non-pure choices are
+ *  never touched. Pure and state-derived, so saves can't disagree. */
+export function mapReplacedChoiceIds(story: Story, scene: SceneNode, s: GlobalState): Set<string> {
+  const out = new Set<string>();
+  if (!story.map?.replaceTravelChoices || !mapAvailable(story)) return out;
+  const open = new Set(
+    (story.map.locations ?? []).filter((l) => meetsGating(l.gating, s)).map((l) => l.targetSceneId)
+  );
+  for (const c of scene.choices ?? []) {
+    if (choiceIsPureTravel(c) && open.has(c.targetSceneId!)) out.add(c.id);
+  }
+  return out;
+}
+
 /** The scene a heat bust should route to, or null when no bust is due:
  *  Suspicion at/over the briefing's heat limit, a valid bust scene, not
  *  already standing on it, and (in a season) inside the CURRENT episode —
@@ -1242,6 +1283,22 @@ export function validateStory(story: Story): ValidationIssue[] {
       if (loc.hiddenWhenLocked && !loc.gating)
         issues.push({ severity: "warning", sceneId: null, message: `Map location "${loc.label || loc.id}" is hiddenWhenLocked but has no gating — it can never be hidden.` });
     });
+    // Map-absorbs-travel: warn when the switch is on but can never fire —
+    // either nothing to absorb, or every matching choice carries side
+    // effects (which absorption deliberately never touches).
+    if (story.map.replaceTravelChoices) {
+      const targets = new Set(story.map.locations.map((l) => l.targetSceneId));
+      const absorbable = story.scenes.some((sc) =>
+        (sc.choices ?? []).some((c) => choiceIsPureTravel(c) && targets.has(c.targetSceneId!))
+      );
+      if (!absorbable)
+        issues.push({
+          severity: "warning",
+          sceneId: null,
+          message:
+            "Map replaceTravelChoices is on, but no scene has a pure travel choice matching a pin — the setting does nothing. (Choices with flags/meters/items/replies are never absorbed.)",
+        });
+    }
   }
 
   if (!ids.has(story.startSceneId))

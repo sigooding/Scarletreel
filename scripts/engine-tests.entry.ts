@@ -19,6 +19,7 @@ import {
   collectFlags,
   mapAvailable,
   mapLocationsView,
+  mapReplacedChoiceIds,
   collectMemoryTags,
   composureRemaining,
   DEFAULT_WRONG_EVIDENCE_LIMIT,
@@ -41,6 +42,7 @@ import {
   posReachesHotspot,
   hotspotAtPoint,
   clampStagePos,
+  choiceIsPureTravel,
   createInitialState,
   effectiveChoiceGating,
   examineZoom,
@@ -2168,6 +2170,59 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     validateStory({ ...S, map: undefined }).some((i) => i.sceneId === "b" && /unreachable/.test(i.message))
   );
   check("map flags: collectFlags sees map gate flags", collectFlags(S).includes("tip") && collectFlags(S).includes("deep"));
+
+  // -- map absorbs pure travel choices (replaceTravelChoices) ---------------
+  {
+    const R: Story = JSON.parse(JSON.stringify(S)) as Story;
+    R.map!.replaceTravelChoices = true;
+    R.scenes[0].choices = [
+      { id: "t1", text: "Back to the start", targetSceneId: "a", attitudeTag: "Neutral" }, // pure, pin open
+      { id: "t2", text: "Off to b", targetSceneId: "b", attitudeTag: "Neutral" }, // pure, but every pin to b is LOCKED
+      { id: "t3", text: "Go and grab it", targetSceneId: "a", attitudeTag: "Neutral", consequences: { setFlags: ["x"] } }, // side effects
+      { id: "t4", text: "Answer her", reply: true, attitudeTag: "Neutral" }, // reply, no target
+      { id: "t5", text: "Show the key", targetSceneId: "a", attitudeTag: "Neutral", presentItem: "key" }, // presents evidence
+      { id: "t6", text: "Move! Now!", targetSceneId: "a", attitudeTag: "Neutral", quickTime: true, timeLimitSeconds: 5 }, // timed
+    ];
+    const st = createInitialState(R);
+    const absorbed = mapReplacedChoiceIds(R, R.scenes[0], st);
+    check("map absorb: pure travel to an open pin is absorbed", absorbed.has("t1"));
+    check("map absorb: a LOCKED pin never absorbs (the choice may be the only way in)", !absorbed.has("t2"));
+    check("map absorb: consequences keep the choice", !absorbed.has("t3"));
+    check("map absorb: replies are never absorbed", !absorbed.has("t4"));
+    check("map absorb: present-item choices are never absorbed", !absorbed.has("t5"));
+    check("map absorb: timed/QTE choices are never absorbed", !absorbed.has("t6"));
+    check("map absorb: exactly one choice absorbed", absorbed.size === 1, [...absorbed]);
+
+    // unlock the b pins → t2 becomes absorbable, live from state
+    st.activeFlags.add("tip");
+    check("map absorb: unlocking the pin absorbs the matching choice live", mapReplacedChoiceIds(R, R.scenes[0], st).has("t2"));
+
+    // the switch itself, and the theme's hideMap, both disable absorption
+    const off: Story = JSON.parse(JSON.stringify(R)) as Story;
+    off.map!.replaceTravelChoices = undefined;
+    check("map absorb: off by default (opt-in)", mapReplacedChoiceIds(off, off.scenes[0], createInitialState(off)).size === 0);
+    const hidden: Story = { ...R, dialogueBox: { hideMap: true } };
+    check("map absorb: theme hideMap disables absorption (no map, no swap)", mapReplacedChoiceIds(hidden, hidden.scenes[0], createInitialState(hidden)).size === 0);
+
+    // choiceIsPureTravel unit edges
+    check("pure travel: nav-only choice is pure", choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral" }));
+    check("pure travel: memoryLog keeps the choice", !choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", memoryLog: "m" }));
+    check("pure travel: rememberLine keeps the choice", !choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", rememberLine: "r" }));
+    check("pure travel: exclusiveGroup keeps the choice", !choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", exclusiveGroup: "g" }));
+    check("pure travel: empty consequences object is still pure", choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", consequences: {} }));
+
+    // validator: the switch that can never fire warns; a working one doesn't
+    const dead: Story = JSON.parse(JSON.stringify(R)) as Story;
+    dead.scenes.forEach((sc) => (sc.choices = sc.choices?.filter((c) => !(choiceIsPureTravel(c) && ["a", "b"].includes(c.targetSceneId!)))));
+    check(
+      "map absorb validator: switch with nothing to absorb warns",
+      validateStory(dead).some((i) => /replaceTravelChoices.*does nothing/.test(i.message))
+    );
+    check(
+      "map absorb validator: a working switch raises no such warning",
+      !validateStory(R).some((i) => /replaceTravelChoices.*does nothing/.test(i.message))
+    );
+  }
 }
 
 /* ================================================================== *

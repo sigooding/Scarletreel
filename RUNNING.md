@@ -164,6 +164,21 @@ map, or T; a hotspot can use action `openMap`). Design contract:
   Theme tab (`dialogueBox.hideMap` / `hideCorkboard` / `hideCaseProgress`).
   There is deliberately no "force show" — an empty corkboard or map would
   only confuse the player.
+- **`map.replaceTravelChoices`** (opt-in, Map tab toggle): the map ABSORBS
+  pure travel choices. A choice whose only job is navigating to a scene an
+  UNLOCKED pin also reaches is hidden in play and the rail shows one
+  "🗺 Open the map" action instead. Hard safety rules, all pinned by engine
+  tests (`mapReplacedChoiceIds` / `choiceIsPureTravel` in src/logic.ts):
+  choices with ANY side effect (consequences, memoryLog, rememberLine,
+  reply, presentItem, timers/QTE, exclusiveGroup, timed-out routing) are
+  never absorbed — map travel applies no consequences, so absorbing them
+  would delete authored effects; a LOCKED pin never absorbs (the choice may
+  be the only way in until the pin is earned); the swap is play-time only —
+  the draft's choice graph (and so the deep-walker and reachability) is
+  untouched. The in-game dead-end detector and "current lead" hint both
+  treat absorbed travel as a live exit. Demo: The Kingfisher Job
+  (`src/data/kingfisherJob.ts`), asserted end-to-end by the DOM smoke's
+  KINGFISHER phase.
 
 The demo case is **Crosstown** (`src/data/mapDemo.ts`): two pins open at
 start, one locked-visible, one hidden, plus parallel gated choices so the

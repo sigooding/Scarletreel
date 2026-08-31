@@ -155,6 +155,45 @@ for (let i = 0; i < 5; i++) {
 failed |= report("GAME after 5 interactions").crashed;
 root.unmount();
 
+// Phase 6: The Kingfisher Job — travel-map absorption in the real UI.
+// Boot the story, advance through prose + beats, and confirm the rail shows
+// the "Open the map" action INSTEAD of the raw travel choice; then open the
+// map and confirm the pins render.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/Kingfisher/i)) {
+  await sleep(1500);
+  clickByText(/^▶?\\s*Play/i) || clickByText(/Play/i);
+  await sleep(3000);
+  let sawMapButton = false;
+  for (let i = 0; i < 24 && !sawMapButton; i++) {
+    const btns = [...container.querySelectorAll("button")].filter((b) => (b.textContent || "").trim().length > 0);
+    const mapBtn = btns.find((b) => /open the map/i.test(b.textContent || ""));
+    if (mapBtn) { sawMapButton = true; break; }
+    // Space is the engine's universal advance: finish typing, acknowledge
+    // prose, then step dialogue beats — exactly what a player does.
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = btns.find((b) => /continue|▸ continue/i.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(600);
+  }
+  const text = (container.textContent || "").replace(/\\s+/g, " ");
+  const leakedTravel = /Take the Packard/i.test(text);
+  const falseDeadEnd = /Dead end detected/i.test(text);
+  console.log("\\n=== KINGFISHER map absorption ===");
+  console.log("  open-the-map action shown:", sawMapButton, "| raw travel choice leaked:", leakedTravel, "| false dead-end:", falseDeadEnd);
+  if (!sawMapButton || leakedTravel || falseDeadEnd) failed = true;
+  if (sawMapButton) {
+    [...container.querySelectorAll("button")].find((b) => /open the map/i.test(b.textContent || ""))?.click();
+    await sleep(900);
+    const mapText = (container.textContent || "").replace(/\\s+/g, " ");
+    const pinsOk = /Gilded Kingfisher/i.test(mapText) && /Crosstown/i.test(mapText);
+    console.log("  travel map opened with pins:", pinsOk);
+    if (!pinsOk) failed = true;
+  }
+  failed |= report("KINGFISHER (map absorbs travel)").crashed;
+} else console.log("!! could not find The Kingfisher Job card");
+root.unmount();
+
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
 process.exit(failed ? 1 : 0);
 `
