@@ -7,6 +7,7 @@ import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
 import { TINTIN_MERIDIAN } from "./tintinMeridian";
 import { KINGFISHER_JOB } from "./kingfisherJob";
+import { BUMPY_NIGHT } from "./allAboutEve";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
 import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
 import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
@@ -87,4 +88,5 @@ export const STORIES: Story[] = [
   MAP_DEMO,
   TINTIN_MERIDIAN,
   KINGFISHER_JOB,
+  BUMPY_NIGHT,
 ];

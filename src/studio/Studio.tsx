@@ -68,6 +68,7 @@ import {
 import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } from "./MediaLibrary";
 import { ImagePicker } from "./ImagePicker";
 import { EXTRA_PRESET, SheetLab, SpriteSheetControls, TALKING_PRESET, WALKER_PRESET } from "./SheetEditor";
+import { SpriteCutoutLab } from "./SpriteCutout";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
 import { ActEditor, ACT_TINTS } from "./ActEditor";
@@ -6587,6 +6588,7 @@ function StudioInner({
                 </HelpNote>
                 <MediaLibrary storyId={story.id} />
                 <SheetLab storyId={story.id} />
+                <SpriteCutoutLab storyId={story.id} />
               </>
             )}
             {tab === "ai" && <AiImageStudio storyId={story.id} />}

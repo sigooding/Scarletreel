@@ -50,6 +50,37 @@ globalThis.window = win;
 win.matchMedia = win.matchMedia?.bind(win) ?? ((q) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
 globalThis.matchMedia = win.matchMedia;
 
+// happy-dom has no network, so <img>/new Image() never fire "load" — which
+// keeps SheetSprite (talking portraits, foreground extras, stage walkers)
+// from ever mounting. Stub Image with an eager loader that reports the real
+// PNG dimensions read straight from the file header when the src maps to a
+// file under public/, so sprite grids compute exactly as in a browser.
+import { readFileSync as __readPng } from "node:fs";
+function pngSize(p) {
+  try {
+    const b = __readPng(p);
+    if (b.length > 24 && b[12] === 0x49 && b[13] === 0x48 && b[14] === 0x44 && b[15] === 0x52)
+      return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  } catch {}
+  return null;
+}
+class EagerImage {
+  constructor() { this.naturalWidth = 0; this.naturalHeight = 0; this.onload = null; this.onerror = null; }
+  set src(v) {
+    this._src = v;
+    const rel = String(v).replace(/^https?:\\/\\/[^/]+/, "").split("?")[0];
+    const size = rel.endsWith(".png") ? pngSize("${path.join(root, "public").replace(/\\/g, "\\\\")}" + rel) : null;
+    if (size) { this.naturalWidth = size.w; this.naturalHeight = size.h; }
+    else { this.naturalWidth = 1024; this.naturalHeight = 512; }
+    queueMicrotask(() => this.onload && this.onload());
+  }
+  get src() { return this._src; }
+  addEventListener(t, fn) { if (t === "load") this.onload = fn; }
+  removeEventListener() {}
+}
+globalThis.Image = EagerImage;
+win.Image = EagerImage;
+
 const problems = [];
 const realErr = console.error;
 const realWarn = console.warn;
@@ -192,6 +223,37 @@ if (clickByText(/Kingfisher/i)) {
   }
   failed |= report("KINGFISHER (map absorbs travel)").crashed;
 } else console.log("!! could not find The Kingfisher Job card");
+root.unmount();
+
+// Phase 7: Bumpy Night — video background plate + non-pixel car sprite.
+// Boot the story, travel dressing room → party → the drive, and confirm the
+// scene renders a <video> element pointing at the highway plate with the
+// painted car sheet layered over it.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/Bumpy Night/i)) {
+  await sleep(1500);
+  clickByText(/^▶?\\s*Play/i) || clickByText(/Play/i);
+  await sleep(3000);
+  let sawVideo = false;
+  for (let i = 0; i < 40 && !sawVideo; i++) {
+    const vid = container.querySelector("video");
+    if (vid && /Highway-driving/i.test(vid.getAttribute("src") || "")) { sawVideo = true; break; }
+    const btns = [...container.querySelectorAll("button")].filter((b) => (b.textContent || "").trim().length > 0);
+    // Route toward the drive: take Eve on, then leave the party with Karen.
+    const travel = btns.find((b) => /throw the party|country place/i.test(b.textContent || ""));
+    if (travel) { travel.click(); await sleep(900); continue; }
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = btns.find((b) => /continue|▸ continue/i.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(600);
+  }
+  const html = container.innerHTML;
+  const carSprite = /av-car-front/i.test(html);
+  console.log("\\n=== BUMPY NIGHT video plate ===");
+  console.log("  video background mounted:", sawVideo, "| car sprite over the plate:", carSprite);
+  if (!sawVideo || !carSprite) failed = true;
+  failed |= report("BUMPY NIGHT (video bg + car sprite)").crashed;
+} else console.log("!! could not find Bumpy Night card");
 root.unmount();
 
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
