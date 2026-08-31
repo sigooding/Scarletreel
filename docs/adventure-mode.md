@@ -62,6 +62,17 @@ flaming-skull gesture. USE expands to the inventory when the object accepts
 items. Off (default) the coin and the classic click-to-activate flow are
 unchanged. `fullThrottle.ts` turns it on for every room.
 
+For the authentic feel, pair it with **hold-to-open** (`stage.objectMenuHold:
+true`, Studio: ⏱ **Hold to open**): press **and hold** an object and a *big*
+circular menu opens in the **middle of the screen** — the verbs the object
+answers ring the centre. Release over a verb to act with it; release over the
+skull or outside to cancel; a quick tap just walks to the object. The pie's
+centrepiece is the story's `verbMenuIcon` sprite (Studio: 🎮 In-game theme →
+💀 **Verb menu icon**): an image / `asset:` / `emoji:` rendered large in the
+middle of the ring (default: a skull emoji), so the menu wears the game's own
+art — Full Throttle uses its flaming skull. Either way the same verbs are
+offered; only the gesture and the presentation change.
+
 ### The protagonist, defined once
 
 A story can set its walker **story-wide** via `story.playerSprite` (Studio:
@@ -128,6 +139,90 @@ the walker stands there — clamped onto the walkable floor band, so you can't
 drop them in the sky. The marker draws the actual character (sprite sheet,
 image, or 🚶) and stays visible, ghosted, while you place hotspots and barriers
 around them. `stage.spawn` is the same value, so the numeric fields still work.
+
+### Sizing the character to a scene
+
+One scene's plate may be a cramped dumpster interior and the next a vast
+alleyway, and the same 96px sprite reads oversized in one and lost in the
+other. **Character size** on the Walkable Stage panel (`stage.playerScale`,
+default 1, range 0.15–4×) is the flat whole-scene multiplier: the walker on
+the editor plate grows and shrinks live as you drag the slider, and the game
+draws the exact same size. It multiplies the near/far perspective scale, so a
+room that needs a smaller character keeps its walk-toward-camera depth — you
+just fit the character to the plate once.
+
+```ts
+stage: {
+  playerScale: 1.35,   // a big presence for a small room (or 0.6 for a giant one)
+}
+```
+
+The walker stays anchored at its feet while scaling, and the value is clamped
+so the character can never vanish or overflow the plate (logic `stagePlayerScale`).
+
+### Wide worlds — one room, several screens, a camera that follows
+
+A room is usually one plate, but a LucasArts alley is a *strip*: you walk
+right and the camera scrolls past the side of the building to the front. Set
+**World width** on the Walkable Stage panel (`stage.worldWidth`, in
+viewport-%, default 100):
+
+```ts
+stage: {
+  worldWidth: 200,                       // two screens side by side
+  spawn: { x: 30, y: 90 },               // a % of the WIDE WORLD, not the plate
+  // …every coordinate (hotspots, obstacles, entrySpawns) is world-% too.
+}
+```
+
+The engine draws the plate's background inside the strip and pans it with the
+camera, which follows the walker with light smoothing and never shows past
+the world's ends. The Studio's floor editor shows the whole strip shrunk to
+fit, with dashed **viewport frames** marking each screen the camera holds, so
+you can lay a marker out on screen two and see exactly what the player will
+see. Use a wide background image (2:1 or wider) so the pan has art to show.
+
+### Walk-off-screen exits — the red/yellow edge arrow
+
+The classic adventure's exit: the player walks into the world's edge (or
+clicks the chevron) and the character *strides off the plate* into the next
+scene. Opt in per room via `stage.exitEdges` (Studio: the **➡ Walk-off-screen
+exits** box on the Walkable Stage panel):
+
+```ts
+exitEdges: {
+  left:  { targetSceneId: "ft_alley", label: "the alley" },
+  right: { targetSceneId: "ft_ride",  label: "the road",
+           gating: { requiresItems: ["ft_keys"] },
+           lockedLine: "Not without the keys, you're not." },
+}
+```
+
+* A **red** chevron arrow sits at the plate edge while the exit is open;
+  **yellow** while `gating` shuts it. Clicking a yellow arrow says
+  `lockedLine` instead of leaving. On a wide world each arrow only appears
+  while the camera is parked at that end of the strip.
+* The exit fires when the walker reaches the world edge with the gate open —
+  input drops, Ben walks past the edge and off-frame, and the scene routes to
+  `targetSceneId` (with the engine's fade). `flagSet` applies the moment he
+  steps off.
+* The story validator counts edge exits as real ways out, and the flowchart
+  draws them as `➜ walk off … edge` branches.
+
+### Entry spawns — where you appear depends on where you came from
+
+`stage.entrySpawns` (Studio: **🚪 Entry spawns**, cyan dots on the floor
+editor, draggable) overrides the spawn point per *previous* scene:
+
+```ts
+entrySpawns: {
+  ft_dump: { x: 30, y: 90 },   // climbed out of the dumpster → stand by it
+  ft_bar:  { x: 162, y: 90 },  // left the bar → stand at the front door
+}
+```
+
+Essential on a wide world with several doors. Unset scenes fall back to
+`spawn`.
 
 ### Cursors — art per verb
 
@@ -276,9 +371,12 @@ Built on purpose: every gap below shows up as a compromise in
 1. **No drag-to-world inertia.** Dropping works, but the items don't have
    weight: no "you can't reach that from here", no throwing, no giving an item
    to an NPC by handing it over.
-2. **One plate = one room.** No walk-off-screen exits, no camera, no scrolling
-   rooms wider than the viewport. *Fix:* `stage.worldWidth` + a camera that
-   follows the walker, and `exitEdges: { left, right, top, bottom }`.
+2. **One plate = one room.** ✅ **DONE** — `stage.worldWidth` (a camera that
+   follows the walker across a strip wider than the viewport) and
+   `stage.exitEdges` (walk-off-screen exits with red/yellow edge arrows) are
+   in, with Studio authoring for both (see **Wide worlds** and
+   **Walk-off-screen exits** above). `fullThrottle.ts` uses both: the alley
+   is a 200%-wide scrolling strip and the bar's left edge walks out.
 3. **Linear conversations.** NPC talk is beats + replies; Full Throttle's
    topic *list* (ask about X, ask about Y, leave) needs a
    `dialogue.topics[]` model with per-topic gates and exhausted states.

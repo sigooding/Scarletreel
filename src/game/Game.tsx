@@ -3132,6 +3132,9 @@ function CasePlayer({
   chartedUpToRef.current = chartedUpTo;
   const sceneIdRef = useRef(sceneId);
   sceneIdRef.current = sceneId;
+  // The scene we walked in FROM — stage rooms use it to pick the entry spawn
+  // (stage.entrySpawns: come in from the bar, stand at the bar's door).
+  const prevSceneRef = useRef<string | null>(null);
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
   // A save waiting to be applied on the next scene-entry pass, so restoring
@@ -3358,6 +3361,7 @@ function CasePlayer({
       window.setTimeout(() => {
         // Notes are author placeholders: resolve them to the scene their single
         // outgoing route points at, so the player passes straight through.
+        prevSceneRef.current = sceneIdRef.current;
         setSceneId(bypassedSceneId(story, id));
         setEntrySeq((s) => s + 1);
         setFading(false);
@@ -5859,6 +5863,16 @@ function CasePlayer({
           fires hotspots through activateHotspot exactly as a click would.
           While a conversation is open (stageTalking) the stage sleeps. */}
       {isStage && scene.stage && sceneReady && !scene.isEnding && !overlay && (() => {
+        // Where the walker appears depends on which room they came from
+        // (stage.entrySpawns), falling back to the room's own spawn.
+        const fromScene = prevSceneRef.current;
+        const entrySpawn = scene.stage.entrySpawns?.[fromScene ?? ""] ?? scene.stage.spawn;
+        // The room's plate for WIDE worlds — Stage pans it with the camera.
+        // Gradients/videos stay on Game's fixed plate (Stage skips them).
+        const wideBg =
+          scene.background && !scene.background.startsWith("gradient:") && !scene.background.startsWith("video:")
+            ? assetBackground(scene.background)
+            : undefined;
         const stageEl = (
           <Stage
             key={`stage-${sceneId}`}
@@ -5868,6 +5882,10 @@ function CasePlayer({
               // a scene's own sprite overrides it.
               playerSheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
               playerImage: scene.stage.playerImage ?? story.playerSprite?.image,
+              // The skull pie's centrepiece (In-game theme → 💀 Verb menu
+              // icon); a scene can still override it with its own.
+              objectMenuIcon: scene.stage.objectMenuIcon ?? story.verbMenuIcon,
+              spawn: entrySpawn,
             }}
             hotspots={visibleHotspots}
             unlocked={(hs) => meetsGating(hs.gating, state)}
@@ -5879,6 +5897,19 @@ function CasePlayer({
             {...(dropRequest ? { dropRequest } : {})}
             verbs={scene.stage.verbCoin || scene.stage.objectVerbMenu ? verbsForScene(scene) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
+            background={wideBg}
+            onEdgeExit={(edge) => {
+              const ex = scene.stage?.exitEdges?.[edge];
+              if (!ex) return;
+              const fs = ex.flagSet;
+              if (fs) setState((s) => applyConsequences(story, { setFlags: [fs] }, s));
+              goToScene(ex.targetSceneId);
+            }}
+            onEdgeLocked={(_edge, line) => showStageCaption(line, "fail")}
+            edgeUnlocked={(edge) => {
+              const ex = scene.stage?.exitEdges?.[edge];
+              return ex ? meetsGating(ex.gating, state) : true;
+            }}
           />
         );
         // Graded wrapper so the walker sprite matches the plate's colour

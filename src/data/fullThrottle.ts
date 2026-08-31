@@ -9,19 +9,27 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * with authentic beats and dialogue. The original opens on Ben's flash-
  * forward narration ("Whenever I smell asphalt…"), rolls credits over a
  * night ride down a desert highway, plays the limo scene, then the sales
- * pitch at the Kickstand — and only THEN hands the player the mouse, in a
- * back alley with Ben stuffed in a dumpster.
+ * pitch at the Kickstand — and only THEN hands the player the mouse, in the
+ * dark, inside a dumpster.
  *
- * The playable stretch (the part the engine can do today):
- *   1. The dumpster alley — punch the lid, climb out.
- *   2. The front of The Kickstand — the bike (keys are gone), kick the door.
- *   3. Inside — Quohog the bartender, the piano gag, fist the keys out of him.
- *   4. Ride out — the Rottwheeler, the sabotaged front wheel, the crash.
+ * The playable stretch, screen by screen as the original plays it:
+ *   1. INSIDE THE DUMPSTER — punch the lid, climb out.
+ *   2. The alley behind the Kickstand — a WIDE WORLD: one continuous
+ *      scrolling strip, two viewport-widths long. The dumpster sits on the
+ *      left screen; walk right and the CAMERA PANS around the corner to the
+ *      front of the bar, where your bike (keys gone) and the door are. This
+ *      is exactly the scrolling alley of the original — no scene cuts, the
+ *      world just scrolls.
+ *   3. Inside the Kickstand — Quohog, the piano gag, fist the keys out of
+ *      him; walk off the LEFT EDGE (the red arrow) to leave the bar.
+ *   4. Ride out — the Rottwheeler duel as a QUICK-TIME fight (hesitate and
+ *      the road takes you), the sabotaged front wheel, the crash, Miranda —
+ *      closing on the "asphalt" bookend and a Part One break.
  *
  * Verb mapping (the engine's coin is look/take/talk/use/go — Full
  * Throttle's skull is eyes/mouth/fist/boot). The engine now OPT-INS the two
- * body-verbs this story needs (`stage.extendedVerbs`), so the rooms below use
- * them as close to the original as the engine allows:
+ * body-verbs this story needs (`stage.extendedVerbs`), so the rooms use them
+ * as close to the original as the engine allows:
  *   eyes → look      mouth → talk      fist → punch      boot → kick
  * The opt-in keeps every other game kind (visual novels, classic cases)
  * untouched — see docs/adventure-mode.md and docs/full-throttle-assessment.md.
@@ -29,11 +37,10 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * REMAINING GAPS (ranked — see the assessment doc):
  *   1. The coin is verb-FIRST (pick a verb, then click); Full Throttle is
  *      object-first (hold an object, the skull pops, pick fist/eye/mouth/boot).
- *   2. No walk-off-screen edge arrows — exits are goToScene hotspots with a ➜
- *      go verb, not the red/yellow edge arrows of the original.
- *   3. No bike-riding or fight minigames — the Rottwheeler duel and the crash
- *      are narrated as dialogue beats, not played.
- *   4. No topic-list dialogue — Quohog's conversation is linear beats.
+ *      The recreation uses the object-first menu everywhere it can.
+ *   2. No bike-riding locomotion — the Rottwheeler duel is a QTE fight, the
+ *      crash is narrated (the assessment's planned minigame is partly in).
+ *   3. Topic-list dialogue — Quohog's conversation is linear beats.
  */
 
 /** Ben's walk cycle — four frames, sliced from a flat-magenta plate by
@@ -56,7 +63,8 @@ const BEN_WALK: SpriteSheet = {
 const walker = (
   floor: { top: number; bottom: number },
   spawn: { x: number; y: number },
-  obstacles: { x: number; y: number; w: number; h: number }[] = []
+  obstacles: { x: number; y: number; w: number; h: number }[] = [],
+  extra: Record<string, unknown> = {}
 ) => ({
   verbCoin: true,
   // 👢👊 OPT-IN: this story's coin offers kick & punch (Ben's boot and fist)
@@ -66,6 +74,10 @@ const walker = (
   // verbs pops up next to it (Full Throttle's "skull"), instead of the
   // bottom-left verb coin. See docs/adventure-mode.md.
   objectVerbMenu: true,
+  // ⏱ HOLD-TO-OPEN (classic FT): press and hold an object and the BIG skull
+  // pie opens in the middle of the screen — release over a verb to act. The
+  // centrepiece sprite comes from the story's verbMenuIcon (In-game theme).
+  objectMenuHold: true,
   playerScale: 1,
   playerNearScale: 1.15,
   playerFarScale: 0.62,
@@ -77,6 +89,7 @@ const walker = (
   floor,
   spawn,
   ...(obstacles.length ? { obstacles } : {}),
+  ...extra,
 });
 
 export const FULL_THROTTLE: Story = {
@@ -91,24 +104,28 @@ export const FULL_THROTTLE: Story = {
   // its own playerSheet/playerImage.
   playerSprite: { sheet: BEN_WALK },
   layout: {
-    ft_credits: { x: 60, y: 40 },
-    ft_limo: { x: 320, y: 40 },
-    ft_pitch: { x: 580, y: 40 },
-    ft_alley: { x: 60, y: 300 },
-    ft_front: { x: 320, y: 300 },
-    ft_bar: { x: 580, y: 300 },
-    ft_ride: { x: 60, y: 560 },
-    ft_tbc: { x: 320, y: 560 },
+    ft_credits: { x: 40, y: 40 },
+    ft_limo: { x: 280, y: 40 },
+    ft_pitch: { x: 520, y: 40 },
+    ft_dump: { x: 40, y: 280 },
+    ft_alley: { x: 280, y: 280 },
+    ft_bar: { x: 520, y: 280 },
+    ft_ride: { x: 40, y: 520 },
+    ft_ride2: { x: 200, y: 520 },
+    ft_ride3: { x: 360, y: 520 },
+    ft_ride_dead: { x: 200, y: 700 },
+    ft_tbc: { x: 520, y: 520 },
   },
   briefing: {
     objective:
-      "You come to in a dumpster behind the Kickstand with no keys and a headache. Get out, get your bike keys back, and ride after your gang.",
+      "You come to inside a dumpster behind the Kickstand with no keys and a headache. Get out, get your bike keys back off the bartender, and ride after your gang.",
     winConditions: [
       "Punch your way out of the dumpster.",
-      "Kick in the Kickstand's door and get your keys off the bartender.",
-      "Ride out after the Polecats.",
+      "Walk the alley around to the front of the Kickstand; kick in the door.",
+      "Fist your keys out of Quohog and ride out after the Polecats.",
+      "Beat the Rottwheeler on the road to Corville.",
     ],
-    loseConditions: ["None in the opening — Full Throttle doesn't kill you for being slow."],
+    loseConditions: ["Lose the road fight — the chain takes you off the bike, and that's the end of that."],
   },
   // Cursor art: a pointing hand for use/take, an eye for look. Full Throttle's
   // skull coin has no hand/eye cutouts here, so these are the closest the
@@ -120,6 +137,11 @@ export const FULL_THROTTLE: Story = {
     take: { image: "/assets/ui/cursor-hand.png", size: 34 },
     use: { image: "/assets/ui/cursor-hand.png", size: 34 },
   },
+  // 💀 The skull-pie centrepiece — a flaming-skull sprite in the game's own
+  // art, set on the In-game theme tab (the engine's default is a skull emoji).
+  // It sits BIG in the middle of the ring of verbs when the hold-to-open
+  // object-first menu is up.
+  verbMenuIcon: "/img/ft-skull.png",
   // Ben carries everything in his jacket. The engine's "container" mode with
   // no art falls back to a stitched leather panel — right look for a biker.
   inventoryDisplay: {
@@ -173,6 +195,7 @@ export const FULL_THROTTLE: Story = {
     ft_door_open: "Ben kicked in the Kickstand's front door.",
     ft_noticed_keys: "The keys are gone — some joker took 'em.",
     ft_quohog_talked: "Quohog told Ben the Polecats rode off with Corley.",
+    ft_rott_beaten: "The Rottwheeler ate a chain sandwich and left the road.",
   },
   characters: [
     { id: "narrator", name: "Ben", role: "V.O.", avatarUrl: "emoji:🎙", trustMeter: 0 },
@@ -486,33 +509,33 @@ export const FULL_THROTTLE: Story = {
         { id: "ftb_p37", characterId: "corley", text: "Well then… let's roll 'em, boys!" },
       ],
       choices: [
-        { id: "ftc_p_wake", text: "▶ Wake up", targetSceneId: "ft_alley", attitudeTag: "Neutral" },
+        { id: "ftc_p_wake", text: "▶", targetSceneId: "ft_dump", attitudeTag: "Neutral" },
       ],
       hotspots: [],
     },
 
-    /* ─────────────────────────── 4 · THE DUMPSTER ALLEY ─────────────── */
+    /* ─────────────────────── 4 · INSIDE THE DUMPSTER ────────────────── */
     {
-      id: "ft_alley",
-      title: "Behind the Kickstand",
-      background: "/img/ft-alley.jpg",
+      id: "ft_dump",
+      title: "A Dumpster",
+      background: "/img/ft-dumpster.jpg",
       ambientAudio: "drone",
       nodeType: "stage",
       prose: "",
       stage: {
-        ...walker({ top: 66, bottom: 95 }, { x: 24, y: 90 }, [{ x: 52, y: 68, w: 22, h: 14 }]),
-        enterCaption: "You come to in a dumpster behind the Kickstand. Head throbbing. Keys gone.",
+        ...walker({ top: 72, bottom: 97 }, { x: 50, y: 92 }),
+        enterCaption: "A dumpster. You're in a dumpster. Somewhere overhead, a bar is playing music you don't like.",
       },
       hotspots: [
         {
-          id: "fth_dumpster_lid",
+          id: "fth_lid",
           label: "the dumpster lid",
-          bounds: { x: 56, y: 46, w: 18, h: 16 },
+          bounds: { x: 26, y: 50, w: 48, h: 24 },
           cursor: "punch",
           verbs: {
             look: {
               type: "showText",
-              text: "The lid of a dumpster, inches from your face. Somebody wanted you out of the way.",
+              text: "The lid of a dumpster, a couple of feet over your head. Somebody wanted you out of the way, and this is where they put you.",
             },
             talk: {
               type: "showText",
@@ -522,23 +545,126 @@ export const FULL_THROTTLE: Story = {
               type: "showText",
               text: "You boot the lid from the inside. It rattles like a church bell and stays shut. Fists, not feet, for this one.",
             },
+            take: {
+              type: "showText",
+              text: "You could take the lid off — if you had a crowbar and the lid's cooperation. Neither is on offer.",
+            },
           },
           action: {
             type: "showText",
             flagSet: "ft_free",
-            text: "You punch the lid. It pops, flips, and you climb out into the cool desert night. First thing that's gone right all evening.",
+            text: "You punch the lid. It pops, flips, and hangs there like a challenge. Time to go.",
           },
         },
         {
-          id: "fth_dumpster_side",
+          id: "fth_climb_out",
+          label: "climb out",
+          bounds: { x: 26, y: 50, w: 48, h: 24 },
+          cursor: "go",
+          gating: { requiresFlags: ["ft_free"] },
+          action: {
+            type: "goToScene",
+            targetSceneId: "ft_alley",
+            text: "You haul yourself up and over the lip, into the cool desert night. First thing that's gone right all evening.",
+          },
+        },
+        {
+          id: "fth_trash",
+          label: "the trash",
+          bounds: { x: 8, y: 82, w: 84, h: 13 },
+          cursor: "look",
+          isRepeatable: true,
+          verbs: {
+            take: {
+              type: "showText",
+              text: "Old newspapers, a busted lamp, somebody's bad night. You leave it exactly as you found it: yours.",
+            },
+            punch: {
+              type: "showText",
+              text: "You punch the trash. It takes it like a champ. So does your hand.",
+            },
+          },
+          action: {
+            type: "showText",
+            text: "The usual: newspapers with last week's scores, a lamp that gave up, and you.",
+          },
+        },
+        {
+          id: "fth_dump_walls",
+          label: "the dumpster walls",
+          bounds: { x: 2, y: 40, w: 8, h: 56 },
+          cursor: "look",
+          isRepeatable: true,
+          verbs: {
+            punch: {
+              type: "showText",
+              text: "You punch the wall. It booms like a drum. Nobody hears, nobody cares.",
+            },
+          },
+          action: {
+            type: "showText",
+            text: "Ribbed green metal, painted over about forty times, dented in a language you understand.",
+          },
+        },
+      ],
+      dialogueBeats: [],
+      choices: [],
+    },
+
+    /* ─────────────────── 5 · THE ALLEY (a WIDE WORLD) ───────────────── */
+    {
+      id: "ft_alley",
+      title: "Behind the Kickstand",
+      background: "/img/ft-alley-wide.jpg",
+      ambientAudio: "drone",
+      nodeType: "stage",
+      prose: "",
+      stage: {
+        // 🎥 WIDE WORLD: one continuous strip, two viewport-widths long.
+        // The dumpster is on the LEFT screen; walk right and the camera pans
+        // around the corner to the front of the Kickstand (bike + door) on
+        // the RIGHT screen — the scrolling alley of the original, no cuts.
+        ...walker(
+          { top: 66, bottom: 94 },
+          { x: 30, y: 90 },
+          [
+            { x: 14, y: 66, w: 38, h: 14 }, // the dumpster
+            { x: 118, y: 68, w: 26, h: 12 }, // the parked bike
+            { x: 154, y: 66, w: 12, h: 14 }, // the door's step
+          ],
+          {
+            worldWidth: 200,
+            // Where you appear depends on where you walked in from: the
+            // dumpster if you climbed out of it, the front door if you left
+            // the bar. (Cyan dots in the Studio's walkable-stage editor.)
+            entrySpawns: {
+              ft_dump: { x: 30, y: 90 },
+              ft_bar: { x: 162, y: 90 },
+            },
+          }
+        ),
+        enterCaption:
+          "Behind the Kickstand. You're out, you're alive, and your bike is around the corner — keys permitting.",
+      },
+      hotspots: [
+        {
+          id: "fth_dumpster",
           label: "the dumpster",
-          bounds: { x: 50, y: 58, w: 26, h: 30 },
+          bounds: { x: 14, y: 56, w: 38, h: 34 },
           cursor: "look",
           isRepeatable: true,
           verbs: {
             punch: {
               type: "showText",
               text: "You punch the dumpster. A dent blooms in the side and fades again. Cathartic, but not useful.",
+            },
+            kick: {
+              type: "showText",
+              text: "You boot it for good measure. It doesn't even rattle. You've got its measure now.",
+            },
+            talk: {
+              type: "showText",
+              text: "\u201CThanks for the bed.\u201D The dumpster says nothing. Rude.",
             },
           },
           action: {
@@ -547,41 +673,9 @@ export const FULL_THROTTLE: Story = {
           },
         },
         {
-          id: "fth_alley_exit",
-          label: "around to the front",
-          bounds: { x: 86, y: 58, w: 12, h: 38 },
-          cursor: "go",
-          gating: { requiresFlags: ["ft_free"] },
-          verbs: {
-            look: {
-              type: "showText",
-              text: "The alley runs around to the street side of the Kickstand. Your bike ought to be out there.",
-            },
-          },
-          action: { type: "goToScene", targetSceneId: "ft_front" },
-        },
-      ],
-      dialogueBeats: [],
-      choices: [],
-    },
-
-    /* ─────────────────────────── 5 · THE FRONT OF THE KICKSTAND ─────── */
-    {
-      id: "ft_front",
-      title: "The Kickstand",
-      background: "/img/ft-front.jpg",
-      ambientAudio: "drone",
-      nodeType: "stage",
-      prose: "",
-      stage: {
-        ...walker({ top: 66, bottom: 95 }, { x: 20, y: 90 }, [{ x: 8, y: 70, w: 22, h: 12 }]),
-        enterCaption: "The Kickstand. Dark, locked up, and your bike is still where you left it — almost.",
-      },
-      hotspots: [
-        {
           id: "fth_bike",
           label: "your bike",
-          bounds: { x: 8, y: 60, w: 24, h: 34 },
+          bounds: { x: 116, y: 58, w: 30, h: 36 },
           cursor: "use",
           image: "/assets/sprites/adv-bike.png",
           imageFit: "contain",
@@ -594,6 +688,14 @@ export const FULL_THROTTLE: Story = {
               type: "showText",
               text: "You tell her you're leaving. She says nothing. She never says anything, but she's always right.",
             },
+            kick: {
+              type: "showText",
+              text: "You give the front tire a boot. It holds. You'd rather it not hold at the exact moment you're asking it to.",
+            },
+            punch: {
+              type: "showText",
+              text: "You don't punch your bike. Some lines you don't cross.",
+            },
           },
           action: {
             type: "showText",
@@ -602,9 +704,29 @@ export const FULL_THROTTLE: Story = {
           },
         },
         {
+          id: "fth_ride",
+          label: "ride out",
+          bounds: { x: 120, y: 60, w: 22, h: 32 },
+          cursor: "use",
+          // The keys are the gate: no keys, no ignition — this marker stays
+          // 🔒 until Quohog hands them over.
+          gating: { requiresItems: ["ft_keys"] },
+          verbs: {
+            look: {
+              type: "showText",
+              text: "The road out of here. It's two lanes of maybe and a long way to Corville.",
+            },
+          },
+          action: {
+            type: "goToScene",
+            targetSceneId: "ft_ride",
+            text: "You slide the key in. She turns over on the third kick. You swing a leg over and point her at the road.",
+          },
+        },
+        {
           id: "fth_door",
           label: "the Kickstand door",
-          bounds: { x: 62, y: 52, w: 14, h: 42 },
+          bounds: { x: 154, y: 50, w: 20, h: 44 },
           cursor: "kick",
           verbs: {
             look: {
@@ -627,13 +749,6 @@ export const FULL_THROTTLE: Story = {
             text: "You kick the door. It splinters at the latch and swings wide. You step inside, cool as anything.",
           },
         },
-        {
-          id: "fth_front_alley",
-          label: "back to the alley",
-          bounds: { x: 34, y: 58, w: 14, h: 36 },
-          cursor: "go",
-          action: { type: "goToScene", targetSceneId: "ft_alley" },
-        },
       ],
       dialogueBeats: [],
       choices: [],
@@ -648,7 +763,20 @@ export const FULL_THROTTLE: Story = {
       nodeType: "stage",
       prose: "",
       stage: {
-        ...walker({ top: 68, bottom: 94 }, { x: 30, y: 90 }, [{ x: 6, y: 66, w: 30, h: 12 }]),
+        ...walker(
+          { top: 68, bottom: 94 },
+          { x: 30, y: 90 },
+          [{ x: 6, y: 66, w: 30, h: 12 }],
+          {
+            // ➡ WALK-OFF-SCREEN EXIT: the red arrow at the LEFT edge — walk
+            // into it and Ben strides off the plate, back out to the alley.
+            // (The door marker near the middle also leaves, for pointer users
+            // who'd rather click the door than the edge.)
+            exitEdges: {
+              left: { targetSceneId: "ft_alley", label: "the alley" },
+            },
+          }
+        ),
         enterCaption: "Empty, except for the bartender. The Polecats are long gone.",
       },
       hotspots: [
@@ -671,7 +799,10 @@ export const FULL_THROTTLE: Story = {
               text: "You could boot the bar. It's not the bar that's lying to you.",
             },
           },
-          action: { type: "startDialogue" },
+          // Talking to Quohog is what unlocks the fist: the conversation
+          // itself sets ft_quohog_talked, so the grab marker (gated on it)
+          // opens up afterwards — a proper talk-then-shake-down chain.
+          action: { type: "startDialogue", flagSet: "ft_quohog_talked" },
         },
         {
           id: "fth_quohog_grab",
@@ -722,7 +853,7 @@ export const FULL_THROTTLE: Story = {
           label: "back outside",
           bounds: { x: 44, y: 58, w: 14, h: 36 },
           cursor: "go",
-          action: { type: "goToScene", targetSceneId: "ft_front" },
+          action: { type: "goToScene", targetSceneId: "ft_alley" },
         },
       ],
       dialogueBeats: [
@@ -770,12 +901,14 @@ export const FULL_THROTTLE: Story = {
       choices: [],
     },
 
-    /* ─────────────────────────── 7 · RIDE OUT ───────────────────────── */
+    /* ─────────────────── 7 · THE ROTTWHEELER DUEL (QTE) ─────────────── */
     {
       id: "ft_ride",
-      title: "The Long Way to Melonweed",
+      title: "Highway 9, Heading North",
       background: "/img/ft-highway.jpg",
       ambientAudio: "drone",
+      musicMode: "track",
+      musicUrl: "/Soundtrack.mp3",
       letterbox: true,
       prose: "",
       dialogueBeats: [
@@ -787,7 +920,7 @@ export const FULL_THROTTLE: Story = {
         {
           id: "ftb_r2",
           characterId: "narrator",
-          text: "Up ahead, a Rottwheeler drops into the lane beside him — a rival who figures Ben's bike is his for the taking.",
+          text: "A Rottwheeler drops into the lane beside you, chain in his fist. Somebody wants your bike — and they want it enough to fight for it.",
         },
         {
           id: "ftb_r3",
@@ -797,21 +930,104 @@ export const FULL_THROTTLE: Story = {
         {
           id: "ftb_r4",
           characterId: "narrator",
-          text: "The fight is short and mean — road rash and chrome — and Ben walks away from it. But the Rottwheeler wasn't the problem.",
+          silent: true,
+          text: "The road narrows. Your hands are full of throttle and his are full of chain. It's going to be one of those conversations.",
         },
+      ],
+      choices: [
+        {
+          id: "ftc_fight1",
+          text: "Swing your chain at his head!",
+          quickTime: true,
+          qtePrompt: "HIT HIM!",
+          timeLimitSeconds: 5,
+          qteHeartbeat: true,
+          qteShakyCam: true,
+          targetSceneId: "ft_ride2",
+          attitudeTag: "Aggressive",
+          timedOutTargetSceneId: "ft_ride_dead",
+        },
+      ],
+      hotspots: [],
+    },
+    {
+      id: "ft_ride2",
+      title: "The Duel",
+      background: "/img/ft-highway.jpg",
+      ambientAudio: "drone",
+      musicMode: "track",
+      musicUrl: "/Soundtrack.mp3",
+      letterbox: true,
+      prose: "",
+      dialogueBeats: [
         {
           id: "ftb_r5",
           characterId: "narrator",
-          text: "The front wheel shimmies. Bolus did more than take his keys — he put a tool to the forks. At speed, the wheel says goodbye, and so does the road.",
+          text: "Your chain cracks his mirror. He comes back swinging — his chain takes you across the jacket and lays the leather open.",
         },
         {
           id: "ftb_r6",
+          characterId: "rott",
+          text: "Nice jacket! I'll keep it!",
+        },
+        {
+          id: "ftb_r7",
+          characterId: "ben",
+          text: "You'll keep a hospital bed.",
+        },
+      ],
+      choices: [
+        {
+          id: "ftc_fight2",
+          text: "Boot his front wheel — knock him off the road!",
+          quickTime: true,
+          qtePrompt: "BOOT HIM!",
+          timeLimitSeconds: 5,
+          qteHeartbeat: true,
+          qteShakyCam: true,
+          targetSceneId: "ft_ride3",
+          attitudeTag: "Aggressive",
+          timedOutTargetSceneId: "ft_ride_dead",
+        },
+      ],
+      hotspots: [],
+    },
+    {
+      id: "ft_ride3",
+      title: "The Long Way to Melonweed",
+      background: "/img/ft-highway.jpg",
+      ambientAudio: "drone",
+      musicMode: "track",
+      musicUrl: "/Soundtrack.mp3",
+      letterbox: true,
+      prose: "",
+      dialogueBeats: [
+        {
+          id: "ftb_r8",
+          characterId: "narrator",
+          text: "Your boot finds his front wheel. It wobbles, folds, and the Rottwheeler leaves the road in a shower of sparks. You don't look back.",
+        },
+        {
+          id: "ftb_r9",
+          characterId: "narrator",
+          silent: true,
+          text: "The fight is short and mean — road rash and chrome. But the Rottwheeler wasn't the problem.",
+        },
+        {
+          id: "ftb_r10",
+          characterId: "narrator",
+          silent: true,
+          text: "The front wheel shimmies. Bolus did more than take your keys — he put a tool to the forks. At speed, the wheel says goodbye, and so does the road.",
+        },
+        {
+          id: "ftb_r11",
           characterId: "miranda",
           text: "Hey! Hey, are you okay? Oh, this is going to make a great story. Don't move, I'm getting my camera.",
         },
         {
-          id: "ftb_r7",
+          id: "ftb_r12",
           characterId: "narrator",
+          silent: true,
           text: "And then, nothing but the smell of asphalt…",
         },
       ],
@@ -819,6 +1035,25 @@ export const FULL_THROTTLE: Story = {
         { id: "ftc_r_end", text: "▶", targetSceneId: "ft_tbc", attitudeTag: "Neutral" },
       ],
       hotspots: [],
+    },
+
+    /* ──────────────────── 7b · LOSING THE DUEL (GAME OVER) ──────────── */
+    {
+      id: "ft_ride_dead",
+      title: "The End of the Road",
+      isEnding: true,
+      background: "/img/ft-highway.jpg",
+      letterbox: true,
+      prose:
+        "You hesitate — half a second too long. The chain whistles, the world tilts, and the road comes up sideways. The last thing you hear is your own bike, laying down on the asphalt at speed.\n\nThe Polecats will find the wreck in the morning. Somebody else will get the keys.",
+      endingData: {
+        tier: "gameover",
+        headline: "KILLED ON HIGHWAY 9",
+        recap: "You waited for the perfect moment. The Rottwheeler didn't. Full Throttle doesn't hand out second chances on the open road.",
+      },
+      hotspots: [],
+      dialogueBeats: [],
+      choices: [],
     },
 
     /* ─────────────────────────── 8 · PART ONE BREAK ─────────────────── */
@@ -833,7 +1068,7 @@ export const FULL_THROTTLE: Story = {
       endingData: {
         tier: "victory-silver",
         headline: "END OF PART ONE — THE KICKSTAND",
-        recap: "You punched out of a dumpster, kicked in a door, and shook your keys out of a bartender. Next: Melonweed, and the long road to Corville.",
+        recap: "You punched out of a dumpster, walked the alley around to the front, kicked in a door, shook your keys out of a bartender, and beat a Rottwheeler for the right to crash your own bike. Next: Melonweed, and the long road to Corville.",
       },
       hotspots: [],
       dialogueBeats: [],

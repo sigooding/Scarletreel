@@ -651,6 +651,22 @@ export function storyEdges(story: Story): StoryEdge[] {
           });
       }
     });
+    // Walk-off-screen edge exits are real scene edges too: the player walks
+    // into the plate edge and lands in the target scene, so the validator
+    // treats them as exits and the canvas draws the branch.
+    (["left", "right"] as const).forEach((edge) => {
+      const ex = sc.stage?.exitEdges?.[edge];
+      if (ex?.targetSceneId)
+        edges.push({
+          id: `e-${sc.id}-edge-${edge}`,
+          source: sc.id,
+          target: ex.targetSceneId,
+          kind: "hotspot",
+          ref: sc,
+          label: `➜ walk off ${edge} edge`,
+          attitude: "Hotspot",
+        });
+    });
   });
   return edges;
 }
@@ -1150,9 +1166,17 @@ export function stageFloor(settings: StageSettings | undefined): { top: number; 
 
 /** Clamp a point into the floor band (x also kept off the plate edges).
  *  Clicks above/below the band walk to its nearest edge — the cursor always
- *  lands somewhere the character can stand. */
-export function clampToFloor(x: number, y: number, floor: { top: number; bottom: number }): { x: number; y: number } {
-  return { x: clamp(x, 1, 99), y: clamp(y, floor.top, floor.bottom) };
+ *  lands somewhere the character can stand. `width` is the world width in
+ *  viewport-% (100 = a single screen; wide worlds clamp to their own
+ *  bounds). */
+export function clampToFloor(
+  x: number,
+  y: number,
+  floor: { top: number; bottom: number },
+  width = 100
+): { x: number; y: number } {
+  const w = Math.max(100, width);
+  return { x: clamp(x, 1, w - 1), y: clamp(y, floor.top, floor.bottom) };
 }
 
 /** Perspective scale of a sprite standing at y within the floor band:
@@ -1294,6 +1318,16 @@ export function stageSpriteScale(y: number, floor: { top: number; bottom: number
   return far + (near - far) * t;
 }
 
+/** The per-scene character size multiplier (stage.playerScale) — the flat
+ *  scale every depth-scaled sprite is multiplied by, so a room with a huge
+ *  plate (a wide alley, a cathedral) can make the character LOOK huge or
+ *  tiny to fit it. Clamped so the walker can't vanish or blow through the
+ *  plate; the editor preview and the game both read it through here so the
+ *  author sees exactly what plays. */
+export function stagePlayerScale(settings: { playerScale?: number }): number {
+  return clamp(settings.playerScale ?? 1, 0.15, 4);
+}
+
 /** Walk speed at a given y, as a fraction of the room's speed. A smaller
  *  (further away) character covers less screen per second — without this,
  *  walking "into the distance" reads as skating. */
@@ -1318,9 +1352,32 @@ export function extraOccludes(extra: { occludes?: boolean; occludeBaseline?: num
  *  character can always walk to it. */
 export function stageMarkerPoint(
   h: Hotspot,
-  floor: { top: number; bottom: number }
+  floor: { top: number; bottom: number },
+  width = 100
 ): { x: number; y: number } {
-  return clampToFloor(h.bounds.x + h.bounds.w / 2, h.bounds.y + h.bounds.h, floor);
+  return clampToFloor(h.bounds.x + h.bounds.w / 2, h.bounds.y + h.bounds.h, floor, width);
+}
+
+/** The stage camera for a wide world: follows the walker, clamped so the
+ *  camera never shows past the world's ends. Returns the left edge of the
+ *  viewport in world-% (0 on a single-screen room, where nothing moves). */
+export function stageCamX(walkerX: number, worldWidth: number): number {
+  const w = Math.max(100, worldWidth);
+  return clamp(walkerX - 50, 0, w - 100);
+}
+
+/** Is the walker at a world edge, close enough that walking a step further
+ *  would walk them off the plate? Used by the stage's walk-off-screen exits
+ *  (and the edge arrows). */
+export function stageAtWorldEdge(
+  x: number,
+  worldWidth: number,
+  margin = 1.2
+): "left" | "right" | null {
+  const w = Math.max(100, worldWidth);
+  if (x <= margin) return "left";
+  if (x >= w - margin) return "right";
+  return null;
 }
 
 /* --------------------- stage 2d: obstacles + routing ---------------- */
@@ -1351,10 +1408,12 @@ export function stageBlocked(
   y: number,
   obstacles: StageObstacle[] | undefined,
   floor?: { top: number; bottom: number },
-  aspect = 16 / 9
+  aspect = 16 / 9,
+  width = 100
 ): boolean {
   if (floor && (y < floor.top || y > floor.bottom)) return true;
-  if (x < 0 || x > 100) return true;
+  const w = Math.max(100, width);
+  if (x < 0 || x > w) return true;
   const padX = STAGE_AGENT_RADIUS;
   const padY = STAGE_AGENT_RADIUS * (aspect > 0 ? aspect : 16 / 9);
   for (const o of obstacles ?? []) {
@@ -1370,12 +1429,13 @@ export function stageLineClear(
   b: { x: number; y: number },
   obstacles: StageObstacle[] | undefined,
   floor?: { top: number; bottom: number },
-  aspect = 16 / 9
+  aspect = 16 / 9,
+  width = 100
 ): boolean {
   const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, (b.y - a.y) * aspect) / 0.75));
   for (let i = 0; i <= steps; i++) {
     const f = i / steps;
-    if (stageBlocked(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, obstacles, floor, aspect)) return false;
+    if (stageBlocked(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, obstacles, floor, aspect, width)) return false;
   }
   return true;
 }
@@ -1387,16 +1447,17 @@ function nearestFree(
   y: number,
   obstacles: StageObstacle[] | undefined,
   floor: { top: number; bottom: number },
-  step: number
+  step: number,
+  width = 100
 ): { x: number; y: number } | null {
-  if (!stageBlocked(x, y, obstacles, floor)) return { x, y };
+  if (!stageBlocked(x, y, obstacles, floor, 16 / 9, width)) return { x, y };
   for (let ring = 1; ring <= 24; ring++) {
     for (let dy = -ring; dy <= ring; dy++) {
       for (let dx = -ring; dx <= ring; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
-        const nx = clamp(x + dx * step, 1, 99);
+        const nx = clamp(x + dx * step, 1, width - 1);
         const ny = clamp(y + dy * step, floor.top, floor.bottom);
-        if (!stageBlocked(nx, ny, obstacles, floor)) return { x: nx, y: ny };
+        if (!stageBlocked(nx, ny, obstacles, floor, 16 / 9, width)) return { x: nx, y: ny };
       }
     }
   }
@@ -1415,18 +1476,20 @@ export function stageRoute(
   to: { x: number; y: number },
   obstacles: StageObstacle[] | undefined,
   floor: { top: number; bottom: number },
-  step = STAGE_GRID_STEP
+  step = STAGE_GRID_STEP,
+  width = 100
 ): { x: number; y: number }[] {
   if (!obstacles?.length) {
     // No furniture: the straight line is the route (and it is already optimal).
-    return stageLineClear(from, to, obstacles, floor) ? [{ x: to.x, y: to.y }] : [];
+    return stageLineClear(from, to, obstacles, floor, 16 / 9, width) ? [{ x: to.x, y: to.y }] : [];
   }
-  const start = nearestFree(from.x, from.y, obstacles, floor, step);
-  const goal = nearestFree(to.x, to.y, obstacles, floor, step);
+  const start = nearestFree(from.x, from.y, obstacles, floor, step, width);
+  const goal = nearestFree(to.x, to.y, obstacles, floor, step, width);
   if (!start || !goal) return [];
-  if (stageLineClear(start, goal, obstacles, floor)) return [{ x: goal.x, y: goal.y }];
+  if (stageLineClear(start, goal, obstacles, floor, 16 / 9, width)) return [{ x: goal.x, y: goal.y }];
 
-  const cols = Math.floor(100 / step) + 1;
+  const w = Math.max(100, width);
+  const cols = Math.floor(w / step) + 1;
   const rows = Math.floor((floor.bottom - floor.top) / step) + 1;
   const idx = (c: number, r: number) => r * cols + c;
   const toXY = (c: number, r: number) => ({ x: c * step, y: floor.top + r * step });
@@ -1439,7 +1502,7 @@ export function stageRoute(
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const p = toXY(c, r);
-      blocked[idx(c, r)] = stageBlocked(p.x, p.y, obstacles, floor) ? 1 : 0;
+      blocked[idx(c, r)] = stageBlocked(p.x, p.y, obstacles, floor, 16 / 9, w) ? 1 : 0;
     }
   }
 
@@ -1511,7 +1574,7 @@ export function stageRoute(
   while (i < chain.length) {
     let furthest = i;
     for (let j = chain.length - 1; j > i; j--) {
-      if (stageLineClear(cur, chain[j], obstacles, floor)) {
+      if (stageLineClear(cur, chain[j], obstacles, floor, 16 / 9, w)) {
         furthest = j;
         break;
       }
@@ -1823,12 +1886,14 @@ export function validateStory(story: Story): ValidationIssue[] {
     if ((sc.prose ?? "").trim())
       issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has prose, but stage nodes never show the prose panel. Move it into "Caption on scene entry" (Scene tab → 🚶 Walkable Stage) or showText hotspots.` });
     // A stage scene the player can never leave is a soft-lock: exits must be
-    // walk-to markers (goToScene hotspots) or an auto-advance — a choice
-    // only appears after a conversation, so it can't be the only way out.
+    // walk-to markers (goToScene hotspots), walk-off-screen edge exits, or
+    // an auto-advance — a choice only appears after a conversation, so it
+    // can't be the only way out.
     if (!sc.isEnding) {
       const doorOut = (sc.hotspots ?? []).some((h) => h.action.type === "goToScene" && h.action.targetSceneId);
-      if (!doorOut && !sc.autoAdvanceTargetSceneId && !(sc.choices ?? []).some((c) => c.targetSceneId))
-        issues.push({ severity: "error", sceneId: sc.id, message: `${label} has no way out. Add a hotspot with action "→ Go to scene" (a door/exit marker the player walks to), or an auto-advance target.` });
+      const edgeOut = Object.values(sc.stage?.exitEdges ?? {}).some((e) => e?.targetSceneId);
+      if (!doorOut && !edgeOut && !sc.autoAdvanceTargetSceneId && !(sc.choices ?? []).some((c) => c.targetSceneId))
+        issues.push({ severity: "error", sceneId: sc.id, message: `${label} has no way out. Add a hotspot with action "→ Go to scene" (a door/exit marker the player walks to), a walk-off-screen edge exit, or an auto-advance target.` });
     }
     if ((sc.hotspots ?? []).some((h) => h.action.type === "startDialogue") && (sc.dialogueBeats ?? []).length === 0)
       issues.push({ severity: "error", sceneId: sc.id, message: `${label} has a "Start conversation" marker but no dialogue beats — write the conversation in the Beats tab or the marker does nothing.` });
