@@ -5605,7 +5605,7 @@ function StudioInner({
       beats.splice(to, 0, moved);
     });
   };
-  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle" | "map">("scene");
+  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "stage" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle" | "map">("scene");
   // Storage is the source of truth for the ElevenLabs model (the Characters
   // tab can change it elsewhere), so re-read it whenever the tab changes.
   useEffect(() => {
@@ -5708,6 +5708,12 @@ function StudioInner({
   const toggleInspectorWidth = () => setInspectorWidth((w) => (w >= 640 ? 420 : 720));
 
   const scene = story.scenes.find((s) => s.id === selectedId) ?? null;
+  // The 🚶 Stage tab only exists for walkable-stage nodes. If the selection (or
+  // the node's type) moves away from a stage while the tab is open, fall back to
+  // the Scene tab so the inspector never points at an empty panel.
+  useEffect(() => {
+    if (tab === "stage" && scene?.nodeType !== "stage") setTab("scene");
+  }, [tab, scene]);
   const issues = useMemo(() => validateStory(story), [story]);
   // Every flag referenced anywhere in the story — the source list for the flag
   // dropdowns so authors can pick (and keep track of) existing flag names.
@@ -5898,7 +5904,7 @@ function StudioInner({
       if (isFirstScene) d.startSceneId = id;
     });
     setSelectedId(id);
-    setTab("scene");
+    setTab(adv ? "stage" : "scene");
     if (isFirstScene && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
     if (adv) say("Room created as a 🚶 walkable stage. Put a plate on it, draw 🚧 obstacles, then hang 👁 look / ✋ take / 💬 talk / ➜ go hotspots on it.");
     audio.pickup();
@@ -6014,7 +6020,7 @@ function StudioInner({
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
     });
     setSelectedId(id);
-    setTab("scene");
+    setTab("stage");
     say("Walkable Stage created — a free-roam exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
     audio.pickup();
   };
@@ -6981,7 +6987,7 @@ function StudioInner({
             commit({ ...story, gameKind: kind });
             say(
               kind === "adventure"
-                ? "Adventure mode: new scenes come out as 🚶 walkable rooms, and the Scene tab opens on the Walkable Stage panel."
+                ? "Adventure mode: new scenes come out as 🚶 walkable rooms, and they open on the dedicated 🚶 Stage tab."
                 : kind === "vn"
                   ? "Visual novel mode: build around portraits and dialogue beats."
                   : "Noir rail mode: prose + choice rail, the house style.",
@@ -7660,35 +7666,38 @@ function StudioInner({
                 (Game Objective → Characters → Items → Flags), then STRUCTURE
                 (Acts → Episodes) and the in-game look, then ASSETS, then ▶
                 Test. Story-wide tabs sit above the scene panels as before. */}
-            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "map", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`border-b border-r border-noir-700 px-1 py-2 font-pulp text-[9px] uppercase tracking-wider ${
-                  tab === t ? "bg-noir-800 text-neon" : "text-paper/50 hover:text-paper"
-                }`}
-              >
-                {{
-                  scene: "Scene",
-                  beats: "Beats",
-                  hotspots: "Hotspots",
-                  choices: "Choices",
-                  audio: "🔊 Audio",
-                  briefing: "🎯 Game Objective",
-                  characters: "Characters",
-                  items: "Items",
-                  flags: "🏷 Flags",
-                  acts: "🎭 Acts",
-                  episodes: "🎞 Episodes",
-                  media: "🛠 Media Tools",
-                  ai: "🎨 AI Images",
-                  map: "🗺 Map",
-                  dialogueBox: "🎮 In-Game Theme",
-                  globalTitle: "🎼 Newsstand Theme",
-                  test: "▶ Test",
-                }[t]}
-              </button>
-            ))}
+            {(["scene", "beats", "hotspots", "stage", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "map", "dialogueBox", "globalTitle", "media", "ai", "test"] as const)
+              .filter((t) => t !== "stage" || scene?.nodeType === "stage")
+              .map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`border-b border-r border-noir-700 px-1 py-2 font-pulp text-[9px] uppercase tracking-wider ${
+                    tab === t ? "bg-noir-800 text-neon" : "text-paper/50 hover:text-paper"
+                  }`}
+                >
+                  {{
+                    scene: "Scene",
+                    beats: "Beats",
+                    hotspots: "Hotspots",
+                    stage: "🚶 Stage",
+                    choices: "Choices",
+                    audio: "🔊 Audio",
+                    briefing: "🎯 Game Objective",
+                    characters: "Characters",
+                    items: "Items",
+                    flags: "🏷 Flags",
+                    acts: "🎭 Acts",
+                    episodes: "🎞 Episodes",
+                    media: "🛠 Media Tools",
+                    ai: "🎨 AI Images",
+                    map: "🗺 Map",
+                    dialogueBox: "🎮 In-Game Theme",
+                    globalTitle: "🎼 Newsstand Theme",
+                    test: "▶ Test",
+                  }[t]}
+                </button>
+              ))}
           </div>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
             <CollapsibleSection id="workflow" title="Creator workflow" className="border border-cyan-neon/30 bg-cyan-neon/5">
@@ -9547,6 +9556,408 @@ function StudioInner({
                   </select>
                 </Field>
 
+                {/* The 🚶 walkable-stage editor now lives on its own 🚶 Stage tab. */}
+                {/* ---- Letterbox & entry transition (cinematic polish) ---- */}
+                <div className="border border-gold/40 bg-gold/5 p-2 space-y-2">
+                  <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎞 Letterbox &amp; transition</div>
+                  <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                    <input
+                      type="checkbox"
+                      checked={!!scene.letterbox}
+                      onChange={(e) => updateScene(scene.id, { letterbox: e.target.checked || undefined })}
+                    />
+                    🎬 Letterbox bars (top &amp; bottom black bands)
+                  </label>
+                  <div className="grid grid-cols-2 gap-1">
+                    <Field label="Entry transition">
+                      <select
+                        className={inputCls}
+                        value={scene.transition ?? "fade"}
+                        onChange={(e) => updateScene(scene.id, { transition: e.target.value as SceneNode["transition"] })}
+                      >
+                        <option value="fade">⬛ Fade (dissolve)</option>
+                        <option value="fade-black">🌑 Fade to black then back</option>
+                        <option value="cut">⚡ Cut (instant)</option>
+                      </select>
+                    </Field>
+                    <Field label={`Transition speed ${(scene.transitionSpeed ?? 0.5).toFixed(2)}s`}>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={3}
+                        step={0.05}
+                        value={scene.transitionSpeed ?? 0.5}
+                        className="w-full accent-pink-500"
+                        onChange={(e) => updateScene(scene.id, { transitionSpeed: Number(e.target.value) })}
+                      />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* ---- Cinematic Image Controls ---- */}
+                <div className="border border-gold/40 bg-gold/5 p-3 space-y-3">
+                  <div className="font-pulp text-[11px] uppercase tracking-widest text-gold">🎬 Cinematic Image Controls</div>
+                  <p className="font-type text-[9px] text-paper/50">
+                    Pick which image to grade, then set its camera motion and lighting. Each dialogue beat with a replacement background image gets its own settings.
+                  </p>
+                  <Field label="Apply cinematic to">
+                    <select
+                      className={inputCls}
+                      value={cinematicTarget}
+                      onChange={(e) => setCinematicTarget(e.target.value)}
+                    >
+                      <option value="__scene__">🖼 Scene background</option>
+                      {(scene.dialogueBeats ?? []).filter((b) => b.background).map((b, i) => (
+                        <option key={b.id} value={b.id}>💬 Beat {i + 1} — {b.text.slice(0, 32)}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  {!(scene.dialogueBeats ?? []).some((b) => b.background) && (
+                    <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[9px] text-paper/55">
+                      Add a <b className="text-cyan-neon">replacement background image</b> to a beat in the Beats tab to give it its own cinematic settings here.
+                    </p>
+                  )}
+                  <CinematicControls
+                    cinematic={cinematicTarget === "__scene__" ? scene.cinematic : scene.dialogueBeats?.find((b) => b.id === cinematicTarget)?.cinematic}
+                    previewUrl={media(cinematicTarget === "__scene__" ? scene.background : (scene.dialogueBeats?.find((b) => b.id === cinematicTarget)?.background ?? scene.background)) ?? (cinematicTarget === "__scene__" ? scene.background : (scene.dialogueBeats?.find((b) => b.id === cinematicTarget)?.background ?? scene.background))}
+                    storyId={story.id}
+                    media={media}
+                    onChange={(next) => {
+                      if (cinematicTarget === "__scene__") {
+                        updateScene(scene.id, { cinematic: next });
+                      } else {
+                        mutate((d) => {
+                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                          s.dialogueBeats!.find((x) => x.id === cinematicTarget)!.cinematic = next;
+                        });
+                      }
+                    }}
+                  />
+                </div>
+                <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] text-paper/55">
+                  Need real music or recorded narration? Use the <b className="text-cyan-neon">Audio</b> tab — music and voice are separate there.
+                </p>
+                </CollapsibleSection>
+                <CollapsibleSection id={`scene-${scene.id}-prose`} title="📜 Prose, pacing & structure">
+                {scene.nodeType === "stage" && (
+                  <p className="mb-2 border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
+                    🚶 <b>Stage nodes never show prose.</b> Anything typed here stays author-only — put the scene's
+                    opening line in <b>🚶 Walkable Stage → "Caption on scene entry"</b>, and its narration into 💬
+                    show-text markers.
+                  </p>
+                )}
+                <Field label="Prose (narrator)">
+                  <textarea
+                    className={`${inputCls} h-28 font-type`}
+                    value={scene.prose}
+                    onChange={(e) => updateScene(scene.id, { prose: e.target.value })}
+                  />
+                </Field>
+                <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
+                  <input
+                    type="checkbox"
+                    checked={!!scene.noTypewriter}
+                    onChange={(e) => updateScene(scene.id, { noTypewriter: e.target.checked || undefined })}
+                  />
+                  ⚡ Instant text — disable typewriter (use when MP3 voice is main narration)
+                </label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                  <input
+                    type="checkbox"
+                    checked={story.startSceneId === scene.id}
+                    onChange={() => commit({ ...story, startSceneId: scene.id })}
+                  />
+                  ★ start scene
+                </label>
+                <Field label="End-of-part route chart (shown when leaving this scene)">
+                  <input
+                    className={inputCls}
+                    placeholder='e.g. "Part Two — The Long Drop" — leave empty for none'
+                    value={scene.partBreak ?? ""}
+                    onChange={(e) => updateScene(scene.id, { partBreak: e.target.value.trim() || undefined })}
+                  />
+                  <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                    When the player leaves this scene, the flowchart of the stretch just played is shown — and if
+                    the exit crosses an act boundary, the act's route map follows. Point it at a <b>choke point</b>
+                    the player must pass through: a hub you backtrack through will re-chart on every exit.
+                  </p>
+                </Field>
+                {scene && (
+                  <button
+                    onClick={() => { onPlay(deepClone(story), { fromSceneId: scene.id }); }}
+                    className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10"
+                    title="Launch the game starting at this scene (fresh world state, does not change your start scene)"
+                  >
+                    ▶ Play from this scene
+                  </button>
+                )}
+                {scene.background.startsWith("video:") && (
+                  <p className="border border-gold/30 bg-gold/5 px-2 py-1 font-type text-[10px] text-gold">
+                    🎥 This scene plays a video cutscene instead of a static background. Manage it above.
+                  </p>
+                )}
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                  <input
+                    type="checkbox"
+                    checked={!!scene.isEnding}
+                    onChange={(e) =>
+                      updateScene(scene.id, {
+                        isEnding: e.target.checked,
+                        endingData: e.target.checked
+                          ? scene.endingData ?? { tier: "victory-silver", headline: "HEADLINE!", recap: "How it ended." }
+                          : scene.endingData,
+                      })
+                    }
+                  />
+                  🏁 this scene is an ending
+                </label>
+                {scene.isEnding && scene.endingData && (
+                  <div className="space-y-1.5 border border-gold/40 p-2">
+                    <Field label="Tier">
+                      <select
+                        className={inputCls}
+                        value={scene.endingData.tier}
+                        onChange={(e) =>
+                          updateScene(scene.id, { endingData: { ...scene.endingData!, tier: e.target.value as never } })
+                        }
+                      >
+                        <option value="victory-gold">victory-gold</option>
+                        <option value="victory-silver">victory-silver</option>
+                        <option value="gameover">gameover</option>
+                      </select>
+                    </Field>
+                    <Field label="Pulp headline">
+                      <input
+                        className={inputCls}
+                        value={scene.endingData.headline}
+                        onChange={(e) => updateScene(scene.id, { endingData: { ...scene.endingData!, headline: e.target.value } })}
+                      />
+                    </Field>
+                    <Field label="Recap">
+                      <textarea
+                        className={`${inputCls} h-16`}
+                        value={scene.endingData.recap}
+                        onChange={(e) => updateScene(scene.id, { endingData: { ...scene.endingData!, recap: e.target.value } })}
+                      />
+                    </Field>
+                    {story.episodes?.length ? (
+                      <>
+                        <label className="flex items-start gap-2 border-t border-gold/20 pt-1.5 text-[10px] text-paper/60">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={!!scene.endingData.endsSeason}
+                            onChange={(e) =>
+                              updateScene(scene.id, { endingData: { ...scene.endingData!, endsSeason: e.target.checked || undefined } })
+                            }
+                          />
+                          <span>
+                            Ends the whole season here
+                            <span className="block font-type text-[9px] normal-case text-paper/35">
+                              Off (default): this closes the EPISODE and hands off to "Next time on…". On: a true finale — no next episode is offered.
+                            </span>
+                          </span>
+                        </label>
+                        {(() => {
+                          const owner = episodeOfScene(story, scene.id);
+                          return (
+                            <p className={`font-type text-[9px] ${owner ? "text-paper/40" : "text-crimson"}`}>
+                              {owner
+                                ? `Closes Episode ${owner.number}: ${owner.title}.`
+                                : "⚠ This ending isn't in any episode — assign it on the Episodes tab."}
+                            </p>
+                          );
+                        })()}
+                      </>
+                    ) : null}
+                  </div>
+                )}
+                </CollapsibleSection>
+                <CollapsibleSection
+                  id={`interrogation-${scene.id}`}
+                  title="🎭 Interrogation (composure pressure)"
+                  hint={scene.interrogation ? "active" : undefined}
+                  titleClass="text-gold"
+                >
+                  <p className="font-type text-[9px] leading-snug text-paper/45">
+                    Talking gets tension. Every <b>attitude-tagged reply</b> in this scene (Sultry / Aggressive /
+                    Clever — neutral follow-ups don't count) chips the suspect's <b>composure</b>. At zero their{" "}
+                    <b>trust</b> decides: at/above the crack threshold they <b className="text-gold">BREAK</b> (broke
+                    beat + flag + the big swing); below it they <b className="text-crimson">CLAMP</b> (clamped beat +
+                    flag + the backfire). Composure is derived from the presses you've made — one-shot, save-proof,
+                    ungrindable. Gate the payoff content on the broke flag.
+                  </p>
+                  {!scene.interrogation ? (
+                    <button
+                      onClick={() => {
+                        const ch = story.characters[0]?.id ?? "narrator";
+                        updateScene(scene.id, {
+                          interrogation: {
+                            characterId: ch,
+                            composure: 3,
+                            crackTrust: 0,
+                            brokeBeat: {
+                              id: `iq_broke_${scene.id}`,
+                              characterId: ch,
+                              text: "They finally talk — write what spills.",
+                            },
+                            brokeFlag: `broke_${scene.id}`,
+                            clampedBeat: {
+                              id: `iq_clamp_${scene.id}`,
+                              characterId: ch,
+                              text: "They shut down — write the door closing.",
+                            },
+                            clampFlag: `clamped_${scene.id}`,
+                          },
+                        });
+                      }}
+                      className="w-full border border-gold/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-gold/10"
+                    >
+                      ＋ Enable interrogation on this scene
+                    </button>
+                  ) : (
+                    (() => {
+                      const iq = scene.interrogation!;
+                      const setIq = (patch: Partial<typeof iq>) =>
+                        updateScene(scene.id, { interrogation: { ...iq, ...patch } });
+                      const setBrokeBeat = (patch: Partial<typeof iq.brokeBeat>) =>
+                        setIq({ brokeBeat: { ...iq.brokeBeat, ...patch } });
+                      const swingOf = (cons: Consequences | undefined, characterId: string) => ({
+                        trust: String(cons?.trustChanges?.find((t) => t.characterId === characterId)?.delta ?? ""),
+                        heat: String(cons?.meterChanges?.find((m) => m.meter === "Suspicion")?.delta ?? ""),
+                      });
+                      const setSwing = (key: "brokeConsequences" | "clampConsequences", trust: string, heat: string) => {
+                        const cons: Consequences = {};
+                        if (trust !== "" && Number(trust) !== 0) cons.trustChanges = [{ characterId: iq.characterId, delta: Number(trust) }];
+                        if (heat !== "" && Number(heat) !== 0) cons.meterChanges = [{ meter: "Suspicion", delta: Number(heat) }];
+                        setIq({ [key]: Object.keys(cons).length ? cons : undefined });
+                      };
+                      const brokeSwing = swingOf(iq.brokeConsequences, iq.characterId);
+                      const clampSwing = swingOf(iq.clampConsequences, iq.characterId);
+                      return (
+                      <>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label="Suspect being pressed">
+                            <select
+                              className={inputCls}
+                              value={iq.characterId}
+                              onChange={(e) =>
+                                setIq({
+                                  characterId: e.target.value,
+                                  brokeBeat: { ...iq.brokeBeat, characterId: e.target.value },
+                                  clampedBeat: iq.clampedBeat ? { ...iq.clampedBeat, characterId: e.target.value } : undefined,
+                                })
+                              }
+                            >
+                              <option value="narrator">🎙 Narrator</option>
+                              {story.characters.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </select>
+                          </Field>
+                          <Field label={`Composure (${iq.composure ?? 3} hits to break)`}>
+                            <input
+                              type="number"
+                              min={1}
+                              max={5}
+                              className={inputCls}
+                              value={iq.composure ?? 3}
+                              onChange={(e) => setIq({ composure: Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 3)) })}
+                            />
+                          </Field>
+                        </div>
+                        <Field label={`Crack threshold — trust ≥ this at zero composure = CRACK (now: ${iq.crackTrust ?? 0})`}>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="range"
+                              min={-5}
+                              max={5}
+                              step={1}
+                              className="flex-1 accent-pink-500"
+                              value={iq.crackTrust ?? 0}
+                              onChange={(e) => setIq({ crackTrust: Number(e.target.value) })}
+                            />
+                            <span className="w-6 text-right font-type text-[10px] text-paper/70">{iq.crackTrust ?? 0}</span>
+                          </div>
+                          <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                            The risk in the risk/reward: press cold and their trust is below the line, the pressure
+                            rebounds. Charm them up first (trust-positive replies) and it pays.
+                          </p>
+                        </Field>
+                        <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">★ On crack (they talk)</div>
+                          <Field label="Broke beat — plays the moment they break">
+                            <textarea className={`${inputCls} h-14 font-type`} value={iq.brokeBeat.text} onChange={(e) => setBrokeBeat({ text: e.target.value })} />
+                          </Field>
+                          <div className="grid grid-cols-3 gap-1">
+                            <Field label="Broke flag">
+                              <FlagInput value={iq.brokeFlag} suggestions={allFlags} onChange={(v) => setIq({ brokeFlag: v ?? iq.brokeFlag })} />
+                            </Field>
+                            <Field label="Trust swing">
+                              <input type="number" className={inputCls} value={brokeSwing.trust} placeholder="0"
+                                onChange={(e) => setSwing("brokeConsequences", e.target.value, brokeSwing.heat)} />
+                            </Field>
+                            <Field label="Heat swing">
+                              <input type="number" className={inputCls} value={brokeSwing.heat} placeholder="0"
+                                onChange={(e) => setSwing("brokeConsequences", brokeSwing.trust, e.target.value)} />
+                            </Field>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 border border-crimson/30 bg-crimson/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-crimson">✖ On clamp (they shut down)</div>
+                          <Field label="Clamped beat — plays when they refuse to break (optional text)">
+                            <textarea className={`${inputCls} h-14 font-type`} value={iq.clampedBeat?.text ?? ""} placeholder="Leave empty for no clamped beat (flag + swings still apply)"
+                              onChange={(e) => setIq({ clampedBeat: { id: `iq_clamp_${scene.id}`, characterId: iq.characterId, text: e.target.value } })} />
+                          </Field>
+                          <div className="grid grid-cols-3 gap-1">
+                            <Field label="Clamp flag">
+                              <FlagInput value={iq.clampFlag} suggestions={allFlags} onChange={(v) => setIq({ clampFlag: v || undefined })} />
+                            </Field>
+                            <Field label="Trust swing">
+                              <input type="number" className={inputCls} value={clampSwing.trust} placeholder="0"
+                                onChange={(e) => setSwing("clampConsequences", e.target.value, clampSwing.heat)} />
+                            </Field>
+                            <Field label="Heat swing">
+                              <input type="number" className={inputCls} value={clampSwing.heat} placeholder="0"
+                                onChange={(e) => setSwing("clampConsequences", clampSwing.trust, e.target.value)} />
+                            </Field>
+                          </div>
+                          <p className="font-type text-[9px] leading-snug text-paper/40">
+                            Usually the backfire: Heat +, trust −. Gate the fallout on the clamp flag.
+                          </p>
+                        </div>
+                        <p className="font-type text-[9px] leading-snug text-paper/40">
+                          Presses = this scene's attitude-tagged REPLY choices ({(scene.choices ?? []).filter((c) => c.reply && (c.attitudeTag ?? "Neutral") !== "Neutral").length} found).
+                          Author at least composure many of them, or the validator will warn that composure can never break.
+                        </p>
+                        <button
+                          onClick={() => updateScene(scene.id, { interrogation: undefined })}
+                          className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                        >
+                          ✕ Remove interrogation
+                        </button>
+                      </>
+                      );
+                    })()
+                  )}
+                </CollapsibleSection>
+                <button
+                  onClick={() => deleteScene(scene.id)}
+                  className="w-full border border-crimson/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-crimson hover:bg-crimson/15"
+                >
+                  🗑 Delete scene
+                </button>
+              </>
+            )}
+
+            {scene && scene.nodeType === "stage" && tab === "stage" && (
+              <>
+                <HelpNote id="stage-tab" title="Walkable Stage">
+                  Free-roam exploration — the player walks a character around the floor and walks up to
+                  interaction markers to use them. Lay the markers on the <b>Hotspots</b> tab, write the
+                  conversations a <b>🗣 Start conversation</b> marker starts on the <b>Beats</b> tab, and wire
+                  doors as <b>→ Go to scene</b> hotspots. Every number on this tab is a % of the whole strip.
+                </HelpNote>
                 {/* ---- Stage node — free-roam walkable exploration ---- */}
                 <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (free-roam)">
                   <div className="space-y-2">
@@ -10277,397 +10688,6 @@ function StudioInner({
                     )}
                   </div>
                 </CollapsibleSection>
-
-                {/* ---- Letterbox & entry transition (cinematic polish) ---- */}
-                <div className="border border-gold/40 bg-gold/5 p-2 space-y-2">
-                  <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎞 Letterbox &amp; transition</div>
-                  <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                    <input
-                      type="checkbox"
-                      checked={!!scene.letterbox}
-                      onChange={(e) => updateScene(scene.id, { letterbox: e.target.checked || undefined })}
-                    />
-                    🎬 Letterbox bars (top &amp; bottom black bands)
-                  </label>
-                  <div className="grid grid-cols-2 gap-1">
-                    <Field label="Entry transition">
-                      <select
-                        className={inputCls}
-                        value={scene.transition ?? "fade"}
-                        onChange={(e) => updateScene(scene.id, { transition: e.target.value as SceneNode["transition"] })}
-                      >
-                        <option value="fade">⬛ Fade (dissolve)</option>
-                        <option value="fade-black">🌑 Fade to black then back</option>
-                        <option value="cut">⚡ Cut (instant)</option>
-                      </select>
-                    </Field>
-                    <Field label={`Transition speed ${(scene.transitionSpeed ?? 0.5).toFixed(2)}s`}>
-                      <input
-                        type="range"
-                        min={0.1}
-                        max={3}
-                        step={0.05}
-                        value={scene.transitionSpeed ?? 0.5}
-                        className="w-full accent-pink-500"
-                        onChange={(e) => updateScene(scene.id, { transitionSpeed: Number(e.target.value) })}
-                      />
-                    </Field>
-                  </div>
-                </div>
-
-                {/* ---- Cinematic Image Controls ---- */}
-                <div className="border border-gold/40 bg-gold/5 p-3 space-y-3">
-                  <div className="font-pulp text-[11px] uppercase tracking-widest text-gold">🎬 Cinematic Image Controls</div>
-                  <p className="font-type text-[9px] text-paper/50">
-                    Pick which image to grade, then set its camera motion and lighting. Each dialogue beat with a replacement background image gets its own settings.
-                  </p>
-                  <Field label="Apply cinematic to">
-                    <select
-                      className={inputCls}
-                      value={cinematicTarget}
-                      onChange={(e) => setCinematicTarget(e.target.value)}
-                    >
-                      <option value="__scene__">🖼 Scene background</option>
-                      {(scene.dialogueBeats ?? []).filter((b) => b.background).map((b, i) => (
-                        <option key={b.id} value={b.id}>💬 Beat {i + 1} — {b.text.slice(0, 32)}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  {!(scene.dialogueBeats ?? []).some((b) => b.background) && (
-                    <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[9px] text-paper/55">
-                      Add a <b className="text-cyan-neon">replacement background image</b> to a beat in the Beats tab to give it its own cinematic settings here.
-                    </p>
-                  )}
-                  <CinematicControls
-                    cinematic={cinematicTarget === "__scene__" ? scene.cinematic : scene.dialogueBeats?.find((b) => b.id === cinematicTarget)?.cinematic}
-                    previewUrl={media(cinematicTarget === "__scene__" ? scene.background : (scene.dialogueBeats?.find((b) => b.id === cinematicTarget)?.background ?? scene.background)) ?? (cinematicTarget === "__scene__" ? scene.background : (scene.dialogueBeats?.find((b) => b.id === cinematicTarget)?.background ?? scene.background))}
-                    storyId={story.id}
-                    media={media}
-                    onChange={(next) => {
-                      if (cinematicTarget === "__scene__") {
-                        updateScene(scene.id, { cinematic: next });
-                      } else {
-                        mutate((d) => {
-                          const s = d.scenes.find((x) => x.id === scene.id)!;
-                          s.dialogueBeats!.find((x) => x.id === cinematicTarget)!.cinematic = next;
-                        });
-                      }
-                    }}
-                  />
-                </div>
-                <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] text-paper/55">
-                  Need real music or recorded narration? Use the <b className="text-cyan-neon">Audio</b> tab — music and voice are separate there.
-                </p>
-                </CollapsibleSection>
-                <CollapsibleSection id={`scene-${scene.id}-prose`} title="📜 Prose, pacing & structure">
-                {scene.nodeType === "stage" && (
-                  <p className="mb-2 border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                    🚶 <b>Stage nodes never show prose.</b> Anything typed here stays author-only — put the scene's
-                    opening line in <b>🚶 Walkable Stage → "Caption on scene entry"</b>, and its narration into 💬
-                    show-text markers.
-                  </p>
-                )}
-                <Field label="Prose (narrator)">
-                  <textarea
-                    className={`${inputCls} h-28 font-type`}
-                    value={scene.prose}
-                    onChange={(e) => updateScene(scene.id, { prose: e.target.value })}
-                  />
-                </Field>
-                <label className="flex items-center gap-2 border border-cyan-neon/20 bg-cyan-neon/5 px-2 py-1 text-[10px] uppercase tracking-wider text-paper/60">
-                  <input
-                    type="checkbox"
-                    checked={!!scene.noTypewriter}
-                    onChange={(e) => updateScene(scene.id, { noTypewriter: e.target.checked || undefined })}
-                  />
-                  ⚡ Instant text — disable typewriter (use when MP3 voice is main narration)
-                </label>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                  <input
-                    type="checkbox"
-                    checked={story.startSceneId === scene.id}
-                    onChange={() => commit({ ...story, startSceneId: scene.id })}
-                  />
-                  ★ start scene
-                </label>
-                <Field label="End-of-part route chart (shown when leaving this scene)">
-                  <input
-                    className={inputCls}
-                    placeholder='e.g. "Part Two — The Long Drop" — leave empty for none'
-                    value={scene.partBreak ?? ""}
-                    onChange={(e) => updateScene(scene.id, { partBreak: e.target.value.trim() || undefined })}
-                  />
-                  <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
-                    When the player leaves this scene, the flowchart of the stretch just played is shown — and if
-                    the exit crosses an act boundary, the act's route map follows. Point it at a <b>choke point</b>
-                    the player must pass through: a hub you backtrack through will re-chart on every exit.
-                  </p>
-                </Field>
-                {scene && (
-                  <button
-                    onClick={() => { onPlay(deepClone(story), { fromSceneId: scene.id }); }}
-                    className="w-full border border-neon/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-neon hover:bg-neon/10"
-                    title="Launch the game starting at this scene (fresh world state, does not change your start scene)"
-                  >
-                    ▶ Play from this scene
-                  </button>
-                )}
-                {scene.background.startsWith("video:") && (
-                  <p className="border border-gold/30 bg-gold/5 px-2 py-1 font-type text-[10px] text-gold">
-                    🎥 This scene plays a video cutscene instead of a static background. Manage it above.
-                  </p>
-                )}
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                  <input
-                    type="checkbox"
-                    checked={!!scene.isEnding}
-                    onChange={(e) =>
-                      updateScene(scene.id, {
-                        isEnding: e.target.checked,
-                        endingData: e.target.checked
-                          ? scene.endingData ?? { tier: "victory-silver", headline: "HEADLINE!", recap: "How it ended." }
-                          : scene.endingData,
-                      })
-                    }
-                  />
-                  🏁 this scene is an ending
-                </label>
-                {scene.isEnding && scene.endingData && (
-                  <div className="space-y-1.5 border border-gold/40 p-2">
-                    <Field label="Tier">
-                      <select
-                        className={inputCls}
-                        value={scene.endingData.tier}
-                        onChange={(e) =>
-                          updateScene(scene.id, { endingData: { ...scene.endingData!, tier: e.target.value as never } })
-                        }
-                      >
-                        <option value="victory-gold">victory-gold</option>
-                        <option value="victory-silver">victory-silver</option>
-                        <option value="gameover">gameover</option>
-                      </select>
-                    </Field>
-                    <Field label="Pulp headline">
-                      <input
-                        className={inputCls}
-                        value={scene.endingData.headline}
-                        onChange={(e) => updateScene(scene.id, { endingData: { ...scene.endingData!, headline: e.target.value } })}
-                      />
-                    </Field>
-                    <Field label="Recap">
-                      <textarea
-                        className={`${inputCls} h-16`}
-                        value={scene.endingData.recap}
-                        onChange={(e) => updateScene(scene.id, { endingData: { ...scene.endingData!, recap: e.target.value } })}
-                      />
-                    </Field>
-                    {story.episodes?.length ? (
-                      <>
-                        <label className="flex items-start gap-2 border-t border-gold/20 pt-1.5 text-[10px] text-paper/60">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5"
-                            checked={!!scene.endingData.endsSeason}
-                            onChange={(e) =>
-                              updateScene(scene.id, { endingData: { ...scene.endingData!, endsSeason: e.target.checked || undefined } })
-                            }
-                          />
-                          <span>
-                            Ends the whole season here
-                            <span className="block font-type text-[9px] normal-case text-paper/35">
-                              Off (default): this closes the EPISODE and hands off to "Next time on…". On: a true finale — no next episode is offered.
-                            </span>
-                          </span>
-                        </label>
-                        {(() => {
-                          const owner = episodeOfScene(story, scene.id);
-                          return (
-                            <p className={`font-type text-[9px] ${owner ? "text-paper/40" : "text-crimson"}`}>
-                              {owner
-                                ? `Closes Episode ${owner.number}: ${owner.title}.`
-                                : "⚠ This ending isn't in any episode — assign it on the Episodes tab."}
-                            </p>
-                          );
-                        })()}
-                      </>
-                    ) : null}
-                  </div>
-                )}
-                </CollapsibleSection>
-                <CollapsibleSection
-                  id={`interrogation-${scene.id}`}
-                  title="🎭 Interrogation (composure pressure)"
-                  hint={scene.interrogation ? "active" : undefined}
-                  titleClass="text-gold"
-                >
-                  <p className="font-type text-[9px] leading-snug text-paper/45">
-                    Talking gets tension. Every <b>attitude-tagged reply</b> in this scene (Sultry / Aggressive /
-                    Clever — neutral follow-ups don't count) chips the suspect's <b>composure</b>. At zero their{" "}
-                    <b>trust</b> decides: at/above the crack threshold they <b className="text-gold">BREAK</b> (broke
-                    beat + flag + the big swing); below it they <b className="text-crimson">CLAMP</b> (clamped beat +
-                    flag + the backfire). Composure is derived from the presses you've made — one-shot, save-proof,
-                    ungrindable. Gate the payoff content on the broke flag.
-                  </p>
-                  {!scene.interrogation ? (
-                    <button
-                      onClick={() => {
-                        const ch = story.characters[0]?.id ?? "narrator";
-                        updateScene(scene.id, {
-                          interrogation: {
-                            characterId: ch,
-                            composure: 3,
-                            crackTrust: 0,
-                            brokeBeat: {
-                              id: `iq_broke_${scene.id}`,
-                              characterId: ch,
-                              text: "They finally talk — write what spills.",
-                            },
-                            brokeFlag: `broke_${scene.id}`,
-                            clampedBeat: {
-                              id: `iq_clamp_${scene.id}`,
-                              characterId: ch,
-                              text: "They shut down — write the door closing.",
-                            },
-                            clampFlag: `clamped_${scene.id}`,
-                          },
-                        });
-                      }}
-                      className="w-full border border-gold/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-gold/10"
-                    >
-                      ＋ Enable interrogation on this scene
-                    </button>
-                  ) : (
-                    (() => {
-                      const iq = scene.interrogation!;
-                      const setIq = (patch: Partial<typeof iq>) =>
-                        updateScene(scene.id, { interrogation: { ...iq, ...patch } });
-                      const setBrokeBeat = (patch: Partial<typeof iq.brokeBeat>) =>
-                        setIq({ brokeBeat: { ...iq.brokeBeat, ...patch } });
-                      const swingOf = (cons: Consequences | undefined, characterId: string) => ({
-                        trust: String(cons?.trustChanges?.find((t) => t.characterId === characterId)?.delta ?? ""),
-                        heat: String(cons?.meterChanges?.find((m) => m.meter === "Suspicion")?.delta ?? ""),
-                      });
-                      const setSwing = (key: "brokeConsequences" | "clampConsequences", trust: string, heat: string) => {
-                        const cons: Consequences = {};
-                        if (trust !== "" && Number(trust) !== 0) cons.trustChanges = [{ characterId: iq.characterId, delta: Number(trust) }];
-                        if (heat !== "" && Number(heat) !== 0) cons.meterChanges = [{ meter: "Suspicion", delta: Number(heat) }];
-                        setIq({ [key]: Object.keys(cons).length ? cons : undefined });
-                      };
-                      const brokeSwing = swingOf(iq.brokeConsequences, iq.characterId);
-                      const clampSwing = swingOf(iq.clampConsequences, iq.characterId);
-                      return (
-                      <>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Suspect being pressed">
-                            <select
-                              className={inputCls}
-                              value={iq.characterId}
-                              onChange={(e) =>
-                                setIq({
-                                  characterId: e.target.value,
-                                  brokeBeat: { ...iq.brokeBeat, characterId: e.target.value },
-                                  clampedBeat: iq.clampedBeat ? { ...iq.clampedBeat, characterId: e.target.value } : undefined,
-                                })
-                              }
-                            >
-                              <option value="narrator">🎙 Narrator</option>
-                              {story.characters.map((c) => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                              ))}
-                            </select>
-                          </Field>
-                          <Field label={`Composure (${iq.composure ?? 3} hits to break)`}>
-                            <input
-                              type="number"
-                              min={1}
-                              max={5}
-                              className={inputCls}
-                              value={iq.composure ?? 3}
-                              onChange={(e) => setIq({ composure: Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 3)) })}
-                            />
-                          </Field>
-                        </div>
-                        <Field label={`Crack threshold — trust ≥ this at zero composure = CRACK (now: ${iq.crackTrust ?? 0})`}>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="range"
-                              min={-5}
-                              max={5}
-                              step={1}
-                              className="flex-1 accent-pink-500"
-                              value={iq.crackTrust ?? 0}
-                              onChange={(e) => setIq({ crackTrust: Number(e.target.value) })}
-                            />
-                            <span className="w-6 text-right font-type text-[10px] text-paper/70">{iq.crackTrust ?? 0}</span>
-                          </div>
-                          <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
-                            The risk in the risk/reward: press cold and their trust is below the line, the pressure
-                            rebounds. Charm them up first (trust-positive replies) and it pays.
-                          </p>
-                        </Field>
-                        <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">★ On crack (they talk)</div>
-                          <Field label="Broke beat — plays the moment they break">
-                            <textarea className={`${inputCls} h-14 font-type`} value={iq.brokeBeat.text} onChange={(e) => setBrokeBeat({ text: e.target.value })} />
-                          </Field>
-                          <div className="grid grid-cols-3 gap-1">
-                            <Field label="Broke flag">
-                              <FlagInput value={iq.brokeFlag} suggestions={allFlags} onChange={(v) => setIq({ brokeFlag: v ?? iq.brokeFlag })} />
-                            </Field>
-                            <Field label="Trust swing">
-                              <input type="number" className={inputCls} value={brokeSwing.trust} placeholder="0"
-                                onChange={(e) => setSwing("brokeConsequences", e.target.value, brokeSwing.heat)} />
-                            </Field>
-                            <Field label="Heat swing">
-                              <input type="number" className={inputCls} value={brokeSwing.heat} placeholder="0"
-                                onChange={(e) => setSwing("brokeConsequences", brokeSwing.trust, e.target.value)} />
-                            </Field>
-                          </div>
-                        </div>
-                        <div className="space-y-1.5 border border-crimson/30 bg-crimson/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-crimson">✖ On clamp (they shut down)</div>
-                          <Field label="Clamped beat — plays when they refuse to break (optional text)">
-                            <textarea className={`${inputCls} h-14 font-type`} value={iq.clampedBeat?.text ?? ""} placeholder="Leave empty for no clamped beat (flag + swings still apply)"
-                              onChange={(e) => setIq({ clampedBeat: { id: `iq_clamp_${scene.id}`, characterId: iq.characterId, text: e.target.value } })} />
-                          </Field>
-                          <div className="grid grid-cols-3 gap-1">
-                            <Field label="Clamp flag">
-                              <FlagInput value={iq.clampFlag} suggestions={allFlags} onChange={(v) => setIq({ clampFlag: v || undefined })} />
-                            </Field>
-                            <Field label="Trust swing">
-                              <input type="number" className={inputCls} value={clampSwing.trust} placeholder="0"
-                                onChange={(e) => setSwing("clampConsequences", e.target.value, clampSwing.heat)} />
-                            </Field>
-                            <Field label="Heat swing">
-                              <input type="number" className={inputCls} value={clampSwing.heat} placeholder="0"
-                                onChange={(e) => setSwing("clampConsequences", clampSwing.trust, e.target.value)} />
-                            </Field>
-                          </div>
-                          <p className="font-type text-[9px] leading-snug text-paper/40">
-                            Usually the backfire: Heat +, trust −. Gate the fallout on the clamp flag.
-                          </p>
-                        </div>
-                        <p className="font-type text-[9px] leading-snug text-paper/40">
-                          Presses = this scene's attitude-tagged REPLY choices ({(scene.choices ?? []).filter((c) => c.reply && (c.attitudeTag ?? "Neutral") !== "Neutral").length} found).
-                          Author at least composure many of them, or the validator will warn that composure can never break.
-                        </p>
-                        <button
-                          onClick={() => updateScene(scene.id, { interrogation: undefined })}
-                          className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                        >
-                          ✕ Remove interrogation
-                        </button>
-                      </>
-                      );
-                    })()
-                  )}
-                </CollapsibleSection>
-                <button
-                  onClick={() => deleteScene(scene.id)}
-                  className="w-full border border-crimson/50 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-crimson hover:bg-crimson/15"
-                >
-                  🗑 Delete scene
-                </button>
               </>
             )}
 
