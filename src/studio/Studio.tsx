@@ -231,12 +231,32 @@ function StageFloorEditor({
   entrySceneTitles,
   onEntrySpawn,
   playerScale,
+  onPlayerScale,
+  obstacles,
+  selectedObstacle,
+  onObstacleDraw,
+  onObstacleSelect,
+  onObstacleDelete,
+  floorPoints,
+  onFloorPoints,
 }: {
   background: string;
   media: (v?: string) => string | undefined;
   floor: { top: number; bottom: number };
   spawn: { x: number; y: number };
-  hotspots: { id: string; label: string; cursor: string; bounds: { x: number; y: number; w: number; h: number } }[];
+  hotspots: {
+    id: string;
+    label: string;
+    cursor: string;
+    bounds: { x: number; y: number; w: number; h: number };
+    /** Scene-object art drawn on the plate at the marker — the NPC or prop
+     *  itself, exactly as the game draws it (feet planted on the marker,
+     *  sized by the zone width). Lets you place characters visually instead
+     *  of by a bare label. */
+    image?: string;
+    sheet?: import("./../game/spriteSheet").SpriteSheet;
+    imageFit?: "contain" | "cover";
+  }[];
   /** The player's appearance, so the room preview shows the REAL walker (its
    *  sprite sheet / image / emoji) standing on the plate at spawn — not a
    *  stand-in 🕵️. See docs/adventure-mode.md §"Placing the character". */
@@ -258,6 +278,24 @@ function StageFloorEditor({
   /** sceneId -> title, for the entry-dot labels. */
   entrySceneTitles?: Record<string, string>;
   onEntrySpawn?: (sceneId: string, x: number, y: number) => void;
+  /** In-plate resize: drag the ↕ handle on the walker up/down to change the
+   *  character's size (writes `stage.playerScale`). Called continuously. */
+  onPlayerScale?: (scale: number) => void;
+  /** 🚧 No-go obstacles (walk-around furniture), drawn as hatched crimson
+   *  rectangles on the plate. When "Draw obstacle" is armed, dragging a box
+   *  commits via onObstacleDraw; clicking one selects it (onObstacleSelect),
+   *  and the selected one shows a ✕ (onObstacleDelete). All world-%. */
+  obstacles?: { x: number; y: number; w: number; h: number }[];
+  selectedObstacle?: number | null;
+  onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
+  onObstacleSelect?: (index: number | null) => void;
+  onObstacleDelete?: (index: number) => void;
+  /** 🧭 WALK PATH — the walkable polygon (world-%) when the scene is in path
+   *  mode. With ≥3 points the plate shows the polygon with draggable corner
+   *  points + midpoint ⊕ handles to add more, so you can carve a winding
+   *  path instead of a flat band. */
+  floorPoints?: { x: number; y: number }[];
+  onFloorPoints?: (pts: { x: number; y: number }[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const worldW = Math.max(100, worldWidth ?? 100);
@@ -266,7 +304,21 @@ function StageFloorEditor({
   /** Character size as the GAME draws it (same clamp) — the preview walker
    *  stands on the plate at spawn, so its height must follow playerScale. */
   const pscale = stagePlayerScale({ playerScale });
-  const drag = useRef<null | { kind: "floor-top" | "floor-bottom" | "spawn" | { hsId: string } | { entryId: string }; offX: number }>(null);
+  /** The live scale the ↕ handle is dragging toward (same range as the
+   *  panel slider so the two stay in lock-step). */
+  const SCALE_MIN = 0.3;
+  const SCALE_MAX = 3;
+  const drag = useRef<
+    | { kind: "floor-top" | "floor-bottom" | "spawn"; offX: number }
+    | { kind: "resize"; startY: number; startScale: number }
+    | { kind: { hsId: string }; offX: number }
+    | { kind: { entryId: string }; offX: number }
+    | { kind: { pt: number }; offX: number; offY: number }
+    | null
+  >(null);
+  /** 🧭 Path mode: the walkable zone is an editable polygon (floorPoints). */
+  const pathMode = (floorPoints?.length ?? 0) >= 3;
+  const pathPts = pathMode ? floorPoints! : [];
 
   const pct = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
@@ -281,15 +333,73 @@ function StageFloorEditor({
     y: h.bounds.y + h.bounds.h,
   });
 
-  return (
+  // FULL-SCREEN PREVIEW — the plate opens up to (nearly) the whole window so
+  // characters and props can be placed at real size, not squinted at in the
+  // narrow inspector. Esc closes it.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  // 🚧 OBSTACLE DRAWING — arm the "Draw obstacle" tool, then drag a box on the
+  // plate to fence off walk-around furniture, right next to the floor and the
+  // characters. Drafting is separate from the floor/spawn/marker drag state.
+  const [obstacleMode, setObstacleMode] = useState(false);
+  const [draftOb, setDraftOb] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const draftObStart = useRef<{ x: number; y: number } | null>(null);
+
+  // The player's drawn height as a % of the plate (clamped so the walker can't
+  // blow through the plate or vanish) — reused by the emoji glyph so IT scales
+  // with the resize handle too, not just sprite/image characters.
+  const playerHPct = Math.min(55, 26 * pscale);
+
+  const plate = (
     <div
       ref={ref}
-      className="relative aspect-video w-full touch-none select-none overflow-hidden border border-noir-600"
-      style={bgStyle(media(background) ?? background)}
+      className={`relative w-full touch-none select-none overflow-hidden border border-noir-600 ${expanded ? "h-full" : "aspect-video"}`}
+      style={{ ...bgStyle(media(background) ?? background), containerType: "size" } as React.CSSProperties}
       onPointerDown={(e) => {
-        const kind = (e.target as HTMLElement).dataset.drag;
+        // `closest()` lets a drag start from anywhere inside a draggable —
+        // the art image, the label text, the diamond — not just the exact
+        // element carrying `data-drag`.
+        const dragEl = (e.target as HTMLElement).closest?.("[data-drag]") as HTMLElement | null;
+        const kind = dragEl?.dataset.drag;
+        // 🚧 obstacle tool: a press on empty plate starts a draft box.
+        if (!kind && obstacleMode) {
+          const p = pct(e);
+          const wx = p.x / scale;
+          draftObStart.current = { x: wx, y: p.y };
+          setDraftOb({ x: wx, y: p.y, w: 0, h: 0 });
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+          e.preventDefault();
+          return;
+        }
         if (!kind) return;
-        if (kind.startsWith("hs:")) {
+        if (kind === "resize") {
+          drag.current = { kind: "resize", startY: e.clientY, startScale: pscale };
+        } else if (kind.startsWith("pt:")) {
+          const idx = Number(kind.slice(3));
+          const pt = pathPts[idx];
+          if (!pt) return;
+          drag.current = { kind: { pt: idx }, offX: pt.x - pct(e).x / scale, offY: pt.y - pct(e).y };
+        } else if (kind.startsWith("addpt:")) {
+          // ⊕ on an edge midpoint: insert a vertex right there.
+          const i = Number(kind.slice(6));
+          const a = pathPts[i];
+          const b = pathPts[(i + 1) % pathPts.length];
+          if (!a || !b) return;
+          const mx = round1((a.x + b.x) / 2);
+          const my = round1((a.y + b.y) / 2);
+          const next = [...pathPts.slice(0, i + 1), { x: mx, y: my }, ...pathPts.slice(i + 1)];
+          onFloorPoints?.(next);
+          e.preventDefault();
+          return;
+        } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
           drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x * scale };
@@ -299,14 +409,37 @@ function StageFloorEditor({
         } else {
           drag.current = { kind: kind as "floor-top" | "floor-bottom" | "spawn", offX: 0 };
         }
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+        dragEl!.setPointerCapture?.(e.pointerId);
         e.preventDefault();
       }}
       onPointerMove={(e) => {
+        // 🚧 obstacle draft is live while dragging out a box.
+        if (draftObStart.current) {
+          const p = pct(e);
+          const x0 = draftObStart.current.x;
+          const y0 = draftObStart.current.y;
+          const x1 = clamp(p.x / scale, 0, worldW);
+          const y1 = clamp(p.y, 0, 100);
+          setDraftOb({ x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) });
+          return;
+        }
         if (!drag.current) return;
         const p = pct(e);
         const d = drag.current;
-        if (d.kind === "spawn") {
+        if (d.kind === "resize") {
+          // Drag UP (negative dy) = bigger; drag DOWN = smaller. Sensitivity is
+          // tuned so pulling the handle a quarter-plate doubles the character.
+          const rect = ref.current!.getBoundingClientRect();
+          const dy = (d.startY - e.clientY) / rect.height;
+          const next = clamp(d.startScale * (1 + dy * 4), SCALE_MIN, SCALE_MAX);
+          onPlayerScale?.(Math.round(next * 100) / 100);
+        } else if (typeof d.kind === "object" && "pt" in d.kind) {
+          // 🧭 drag a path vertex: stretch the polygon into a winding path.
+          const dd = d as { kind: { pt: number }; offX: number; offY: number };
+          const nx = clamp(round1(p.x / scale + dd.offX), 0, worldW);
+          const ny = clamp(round1(p.y + dd.offY), 0, 100);
+          onFloorPoints?.(pathPts.map((q, qi) => (qi === dd.kind.pt ? { x: nx, y: ny } : q)));
+        } else if (d.kind === "spawn") {
           onSpawn(round1(Math.min(99, Math.max(1, p.x / scale))), round1(Math.min(100, Math.max(0, p.y))));
         } else if (d.kind === "floor-top") {
           onFloor(round1(Math.min(floor.bottom - 4, Math.max(0, p.y))), floor.bottom);
@@ -326,16 +459,41 @@ function StageFloorEditor({
         }
       }}
       onPointerUp={() => {
+        // 🚧 commit a finished draft box (ignore slivers < 1%).
+        if (draftObStart.current) {
+          const d = draftOb;
+          draftObStart.current = null;
+          setDraftOb(null);
+          if (d && d.w >= 1 && d.h >= 1) {
+            onObstacleDraw?.({ x: round1(d.x), y: round1(d.y), w: round1(d.w), h: round1(d.h) });
+          }
+          return;
+        }
         drag.current = null;
       }}
     >
-      {/* above-floor / below-floor shading */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 bg-black/55" style={{ height: `${floor.top}%` }} />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55" style={{ height: `${100 - floor.bottom}%` }} />
-      <div
-        className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
-        style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
-      />
+      {/* above-floor / below-floor shading — band mode only. In 🧭 path mode
+          the polygon itself is the walkable zone (tinted + outlined below). */}
+      {!pathMode ? (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 top-0 bg-black/55" style={{ height: `${floor.top}%` }} />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55" style={{ height: `${100 - floor.bottom}%` }} />
+          <div
+            className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
+            style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
+          />
+        </>
+      ) : (
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${worldW} 100`} preserveAspectRatio="none" aria-hidden>
+          <path
+            d={pathPts.length ? `M ${pathPts.map((p) => `${p.x} ${p.y}`).join(" L ")} Z` : ""}
+            fill="rgba(255,46,136,0.06)"
+            stroke="rgba(255,46,136,0.55)"
+            strokeWidth={0.5}
+            strokeDasharray="2 2"
+          />
+        </svg>
+      )}
       {/* VIEWPORT FRAMES — on a wide world, the dashed lines mark each
           screen the camera shows; what you see between two lines is what the
           player sees at once. */}
@@ -365,42 +523,181 @@ function StageFloorEditor({
           </span>
         </>
       ) : null}
-      {/* floor edge handles */}
-      <div
-        data-drag="floor-top"
-        className="absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-ns-resize items-center justify-center"
-        style={{ top: `calc(${floor.top}% - 6px)` }}
-        title="Drag: floor top"
-      >
-        <span className="h-1 w-full bg-neon/70" />
-      </div>
-      <div
-        data-drag="floor-bottom"
-        className="absolute inset-x-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
-        style={{ top: `calc(${floor.bottom}% - 6px)` }}
-        title="Drag: floor bottom"
-      >
-        <span className="h-1 w-full bg-neon/70" />
-      </div>
+      {/* floor edge handles — band mode only */}
+      {!pathMode ? (
+        <>
+          <div
+            data-drag="floor-top"
+            className="absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+            style={{ top: `calc(${floor.top}% - 6px)` }}
+            title="Drag: floor top"
+          >
+            <span className="h-1 w-full bg-neon/70" />
+          </div>
+          <div
+            data-drag="floor-bottom"
+            className="absolute inset-x-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+            style={{ top: `calc(${floor.bottom}% - 6px)` }}
+            title="Drag: floor bottom"
+          >
+            <span className="h-1 w-full bg-neon/70" />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* 🧭 path vertices — drag to stretch the path into any shape */}
+          {pathPts.map((p, i) => (
+            <div
+              key={`pt-${i}`}
+              data-drag={`pt:${i}`}
+              className="absolute z-[24] flex h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-move items-center justify-center rounded-full border-2 border-neon bg-noir-950"
+              style={{ left: `${p.x * scale}%`, top: `${p.y}%` }}
+              title={`Path point ${i + 1} — drag to stretch${pathPts.length > 3 ? ", ✕ to remove" : ""}`}
+            >
+              <span className="h-1 w-1 rounded-full bg-neon" />
+              {pathPts.length > 3 ? (
+                <button
+                  className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[8px] leading-none text-crimson hover:bg-crimson/30"
+                  title="Remove this point"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onFloorPoints?.(pathPts.filter((_, j) => j !== i));
+                  }}
+                >
+                  ✕
+                </button>
+              ) : null}
+            </div>
+          ))}
+          {/* ⊕ edge midpoints — click to add a point and pull the path that way */}
+          {pathPts.map((p, i) => {
+            const q = pathPts[(i + 1) % pathPts.length];
+            const mx = (p.x + q.x) / 2;
+            const my = (p.y + q.y) / 2;
+            return (
+              <div
+                key={`mid-${i}`}
+                data-drag={`addpt:${i}`}
+                className="absolute z-[23] flex h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-copy items-center justify-center rounded-full border border-neon/50 bg-noir-950/80 text-[9px] leading-none text-neon/80 hover:bg-neon/20"
+                style={{ left: `${mx * scale}%`, top: `${my}%` }}
+                title="Add a point here"
+              >
+                ⊕
+              </div>
+            );
+          })}
+        </>
+      )}
+      {/* 🚧 NO-GO OBSTACLES — hatched crimson, walk-around furniture. Click to
+          select (ring + ✕ to delete); arm the Draw tool to fence a new one. */}
+      {(obstacles ?? []).map((o, oi) => {
+        const sel = selectedObstacle === oi;
+        return (
+          <div
+            key={oi}
+            className={`absolute z-[14] border-2 ${sel ? "border-crimson bg-crimson/20" : "border-crimson/60 bg-crimson/10"} cursor-pointer`}
+            style={{
+              left: `${o.x * scale}%`,
+              top: `${o.y}%`,
+              width: `${o.w * scale}%`,
+              height: `${o.h}%`,
+              backgroundImage:
+                "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
+            }}
+            title={sel ? "Selected obstacle" : "Click to select, ✕ to delete"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onObstacleSelect?.(sel ? null : oi);
+            }}
+          >
+            <span className="pointer-events-none absolute left-1 top-0.5 font-pulp text-[7px] uppercase tracking-wider text-crimson">
+              🚧 {Math.round(o.w)}×{Math.round(o.h)}
+            </span>
+            {sel ? (
+              <button
+                className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
+                title="Delete obstacle"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onObstacleDelete?.(oi);
+                }}
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+      {/* 🚧 the draft box, live while dragging out a new obstacle */}
+      {draftOb ? (
+        <div
+          className="pointer-events-none absolute z-[14] border-2 border-dashed border-crimson bg-crimson/15"
+          style={{ left: `${draftOb.x * scale}%`, top: `${draftOb.y}%`, width: `${draftOb.w * scale}%`, height: `${draftOb.h}%` }}
+        />
+      ) : null}
       {/* markers — one per hotspot, at its zone base (world-scaled on wide
-          worlds) */}
+          worlds). When the hotspot carries object art (image / sheet), the
+          NPC/prop itself is drawn on the plate — feet planted on the marker,
+          sized by the zone width — EXACTLY as the game draws it, so you place
+          characters by eye, not by a bare label. */}
       {hotspots.map((h) => {
         const m = marker(h);
         const sel = selectedHotspotId === h.id;
+        const hasArt = (h.sheet && sheetDrawable(h.sheet)) || !!h.image;
         return (
-          <div
-            key={h.id}
-            data-drag={`hs:${h.id}`}
-            className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
-              sel ? "text-neon" : "text-gold"
-            }`}
-            style={{ left: `${m.x * scale}%`, top: `${m.y}%` }}
-            title={`${h.label} — drag to move`}
-          >
-            <span className="whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
-              {h.label.slice(0, 22)}
-            </span>
-            <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
+          <div key={h.id} className="contents">
+            {/* the object itself (NPC / prop art), feet on the marker */}
+            {hasArt ? (
+              <div
+                data-drag={`hs:${h.id}`}
+                className={`absolute z-[19] cursor-move ${sel ? "ring-1 ring-neon/70 ring-offset-1 ring-offset-noir-950" : ""}`}
+                style={{ left: `${m.x * scale}%`, top: `${m.y}%`, width: `${h.bounds.w * scale}%`, maxWidth: "none", transform: "translate(-50%,-100%)" }}
+                title={`${h.label} — drag to move`}
+              >
+                {h.sheet && sheetDrawable(h.sheet) ? (
+                  <div style={{ width: "100%", aspectRatio: `${Math.max(1, h.sheet.frameWidth)} / ${Math.max(1, h.sheet.frameHeight)}` }}>
+                    <SheetSprite sheet={h.sheet} anim="loop" fallbacks={["idle", "walk"]} height="100%" className="drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]" />
+                  </div>
+                ) : (
+                  <img
+                    src={assetUrl(media(h.image) ?? h.image)}
+                    alt=""
+                    draggable={false}
+                    className={`w-full select-none object-contain object-bottom drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]`}
+                  />
+                )}
+              </div>
+            ) : null}
+            {/* the reticle + label. For art-carrying hotspots the name tag sits
+                BELOW the feet on the ground so it never covers the character;
+                bare hotspots keep the label above the diamond as before. */}
+            {hasArt ? (
+              <div
+                data-drag={`hs:${h.id}`}
+                className={`absolute z-20 flex -translate-x-1/2 cursor-move flex-col items-center ${sel ? "text-neon" : "text-paper/70"}`}
+                style={{ left: `${m.x * scale}%`, top: `${m.y}%` }}
+                title={`${h.label} — drag to move`}
+              >
+                <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
+                <span className="mt-0.5 max-w-[24cqw] truncate rounded bg-noir-950/70 px-1 font-pulp text-[7px] uppercase tracking-wider">
+                  {h.label.slice(0, 22)}
+                </span>
+              </div>
+            ) : (
+              <div
+                data-drag={`hs:${h.id}`}
+                className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
+                  sel ? "text-neon" : "text-gold"
+                }`}
+                style={{ left: `${m.x * scale}%`, top: `${m.y}%` }}
+                title={`${h.label} — drag to move`}
+              >
+                <span className="whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
+                  {h.label.slice(0, 22)}
+                </span>
+                <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
+              </div>
+            )}
           </div>
         );
       })}
@@ -426,9 +723,21 @@ function StageFloorEditor({
       <div
         data-drag="spawn"
         className="absolute z-30 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
-        style={{ left: `${spawn.x * scale}%`, top: `${spawn.y}%`, height: `${Math.min(55, 26 * pscale)}%` }}
+        style={{ left: `${spawn.x * scale}%`, top: `${spawn.y}%`, height: `${playerHPct}%` }}
         title="Drag: character spawn point"
       >
+        {/* ↕ RESIZE — drag up/down to scale the character live, straight on the
+            plate (writes stage.playerScale). Up = bigger, down = smaller. */}
+        <div
+          data-drag="resize"
+          className="absolute -right-2.5 -top-1.5 z-40 flex h-5 w-5 cursor-ns-resize items-center justify-center rounded-full border border-cyan-neon bg-noir-950/95 text-cyan-neon shadow-[0_0_8px_rgba(42,217,217,0.4)]"
+          title="Drag ↕ to resize the character"
+        >
+          <span className="text-[11px] font-bold leading-none">↕</span>
+        </div>
+        <span className="absolute -left-1.5 -top-1.5 z-40 rounded border border-noir-600 bg-noir-950/95 px-1 font-pulp text-[8px] uppercase tracking-wider text-cyan-neon">
+          {pscale.toFixed(2)}×
+        </span>
         {player && sheetDrawable(player.sheet) ? (
           <SheetSprite sheet={player.sheet!} anim="idle" fallbacks={["walk", "loop"]} height="100%" freezeOnFallback />
         ) : player?.image && !player.image.startsWith("emoji:") ? (
@@ -439,13 +748,108 @@ function StageFloorEditor({
             draggable={false}
           />
         ) : (
-          <span className="text-3xl leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]">
+          <span
+            className="block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]"
+            style={{ fontSize: `${playerHPct * 0.8}cqh` }}
+          >
             {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
           </span>
         )}
         <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
       </div>
     </div>
+  );
+
+  const obstacleToolBtn = (
+    <button
+      onClick={() => {
+        setObstacleMode((v) => !v);
+        if (!obstacleMode) onObstacleSelect?.(null);
+      }}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        obstacleMode ? "border-crimson bg-crimson/20 text-crimson" : "border-crimson/40 bg-noir-900 text-crimson/80 hover:bg-crimson/10"
+      }`}
+      title={obstacleMode ? "Click to stop drawing obstacles" : "Arm the draw tool, then drag a box on the plate to fence off walk-around furniture"}
+    >
+      🚧 Draw obstacle{obstacleMode ? " (on)" : ""}
+    </button>
+  );
+
+  // 🧭 Toggle the walkable zone between a flat band and an editable path
+  // polygon. Switching TO path seeds a rectangle from the current band; the
+  // point handles then stretch it into any shape. Switching back collapses it
+  // to the polygon's bounding band.
+  const pathToolBtn = (
+    <button
+      onClick={() => {
+        if (pathMode) {
+          onFloorPoints?.([]);
+        } else {
+          onFloorPoints?.([
+            { x: 0, y: floor.top },
+            { x: worldW, y: floor.top },
+            { x: worldW, y: floor.bottom },
+            { x: 0, y: floor.bottom },
+          ]);
+        }
+      }}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        pathMode ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
+      }`}
+      title={pathMode ? "Back to a flat floor band" : "Turn the walkable zone into an editable path — stretch its points into any shape"}
+    >
+      🧭 {pathMode ? "Path (on)" : "Make path"}
+    </button>
+  );
+
+  return (
+    <>
+      {expanded ? (
+        <div
+          className="fixed inset-0 z-[100] flex flex-col bg-noir-950/[0.97] p-3 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setExpanded(false);
+          }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="font-pulp text-[11px] uppercase tracking-widest text-cyan-neon">
+              🚶 Walkable Stage — full-screen preview
+            </span>
+            <div className="flex items-center gap-3">
+              <span className="hidden font-type text-[10px] text-paper/50 xl:block">
+                drag floor edges · spawn · markers · <b className="text-cyan-neon">↕</b> resize · <b className="text-neon">🧭</b> path · <b className="text-crimson">🚧</b> obstacles
+              </span>
+              {pathToolBtn}
+              {obstacleToolBtn}
+              <button
+                onClick={() => setExpanded(false)}
+                className="border border-gold/40 bg-noir-900 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
+              >
+                ✕ Close (Esc)
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1">{plate}</div>
+        </div>
+      ) : (
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/40">Stage plate</span>
+            <div className="flex items-center gap-1.5">
+              {pathToolBtn}
+              {obstacleToolBtn}
+              <button
+                onClick={() => setExpanded(true)}
+                className="border border-cyan-neon/40 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+              >
+                ⛶ Full screen
+              </button>
+            </div>
+          </div>
+          {plate}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -9027,9 +9431,12 @@ function StudioInner({
                     ) : (
                       <>
                         <p className="font-type text-[10px] leading-snug text-paper/55">
-                          Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. Markers sit where
-                          the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
-                          narrative is the caption below + 💬 show-text markers.
+                          Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. The <b className="text-cyan-neon">↕</b>{" "}
+                          handle on the character's head resizes it live. <b className="text-neon">🧭 Make path</b> turns the
+                          walkable zone into a polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding
+                          path. Arm <b className="text-crimson">🚧 Draw obstacle</b> and drag a box to fence off furniture.
+                          Markers sit where the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a
+                          stage node: narrative is the caption below + 💬 show-text markers.
                         </p>
                         <StageFloorEditor
                           background={scene.background}
@@ -9039,13 +9446,42 @@ function StudioInner({
                           }
                           spawn={{ x: scene.stage.spawn?.x ?? 50, y: scene.stage.spawn?.y ?? 90 }}
                           player={{
-                            image: scene.stage.playerImage,
-                            sheet: scene.stage.playerSheet,
+                            // Resolve exactly as the game does (Game.tsx): a
+                            // scene's own sprite/image wins, otherwise the
+                            // story-wide Player character (In-game theme) —
+                            // so Full Throttle's Ben walk sheet shows here.
+                            image: scene.stage.playerImage ?? story.playerSprite?.image,
+                            sheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
                           }}
-                          hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds }))}
+                          hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds, image: h.image, sheet: h.sheet, imageFit: h.imageFit }))}
                           selectedHotspotId={null}
                           worldWidth={scene.stage.worldWidth}
                           playerScale={scene.stage.playerScale}
+                          onPlayerScale={(s) =>
+                            updateScene(scene.id, {
+                              stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
+                            })
+                          }
+                          obstacles={scene.stage.obstacles ?? []}
+                          selectedObstacle={selectedBarrier}
+                          onObstacleSelect={(i) => setSelectedBarrier(i)}
+                          onObstacleDelete={(i) => {
+                            const obs = scene.stage!.obstacles ?? [];
+                            const next = obs.filter((_, j) => j !== i);
+                            updateScene(scene.id, { stage: { ...scene.stage!, obstacles: next.length ? next : undefined } });
+                            setSelectedBarrier(null);
+                          }}
+                          onObstacleDraw={(bounds) => {
+                            const obs = scene.stage!.obstacles ?? [];
+                            updateScene(scene.id, { stage: { ...scene.stage!, obstacles: [...obs, bounds] } });
+                            setSelectedBarrier(obs.length);
+                          }}
+                          floorPoints={scene.stage.floorPoints ?? []}
+                          onFloorPoints={(pts) =>
+                            updateScene(scene.id, {
+                              stage: { ...scene.stage!, floorPoints: pts.length >= 3 ? pts : undefined },
+                            })
+                          }
                           entrySpawns={scene.stage.entrySpawns}
                           entrySceneTitles={Object.fromEntries(story.scenes.map((s) => [s.id, s.title]))}
                           onEntrySpawn={(fromId, x, y) =>
@@ -11197,8 +11633,8 @@ function StudioInner({
                   spawnMode={zoneMode === "spawn" && scene.nodeType === "stage"}
                   spawn={scene.stage?.spawn ?? { x: 50, y: 88 }}
                   player={{
-                    ...(scene.stage?.playerImage ? { image: scene.stage.playerImage } : {}),
-                    ...(scene.stage?.playerSheet ? { sheet: scene.stage.playerSheet } : {}),
+                    image: scene.stage?.playerImage ?? story.playerSprite?.image,
+                    sheet: scene.stage?.playerSheet ?? story.playerSprite?.sheet,
                     ...(scene.stage?.playerScale ? { scale: scene.stage.playerScale } : {}),
                   }}
                   onSpawnMove={(p) => {

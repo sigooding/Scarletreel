@@ -84,6 +84,13 @@ import {
   stagePlayerScale,
   stageSpeedScale,
   stageSpriteScale,
+  stageWalkPoly,
+  stageWalkDepth,
+  pointInWalkPoly,
+  clampToWalkPoly,
+  stageMarkerPointPoly,
+  stageBlockedPoly,
+  stageRoutePoly,
   validateStory,
   resolveVerbAction,
   verbsForScene,
@@ -870,6 +877,46 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: marker y is the zone's base clamped into the floor", m.y === 60, m); // 30+30=60 = floor top
   const low: Hotspot = { ...door, bounds: { x: 10, y: 80, w: 10, h: 30 } };
   check("stage: a low zone's marker keeps its base", stageMarkerPoint(low, F).y === 92, stageMarkerPoint(low, F));
+
+  // WALK PATH — a polygon replaces the flat band as the walkable zone.
+  const poly = [
+    { x: 10, y: 80 },
+    { x: 90, y: 80 },
+    { x: 60, y: 40 },
+    { x: 30, y: 40 },
+  ];
+  check("walk-path: a band room still resolves to its rectangle", (() => {
+    const p = stageWalkPoly({ floor: F }, 100);
+    return p.length === 4 && p[0].x === 0 && p[1].x === 100 && p[1].y === 60 && p[2].y === 92;
+  })());
+  check("walk-path: floorPoints define the polygon", (() => {
+    const p = stageWalkPoly({ floorPoints: poly }, 100);
+    return p.length === 4 && p[2].x === 60 && p[2].y === 40;
+  })());
+  check("walk-path: depth band is the polygon's y-extent", (() => {
+    const d = stageWalkDepth(poly);
+    return d.top === 40 && d.bottom === 80;
+  })());
+  check("walk-path: a point inside the polygon is walkable", pointInWalkPoly(50, 60, poly));
+  check("walk-path: a point outside the polygon is not", !pointInWalkPoly(50, 95, poly));
+  check("walk-path: a point inside is kept, clamped to the world", (() => {
+    const c = clampToWalkPoly(50, 60, poly, 100);
+    return c.x === 50 && c.y === 60;
+  })());
+  check("walk-path: a point outside snaps to the nearest boundary", (() => {
+    const c = clampToWalkPoly(50, 95, poly, 100);
+    return c.y < 82 && c.y >= 79; // snaps up to the bottom edge (y≈80)
+  })());
+  check("walk-path: blocked treats outside-the-path as a wall", stageBlockedPoly(50, 95, [], poly, 16 / 9, 100));
+  check("walk-path: a route crosses the path, not outside it", (() => {
+    const r = stageRoutePoly({ x: 15, y: 79 }, { x: 85, y: 79 }, [], poly, stageWalkDepth(poly), STAGE_GRID_STEP, 100);
+    return r.length === 1 && Math.abs(r[0].x - 85) < 1e-9;
+  })());
+  check("walk-path: a marker clamps into the polygon", (() => {
+    const hm: Hotspot = { ...door, bounds: { x: 48, y: 20, w: 4, h: 80 } };
+    const mm = stageMarkerPointPoly(hm, poly, 100);
+    return mm.y >= 40 && mm.y <= 80;
+  })());
 
   // Reach check on the marker point.
   check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));

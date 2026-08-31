@@ -7,18 +7,19 @@ import {
   STAGE_GRID_STEP,
   VERB_ICON,
   VERB_LABEL,
-  clampToFloor,
+  clampToWalkPoly,
   hotspotAtPoint,
   posReachesMarker,
   stageAtWorldEdge,
-  stageBlocked,
+  stageBlockedPoly,
   stageCamX,
-  stageFloor,
-  stageMarkerPoint,
+  stageMarkerPointPoly,
   stagePlayerScale,
-  stageRoute,
+  stageRoutePoly,
   stageSpeedScale,
   stageSpriteScale,
+  stageWalkDepth,
+  stageWalkPoly,
   stepStagePos,
 } from "../logic";
 import type { VerbId } from "../logic";
@@ -53,6 +54,13 @@ import { presetStyle } from "./animation";
  * speed is uniform across the plate. `active` is false while a conversation
  * plays or an overlay is open: movement stops and the markers hide.
  */
+
+/** An SVG path string for a walk polygon (world-%). Used for the subtle
+ *  walkable-path tint on path rooms. */
+function polyPathD(poly: { x: number; y: number }[]): string {
+  if (!poly.length) return "";
+  return `M ${poly.map((p) => `${p.x} ${p.y}`).join(" L ")} Z`;
+}
 
 const HINT_RADIUS = 16; // scene-width % — labels fade in within this of a marker
 
@@ -126,11 +134,18 @@ export function Stage({
   edgeUnlocked?: (edge: "left" | "right") => boolean;
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
-  const floor = stageFloor(settings);
   /** WIDE WORLD: room width in viewport-% (100 = single screen). */
   const worldW = Math.max(100, settings.worldWidth ?? 100);
   const wide = worldW > 100;
-  const spawn = clampToFloor(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, floor, worldW);
+  // The walkable region: a path polygon when the scene authors one, else the
+  // flat floor band as a rectangle. `floor` is its y-extent (depth band) —
+  // sprite scale / speed read it, so band rooms are pixel-identical to before.
+  const poly = stageWalkPoly(settings, worldW);
+  const floor = stageWalkDepth(poly);
+  // A scene with an authored path polygon walks THAT path instead of a flat
+  // band; band rooms keep the exact old rendering.
+  const usingPath = (settings.floorPoints?.length ?? 0) >= 3;
+  const spawn = clampToWalkPoly(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, poly, worldW);
   const speed = settings.speed ?? STAGE2D_DEFAULT_SPEED;
   const reach = settings.reach ?? STAGE2D_DEFAULT_REACH;
   const keyboard = settings.keyboard !== false;
@@ -351,20 +366,20 @@ export function Stage({
           // Wall sliding: if the diagonal is blocked, take whichever single
           // axis still works, so brushing a counter skims along it instead of
           // pinning the character in place.
-          if (obstacles.length && stageBlocked(want.x, want.y, obstacles, floor, a, worldW)) {
+          if (obstacles.length && stageBlockedPoly(want.x, want.y, obstacles, poly, a, worldW)) {
             const slideX = { x: want.x, y: cur.y };
             const slideY = { x: cur.x, y: want.y };
-            if (!stageBlocked(slideX.x, slideX.y, obstacles, floor, a, worldW)) next = slideX;
-            else if (!stageBlocked(slideY.x, slideY.y, obstacles, floor, a, worldW)) next = slideY;
+            if (!stageBlockedPoly(slideX.x, slideX.y, obstacles, poly, a, worldW)) next = slideX;
+            else if (!stageBlockedPoly(slideY.x, slideY.y, obstacles, poly, a, worldW)) next = slideY;
           } else {
-            next = clampToFloor(want.x, want.y, floor, worldW);
+            next = clampToWalkPoly(want.x, want.y, poly, worldW);
           }
           if (kb !== 0 || vf !== 0) setDir(dirOf(kb, vf));
           moved = next.x !== cur.x || next.y !== cur.y;
         } else if (targetRef.current) {
           const t = targetRef.current;
           const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings), dt, a);
-          next = clampToFloor(r.x, r.y, floor, worldW);
+          next = clampToWalkPoly(r.x, r.y, poly, worldW);
           if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
           moved = true;
           if (r.arrived) arrived = true;
@@ -402,7 +417,7 @@ export function Stage({
         // usually arrive because they clicked the marker.
         for (const hs of hotspotsRef.current) {
           if (firedRef.current.has(hs.id)) continue;
-          const m = stageMarkerPoint(hs, floor, worldW);
+          const m = stageMarkerPointPoly(hs, poly, worldW);
           if (!posReachesMarker(next, m, reach, a)) continue;
           // A coin room is verb-first: only the marker the player actually
           // aimed at fires, and it fires with the verb they picked. Brushing
@@ -422,7 +437,7 @@ export function Stage({
         // Which marker is "near" (for proximity labels)?
         let best: { id: string; d: number } | null = null;
         for (const hs of hotspotsRef.current) {
-          const m = stageMarkerPoint(hs, floor, worldW);
+          const m = stageMarkerPointPoly(hs, poly, worldW);
           const a2 = a;
           const d = Math.hypot(next.x - m.x, (next.y - m.y) * a2);
           if (!best || d < best.d) best = { id: hs.id, d };
@@ -502,7 +517,7 @@ export function Stage({
         itemId: v === "use" ? ctx?.itemId ?? heldRef.current ?? undefined : undefined,
       };
     }
-    const m = stageMarkerPoint(hs, floor, worldW);
+    const m = stageMarkerPointPoly(hs, poly, worldW);
     const a = aspect();
     const cur = posRef.current;
     const dx = cur.x - m.x;
@@ -519,7 +534,7 @@ export function Stage({
       ty = m.y + ((dy / dist) * stop) / a;
     }
     firedRef.current.clear();
-    const route = stageRoute(cur, { x: tx, y: ty }, obstacles, floor, STAGE_GRID_STEP, worldW);
+    const route = stageRoutePoly(cur, { x: tx, y: ty }, obstacles, poly, floor, STAGE_GRID_STEP, worldW);
     if (route.length) {
       setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur.x, m.y - cur.y));
       if (followRoute(route)) return;
@@ -725,7 +740,7 @@ export function Stage({
         setMenu(null);
         setMenuUse(null);
         const p = platePoint(e);
-        const floorPoint = clampToFloor(p.x, p.y, floor, worldW);
+        const floorPoint = clampToWalkPoly(p.x, p.y, poly, worldW);
         audio.click();
         setRipple({ x: floorPoint.x, y: floorPoint.y, key: Date.now() });
         // Clicking a zone walks to that zone's marker; empty floor walks
@@ -734,7 +749,7 @@ export function Stage({
         const hit = hotspotAtPoint(hotspotsRef.current, p);
         if (hit) {
           if (objectMenu && !coinOn) {
-            const m = stageMarkerPoint(hit, floor, worldW);
+            const m = stageMarkerPointPoly(hit, poly, worldW);
             setMenu({ hs: hit, x: m.x, y: m.y });
           } else {
             walkToMarker(hit);
@@ -743,7 +758,7 @@ export function Stage({
           // Empty floor: just walk — routed around the furniture. The fired
           // set persists, so brushed-past markers don't re-rattle on every
           // stroll.
-          const route = stageRoute(posRef.current, floorPoint, obstacles, floor, STAGE_GRID_STEP, worldW);
+          const route = stageRoutePoly(posRef.current, floorPoint, obstacles, poly, floor, STAGE_GRID_STEP, worldW);
           if (route.length) {
             routeRef.current = route.slice(1);
             targetRef.current = { x: route[0].x, y: route[0].y };
@@ -778,17 +793,33 @@ export function Stage({
         ) : null}
 
         {/* the floor — two soft edge-shades so the walkable band reads without
-            painting a obvious rectangle over the art */}
-        <div
-          className="pointer-events-none absolute inset-x-0"
-          style={{ top: 0, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute inset-x-0"
-          style={{ top: `${floor.bottom}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
-          aria-hidden
-        />
+            painting a obvious rectangle over the art. A path-polygon room
+            instead darkens everything OUTSIDE the path and tints the path
+            itself, so the winding walkable zone is what reads. */}
+        {usingPath ? (
+          <svg
+            className="pointer-events-none absolute inset-0 h-full w-full"
+            viewBox={`0 0 ${worldW} 100`}
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            <path d={polyPathD(poly)} fill="rgba(42,217,217,0.07)" stroke="rgba(42,217,217,0.30)" strokeWidth={0.6} strokeDasharray="2.5 2" />
+            <path d={`M 0 0 H ${worldW} V 100 H 0 Z ${polyPathD(poly)}`} fill="rgba(0,0,0,0.30)" fillRule="evenodd" />
+          </svg>
+        ) : (
+          <>
+            <div
+              className="pointer-events-none absolute inset-x-0"
+              style={{ top: 0, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
+              aria-hidden
+            />
+            <div
+              className="pointer-events-none absolute inset-x-0"
+              style={{ top: `${floor.bottom}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
+              aria-hidden
+            />
+          </>
+        )}
 
         {/* walk target ripple */}
         {ripple && active && (
@@ -805,7 +836,7 @@ export function Stage({
             SEPARATE plate-anchored elements so percent widths stay relative to
             the plate; both depth-sort by the marker's y. */}
         {hotspots.map((hs) => {
-          const m = stageMarkerPoint(hs, floor, worldW);
+          const m = stageMarkerPointPoly(hs, poly, worldW);
           const ok = unlocked(hs);
           const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, m, HINT_RADIUS, aspect())));
           const z = 50 + Math.round(m.y);

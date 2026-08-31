@@ -964,6 +964,14 @@ export interface StageSettings {
    *  screen. Default { top: 62, bottom: 94 }. Clicks outside the band walk
    *  to the nearest edge of it. */
   floor?: { top: number; bottom: number };
+  /** WALK PATH — an arbitrary walkable polygon instead of the flat band.
+   *  When ≥3 points are set, the walkable zone IS this polygon (world-%:
+   *  x spans 0–worldWidth, y spans 0–100), so you can carve a winding path,
+   *  a corridor that turns a corner, an L-shaped boardwalk — anything the
+   *  plain band can't. Perspective depth still reads from the polygon's
+   *  y-extent (bottom = near, top = far). Overrides `floor` for movement;
+   *  `floor` (or the polygon's bounds) still drives the depth scale. */
+  floorPoints?: { x: number; y: number }[];
   /** Perspective: how much SMALLER the character is drawn at the top of the
    *  floor vs the bottom, 0–0.9 (default 0.35). 0 = flat, no depth scaling. */
   depthScale?: number;

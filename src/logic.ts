@@ -1358,6 +1358,122 @@ export function stageMarkerPoint(
   return clampToFloor(h.bounds.x + h.bounds.w / 2, h.bounds.y + h.bounds.h, floor, width);
 }
 
+/* --------------------- walk path (polygon walkable zone) ----------------
+ * A stage scene may replace the flat floor band with an arbitrary polygon
+ * (`floorPoints`). Everything below turns that polygon into the walkable
+ * region: point-in-polygon for walkability, nearest-boundary for click
+ * clamping, and a depth band (the polygon's y-extent) so perspective still
+ * reads "big up close, small in the distance". The plain band is just the
+ * special case of a full-width rectangle, so band rooms behave exactly as
+ * before. */
+
+export interface WalkPoint {
+  x: number;
+  y: number;
+}
+
+/** The walkable polygon of a stage scene (world-%). With `floorPoints` (≥3
+ *  points) it IS that polygon; otherwise it's the classic floor band as a
+ *  full-width rectangle. Always returns a closed, ≥3-point ring. */
+export function stageWalkPoly(settings: StageSettings | undefined, width = 100): WalkPoint[] {
+  const pts = settings?.floorPoints;
+  if (pts && pts.length >= 3) return pts.map((p) => ({ x: p.x, y: p.y }));
+  const w = Math.max(100, width);
+  const f = stageFloor(settings);
+  return [
+    { x: 0, y: f.top },
+    { x: w, y: f.top },
+    { x: w, y: f.bottom },
+    { x: 0, y: f.bottom },
+  ];
+}
+
+/** The depth band for perspective scaling: the polygon's y-extent (bottom =
+ *  near, top = far). For a band room this equals `stageFloor`, so sprite
+ *  scale/speed are unchanged. */
+export function stageWalkDepth(poly: WalkPoint[]): { top: number; bottom: number } {
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const p of poly) {
+    if (p.y < top) top = p.y;
+    if (p.y > bottom) bottom = p.y;
+  }
+  if (!Number.isFinite(top)) return { top: 0, bottom: 100 };
+  return { top: clamp(top, 0, 98), bottom: clamp(bottom, 2, 100) };
+}
+
+/** Squared distance from a point to a line segment (raw units). */
+function segDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const qx = ax + t * dx;
+  const qy = ay + t * dy;
+  return (px - qx) * (px - qx) + (py - qy) * (py - qy);
+}
+
+/** Ray-cast point-in-polygon, with a small boundary tolerance so the walker
+ *  can stand ON the path's edge (an agent radius, not a point). */
+export function pointInWalkPoly(x: number, y: number, poly: WalkPoint[]): boolean {
+  if (!poly || poly.length < 3) return true;
+  const EPS = 0.6;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (segDist2(x, y, a.x, a.y, b.x, b.y) <= EPS * EPS) return true;
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/** Clamp a point into the walkable polygon: if it's already walkable, keep
+ *  it (x kept off the world edges); otherwise snap to the nearest point on
+ *  the polygon's boundary — so a click outside the path walks to the closest
+ *  spot the character can stand. */
+export function clampToWalkPoly(
+  x: number,
+  y: number,
+  poly: WalkPoint[],
+  width = 100
+): { x: number; y: number } {
+  const w = Math.max(100, width);
+  const cx = clamp(x, 1, w - 1);
+  if (pointInWalkPoly(cx, y, poly)) return { x: cx, y };
+  let best = { x: cx, y: clamp(y, 0, 100) };
+  let bestD = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 === 0 ? 0 : ((x - a.x) * dx + (y - a.y) * dy) / len2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = a.x + t * dx;
+    const qy = a.y + t * dy;
+    const d = (qx - x) * (qx - x) + (qy - y) * (qy - y);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: qx, y: qy };
+    }
+  }
+  return best;
+}
+
+/** Where a hotspot's stage MARKER stands when the walkable zone is a path
+ *  polygon: bottom-centre of the zone, snapped into the polygon. */
+export function stageMarkerPointPoly(
+  h: Hotspot,
+  poly: WalkPoint[],
+  width = 100
+): { x: number; y: number } {
+  return clampToWalkPoly(h.bounds.x + h.bounds.w / 2, h.bounds.y + h.bounds.h, poly, width);
+}
+
 /** The stage camera for a wide world: follows the walker, clamped so the
  *  camera never shows past the world's ends. Returns the left edge of the
  *  viewport in world-% (0 on a single-screen room, where nothing moves). */
@@ -1397,21 +1513,34 @@ export interface StageObstacle {
   h: number;
 }
 
+/** The floor band as a full-width rectangle polygon (world %). */
+function bandPoly(floor: { top: number; bottom: number }, width: number): WalkPoint[] {
+  const w = Math.max(100, width);
+  return [
+    { x: 0, y: floor.top },
+    { x: w, y: floor.top },
+    { x: w, y: floor.bottom },
+    { x: 0, y: floor.bottom },
+  ];
+}
+
 /** Is this point inside an obstacle (inflated by the character's radius)?
  *
+ *  `poly` is the walkable region (a path polygon, or the floor band as a
+ *  rectangle): a point outside it is blocked just like a point inside a wall.
  *  `aspect` (plate width ÷ height) converts the radius from the width-% the
  *  author thinks in to the height-% the y axis is measured in — without it the
  *  clearance is lopsided and the sprite clips the top and bottom of furniture
  *  it neatly avoids at the sides. */
-export function stageBlocked(
+export function stageBlockedPoly(
   x: number,
   y: number,
   obstacles: StageObstacle[] | undefined,
-  floor?: { top: number; bottom: number },
+  poly: WalkPoint[] | undefined,
   aspect = 16 / 9,
   width = 100
 ): boolean {
-  if (floor && (y < floor.top || y > floor.bottom)) return true;
+  if (poly && !pointInWalkPoly(x, y, poly)) return true;
   const w = Math.max(100, width);
   if (x < 0 || x > w) return true;
   const padX = STAGE_AGENT_RADIUS;
@@ -1422,8 +1551,38 @@ export function stageBlocked(
   return false;
 }
 
+/** Band form of stageBlockedPoly — kept for the flat-floor call sites and the
+ *  engine tests. Delegates through the same polygon logic. */
+export function stageBlocked(
+  x: number,
+  y: number,
+  obstacles: StageObstacle[] | undefined,
+  floor?: { top: number; bottom: number },
+  aspect = 16 / 9,
+  width = 100
+): boolean {
+  return stageBlockedPoly(x, y, obstacles, floor ? bandPoly(floor, width) : undefined, aspect, width);
+}
+
 /** Walk the segment in small steps and ask whether every one is clear. Used
  *  for string-pulling and for keyboard wall-sliding. */
+export function stageLineClearPoly(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  obstacles: StageObstacle[] | undefined,
+  poly: WalkPoint[] | undefined,
+  aspect = 16 / 9,
+  width = 100
+): boolean {
+  const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, (b.y - a.y) * aspect) / 0.75));
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    if (stageBlockedPoly(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, obstacles, poly, aspect, width)) return false;
+  }
+  return true;
+}
+
+/** Band form of stageLineClearPoly. */
 export function stageLineClear(
   a: { x: number; y: number },
   b: { x: number; y: number },
@@ -1432,32 +1591,28 @@ export function stageLineClear(
   aspect = 16 / 9,
   width = 100
 ): boolean {
-  const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, (b.y - a.y) * aspect) / 0.75));
-  for (let i = 0; i <= steps; i++) {
-    const f = i / steps;
-    if (stageBlocked(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, obstacles, floor, aspect, width)) return false;
-  }
-  return true;
+  return stageLineClearPoly(a, b, obstacles, floor ? bandPoly(floor, width) : undefined, aspect, width);
 }
 
 /** Nearest walkable grid node to a point (spiral search outward). A click
  *  that lands inside a wall still has to go SOMEWHERE. */
-function nearestFree(
+function nearestFreePoly(
   x: number,
   y: number,
   obstacles: StageObstacle[] | undefined,
-  floor: { top: number; bottom: number },
+  poly: WalkPoint[] | undefined,
+  depth: { top: number; bottom: number },
   step: number,
   width = 100
 ): { x: number; y: number } | null {
-  if (!stageBlocked(x, y, obstacles, floor, 16 / 9, width)) return { x, y };
+  if (!stageBlockedPoly(x, y, obstacles, poly, 16 / 9, width)) return { x, y };
   for (let ring = 1; ring <= 24; ring++) {
     for (let dy = -ring; dy <= ring; dy++) {
       for (let dx = -ring; dx <= ring; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
         const nx = clamp(x + dx * step, 1, width - 1);
-        const ny = clamp(y + dy * step, floor.top, floor.bottom);
-        if (!stageBlocked(nx, ny, obstacles, floor, 16 / 9, width)) return { x: nx, y: ny };
+        const ny = clamp(y + dy * step, depth.top, depth.bottom);
+        if (!stageBlockedPoly(nx, ny, obstacles, poly, 16 / 9, width)) return { x: nx, y: ny };
       }
     }
   }
@@ -1468,41 +1623,44 @@ function nearestFree(
  *  can skip in a straight line is dropped, so a grid route becomes the two or
  *  three corners a human would walk.
  *
- *  Returns the waypoints to walk (excluding the start) or an empty array when
- *  no route exists (fully walled off) — the caller should then refuse the
- *  click rather than walk through the furniture. */
-export function stageRoute(
+ *  `poly` is the walkable region (path polygon or band rectangle); `depth`
+ *  is its y-extent (the grid rows span it). Returns the waypoints to walk
+ *  (excluding the start) or an empty array when no route exists (fully walled
+ *  off) — the caller should then refuse the click rather than walk through
+ *  the furniture. */
+export function stageRoutePoly(
   from: { x: number; y: number },
   to: { x: number; y: number },
   obstacles: StageObstacle[] | undefined,
-  floor: { top: number; bottom: number },
+  poly: WalkPoint[] | undefined,
+  depth: { top: number; bottom: number },
   step = STAGE_GRID_STEP,
   width = 100
 ): { x: number; y: number }[] {
   if (!obstacles?.length) {
     // No furniture: the straight line is the route (and it is already optimal).
-    return stageLineClear(from, to, obstacles, floor, 16 / 9, width) ? [{ x: to.x, y: to.y }] : [];
+    return stageLineClearPoly(from, to, obstacles, poly, 16 / 9, width) ? [{ x: to.x, y: to.y }] : [];
   }
-  const start = nearestFree(from.x, from.y, obstacles, floor, step, width);
-  const goal = nearestFree(to.x, to.y, obstacles, floor, step, width);
+  const start = nearestFreePoly(from.x, from.y, obstacles, poly, depth, step, width);
+  const goal = nearestFreePoly(to.x, to.y, obstacles, poly, depth, step, width);
   if (!start || !goal) return [];
-  if (stageLineClear(start, goal, obstacles, floor, 16 / 9, width)) return [{ x: goal.x, y: goal.y }];
+  if (stageLineClearPoly(start, goal, obstacles, poly, 16 / 9, width)) return [{ x: goal.x, y: goal.y }];
 
   const w = Math.max(100, width);
   const cols = Math.floor(w / step) + 1;
-  const rows = Math.floor((floor.bottom - floor.top) / step) + 1;
+  const rows = Math.floor((depth.bottom - depth.top) / step) + 1;
   const idx = (c: number, r: number) => r * cols + c;
-  const toXY = (c: number, r: number) => ({ x: c * step, y: floor.top + r * step });
+  const toXY = (c: number, r: number) => ({ x: c * step, y: depth.top + r * step });
   const snap = (p: { x: number; y: number }) => ({
     c: clamp(Math.round(p.x / step), 0, cols - 1),
-    r: clamp(Math.round((p.y - floor.top) / step), 0, rows - 1),
+    r: clamp(Math.round((p.y - depth.top) / step), 0, rows - 1),
   });
 
   const blocked = new Uint8Array(cols * rows);
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const p = toXY(c, r);
-      blocked[idx(c, r)] = stageBlocked(p.x, p.y, obstacles, floor, 16 / 9, w) ? 1 : 0;
+      blocked[idx(c, r)] = stageBlockedPoly(p.x, p.y, obstacles, poly, 16 / 9, w) ? 1 : 0;
     }
   }
 
@@ -1574,7 +1732,7 @@ export function stageRoute(
   while (i < chain.length) {
     let furthest = i;
     for (let j = chain.length - 1; j > i; j--) {
-      if (stageLineClear(cur, chain[j], obstacles, floor, 16 / 9, w)) {
+      if (stageLineClearPoly(cur, chain[j], obstacles, poly, 16 / 9, w)) {
         furthest = j;
         break;
       }
@@ -1584,6 +1742,19 @@ export function stageRoute(
     i = furthest + 1;
   }
   return pulled;
+}
+
+/** Band form of stageRoutePoly — kept for the flat-floor call sites and the
+ *  engine tests. */
+export function stageRoute(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  obstacles: StageObstacle[] | undefined,
+  floor: { top: number; bottom: number },
+  step = STAGE_GRID_STEP,
+  width = 100
+): { x: number; y: number }[] {
+  return stageRoutePoly(from, to, obstacles, bandPoly(floor, width), floor, step, width);
 }
 
 /** Is a stage position within `reach` (scene-width %) of a marker point? */
