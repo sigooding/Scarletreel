@@ -6365,7 +6365,7 @@ function CasePlayer({
         </div>
       )}
       {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
-        <div className="absolute right-3 top-3 z-50">
+        <div className="absolute right-3 top-3 z-[60]">
           <button
             onClick={() => {
               audio.click();
