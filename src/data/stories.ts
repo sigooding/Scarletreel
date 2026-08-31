@@ -5,6 +5,7 @@ import { QTE_DEMO } from "./qteDemo";
 import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
+import { TINTIN_MERIDIAN } from "./tintinMeridian";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
 import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
 import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
@@ -83,4 +84,5 @@ export const STORIES: Story[] = [
   PERK_RANGE,
   PATTERN_PUZZLE_DEMO,
   MAP_DEMO,
+  TINTIN_MERIDIAN,
 ];

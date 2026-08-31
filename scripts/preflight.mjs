@@ -73,7 +73,7 @@ if (!storiesJs || !logicJs) {
 }
 const { STORIES } = await import(storiesJs.replaceAll("\\", "/"));
 const logic = await import(logicJs.replaceAll("\\", "/"));
-const { validateStory, meetsGating, createInitialState, applyConsequences, sceneById, encodeStory, decodeStory, seasonEpisodes, unassignedScenes } = logic;
+const { validateStory, meetsGating, createInitialState, applyConsequences, sceneById, encodeStory, decodeStory, seasonEpisodes, unassignedScenes, effectiveChoiceGating } = logic;
 const canvasJs = find(TMP, "canvas.js");
 const canvas = canvasJs ? await import(canvasJs.replaceAll("\\", "/")) : null;
 
@@ -93,10 +93,30 @@ function walk(story, avoidEndings = true) {
     visited.push(sc.id);
     if (sc.onEnterActions) for (const a of sc.onEnterActions) state = applyConsequences(story, a.consequences, state);
     if (sc.isEnding) return { ending: sc, visited, state };
+    // Exploration pass — mirrors a player clicking every visible non-routing
+    // hotspot: giveItem / setFlag / meterChange effects land in the walker's
+    // state, so items and flags granted by scenery can open later gates
+    // (exactly what completeHotspot() does in Game.tsx).
+    for (const h of sc.hotspots ?? []) {
+      if (h.action?.targetSceneId || h.action?.patternPuzzle) continue; // routing & minigames handled below
+      const key = `${sc.id}:hs:${h.id}`;
+      if (used.has(key) || !meetsGating(h.gating, state)) continue;
+      const eff = {};
+      if (h.action?.itemGranted) eff.addItems = [h.action.itemGranted];
+      if (h.action?.flagSet) eff.setFlags = [h.action.flagSet];
+      if (h.action?.meterChange) eff.meterChanges = [h.action.meterChange];
+      if (Object.keys(eff).length) {
+        used.add(key);
+        state = applyConsequences(story, eff, state);
+      }
+    }
+    // effectiveChoiceGating folds a presentItem requirement into the gate, so
+    // the walker can't "show" an item it never picked up (game parity).
+    const gateOf = (c) => (effectiveChoiceGating ? effectiveChoiceGating(c) : c.gating);
     const usable = (sc.choices ?? []).filter((c) =>
       !used.has(`${sc.id}:${c.id}`) &&
-      !(c.hidden && !meetsGating(c.gating, state)) &&
-      meetsGating(c.gating, state));
+      !(c.hidden && !meetsGating(gateOf(c), state)) &&
+      meetsGating(gateOf(c), state));
     let navs = usable.filter((c) => c.targetSceneId && !c.reply && c.targetSceneId !== "");
     if (avoidEndings) {
       const ne = navs.filter((c) => !sceneById(story, c.targetSceneId)?.isEnding);
@@ -119,6 +139,10 @@ function walk(story, avoidEndings = true) {
     if (hs) {
       used.add(`${sc.id}:${hs.id}`);
       const target = hs.action.targetSceneId || hs.action.patternPuzzle?.targetSceneId;
+      // A walker that "solves" a pattern puzzle earns what the player earns —
+      // flags/items granted on solve can gate the road ahead.
+      if (hs.action.patternPuzzle?.rewardConsequences)
+        state = applyConsequences(story, hs.action.patternPuzzle.rewardConsequences, state);
       if (target) {
         cur = target;
         continue;

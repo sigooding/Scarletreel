@@ -1084,6 +1084,8 @@ export default function App() {
                           ? "⭐ New — Pulp Prehistoric"
                           : s.id === "war-of-the-worlds"
                           ? "⭐ New — Pulp Adaptation, H.G. Wells"
+                          : s.id === "tintin-meridian"
+                          ? "⭐ New — Fan Homage, Ligne Claire"
                           : s.id === "pulp-reel"
                           ? "⭐ New — Fan Homage, Original Dialogue"
                           : s.id === "blackwood-ledger"
