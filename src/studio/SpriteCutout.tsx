@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveAssetReference, uploadDataUrlAsset } from "../data/mediaLibrary";
 import { ImagePicker } from "./ImagePicker";
+import { applyKey, contentBounds, parseHex, sampleCorners, toHex } from "./spriteForge";
 
 /* ------------------------------------------------------------------ */
 /*  Media tab: Sprite Cutout Lab.                                      */
@@ -13,96 +14,6 @@ import { ImagePicker } from "./ImagePicker";
 /*  straight into the media library so it can be used as a foreground  */
 /*  extra, stage walker frame, portrait, or sheet source anywhere.     */
 /* ------------------------------------------------------------------ */
-
-type Rgb = { r: number; g: number; b: number };
-
-function parseHex(hex: string): Rgb {
-  const h = hex.replace("#", "");
-  return {
-    r: parseInt(h.slice(0, 2), 16) || 0,
-    g: parseInt(h.slice(2, 4), 16) || 0,
-    b: parseInt(h.slice(4, 6), 16) || 0,
-  };
-}
-
-function toHex(c: Rgb): string {
-  const p = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
-  return `#${p(c.r)}${p(c.g)}${p(c.b)}`;
-}
-
-/** Sample the four corners of the image and return the average colour —
- * a good default key for sprites painted on a flat backdrop. */
-function sampleCorners(data: Uint8ClampedArray, w: number, h: number): Rgb {
-  const px = (x: number, y: number) => (y * w + x) * 4;
-  const spots = [px(0, 0), px(w - 1, 0), px(0, h - 1), px(w - 1, h - 1)];
-  let r = 0,
-    g = 0,
-    b = 0;
-  for (const i of spots) {
-    r += data[i];
-    g += data[i + 1];
-    b += data[i + 2];
-  }
-  return { r: r / spots.length, g: g / spots.length, b: b / spots.length };
-}
-
-/** Chroma-key `src` against `key`: fully transparent within `tolerance`
- * colour distance, feathered alpha across the `softness` band beyond it.
- * Also de-spills the key hue from semi-transparent edge pixels. */
-function applyKey(
-  src: ImageData,
-  key: Rgb,
-  tolerance: number,
-  softness: number
-): ImageData {
-  const out = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
-  const d = out.data;
-  const soft = Math.max(1, softness);
-  for (let i = 0; i < d.length; i += 4) {
-    const dr = d[i] - key.r;
-    const dg = d[i + 1] - key.g;
-    const db = d[i + 2] - key.b;
-    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
-    if (dist <= tolerance) {
-      d[i + 3] = 0;
-    } else if (dist <= tolerance + soft) {
-      const a = (dist - tolerance) / soft; // 0..1 across the feather band
-      d[i + 3] = Math.round(d[i + 3] * a);
-      // De-spill: pull the edge pixel away from the key colour so halos
-      // don't show against new backgrounds.
-      d[i] = Math.round(d[i] + (d[i] - key.r) * 0.25 * (1 - a));
-      d[i + 1] = Math.round(d[i + 1] + (d[i + 1] - key.g) * 0.25 * (1 - a));
-      d[i + 2] = Math.round(d[i + 2] + (d[i + 2] - key.b) * 0.25 * (1 - a));
-    }
-  }
-  return out;
-}
-
-/** Bounding box of non-transparent pixels (with a small margin). */
-function contentBounds(img: ImageData): { x: number; y: number; w: number; h: number } | null {
-  const { width: w, height: h, data } = img;
-  let minX = w,
-    minY = h,
-    maxX = -1,
-    maxY = -1;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (data[(y * w + x) * 4 + 3] > 8) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0) return null;
-  const m = 2;
-  minX = Math.max(0, minX - m);
-  minY = Math.max(0, minY - m);
-  maxX = Math.min(w - 1, maxX + m);
-  maxY = Math.min(h - 1, maxY + m);
-  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
-}
 
 export function SpriteCutoutLab({ storyId }: { storyId: string }) {
   const [sourceRef, setSourceRef] = useState<string | undefined>(undefined);
