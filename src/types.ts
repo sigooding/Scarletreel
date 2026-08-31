@@ -52,6 +52,7 @@ export type HotspotActionType =
   | "showText"
   | "meterChange"
   | "openBoard"
+  | "openMap"
   | "useItem"
   | "patternPuzzle"
   | "startDialogue";
@@ -491,6 +492,11 @@ export interface CreditsSettings {
 export interface ForegroundExtra {
   /** image url / `gradient:` / `asset:` reference */
   image: string;
+  /** Animate this extra with a sprite sheet (flickering neon, a rain-lashed
+   * flag) instead of the static `image`. Plays the sheet's "loop" animation
+   * (or the first one defined) on repeat. While set it replaces `image` in
+   * play; `image` is kept as the author's static fallback. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
   /** how the image fits its box (default contain) */
   fit?: "contain" | "cover" | "fill" | "native";
   /** image scale (default 1) */
@@ -843,6 +849,11 @@ export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
    *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
   playerImage?: string;
+  /** Sprite-sheet walker — ONE image holding a grid of frames plus named
+   *  animations ("walk" while moving, "idle" at rest; either falls back to
+   *  the other). Takes precedence over walkFrames/playerImage when set.
+   *  See src/game/spriteSheet.ts. */
+  playerSheet?: import("./game/spriteSheet").SpriteSheet;
   /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
    *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
    *  procedurally instead. Frame 0 doubles as the idle pose. */
@@ -994,6 +1005,9 @@ export interface MediaAsset {
   id: string;
   name: string;
   type: AssetType;
+  /** optional library folder ("sprites", "backgrounds", …) so generated and
+   * uploaded assets can be grouped and found again; unfiled when unset */
+  folder?: string;
   /** portable base64 data URL used for export/import and browser fallback */
   dataUrl: string;
   /** desktop-only playable copy written to the game media folder */
@@ -1031,6 +1045,22 @@ export interface Character {
   /** resting/neutral pose shown when this character is on-scene but NOT the
    * active speaker (falls back to talkingFrames[0] if unset). */
   talkingRest?: string;
+  /** Talking portrait as ONE sprite-sheet image instead of loose frame files.
+   * Named animations the engine looks up: "talk" while this character is the
+   * active speaker, "rest" otherwise (a missing "rest" holds talk frame 1).
+   * TAKES OVER from talkingFrames/talkingRest while set — the keyframe fields
+   * are untouched and take effect again the moment the sheet is cleared.
+   * Position/scale/flip still come from talkingX/Y/Scale/Flip. */
+  talkingSheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Alternate talking sheets — outfits, moods, poses. While this character
+   * is the ACTIVE SPEAKER and the current beat's `expression` matches a
+   * variant's name (case-insensitive), that variant's sheet replaces
+   * `talkingSheet` for the beat; everyone else (and beats with no matching
+   * expression) uses the default sheet. */
+  talkingSheets?: { name: string; sheet: import("./game/spriteSheet").SpriteSheet }[];
+  /** opacity of the sprite while some OTHER character is speaking
+   * (0.2–1, default 0.72 — lower = more see-through). */
+  talkingDim?: number;
   /** mirror the sprite horizontally (face left) so two speakers can face
    * each other across the frame. */
   talkingFlip?: boolean;
@@ -1050,6 +1080,58 @@ export interface DeductionBoard {
   connections: DeductionConnection[];
 }
 
+/**
+ * One travel destination on the story's map screen.
+ *
+ * Unlocking is DERIVED, never stored: a location is open exactly when its
+ * `gating` passes against the live GlobalState (same `meetsGating` used by
+ * choices and hotspots — flags, items, meters, trust all work). No unlock
+ * list is written to the save, so loads, replays and NG+ can never disagree
+ * with the story state that earned the access.
+ */
+export interface MapLocation {
+  id: string;
+  /** Pin label, e.g. "The Blue Room". */
+  label: string;
+  /** Scene the player lands on when travelling here. Resolved through
+   * bypassedSceneId, so a note placeholder target passes through to the
+   * first real scene like every other route. */
+  targetSceneId: string;
+  /** Pin position on the map image, in percent (0–100) of width/height. */
+  x: number;
+  y: number;
+  /** Same gating vocabulary as choices/hotspots. Absent = always open. */
+  gating?: Gating;
+  /** true → a locked pin is not drawn at all (a secret place). Default
+   * false → a locked pin shows as "???" so the player knows somewhere is
+   * still waiting to be earned. */
+  hiddenWhenLocked?: boolean;
+  /** One teasing line shown on a locked (visible) pin, e.g. "Someone in the
+   * diner knows the pier number." Falls back to the generic gating hint. */
+  lockedHint?: string;
+  /** Emoji drawn on the pin (default 📍). */
+  icon?: string;
+}
+
+/** The story's travel map — a screen of flag-gated destinations. When
+ * present (with at least one location) the player gets a 🗺 Travel Map entry
+ * in the HUD menu and the T hotkey. When absent nothing map-related renders. */
+export interface StoryMap {
+  /** Heading over the map screen (default "Travel Map"). */
+  title?: string;
+  /** Map artwork (url / gradient: / asset:). The pins are placed on this. */
+  backgroundImage?: string;
+  /** Opt-in: let the map ABSORB pure travel choices. When true, a choice
+   * whose only job is navigating to a scene an UNLOCKED pin also reaches is
+   * hidden in play, and the choice rail shows one "🗺 Open the map" action
+   * instead — one road out, not two buttons for the same journey. Choices
+   * with any side effect (flags, meters, items, memory, replies, timers,
+   * presented evidence) are NEVER absorbed, and locked pins never absorb a
+   * choice. Default false: authored choices win unless you opt in. */
+  replaceTravelChoices?: boolean;
+  locations: MapLocation[];
+}
+
 export interface Story {
   id: string;
   title: string;
@@ -1060,6 +1142,9 @@ export interface Story {
   items: Item[];
   characters: Character[];
   deduction?: DeductionBoard;
+  /** Optional travel map: flag/item/meter-gated destinations the player can
+   * jump to from the 🗺 map screen. See StoryMap. */
+  map?: StoryMap;
   /** explicit win/lose rules surfaced to the player */
   briefing?: CaseBriefing;
   /** Optional episodic structure. When present the story is presented as a
@@ -1153,6 +1238,22 @@ export interface DialogueBoxTheme {
   /** Hide the small ⏱ countdown / autosave style readouts and similar HUD
    * chrome for a cleaner, more cinematic frame. */
   minimalHud?: boolean;
+
+  /* ------------------------------------------------------------------ *
+   *  Investigation panel visibility
+   * ------------------------------------------------------------------ *
+   * Each panel is AUTO by default: it only appears when the story actually
+   * uses the feature (corkboard needs `deduction`, travel map needs `map`
+   * with locations; case progress always has content so auto = shown).
+   * These flags force a panel OFF for stories that want a cleaner frame.
+   * There is deliberately no "force show" — surfacing an empty corkboard or
+   * map a story never feeds would only confuse the player. */
+  /** Hide the ▤ Case Progress drawer (top-left) entirely. */
+  hideCaseProgress?: boolean;
+  /** Hide the 📌 Corkboard even when the story defines a deduction board. */
+  hideCorkboard?: boolean;
+  /** Hide the 🗺 Travel Map even when the story defines map locations. */
+  hideMap?: boolean;
 }
 
 /** Named in-game HUD colour schemes (see HUD_THEMES in src/cinematic.ts). */

@@ -48,6 +48,47 @@ zone's base and makes the player walk to it:
 Object art (an NPC, a prop) goes in the hotspot's **image** field: the stage
 anchors it with its feet on the marker, depth-sorted with the characters.
 
+## The walker's look — four tiers
+
+The player character renders from the first of these that's set
+(Scene tab → 🚶 Walkable Stage):
+
+1. **`stage.playerSheet` — a sprite sheet** (best). ONE image holding a grid
+   of frames (counted left→right, top→bottom, starting at 0) plus named
+   animations. The engine plays `walk` while moving and `idle` at rest, with
+   graceful fallback (missing `idle` freezes on `walk`'s first frame; any
+   missing name falls back to the first animation defined). Set per-animation
+   `fps` (default 8) and `loop` (default true; `false` holds the last frame).
+   `pixelated: true` keeps pixel art crisp. Rendered via CSS
+   `background-position` stepping — no canvas, zero work while idle on a
+   single frame. Demo: `public/assets/sprites/gumshoe-walk.png` (4 frames of
+   114×192), wired up in *Anatomy of a Lie*'s stage scene.
+
+   ```ts
+   playerSheet: {
+     image: "/assets/sprites/gumshoe-walk.png",
+     frameWidth: 114, frameHeight: 192,
+     animations: { idle: { frames: [1] }, walk: { frames: [0, 1, 2, 3], fps: 8 } },
+     pixelated: true,
+   }
+   ```
+
+2. **`walkFrames`** — 2–4 loose frame images cycled while walking (frame 1
+   doubles as the idle pose).
+3. **`playerImage`** — a single sprite image, procedurally bobbed.
+4. **`emoji:…`** — the zero-asset placeholder (also bobbed).
+
+`playerSheet.image` is a media-bearing field: it's wired into all three
+`mediaLibrary.ts` walkers (visit / resolve / compact), the voice-pack
+bundler, the import/export round-trip seed, and the preflight asset-exists
+check. `spriteSheetIssues()` (src/game/spriteSheet.ts) validates sheets and
+surfaces problems as Check-tab warnings.
+
+> Sprite sheets also drive **talking portraits** (`character.talkingSheet`)
+> and **animated foreground extras** (`foregroundExtra.sheet`), and the
+> Media tab has a **Sheet slicer** for working out any sheet's grid — see
+> `docs/sprite-sheets.md` for the full picture.
+
 ## Authoring recipe (the Telltale loop)
 
 1. **Floor & spawn** — drag the neon band and 🕵️ dot in the Scene tab's
@@ -71,6 +112,8 @@ anchors it with its feet on the marker, depth-sorted with the characters.
   heads-up (the player must talk before they can leave).
 - Spawn outside the floor band, thin floor bands, single-frame walk cycles →
   warnings.
+- **Sprite-sheet problems** (no image, non-positive frame size, empty/negative
+  frame lists, missing `walk`/`idle` names) → warnings via `spriteSheetIssues`.
 
 ## Legacy
 

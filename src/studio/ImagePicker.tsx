@@ -56,6 +56,7 @@ export function ImagePicker({
   /** for uploads, store `asset:<id>` (default) instead of the data URL */
   returnReference = true,
   placeholder = "Pick an image…",
+  preferFolder,
 }: {
   value?: string;
   onChange: (v: string | undefined) => void;
@@ -66,6 +67,8 @@ export function ImagePicker({
   allowClear?: boolean;
   returnReference?: boolean;
   placeholder?: string;
+  /** library folder whose uploads sort to the very top (e.g. "sprites") */
+  preferFolder?: string;
 }) {
   const uploads = useAllAssets("image");
   const [open, setOpen] = useState(false);
@@ -101,15 +104,19 @@ export function ImagePicker({
     const out: Item[] = [];
     if (includeGradients) for (const g of GRADIENT_PRESETS) out.push({ kind: "gradient", ...g });
     if (includeBuiltins) for (const b of builtinImages) out.push({ kind: "builtin", value: b.url, label: b.label });
-    for (const a of uploads)
+    for (const a of [...uploads].sort((x, y) => {
+      // preferred folder first, then other folders A→Z, then unfiled
+      const rank = (a2: typeof x) => (preferFolder && a2.folder === preferFolder ? "" : a2.folder ?? "\uffff");
+      return rank(x).localeCompare(rank(y)) || x.name.localeCompare(y.name);
+    }))
       out.push({
         kind: "upload",
         value: returnReference ? `asset:${a.id}` : a.dataUrl,
-        label: a.name,
+        label: a.folder ? `📁 ${a.folder} / ${a.name}` : a.name,
         src: a.dataUrl,
       });
     return out;
-  }, [includeGradients, includeBuiltins, uploads, returnReference]);
+  }, [includeGradients, includeBuiltins, uploads, returnReference, preferFolder]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

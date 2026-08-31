@@ -37,7 +37,7 @@ guessing.
 npm test
 ```
 
-Runs two suites under plain Node. No test framework — the TypeScript bodies are
+Runs three suites under plain Node. No test framework — the TypeScript bodies are
 bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
 
 1. **Engine tests** (`npm run test:engine`) — the pure-logic checks: gating,
@@ -68,6 +68,14 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    `npm run test:media:real` additionally pushes the shipped 45.9 MB
    `nobodys-witness-draft.reel.json` (69 scenes, 86 bundled assets) through the
    same import path and asserts every reference resolves.
+
+3. **DOM smoke test** (`npm run test:dom`) — mounts the real `<App/>` in
+   [happy-dom](https://github.com/capricorn86/happy-dom) (a devDependency) and
+   clicks through the newsstand, the ending gallery, the Studio, and a real
+   playthrough of Nobody's Witness. Any `console.error`/`console.warn`,
+   uncaught throw, or error-boundary trip on those screens fails the run —
+   this is what catches invalid DOM nesting (React logs it as an error) and
+   mount-time crashes that the pure-logic suites can't see.
 
 ### Blank/white screen, or art missing but text showing
 
@@ -130,6 +138,51 @@ exempt from the unreachable / no-exits checks. The placeholder text lives in
 `scene.title` (a dead-end note shows it as its plate instead of a blank
 scene). The inspector offers "Convert to full scene" (clears `nodeType`) once
 the real scene is written.
+
+### Travel map (`story.map`)
+
+The 🗺 Travel Map is a screen of flag-gated destinations (HUD menu → Travel
+map, or T; a hotspot can use action `openMap`). Design contract:
+
+- **Unlocks are derived, never stored.** A pin is open exactly when its
+  `gating` passes `meetsGating` against the live state — the same vocabulary
+  as choices/hotspots (flags, items, meters, trust). Nothing map-related is
+  written to the save, so loads, replays and NG+ can never disagree with the
+  flags that earned access.
+- Locked pins render as "???" with the author's `lockedHint` (or the generic
+  gating hint); `hiddenWhenLocked` pins aren't drawn at all until earned.
+- Travel resolves through `bypassedSceneId` like every other route, so note
+  placeholders pass through.
+- The validator checks every pin (missing target = error, dead-end note
+  target = stranding error, off-map x/y = warning) and seeds reachability
+  with map targets so a map-only location isn't flagged unreachable.
+- `map.backgroundImage` is a media-bearing field: it's wired into
+  `visitStoryMediaRefs` / `resolveStoryMedia` / `compactStoryMedia` and
+  seeded in the import/export round-trip suite. Keep it that way.
+- Panel visibility is AUTO (map shows only when locations exist; corkboard
+  only with a deduction board) with explicit hide overrides in the In-Game
+  Theme tab (`dialogueBox.hideMap` / `hideCorkboard` / `hideCaseProgress`).
+  There is deliberately no "force show" — an empty corkboard or map would
+  only confuse the player.
+- **`map.replaceTravelChoices`** (opt-in, Map tab toggle): the map ABSORBS
+  pure travel choices. A choice whose only job is navigating to a scene an
+  UNLOCKED pin also reaches is hidden in play and the rail shows one
+  "🗺 Open the map" action instead. Hard safety rules, all pinned by engine
+  tests (`mapReplacedChoiceIds` / `choiceIsPureTravel` in src/logic.ts):
+  choices with ANY side effect (consequences, memoryLog, rememberLine,
+  reply, presentItem, timers/QTE, exclusiveGroup, timed-out routing) are
+  never absorbed — map travel applies no consequences, so absorbing them
+  would delete authored effects; a LOCKED pin never absorbs (the choice may
+  be the only way in until the pin is earned); the swap is play-time only —
+  the draft's choice graph (and so the deep-walker and reachability) is
+  untouched. The in-game dead-end detector and "current lead" hint both
+  treat absorbed travel as a live exit. Demo: The Kingfisher Job
+  (`src/data/kingfisherJob.ts`), asserted end-to-end by the DOM smoke's
+  KINGFISHER phase.
+
+The demo case is **Crosstown** (`src/data/mapDemo.ts`): two pins open at
+start, one locked-visible, one hidden, plus parallel gated choices so the
+deep-walker can prove the endings without the map.
 
 ### ElevenLabs model & cost estimate
 

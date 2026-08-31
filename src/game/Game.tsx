@@ -37,6 +37,9 @@ import {
   gatingHint,
   heatBustTarget,
   isEpisodic,
+  mapAvailable,
+  mapLocationsView,
+  mapReplacedChoiceIds,
   meetsGating,
   METER_LABELS,
   nextEpisode,
@@ -82,6 +85,8 @@ import {
 } from "./Episode";
 import { Flowchart } from "./Flowchart";
 import { Stage } from "./Stage";
+import { SheetSprite } from "./SheetSprite";
+import { sheetDrawable, type SpriteSheet } from "./spriteSheet";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
 import { RouteMap } from "./RouteMap";
@@ -362,6 +367,18 @@ function cinematicGradeClasses(c: CinematicSettings | undefined): string {
   if (grade && (c?.mode ?? "pan") !== "dolly-zoom") out.push(`cin-grade-${grade.id}`);
   if (film) out.push("film-grade");
   return out.join(" ");
+}
+
+/** The clean (no-blur) grade filter for SPRITE layers — foreground extras,
+ * the primary foreground subject, hotspot object images, talking portraits
+ * and the stage walker. The plate takes the grade via its cin-grade-* class;
+ * sprites render in layers above it, so without this they'd float ungraded
+ * (full colour over a 1940s black & white plate). Same preset, same filter,
+ * so sprite pixels match the plate exactly. */
+export function spriteGradeStyle(c?: CinematicSettings): React.CSSProperties {
+  const grade = c?.colorGrade ? GRADE_PRESETS[c.colorGrade] : undefined;
+  if (!grade?.filter || grade.filter === "none") return {};
+  return { filter: grade.filter };
 }
 
 /** The split-tone wash + scratch layer that sit ABOVE a graded/filmed plate
@@ -723,7 +740,7 @@ function ForegroundExtraImage({
 }) {
   const r = resolve ?? ((v?: string) => v);
   const src = assetUrl(r(extra.image));
-  if (!src) return null;
+  if (!src && !sheetDrawable(extra.sheet)) return null;
   const x = clamp(extra.x ?? 50, 0, 100);
   const y = clamp(extra.y ?? 50, 0, 100);
   const scale = Math.max(0.05, extra.scale ?? 1);
@@ -748,6 +765,32 @@ function ForegroundExtraImage({
     justifyContent: "center",
   };
   const flipScale = extra.flip ? -1 : 1;
+  // An animated extra: the sprite sheet replaces the static image entirely.
+  if (sheetDrawable(extra.sheet)) {
+    return (
+      <div className="absolute" style={boxStyle} aria-hidden>
+        <SheetSprite
+          sheet={extra.sheet}
+          anim="loop"
+          resolve={r}
+          height="100%"
+          className={zoom ? "fg-zoom" : ""}
+          style={{
+            transformOrigin: `${ax}% ${ay}%`,
+            transform: zoom ? undefined : `scaleX(${flipScale})`,
+            ...(zoom
+              ? ({
+                  "--fg-base": String(flipScale),
+                  "--fg-zoom": String(zoom),
+                  "--fg-zoom-dur": `${zoomDur}s`,
+                } as React.CSSProperties)
+              : {}),
+          }}
+        />
+      </div>
+    );
+  }
+  if (!src) return null;
   if (src.startsWith("gradient:")) {
     return <div className="absolute" style={{ ...boxStyle, background: src.slice(9) }} aria-hidden />;
   }
@@ -1003,6 +1046,7 @@ function ForegroundFrames({
 function StageSprite({
   frames,
   rest,
+  sheet,
   animate,
   frameDuration,
   x,
@@ -1010,9 +1054,11 @@ function StageSprite({
   scale,
   flip,
   dim,
+  dimOpacity,
 }: {
   frames: string[];
   rest?: string;
+  sheet?: SpriteSheet;
   animate: boolean;
   frameDuration: number;
   x: number;
@@ -1020,8 +1066,11 @@ function StageSprite({
   scale: number;
   flip: boolean;
   dim: boolean;
+  /** opacity while another character speaks (default 0.72) */
+  dimOpacity?: number;
 }) {
-  const cycle = animate && frames.length > 1;
+  const useSheet = sheetDrawable(sheet);
+  const cycle = !useSheet && animate && frames.length > 1;
   const [i, setI] = useState(0);
   useEffect(() => {
     setI(0);
@@ -1045,7 +1094,7 @@ function StageSprite({
     };
   }, [cycle, frames.length, frameDuration]);
   const shown = cycle ? frames[i] : rest ?? frames[0];
-  if (!shown) return null;
+  if (!useSheet && !shown) return null;
   const heightPct = Math.min(96, Math.max(20, 72 * Math.max(0.2, scale)));
   return (
     <div
@@ -1055,11 +1104,21 @@ function StageSprite({
         bottom: `${y}%`,
         transform: `translateX(-50%)${flip ? " scaleX(-1)" : ""}`,
         height: `${heightPct}%`,
-        opacity: dim ? 0.72 : 1,
+        opacity: dim ? Math.min(1, Math.max(0.2, dimOpacity ?? 0.72)) : 1,
         transition: "opacity .3s ease",
       }}
     >
-      <img src={assetUrl(shown)} alt="" className="h-full w-auto max-w-none object-contain" />
+      {useSheet ? (
+        <SheetSprite
+          sheet={sheet!}
+          anim={animate ? "talk" : "rest"}
+          fallbacks={animate ? ["rest", "idle"] : ["idle", "talk"]}
+          height="100%"
+          freezeOnFallback={!animate}
+        />
+      ) : (
+        <img src={assetUrl(shown)} alt="" className="h-full w-auto max-w-none object-contain" />
+      )}
     </div>
   );
 }
@@ -2001,7 +2060,7 @@ function BeatBackground({
               </div>
             </div>
             {pOn && <ParallaxMidLayers cinematic={l.cinematic} />}
-            <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+            <div className={`${pOn ? "parallax-fg " : ""}absolute inset-0`} style={spriteGradeStyle(l.cinematic)}>
               <ForegroundExtras cinematic={l.cinematic} />
               <ForegroundLayer cinematic={l.cinematic} />
             </div>
@@ -2199,6 +2258,108 @@ function MetersHUD({
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  travel map                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The 🗺 travel-map overlay: the story's map artwork with one pin per
+ * location. Unlocks are derived live from meetsGating (flags/items/meters —
+ * the same vocabulary as choices), so nothing map-related is stored in the
+ * save. Locked pins show as "???" with the author's teaser (or the generic
+ * gating hint); hiddenWhenLocked pins aren't drawn at all.
+ */
+function TravelMap({
+  story,
+  state,
+  currentSceneId,
+  visitedScenes,
+  onTravel,
+  onClose,
+}: {
+  story: Story;
+  state: GlobalState;
+  currentSceneId: string;
+  visitedScenes: Set<string>;
+  onTravel: (sceneId: string) => void;
+  onClose: () => void;
+}) {
+  const pins = mapLocationsView(story, state);
+  const bg = story.map?.backgroundImage;
+  const bgStyle: React.CSSProperties = bg
+    ? bg.startsWith("gradient:")
+      ? { background: bg.slice(9) }
+      : { backgroundImage: `url(${assetUrl(bg)})`, backgroundSize: "cover", backgroundPosition: "center" }
+    : { background: "linear-gradient(160deg,#14141f 0%,#0c0c14 70%)" };
+  const unlockedCount = pins.filter((p) => p.unlocked).length;
+  return (
+    <Modal title={story.map?.title ?? "Travel Map"} onClose={onClose} wide>
+      <p className="mb-2 font-type text-[10px] uppercase tracking-widest text-paper/40">
+        {unlockedCount}/{story.map?.locations.length ?? 0} destinations open · what you learn opens doors · T or Esc closes
+      </p>
+      <div className="relative aspect-video min-h-[340px] w-full overflow-hidden border-2 border-noir-700 select-none" style={bgStyle}>
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/25" aria-hidden />
+        {pins.map(({ location: loc, unlocked }) => {
+          const here = bypassedSceneId(story, loc.targetSceneId) === currentSceneId;
+          const visited = visitedScenes.has(bypassedSceneId(story, loc.targetSceneId));
+          const hint = loc.lockedHint ?? gatingHint(loc.gating, story) ?? "Locked — you need something more.";
+          return (
+            <div
+              key={loc.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
+            >
+              {unlocked ? (
+                <button
+                  onClick={() => {
+                    if (here) return;
+                    onTravel(loc.targetSceneId);
+                  }}
+                  disabled={here}
+                  className={`group flex flex-col items-center gap-0.5 ${here ? "cursor-default" : "cursor-pointer"}`}
+                  title={here ? `${loc.label} — you are here` : `Travel to ${loc.label}`}
+                >
+                  <span
+                    className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-lg shadow-[0_2px_10px_rgba(0,0,0,0.8)] transition-transform ${
+                      here
+                        ? "border-cyan-neon bg-cyan-neon/25 text-cyan-neon"
+                        : "border-gold bg-noir-950/85 group-hover:scale-125 group-hover:border-neon"
+                    }`}
+                  >
+                    {loc.icon ?? "📍"}
+                  </span>
+                  <span
+                    className={`whitespace-nowrap border px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-widest backdrop-blur-sm ${
+                      here
+                        ? "border-cyan-neon/60 bg-noir-950/85 text-cyan-neon"
+                        : "border-gold/60 bg-noir-950/85 text-gold group-hover:border-neon group-hover:text-neon"
+                    }`}
+                  >
+                    {here ? `◉ ${loc.label}` : loc.label}
+                    {visited && !here && <span className="ml-1 text-paper/50" title="Visited">✓</span>}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex flex-col items-center gap-0.5 opacity-70" title={hint}>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-paper/25 bg-noir-950/85 text-lg grayscale">
+                    🔒
+                  </span>
+                  <span className="whitespace-nowrap border border-paper/25 bg-noir-950/85 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-paper/50 backdrop-blur-sm">
+                    ???
+                  </span>
+                  <span className="max-w-[180px] text-center font-type text-[9px] italic leading-tight text-paper/45">
+                    {hint}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 
@@ -2677,6 +2838,7 @@ type Overlay =
   | { type: "instructions" }
   | { type: "inspect"; item: Item }
   | { type: "board" }
+  | { type: "map" }
   | { type: "relationships" }
   | { type: "log" }
   | { type: "save" }
@@ -4233,7 +4395,12 @@ function CasePlayer({
   /* -------- choices -------- */
   const availableChoices = useMemo(() => {
     if (!scene?.choices) return [];
+    // Travel-map absorption (opt-in): pure travel choices an unlocked pin
+    // duplicates disappear from the rail — the "🗺 Open the map" action
+    // below stands in for all of them.
+    const absorbed = mapReplacedChoiceIds(story, scene, state);
     return scene.choices.filter((c) => {
+      if (absorbed.has(c.id)) return false;
       if (expiredChoices.has(c.id)) return false;
       if (!choiceRepeats(c) && usedChoices.has(`${sceneId}:${c.id}`)) return false;
       // "hidden" choices stay invisible until their gate is met (sequential
@@ -4243,7 +4410,11 @@ function CasePlayer({
       if (c.hidden && !meetsGating(effectiveChoiceGating(c), state)) return false;
       return true;
     });
-  }, [scene, sceneId, expiredChoices, usedChoices, state]);
+  }, [scene, sceneId, expiredChoices, usedChoices, state, story]);
+  const travelViaMap = useMemo(
+    () => (scene && interactive && !scene.isEnding ? mapReplacedChoiceIds(story, scene, state).size : 0),
+    [scene, interactive, story, state]
+  );
 
   const hasUsableChoice = availableChoices.some((c) => meetsGating(effectiveChoiceGating(c), state) && (c.reply || !!c.targetSceneId));
 
@@ -4995,6 +5166,9 @@ function CasePlayer({
         case "openBoard":
           setOverlay({ type: "board" });
           break;
+        case "openMap":
+          if (mapAvailable(story)) setOverlay({ type: "map" });
+          break;
         case "patternPuzzle":
           if (hs.action.patternPuzzle) {
             setPatternPuzzle({ config: hs.action.patternPuzzle, hotspot: hs });
@@ -5166,12 +5340,13 @@ function CasePlayer({
     if (openChoice) return `Time to decide: "${openChoice.text.slice(0, 50)}${openChoice.text.length > 50 ? "…" : ""}"`;
     const lockedChoice = availableChoices.find((c) => effectiveChoiceGating(c));
     if (lockedChoice) return `Locked: ${gatingHint(effectiveChoiceGating(lockedChoice), story) ?? "you need something more."}`;
+    if (travelViaMap > 0) return "Open the travel map (T) — your next stop is a pin away.";
     if (hasValidAutoAdvance) {
       const showTimer = !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0;
       return `The reel advances automatically${showTimer ? ` in ${autoAdvanceRemaining}s` : ""}.`;
     }
     return "Search the scene carefully — mouse over the picture for hidden hotspots.";
-  }, [scene, proseAcknowledged, inBeats, currentBeat, story, visibleHotspots, state, availableChoices, hasValidAutoAdvance, autoAdvanceRemaining]);
+  }, [scene, proseAcknowledged, inBeats, currentBeat, story, visibleHotspots, state, availableChoices, travelViaMap, hasValidAutoAdvance, autoAdvanceRemaining]);
 
   /**
    * Anti-softlock diagnostic. Looks at everything the player could still do in
@@ -5182,13 +5357,16 @@ function CasePlayer({
     if (!scene || scene.isEnding) return false;
     if (!interactive) return false;
     if (hasValidAutoAdvance) return false;
+    // Travel absorbed by the map IS a way out — the "🗺 Open the map" action
+    // stands in for the hidden choices, so this is not a dead end.
+    if (travelViaMap > 0) return false;
     const anyHotspot = visibleHotspots.some((hs) => meetsGating(hs.gating, state));
     const anyChoice = availableChoices.some((c) => meetsGating(effectiveChoiceGating(c), state));
     const anyCraft = state.inventory.some((a) =>
       state.inventory.some((b) => a.id !== b.id && combineItems(story, a, b))
     );
     return !anyHotspot && !anyChoice && !anyCraft;
-  }, [scene, interactive, hasValidAutoAdvance, visibleHotspots, currentBeat, availableChoices, state, story]);
+  }, [scene, interactive, hasValidAutoAdvance, visibleHotspots, currentBeat, availableChoices, travelViaMap, state, story]);
 
   /* -------- crafting -------- */
   const handleCombine = useCallback(
@@ -5287,7 +5465,16 @@ function CasePlayer({
         skipCurrentText();
       }
       if (e.key === "b" || e.key === "B") {
-        if (story.deduction) setOverlay({ type: "board" });
+        if (story.deduction && !story.dialogueBox?.hideCorkboard) setOverlay({ type: "board" });
+      }
+      if (e.key === "t" || e.key === "T") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          if (mapAvailable(story)) {
+            e.preventDefault();
+            setOverlay((o) => (o?.type === "map" ? null : { type: "map" }));
+          }
+        }
       }
       if (e.key === "l" || e.key === "L") {
         const tag = (e.target as HTMLElement).tagName;
@@ -5320,7 +5507,7 @@ function CasePlayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, story.deduction, soundOn, enableSound, triggerHint]);
+  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, story.deduction, story.map, story.dialogueBox, soundOn, enableSound, triggerHint]);
 
   if (!scene)
     return (
@@ -5354,7 +5541,7 @@ function CasePlayer({
     () =>
       scene && scene.nodeType !== "credits" && scene.nodeType !== "cutscene"
         ? story.characters.filter((c) => {
-            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest)) return false;
+            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest || sheetDrawable(c.talkingSheet))) return false;
             return (scene.dialogueBeats ?? []).some((b) => b.characterId === c.id);
           })
         : [],
@@ -5408,6 +5595,7 @@ function CasePlayer({
                 loop
                 playsInline
                 className="absolute inset-0 h-full w-full object-cover"
+                style={spriteGradeStyle(bgCinematic)}
               />
               <LightGlow cinematic={bgCinematic} />
               <LensFlareLayer cinematic={bgCinematic} />
@@ -5431,7 +5619,10 @@ function CasePlayer({
         {hasParallax(bgCinematic) && (
           <ParallaxMidLayers key={`par-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
         )}
-        <div className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}>
+        <div
+          className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}
+          style={spriteGradeStyle(bgCinematic)}
+        >
           {/* Additional stacked foreground images (extras) — render BELOW the
               primary subject so the main foregroundImage stays on top. */}
           <ForegroundExtras key={`fge-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
@@ -5511,16 +5702,26 @@ function CasePlayer({
       />
 
       {/* Characters on stage — the active speaker cycles their talking frames;
-          the others hold their resting pose. */}
-      {showStage &&
-        onStage.map((c) => {
+          the others hold their resting pose. Wrapped in a graded layer so the
+          portraits take the scene's colour grade like every other sprite. */}
+      {showStage && (
+        <div className="pointer-events-none absolute inset-0 z-[6]" style={spriteGradeStyle(bgCinematic)}>
+          {onStage.map((c) => {
           const isActive = c.id === activeSpeakerId;
           const frames = (c.talkingFrames ?? []).filter(Boolean);
+          // Alternate sheet (outfit/mood/pose): while this character speaks a
+          // beat whose `expression` matches a variant name, that sheet takes
+          // over; everyone else keeps their default sheet.
+          const expr = isActive ? (currentBeat?.expression ?? "").trim().toLowerCase() : "";
+          const variant = expr
+            ? c.talkingSheets?.find((v) => v.name.trim().toLowerCase() === expr)?.sheet
+            : undefined;
           return (
             <StageSprite
               key={c.id}
               frames={frames}
               rest={c.talkingRest}
+              sheet={variant ?? c.talkingSheet}
               animate={isActive && animateActive}
               frameDuration={c.talkingFrameDuration ?? 0.16}
               x={c.talkingX ?? 50}
@@ -5528,9 +5729,12 @@ function CasePlayer({
               scale={c.talkingScale ?? 1}
               flip={!!c.talkingFlip}
               dim={!isActive}
+              dimOpacity={c.talkingDim}
             />
           );
-        })}
+          })}
+        </div>
+      )}
 
       <div className="fx-halftone absolute inset-0" aria-hidden />
       {particleKind !== "none" && <Particles kind={particleKind as "rain" | "smoke" | "storm"} soundOn={soundOn} />}
@@ -5575,16 +5779,29 @@ function CasePlayer({
           the floor, the walking character and the interaction markers, and
           fires hotspots through activateHotspot exactly as a click would.
           While a conversation is open (stageTalking) the stage sleeps. */}
-      {isStage && scene.stage && sceneReady && !scene.isEnding && !overlay && (
-        <Stage
-          key={`stage-${sceneId}`}
-          settings={scene.stage}
-          hotspots={visibleHotspots}
-          unlocked={(hs) => meetsGating(hs.gating, state)}
-          onInteract={(hs) => activateHotspot(hs)}
-          active={stageWalking}
-        />
-      )}
+      {isStage && scene.stage && sceneReady && !scene.isEnding && !overlay && (() => {
+        const stageEl = (
+          <Stage
+            key={`stage-${sceneId}`}
+            settings={scene.stage}
+            hotspots={visibleHotspots}
+            unlocked={(hs) => meetsGating(hs.gating, state)}
+            onInteract={(hs) => activateHotspot(hs)}
+            active={stageWalking}
+          />
+        );
+        // Graded wrapper so the walker sprite matches the plate's colour
+        // grade; only added when a grade is active (a filter would otherwise
+        // change the containing block for no reason).
+        const g = spriteGradeStyle(bgCinematic);
+        return g.filter ? (
+          <div className="pointer-events-none absolute inset-0 z-[45]" style={g}>
+            {stageEl}
+          </div>
+        ) : (
+          stageEl
+        );
+      })()}
 
       {/* STAGE caption bar — showText / locked / entry lines play as a
           subtitle over the floor instead of the centre exam card. */}
@@ -5719,13 +5936,15 @@ function CasePlayer({
       {/* HUD */}
       {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
         <>
-          <MetersHUD
-            state={state}
-            story={story}
-            sceneTitle={scene.title}
-            encounteredCharacters={encounteredCharacters}
-            visitedCount={visitedScenes.size}
-          />
+          {!story.dialogueBox?.hideCaseProgress && (
+            <MetersHUD
+              state={state}
+              story={story}
+              sceneTitle={scene.title}
+              encounteredCharacters={encounteredCharacters}
+              visitedCount={visitedScenes.size}
+            />
+          )}
           {!scene.hideSceneTitle && (
             <div
               key={`scene-title-${sceneId}-${entrySeq}`}
@@ -5958,7 +6177,7 @@ function CasePlayer({
                 >
                   🗂 Case File
                 </button>
-                {story.deduction && (
+                {story.deduction && !story.dialogueBox?.hideCorkboard && (
                   <button
                     onClick={() => {
                       setMenuOpen(false);
@@ -5967,6 +6186,18 @@ function CasePlayer({
                     className="hud-menu-item text-crimson"
                   >
                     📌 Corkboard (B)
+                  </button>
+                )}
+                {mapAvailable(story) && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOverlay({ type: "map" });
+                    }}
+                    className="hud-menu-item text-gold"
+                    title="The city map — travel to any place you've unlocked (T)"
+                  >
+                    🗺 Travel map (T)
                   </button>
                 )}
                 {dialogueLog.length > 0 && (
@@ -6772,6 +7003,22 @@ function CasePlayer({
             </>
           )}
 
+          {/* Travel absorbed by the map: the road out lives on the 🗺 screen. */}
+          {travelViaMap > 0 && (
+            <div className="mt-2" role="menu" aria-label="Travel">
+              <button
+                onClick={() => setOverlay({ type: "map" })}
+                className="group flex w-full items-center gap-2 border border-gold/50 bg-noir-950/95 px-3 py-2 text-left transition-colors hover:border-gold hover:bg-gold/10"
+              >
+                <span aria-hidden>🗺</span>
+                <span className="min-w-0 flex-1 font-body text-sm text-paper/90 group-hover:text-paper">
+                  Open the map — pick your next stop
+                </span>
+                <span className="shrink-0 font-pulp text-[9px] uppercase tracking-widest text-paper/40">T</span>
+              </button>
+            </div>
+          )}
+
           {/* Auto beat-route timer is intentionally hidden for a clean
               cinematic cut. (Continue mode keeps its single button above.) */}
 
@@ -7310,6 +7557,20 @@ function CasePlayer({
             const cost = perks.heat ? 2 : 1;
             setState((s) => applyConsequences(story, { meterChanges: [{ meter: "Suspicion", delta: cost }] }, s));
             pushToast(`${revelation} (+${cost} Heat)`, "fail");
+          }}
+        />
+      )}
+
+      {overlay?.type === "map" && mapAvailable(story) && (
+        <TravelMap
+          story={story}
+          state={state}
+          currentSceneId={sceneId}
+          visitedScenes={visitedScenes}
+          onClose={() => setOverlay(null)}
+          onTravel={(target) => {
+            setOverlay(null);
+            goToScene(target);
           }}
         />
       )}

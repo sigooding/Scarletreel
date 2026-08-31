@@ -96,6 +96,19 @@ scene0.hotspots = [
   },
 ];
 
+// Stage-node walker media: single sprite, loose walk frames, and the sprite sheet.
+scene0.stage = {
+  ...(scene0.stage ?? {}),
+  playerImage: await up("image", "stage-player", png("stage-player")),
+  walkFrames: [await up("image", "stage-walk0", png("stage-walk0"))],
+  playerSheet: {
+    image: await up("image", "stage-sheet", png("stage-sheet")),
+    frameWidth: 32,
+    frameHeight: 48,
+    animations: { idle: { frames: [0] }, walk: { frames: [0, 1, 2, 3], fps: 10 } },
+  },
+};
+
 // Dialogue beats (incl. a per-beat background override).
 const beats: DialogueBeat[] = [
   {
@@ -111,7 +124,17 @@ const beats: DialogueBeat[] = [
 beats[0].cinematic = {
   foregroundImage: await up("image", "beat0-fg", png("beat0-fg")),
   foregroundAnimation: { mode: "frames", frames: [await up("image", "beat0-frame0", png("beat0-frame0"))] },
-  foregroundExtras: [{ image: await up("image", "beat0-extra", png("beat0-extra")) }],
+  foregroundExtras: [
+    {
+      image: await up("image", "beat0-extra", png("beat0-extra")),
+      sheet: {
+        image: await up("image", "beat0-xsheet", png("beat0-xsheet")),
+        frameWidth: 32,
+        frameHeight: 32,
+        animations: { loop: { frames: [0, 1, 2], fps: 12 } },
+      },
+    },
+  ],
   parallaxLayers: [{ image: await up("image", "beat0-parallax", png("beat0-parallax")), depth: 0.2 }],
 };
 scene1.dialogueBeats = beats;
@@ -137,6 +160,12 @@ story.characters[0] = {
   avatarUrl: await up("image", "char0-avatar", png("char0-avatar")),
   talkingFrames: [await up("image", "char0-talk0", png("char0-talk0"))],
   talkingRest: await up("image", "char0-talkRest", png("char0-talkRest")),
+  talkingSheet: {
+    image: await up("image", "char0-talksheet", png("char0-talksheet")),
+    frameWidth: 64,
+    frameHeight: 64,
+    animations: { rest: { frames: [0] }, talk: { frames: [0, 1], fps: 6 } },
+  },
 };
 story.acts = [
   {
@@ -146,6 +175,11 @@ story.acts = [
 ];
 story.coverImage = await up("image", "cover", png("cover"));
 story.dialogueBox = { ...(story.dialogueBox ?? {}), backgroundImage: await up("image", "dlgbox-bg", png("dlgbox-bg")) };
+story.map = {
+  title: "Round-Trip City",
+  backgroundImage: await up("image", "map-bg", png("map-bg")),
+  locations: [{ id: "rt-loc", label: "The Docks", targetSceneId: scene0.id, x: 50, y: 50 }],
+};
 
 /* ------------------------------------------------------------------ */
 /*  2. compactStoryMedia: data URLs -> asset: refs (localStorage-safe) */
@@ -208,7 +242,7 @@ seeded.push(L0.musicUrl!, L0.sceneAudioUrl!, L0.narrationAudioUrl!);
 L0.cinematic = {
   foregroundImage: raw("s-fg"),
   foregroundAnimation: { mode: "frames", frames: [raw("s-frame")] },
-  foregroundExtras: [{ image: raw("s-extra") }],
+  foregroundExtras: [{ image: raw("s-extra"), sheet: { image: raw("s-xsheet"), frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0, 1] } } } }],
   parallaxLayers: [{ image: raw("s-parallax"), depth: 0.4 }],
 };
 L0.credits = { ...(L0.credits ?? {}), montage: [raw("s-montage")] };
@@ -245,6 +279,12 @@ legacy.characters[0] = {
   avatarUrl: raw("char-avatar"),
   talkingFrames: [raw("char-talk")],
   talkingRest: raw("char-rest"),
+  talkingSheet: {
+    image: raw("char-talksheet"),
+    frameWidth: 64,
+    frameHeight: 64,
+    animations: { talk: { frames: [0, 1] } },
+  },
 };
 legacy.acts = [
   {
@@ -267,6 +307,16 @@ legacy.episodes = [
 seeded.push(legacy.episodes[0].titleCardMusicUrl!);
 legacy.coverImage = raw("cover");
 legacy.dialogueBox = { ...(legacy.dialogueBox ?? {}), backgroundImage: raw("dlgbox") };
+legacy.map = { locations: [{ id: "lg-loc", label: "Old Pier", targetSceneId: legacy.scenes[0].id, x: 20, y: 80 }], backgroundImage: raw("map-bg") };
+legacy.scenes[0].stage = {
+  ...(legacy.scenes[0].stage ?? {}),
+  playerSheet: {
+    image: raw("stage-sheet"),
+    frameWidth: 32,
+    frameHeight: 48,
+    animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 8 } },
+  },
+};
 
 const compactedLegacy = await compactStoryMedia(legacy);
 const legacyJson = JSON.stringify(compactedLegacy);

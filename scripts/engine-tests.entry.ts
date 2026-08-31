@@ -17,6 +17,9 @@ import {
   beatLie,
   combineItems,
   collectFlags,
+  mapAvailable,
+  mapLocationsView,
+  mapReplacedChoiceIds,
   collectMemoryTags,
   composureRemaining,
   DEFAULT_WRONG_EVIDENCE_LIMIT,
@@ -39,6 +42,7 @@ import {
   posReachesHotspot,
   hotspotAtPoint,
   clampStagePos,
+  choiceIsPureTravel,
   createInitialState,
   effectiveChoiceGating,
   examineZoom,
@@ -65,6 +69,8 @@ import {
   type GlobalState,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
+import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
+import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, Story } from "../src/types";
 
@@ -2059,6 +2065,291 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // An unknown id returns the settings as handed in, so the node's look is
   // whatever it was — here a hand-made combination, matching no preset.
   check("credits presets: unknown id changes nothing the picker sees", matchCreditsPreset(unknown) === undefined, matchCreditsPreset(unknown));
+}
+
+/* ================================================================== *
+ *  travel map — unlock derivation, availability, validator rules
+ * ================================================================== */
+{
+  const scn = (id: string, extra: Partial<SceneNode> = {}): SceneNode => ({
+    id,
+    title: id,
+    background: "",
+    prose: "p",
+    choices: [],
+    hotspots: [],
+    dialogueBeats: [],
+    ...extra,
+  });
+  const S: Story = {
+    id: "map-t",
+    title: "Map T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    items: [{ id: "key", name: "Key", icon: "🔑", description: "", flavorText: "" }],
+    characters: [],
+    scenes: [
+      scn("a", { choices: [{ id: "c1", text: "go", targetSceneId: "end", attitudeTag: "Neutral" }] }),
+      scn("b"),
+      scn("note1", { nodeType: "note", choices: [{ id: "n1", text: "", targetSceneId: "b", attitudeTag: "Neutral" }] }),
+      scn("deadnote", { nodeType: "note" }),
+      scn("end", { isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "r" } }),
+    ],
+    map: {
+      backgroundImage: "/img/map.jpg",
+      locations: [
+        { id: "l-open", label: "Open", targetSceneId: "a", x: 10, y: 10 },
+        { id: "l-flag", label: "Flagged", targetSceneId: "b", x: 20, y: 20, gating: { requiresFlags: ["tip"] } },
+        { id: "l-item", label: "Keyed", targetSceneId: "b", x: 30, y: 30, gating: { requiresItems: ["key"] } },
+        { id: "l-secret", label: "Secret", targetSceneId: "b", x: 40, y: 40, gating: { requiresFlags: ["deep"] }, hiddenWhenLocked: true },
+      ],
+    },
+  };
+
+  // -- unlock view is pure gating over live state --------------------------
+  const s0 = createInitialState(S);
+  let view = mapLocationsView(S, s0);
+  check("map: hiddenWhenLocked pin not drawn while locked", !view.some((v) => v.location.id === "l-secret"), view.map((v) => v.location.id));
+  check("map: visible pins = open + locked-visible", view.length === 3);
+  check("map: ungated pin open from the start", view.find((v) => v.location.id === "l-open")?.unlocked === true);
+  check("map: flag-gated pin locked before the flag", view.find((v) => v.location.id === "l-flag")?.unlocked === false);
+
+  const s1 = { ...s0, activeFlags: new Set([...s0.activeFlags, "tip", "deep"]) };
+  view = mapLocationsView(S, s1);
+  check("map: flag unlock derives live from activeFlags", view.find((v) => v.location.id === "l-flag")?.unlocked === true);
+  check("map: hidden pin surfaces once its flag is set", view.find((v) => v.location.id === "l-secret")?.unlocked === true);
+
+  const s2 = { ...s0, inventory: [...s0.inventory, S.items[0]] };
+  check("map: item gating works too (same vocabulary as choices)", mapLocationsView(S, s2).find((v) => v.location.id === "l-item")?.unlocked === true);
+
+  // -- availability gate ----------------------------------------------------
+  check("map: available when locations exist", mapAvailable(S));
+  check("map: NOT available with no map", !mapAvailable({ ...S, map: undefined }));
+  check("map: NOT available with zero locations", !mapAvailable({ ...S, map: { locations: [] } }));
+  check("map: theme hideMap wins over content", !mapAvailable({ ...S, dialogueBox: { hideMap: true } }));
+
+  // -- validator ------------------------------------------------------------
+  const has = (st: Story, re: RegExp) => validateStory(st).some((i) => re.test(i.message));
+  check("map validator: clean story has no map issues", !has(S, /[Mm]ap location/));
+  check(
+    "map validator: missing target scene is an error",
+    has({ ...S, map: { locations: [{ id: "x", label: "X", targetSceneId: "nope", x: 1, y: 1 }] } }, /missing scene "nope"/)
+  );
+  check(
+    "map validator: duplicate location ids are an error",
+    has({ ...S, map: { locations: [
+      { id: "dup", label: "A", targetSceneId: "a", x: 1, y: 1 },
+      { id: "dup", label: "B", targetSceneId: "b", x: 2, y: 2 },
+    ] } }, /Duplicate map location id/)
+  );
+  check(
+    "map validator: pin to a dead-end note is a stranding error",
+    has({ ...S, map: { locations: [{ id: "n", label: "N", targetSceneId: "deadnote", x: 1, y: 1 }] } }, /note placeholder/)
+  );
+  check(
+    "map validator: pin to a routed note is fine (bypass carries the traveller)",
+    !has({ ...S, map: { locations: [{ id: "n", label: "N", targetSceneId: "note1", x: 1, y: 1 }] } }, /note placeholder/)
+  );
+  check(
+    "map validator: off-map pin coordinates warn",
+    has({ ...S, map: { locations: [{ id: "o", label: "O", targetSceneId: "a", x: 140, y: 1 }] } }, /off the map/)
+  );
+  check(
+    "map validator: hiddenWhenLocked without gating warns",
+    has({ ...S, map: { locations: [{ id: "h", label: "H", targetSceneId: "a", x: 1, y: 1, hiddenWhenLocked: true }] } }, /never be hidden/)
+  );
+
+  // -- reachability & flag bookkeeping --------------------------------------
+  check(
+    "map reachability: a map-only scene is NOT flagged unreachable",
+    !validateStory(S).some((i) => i.sceneId === "b" && /unreachable/.test(i.message))
+  );
+  check(
+    "map reachability: without the map the same scene IS unreachable",
+    validateStory({ ...S, map: undefined }).some((i) => i.sceneId === "b" && /unreachable/.test(i.message))
+  );
+  check("map flags: collectFlags sees map gate flags", collectFlags(S).includes("tip") && collectFlags(S).includes("deep"));
+
+  // -- map absorbs pure travel choices (replaceTravelChoices) ---------------
+  {
+    const R: Story = JSON.parse(JSON.stringify(S)) as Story;
+    R.map!.replaceTravelChoices = true;
+    R.scenes[0].choices = [
+      { id: "t1", text: "Back to the start", targetSceneId: "a", attitudeTag: "Neutral" }, // pure, pin open
+      { id: "t2", text: "Off to b", targetSceneId: "b", attitudeTag: "Neutral" }, // pure, but every pin to b is LOCKED
+      { id: "t3", text: "Go and grab it", targetSceneId: "a", attitudeTag: "Neutral", consequences: { setFlags: ["x"] } }, // side effects
+      { id: "t4", text: "Answer her", reply: true, attitudeTag: "Neutral" }, // reply, no target
+      { id: "t5", text: "Show the key", targetSceneId: "a", attitudeTag: "Neutral", presentItem: "key" }, // presents evidence
+      { id: "t6", text: "Move! Now!", targetSceneId: "a", attitudeTag: "Neutral", quickTime: true, timeLimitSeconds: 5 }, // timed
+    ];
+    const st = createInitialState(R);
+    const absorbed = mapReplacedChoiceIds(R, R.scenes[0], st);
+    check("map absorb: pure travel to an open pin is absorbed", absorbed.has("t1"));
+    check("map absorb: a LOCKED pin never absorbs (the choice may be the only way in)", !absorbed.has("t2"));
+    check("map absorb: consequences keep the choice", !absorbed.has("t3"));
+    check("map absorb: replies are never absorbed", !absorbed.has("t4"));
+    check("map absorb: present-item choices are never absorbed", !absorbed.has("t5"));
+    check("map absorb: timed/QTE choices are never absorbed", !absorbed.has("t6"));
+    check("map absorb: exactly one choice absorbed", absorbed.size === 1, [...absorbed]);
+
+    // unlock the b pins → t2 becomes absorbable, live from state
+    st.activeFlags.add("tip");
+    check("map absorb: unlocking the pin absorbs the matching choice live", mapReplacedChoiceIds(R, R.scenes[0], st).has("t2"));
+
+    // the switch itself, and the theme's hideMap, both disable absorption
+    const off: Story = JSON.parse(JSON.stringify(R)) as Story;
+    off.map!.replaceTravelChoices = undefined;
+    check("map absorb: off by default (opt-in)", mapReplacedChoiceIds(off, off.scenes[0], createInitialState(off)).size === 0);
+    const hidden: Story = { ...R, dialogueBox: { hideMap: true } };
+    check("map absorb: theme hideMap disables absorption (no map, no swap)", mapReplacedChoiceIds(hidden, hidden.scenes[0], createInitialState(hidden)).size === 0);
+
+    // choiceIsPureTravel unit edges
+    check("pure travel: nav-only choice is pure", choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral" }));
+    check("pure travel: memoryLog keeps the choice", !choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", memoryLog: "m" }));
+    check("pure travel: rememberLine keeps the choice", !choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", rememberLine: "r" }));
+    check("pure travel: exclusiveGroup keeps the choice", !choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", exclusiveGroup: "g" }));
+    check("pure travel: empty consequences object is still pure", choiceIsPureTravel({ id: "p", text: "p", targetSceneId: "a", attitudeTag: "Neutral", consequences: {} }));
+
+    // validator: the switch that can never fire warns; a working one doesn't
+    const dead: Story = JSON.parse(JSON.stringify(R)) as Story;
+    dead.scenes.forEach((sc) => (sc.choices = sc.choices?.filter((c) => !(choiceIsPureTravel(c) && ["a", "b"].includes(c.targetSceneId!)))));
+    check(
+      "map absorb validator: switch with nothing to absorb warns",
+      validateStory(dead).some((i) => /replaceTravelChoices.*does nothing/.test(i.message))
+    );
+    check(
+      "map absorb validator: a working switch raises no such warning",
+      !validateStory(R).some((i) => /replaceTravelChoices.*does nothing/.test(i.message))
+    );
+  }
+}
+
+/* ================================================================== *
+ *  sprite sheets — frame maths, animation fallback, validator wiring
+ * ================================================================== */
+{
+  const sheet: SpriteSheet = {
+    image: "/assets/sprites/gumshoe-walk.png",
+    frameWidth: 114,
+    frameHeight: 192,
+    animations: {
+      idle: { frames: [1] },
+      walk: { frames: [0, 1, 2, 3], fps: 8 },
+      slump: { frames: [3, 2], loop: false },
+    },
+  };
+
+  // -- grid maths ------------------------------------------------------------
+  check("sheet: cols from image width", sheetCols(sheet, 456) === 4);
+  check("sheet: cols never collapses to 0 on a too-narrow image", sheetCols(sheet, 50) === 1);
+  check("sheet: frame 0 sits at the origin", JSON.stringify(sheetFramePos(0, 4)) === JSON.stringify({ col: 0, row: 0 }));
+  check("sheet: frame 5 wraps to row 1 col 1", JSON.stringify(sheetFramePos(5, 4)) === JSON.stringify({ col: 1, row: 1 }));
+
+  // -- named-animation lookup with fallbacks ----------------------------------
+  check("sheet: exact animation name wins", sheetAnim(sheet, "walk")?.frames.length === 4);
+  check("sheet: missing name falls back in order", sheetAnim(sheet, "run", ["walk"])?.frames[3] === 3);
+  const idleOnly: SpriteSheet = { ...sheet, animations: { idle: { frames: [0] } } };
+  check("sheet: no match falls back to first defined animation", sheetAnim(idleOnly, "walk")?.frames[0] === 0);
+  check("sheet: empty animations yields null", sheetAnim({ ...sheet, animations: {} }, "walk") === null);
+
+  // -- frame stepping: looping and hold-last ----------------------------------
+  const walk = sheet.animations.walk;
+  check("sheet: t=0 is the first frame", sheetFrameAt(walk, 0) === 0);
+  check("sheet: fps drives stepping", sheetFrameAt(walk, 0.13) === 1); // 8fps → frame 1 at 125ms
+  check("sheet: looping wraps past the end", sheetFrameAt(walk, 0.5) === 0); // frame 4 → wraps
+  const slump = sheet.animations.slump;
+  check("sheet: loop:false holds the last frame", sheetFrameAt(slump, 9) === 2);
+  check("sheet: default fps is 8", sheetFrameAt({ frames: [0, 1] }, 0.13) === 1);
+
+  // -- validator --------------------------------------------------------------
+  check("sheet issues: a well-formed sheet is clean", spriteSheetIssues(sheet, "walker").length === 0);
+  check(
+    "sheet issues: missing image is caught",
+    spriteSheetIssues({ ...sheet, image: "" }, "walker").some((m) => /image/.test(m))
+  );
+  check(
+    "sheet issues: zero frame size is caught",
+    spriteSheetIssues({ ...sheet, frameWidth: 0 }, "walker").some((m) => /frame size/.test(m))
+  );
+  check(
+    "sheet issues: an empty animation is caught",
+    spriteSheetIssues({ ...sheet, animations: { walk: { frames: [] } } }, "walker").some((m) => /no frames/.test(m))
+  );
+  check(
+    "sheet issues: negative frame index is caught",
+    spriteSheetIssues({ ...sheet, animations: { walk: { frames: [-1] } } }, "walker").some((m) => /negative/.test(m))
+  );
+  check(
+    "sheet issues: missing expected animation names hint",
+    spriteSheetIssues({ ...sheet, animations: { dance: { frames: [0] } } }, "walker", ["walk", "idle"]).some((m) => /walk|idle/.test(m))
+  );
+  check(
+    "sheet issues: no hint when an expected name is present",
+    !spriteSheetIssues(sheet, "walker", ["walk", "idle"]).length
+  );
+
+  // -- drawable test used by walker / portraits / extras ----------------------
+  check("sheet: a full sheet is drawable", sheetDrawable(sheet));
+  check("sheet: undefined is not drawable", !sheetDrawable(undefined));
+  check("sheet: no image is not drawable", !sheetDrawable({ ...sheet, image: "" }));
+  check("sheet: zero frame size is not drawable", !sheetDrawable({ ...sheet, frameHeight: 0 }));
+  check("sheet: empty animations is not drawable", !sheetDrawable({ ...sheet, animations: {} }));
+  check(
+    "sheet: an all-empty animation is not drawable",
+    !sheetDrawable({ ...sheet, animations: { walk: { frames: [] } } })
+  );
+
+  // -- story validator wiring: stage.playerSheet problems surface as warnings --
+  const stageStory: Story = {
+    id: "sheet-v", title: "SV", subtitle: "", coverTagline: "", startSceneId: "st",
+    characters: [], items: [], meters: {}, scenes: [
+      {
+        id: "st", title: "Floor", nodeType: "stage", prose: "", background: "",
+        stage: {
+          playerSheet: { image: "", frameWidth: 0, frameHeight: 48, animations: {} },
+          floor: { top: 60, bottom: 90 },
+        },
+        hotspots: [{ id: "d", label: "Door", bounds: { x: 80, y: 60, w: 10, h: 20 }, cursor: "go", action: { type: "goToScene", targetSceneId: "end" } }],
+        dialogueBeats: [], choices: [],
+      } as unknown as SceneNode,
+      { id: "end", title: "End", nodeType: "ending", prose: "Done.", background: "", hotspots: [], dialogueBeats: [], choices: [], endingData: { tier: "best", epilogue: "" } } as unknown as SceneNode,
+    ],
+  } as unknown as Story;
+  const sheetIssues = validateStory(stageStory).filter((i) => /sprite sheet/i.test(i.message));
+  check("sheet validator wiring: bad playerSheet surfaces as story warnings", sheetIssues.length >= 2, sheetIssues.length);
+  check("sheet validator wiring: sheet problems are warnings, not errors", sheetIssues.every((i) => i.severity === "warning"));
+  check("sheet validator wiring: warnings attach to the stage scene", sheetIssues.every((i) => i.sceneId === "st"));
+
+  // -- validator wiring: talking sheets and animated extras -------------------
+  const richStory: Story = JSON.parse(JSON.stringify(stageStory)) as Story;
+  richStory.scenes[0].stage = undefined as never;
+  richStory.scenes[0].nodeType = undefined as never;
+  richStory.scenes[0].choices = [{ id: "c", text: "On", targetSceneId: "end" }] as never;
+  richStory.characters = [
+    {
+      id: "ch", name: "Mara", role: "singer", avatarUrl: "emoji:🎤", trustMeter: 0,
+      talkingSheet: { image: "", frameWidth: 64, frameHeight: 64, animations: { talk: { frames: [-2] } } },
+    },
+  ] as never;
+  richStory.scenes[0].cinematic = {
+    foregroundExtras: [{ image: "", sheet: { image: "x.png", frameWidth: 0, frameHeight: 32, animations: { loop: { frames: [0] } } } }],
+  } as never;
+  const richIssues = validateStory(richStory);
+  const talkWarn = richIssues.filter((i) => /talking sheet/.test(i.message));
+  check("talking sheet: malformed sheet warns at story level", talkWarn.length >= 2, talkWarn.length);
+  check("talking sheet: names the character", talkWarn.every((i) => /Mara/.test(i.message)));
+  check("talking sheet: warnings not errors", talkWarn.every((i) => i.severity === "warning"));
+  const extraWarn = richIssues.filter((i) => /foreground extra .*sprite sheet/i.test(i.message));
+  check("extra sheet: malformed extra sheet warns on the scene", extraWarn.length >= 1, extraWarn.length);
+  check("extra sheet: attaches to the owning scene", extraWarn.every((i) => i.sceneId === "st"));
+  const cleanChars: Story = JSON.parse(JSON.stringify(richStory)) as Story;
+  cleanChars.characters[0].talkingSheet = { image: "s.png", frameWidth: 64, frameHeight: 64, animations: { talk: { frames: [0, 1] }, rest: { frames: [0] } } };
+  cleanChars.scenes[0].cinematic = undefined as never;
+  check(
+    "talking sheet: a well-formed sheet raises no sheet warnings",
+    !validateStory(cleanChars).some((i) => /talking sheet|sprite sheet/i.test(i.message))
+  );
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

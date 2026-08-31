@@ -4,10 +4,12 @@ import {
   AI_PROVIDERS,
   generateAiImage,
   loadAiSettings,
+  providerReferenceSupport,
   saveAiSettings,
   type AiImageSettings,
   type AiProviderSettings,
 } from "../data/aiImages";
+import { FORGE_STRENGTHS, forgeSpriteSheet, type ForgedSheet, type ForgeKind } from "./spriteForge";
 
 const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
@@ -47,6 +49,38 @@ const PROMPT_IDEAS = [
   "Vintage detective office, venetian blinds",
 ];
 
+/** One-click sprite-sheet starters. Each generates frames side by side on a
+ * flat magenta backdrop — and because the backdrop is flat, the whole rest of
+ * the job (cut out, slice into frames, build the sheet) runs automatically
+ * after generation. They skip the noir style suffix because each prompt
+ * carries its own style. */
+const SPRITE_SHEET_PROMPTS: { label: string; prompt: string; kind: ForgeKind }[] = [
+  {
+    label: "🗣 Talking portrait (3 frames)",
+    kind: "talking",
+    prompt:
+      "Three separate side-by-side waist-up portraits of the SAME character on one row: a 1950s noir character (describe them here). Painted classic Hollywood style, identical pose and lighting in all three, ONLY the mouth differs: panel 1 mouth open speaking, panel 2 mouth half-open mid-word, panel 3 mouth closed. Clear gaps of pure flat magenta (#FF00FF) between the figures and as the entire background.",
+  },
+  {
+    label: "🚶 Walk cycle (6 frames)",
+    kind: "walk",
+    prompt:
+      "Six side-by-side frames of the SAME character walking, full body, side view facing right, one complete walk cycle (contact, down, passing, up positions). Identical size and lighting in every frame, evenly spaced on one row. Painted cinematic style. Pure flat magenta (#FF00FF) background everywhere, clear gaps between frames.",
+  },
+  {
+    label: "💡 Flickering sign (3 frames)",
+    kind: "loop",
+    prompt:
+      "Three side-by-side frames of the SAME vintage neon sign: frame 1 fully lit and glowing, frame 2 half-dim, frame 3 dark with only a faint tube outline. Identical size and position in every frame, evenly spaced on one row. Painted cinematic style. Pure flat magenta (#FF00FF) background, clear gaps between frames.",
+  },
+  {
+    label: "🚗 Vehicle sprite (front view)",
+    kind: "single",
+    prompt:
+      "A 1949 American sedan seen directly head-on from the front at night, headlights glowing, driver silhouetted through the windshield. Painted cinematic noir style, the entire car fully visible and centered. Solid flat pure magenta (#FF00FF) background all around, crisp edges, no shadows on the background.",
+  },
+];
+
 export function AiImageStudio({ storyId }: { storyId: string }) {
   const [settings, setSettings] = useState<AiImageSettings>(loadAiSettings);
   const [prompt, setPrompt] = useState("");
@@ -56,6 +90,19 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  // Sprite-sheet mode: set by the 🎞 starters. After generation the pipeline
+  // runs by itself: key out the magenta, slice the frames, build the sheet,
+  // save it to the media library, and emit ready-to-use sheet settings.
+  const [spriteKind, setSpriteKind] = useState<ForgeKind | null>(null);
+  const [forged, setForged] = useState<(ForgedSheet & { assetId?: string; json: string }) | null>(null);
+  const [forgeError, setForgeError] = useState<string | null>(null);
+  const [forging, setForging] = useState(false);
+  const [copiedSheet, setCopiedSheet] = useState(false);
+  const [keyStrength, setKeyStrength] = useState("normal");
+  // Style transfer: a reference image + how closely to match it (providers
+  // that support image-to-image only).
+  const [refImage, setRefImage] = useState<string | null>(null);
+  const [refMatch, setRefMatch] = useState(0.55);
   const storageAvailable = useStorageAvailable();
 
   const provider = settings.provider;
@@ -71,6 +118,29 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
 
   const finalPrompt = (applyStyle && styleSuffix.trim() ? `${prompt}${prompt.trim() ? ", " : ""}${styleSuffix.trim()}` : prompt).trim();
 
+  const autoForge = async (imageDataUrl: string, kind: ForgeKind) => {
+    setForging(true);
+    setForged(null);
+    setForgeError(null);
+    try {
+      const strength = FORGE_STRENGTHS.find((f) => f.id === keyStrength) ?? FORGE_STRENGTHS[1];
+      const sheet = await forgeSpriteSheet(imageDataUrl, kind, strength);
+      const up = await uploadDataUrlAsset(storyId, `sprite-sheet-${kind}-${Date.now()}.png`, "image", sheet.dataUrl, "sprites");
+      const image = up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl;
+      const json = JSON.stringify(
+        { image, frameWidth: sheet.frameWidth, frameHeight: sheet.frameHeight, animations: sheet.animations, pixelated: false },
+        null,
+        2
+      );
+      setForged({ ...sheet, assetId: up.success ? up.assetId : undefined, json });
+      if (!up.success) setForgeError(up.error ?? "sheet built, but saving to the library failed");
+    } catch (err) {
+      setForgeError(err instanceof Error ? err.message : "sprite sheet build failed");
+    } finally {
+      setForging(false);
+    }
+  };
+
   const generate = async () => {
     if (!finalPrompt) {
       setError("Write a prompt first.");
@@ -80,10 +150,20 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
     setError(null);
     setResult(null);
     setSaved(null);
-    const res = await generateAiImage(settings, finalPrompt);
+    setForged(null);
+    setForgeError(null);
+    const refSupport = providerReferenceSupport(provider, cfg.model);
+    const res = await generateAiImage(
+      settings,
+      finalPrompt,
+      refImage && refSupport ? { dataUrl: refImage, match: refMatch } : undefined
+    );
     setBusy(false);
-    if (res.ok && res.dataUrl) setResult(res.dataUrl);
-    else setError(res.error ?? "Generation failed.");
+    if (res.ok && res.dataUrl) {
+      setResult(res.dataUrl);
+      // Sprite mode: the rest of the work is automatic.
+      if (spriteKind) void autoForge(res.dataUrl, spriteKind);
+    } else setError(res.error ?? "Generation failed.");
   };
 
   const saveToLibrary = async () => {
@@ -248,12 +328,68 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
         {PROMPT_IDEAS.map((idea) => (
           <button
             key={idea}
-            onClick={() => setPrompt(idea)}
+            onClick={() => {
+              setPrompt(idea);
+              setSpriteKind(null);
+            }}
             className="border border-paper/20 px-1.5 py-0.5 font-type text-[9px] text-paper/60 hover:border-neon hover:text-neon"
           >
             {idea}
           </button>
         ))}
+      </div>
+      <div className="space-y-1 border border-cyan-neon/25 bg-cyan-neon/5 p-1.5">
+        <div className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon">🎞 Sprite sheet starters — fully automatic</div>
+        <div className="flex flex-wrap gap-1">
+          {SPRITE_SHEET_PROMPTS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => {
+                setPrompt(p.prompt);
+                setApplyStyle(false); // the preset carries its own style; keep the magenta backdrop clean
+                setSpriteKind(p.kind);
+              }}
+              className={`border px-1.5 py-0.5 font-type text-[9px] ${
+                spriteKind === p.kind
+                  ? "border-cyan-neon bg-cyan-neon/15 text-cyan-neon"
+                  : "border-cyan-neon/30 text-cyan-neon/80 hover:border-cyan-neon hover:text-cyan-neon"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {spriteKind ? (
+          <>
+            <p className="font-type text-[8px] leading-snug text-cyan-neon/80">
+              ⚙ Sprite mode ON — after generating, the magenta backdrop is keyed out, the frames are sliced, the sheet
+              is built with its animations and saved to the media library automatically. Edit the prompt first — swap
+              in your own character description where it says so.{" "}
+              <button className="underline hover:text-cyan-neon" onClick={() => setSpriteKind(null)}>
+                turn off
+              </button>
+            </p>
+            <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+              backdrop removal:
+              <select
+                className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+                value={keyStrength}
+                onChange={(e) => setKeyStrength(e.target.value)}
+              >
+                {FORGE_STRENGTHS.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </select>
+              — use gentle if it eats into the art, strong if backdrop specks survive.
+            </label>
+          </>
+        ) : (
+          <p className="font-type text-[8px] leading-snug text-paper/45">
+            Pick a starter and the whole job runs itself: generate → cut out → slice frames → build the sheet →
+            save to the media library. You just pick the finished sheet in the Characters tab or the scene's
+            🎞 Sprite sheet editor.
+          </p>
+        )}
       </div>
       <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
         <input type="checkbox" checked={applyStyle} onChange={(e) => setApplyStyle(e.target.checked)} />
@@ -262,6 +398,69 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
       {applyStyle && (
         <input className={inputCls} value={styleSuffix} onChange={(e) => setStyleSuffix(e.target.value)} />
       )}
+
+      {/* ---- reference image: style transfer / image-to-image ---- */}
+      {(() => {
+        const support = providerReferenceSupport(provider, cfg.model);
+        if (!support)
+          return (
+            <p className="font-type text-[8px] text-paper/35">
+              🖼 Reference-image style transfer isn't available on this provider/model — OpenAI (gpt-image-1),
+              Stability AI and local A1111/Forge support it.
+            </p>
+          );
+        return (
+          <div className="space-y-1 border border-gold/25 bg-gold/5 p-1.5">
+            <div className="font-pulp text-[8px] uppercase tracking-widest text-gold">🖼 Reference image (style transfer)</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="cursor-pointer border border-gold/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10">
+                {refImage ? "⇄ replace" : "⇧ upload reference"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const r = new FileReader();
+                    r.onload = () => setRefImage(String(r.result));
+                    r.readAsDataURL(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {refImage && (
+                <>
+                  <img src={refImage} alt="reference" className="h-10 w-10 border border-noir-600 object-cover" />
+                  <button onClick={() => setRefImage(null)} className="text-[10px] text-crimson hover:underline">
+                    ✕ clear
+                  </button>
+                </>
+              )}
+            </div>
+            {refImage && support === "full" && (
+              <label className="block text-[10px] uppercase tracking-wider text-paper/50">
+                Match the reference {Math.round(refMatch * 100)}% (low = loosely inspired · high = barely changed)
+                <input
+                  type="range" min={0.1} max={0.9} step={0.05} value={refMatch}
+                  className="mt-0.5 w-full accent-gold"
+                  onChange={(e) => setRefMatch(Number(e.target.value))}
+                />
+              </label>
+            )}
+            {refImage && support === "fixed" && (
+              <p className="font-type text-[8px] text-paper/45">
+                This model takes the reference but decides itself how closely to follow it — describe the change you
+                want in the prompt.
+              </p>
+            )}
+            <p className="font-type text-[8px] leading-snug text-paper/45">
+              The generator redraws your image in the style the prompt describes — hand it a photo and ask for
+              "painted 1950 noir style", or hand it your existing character art to make variations that match.
+            </p>
+          </div>
+        );
+      })()}
 
       <button
         onClick={generate}
@@ -280,6 +479,50 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
           <img src={result} alt="Generated" className="w-full border border-noir-600" />
           <button onClick={saveToLibrary} className="mt-2 w-full border border-emerald-500/60 bg-emerald-500/10 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-emerald-400 hover:bg-emerald-500/20">
             💾 Save to media library
+          </button>
+        </div>
+      )}
+      {forging && (
+        <div className="border border-cyan-neon/40 bg-cyan-neon/5 p-2 font-type text-[10px] text-cyan-neon">
+          ⚙ Building the sprite sheet — keying out the backdrop, slicing frames…
+        </div>
+      )}
+      {forgeError && <div className="border border-crimson/40 bg-crimson/10 p-2 font-type text-[10px] text-crimson">⚠ {forgeError}</div>}
+      {forged && (
+        <div className="space-y-1.5 border border-cyan-neon/40 bg-cyan-neon/5 p-2">
+          <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">✓ Sprite sheet built &amp; saved</div>
+          <div
+            className="inline-block max-w-full border border-noir-600"
+            style={{
+              backgroundImage:
+                "linear-gradient(45deg, #333 25%, transparent 25%), linear-gradient(-45deg, #333 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #333 75%), linear-gradient(-45deg, transparent 75%, #333 75%)",
+              backgroundSize: "16px 16px",
+              backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
+              backgroundColor: "#1a1a1f",
+            }}
+          >
+            <img src={forged.dataUrl} alt="Sprite sheet" className="block max-h-48 w-auto max-w-full" />
+          </div>
+          <p className="font-type text-[9px] leading-snug text-paper/60">
+            {forged.frameCount} frame{forged.frameCount === 1 ? "" : "s"} · {forged.frameWidth} × {forged.frameHeight}{" "}
+            each · animations: {Object.keys(forged.animations).join(" + ")} ·{" "}
+            {forged.assetId ? "saved to the media library." : "NOT saved (see warning)."}
+          </p>
+          <p className="font-type text-[9px] leading-snug text-paper/45">
+            Use it now: Characters tab ▸ talking sheet, Scene ▸ 🎞 Sprite sheet editor, or 🚶 Walkable Stage — pick
+            the saved sheet image and enter frame {forged.frameWidth} × {forged.frameHeight}. Or copy the settings
+            below and paste them into the Media tab's 🎞 Sheet slicer.
+          </p>
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(forged.json).then(() => {
+                setCopiedSheet(true);
+                window.setTimeout(() => setCopiedSheet(false), 1600);
+              });
+            }}
+            className="border border-noir-600 px-2 py-1 text-[9px] uppercase tracking-wider text-paper/60 hover:border-cyan-neon hover:text-cyan-neon"
+          >
+            {copiedSheet ? "✓ copied" : "⧉ copy sheet settings (JSON)"}
           </button>
         </div>
       )}

@@ -395,7 +395,10 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     if (!c) return;
     visit(c.foregroundImage);
     c.foregroundAnimation?.frames?.forEach(visit);
-    c.foregroundExtras?.forEach((e) => visit(e.image));
+    c.foregroundExtras?.forEach((e) => {
+      visit(e.image);
+      visit(e.sheet?.image);
+    });
     c.parallaxLayers?.forEach((l) => visit(l.image));
   };
   // A DialogueBeat carries audio/background/cinematic. The contradiction
@@ -419,6 +422,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     // url / asset: only, not emoji:).
     if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) visit(sc.stage.playerImage);
     sc.stage?.walkFrames?.forEach(visit);
+    visit(sc.stage?.playerSheet?.image);
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
     sc.hotspots?.forEach((h) => visit(h.image));
@@ -437,6 +441,8 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     visit(c.avatarUrl);
     c.talkingFrames?.forEach(visit);
     visit(c.talkingRest);
+    visit(c.talkingSheet?.image);
+    c.talkingSheets?.forEach((v) => visit(v.sheet?.image));
   });
   story.acts?.forEach((a) => visit(a.titleCardImage));
   story.episodes?.forEach((ep) => {
@@ -447,6 +453,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
   });
   visit(story.coverImage);
   visit(story.dialogueBox?.backgroundImage);
+  visit(story.map?.backgroundImage);
 }
 
 /** Every IndexedDB asset id a story references (via `asset:` or `video:asset:`),
@@ -509,7 +516,10 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     // — visitStoryMediaRefs (and so the export bundler) visits them, so the
     // play-time resolver must as well or their refs survive as literal
     // "asset:<id>" URLs and render nothing.
-    c.foregroundExtras?.forEach((e) => apply(e, "image"));
+    c.foregroundExtras?.forEach((e) => {
+      apply(e, "image");
+      if (e.sheet) apply(e.sheet, "image");
+    });
     c.parallaxLayers?.forEach((l) => apply(l, "image"));
   };
   const applyLieBeat = (beat?: { audioUrl?: string; background?: string; cinematic?: CinematicSettings }) => {
@@ -525,6 +535,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     apply(sc, "narrationAudioUrl");
     if (sc.stage?.playerImage) apply(sc.stage, "playerImage");
     if (sc.stage?.walkFrames?.length) sc.stage.walkFrames = sc.stage.walkFrames.map((f) => resolveMediaValue(f, map) ?? f);
+    if (sc.stage?.playerSheet) apply(sc.stage.playerSheet, "image");
     applyCinematic(sc.cinematic);
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
@@ -543,6 +554,8 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     apply(c, "avatarUrl");
     if (c.talkingFrames?.length) c.talkingFrames = c.talkingFrames.map((f) => resolveMediaValue(f, map) ?? f);
     if (c.talkingRest) c.talkingRest = resolveMediaValue(c.talkingRest, map) ?? c.talkingRest;
+    if (c.talkingSheet) apply(c.talkingSheet, "image");
+    c.talkingSheets?.forEach((v) => { if (v.sheet) apply(v.sheet, "image"); });
   });
   next.acts?.forEach((a) => apply(a, "titleCardImage"));
   next.episodes?.forEach((ep) => {
@@ -553,6 +566,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
   });
   apply(next, "coverImage");
   if (next.dialogueBox) apply(next.dialogueBox, "backgroundImage");
+  if (next.map) apply(next.map, "backgroundImage");
   return next;
 }
 
@@ -562,7 +576,8 @@ export async function uploadDataUrlAsset(
   storyId: string,
   name: string,
   type: AssetType,
-  dataUrl: string
+  dataUrl: string,
+  folder?: string
 ): Promise<{ success: boolean; assetId?: string; error?: string }> {
   const comma = dataUrl.indexOf(",");
   const base64Length = Math.max(0, dataUrl.length - comma - 1);
@@ -572,6 +587,7 @@ export async function uploadDataUrlAsset(
     id,
     name,
     type,
+    ...(folder ? { folder } : {}),
     dataUrl,
     fileUrl,
     size: Math.round((base64Length * 3) / 4),
@@ -579,6 +595,26 @@ export async function uploadDataUrlAsset(
   };
   const result = await addAsset(storyId, asset);
   return { success: result.success, assetId: result.success ? asset.id : undefined, error: result.error };
+}
+
+/** Move an asset to a library folder (empty/undefined = unfiled). */
+export async function setAssetFolder(storyId: string, assetId: string, folder?: string): Promise<void> {
+  const assets = await loadAssets(storyId);
+  const asset = assets.find((a) => a.id === assetId);
+  if (!asset) return;
+  const next: MediaAsset = { ...asset };
+  if (folder && folder.trim()) next.folder = folder.trim();
+  else delete next.folder;
+  // Direct put (not addAsset): the asset already counts toward the quota, so
+  // re-running the size checks would double-count it.
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put({ ...next, storyId } satisfies StoredAsset);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  notify(storyId);
 }
 
 /** Convert any embedded base64 `data:` URLs inside a story into `asset:<id>`
@@ -657,6 +693,10 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
       const imgType: AssetType = sc.stage.playerImage.startsWith("video:") ? "video" : "image";
       sc.stage.playerImage = (await compact(sc.stage.playerImage, imgType, `${sc.title} stage character`)) ?? sc.stage.playerImage;
     }
+    if (sc.stage?.playerSheet?.image) {
+      sc.stage.playerSheet.image =
+        (await compact(sc.stage.playerSheet.image, "image", `${sc.title} walker sheet`)) ?? sc.stage.playerSheet.image;
+    }
     if (sc.stage?.walkFrames?.length) {
       sc.stage.walkFrames = await Promise.all(
         sc.stage.walkFrames.map(async (f) => (await compact(f, "image", `${sc.title} stage walk frame`)) ?? f)
@@ -682,6 +722,7 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
       for (const e of sc.cinematic.foregroundExtras) {
         const out = await compact(e.image, "image", sc.title);
         e.image = out ?? e.image;
+        if (e.sheet?.image) e.sheet.image = (await compact(e.sheet.image, "image", `${sc.title} extra sheet`)) ?? e.sheet.image;
       }
     }
     if (sc.cinematic?.parallaxLayers?.length) {
@@ -707,6 +748,7 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
         for (const e of b.cinematic.foregroundExtras) {
           const out = await compact(e.image, "image", sc.title);
           e.image = out ?? e.image;
+          if (e.sheet?.image) e.sheet.image = (await compact(e.sheet.image, "image", `${sc.title} extra sheet`)) ?? e.sheet.image;
         }
       }
       if (b.cinematic?.parallaxLayers?.length) {
@@ -733,6 +775,12 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
       ).filter((f): f is string => !!f);
     }
     c.talkingRest = (await compact(c.talkingRest, "image", `${c.name} resting`)) || undefined;
+    if (c.talkingSheet?.image)
+      c.talkingSheet.image = (await compact(c.talkingSheet.image, "image", `${c.name} talking sheet`)) ?? c.talkingSheet.image;
+    for (const v of c.talkingSheets ?? []) {
+      if (v.sheet?.image)
+        v.sheet.image = (await compact(v.sheet.image, "image", `${c.name} sheet: ${v.name}`)) ?? v.sheet.image;
+    }
   }
   for (const a of next.acts ?? []) {
     a.titleCardImage = await compact(a.titleCardImage, "image", a.title || a.label || "act");
@@ -749,6 +797,10 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
   if (next.dialogueBox?.backgroundImage) {
     next.dialogueBox.backgroundImage =
       (await compact(next.dialogueBox.backgroundImage, "image", `${next.title} dialogue box`)) || undefined;
+  }
+  if (next.map?.backgroundImage) {
+    next.map.backgroundImage =
+      (await compact(next.map.backgroundImage, "image", `${next.title} travel map`)) || undefined;
   }
   return next;
 }
@@ -939,6 +991,9 @@ export async function bundleVoiceFileRefs(
     if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) {
       sc.stage.playerImage = (await bundleValue(sc.stage.playerImage)) ?? sc.stage.playerImage;
     }
+    if (sc.stage?.playerSheet?.image) {
+      sc.stage.playerSheet.image = (await bundleValue(sc.stage.playerSheet.image)) ?? sc.stage.playerSheet.image;
+    }
     if (sc.stage?.walkFrames?.length) {
       sc.stage.walkFrames = await Promise.all(sc.stage.walkFrames.map(async (f) => (await bundleValue(f)) ?? f));
     }
@@ -978,6 +1033,10 @@ export async function bundleVoiceFileRefs(
       ).filter((f): f is string => !!f);
     }
     c.talkingRest = await bundleValue(c.talkingRest);
+    if (c.talkingSheet?.image) c.talkingSheet.image = (await bundleValue(c.talkingSheet.image)) ?? c.talkingSheet.image;
+    for (const v of c.talkingSheets ?? []) {
+      if (v.sheet?.image) v.sheet.image = (await bundleValue(v.sheet.image)) ?? v.sheet.image;
+    }
   }
   for (const a of next.acts ?? []) {
     a.titleCardImage = await bundleValue(a.titleCardImage);
@@ -993,6 +1052,9 @@ export async function bundleVoiceFileRefs(
   next.coverImage = await bundleValue(next.coverImage);
   if (next.dialogueBox) {
     await apply(next.dialogueBox, "backgroundImage");
+  }
+  if (next.map) {
+    await apply(next.map, "backgroundImage");
   }
 
   return { story: next, assets, missing };

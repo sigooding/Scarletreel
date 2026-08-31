@@ -41,7 +41,7 @@ import {
   resolveLensFlare,
   resolveLights,
 } from "../cinematic";
-import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
+import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor, spriteGradeStyle } from "../game/Game";
 import {
   characterOpinion,
   clamp,
@@ -67,6 +67,9 @@ import {
 } from "../logic";
 import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } from "./MediaLibrary";
 import { ImagePicker } from "./ImagePicker";
+import { EXTRA_PRESET, SheetLab, SpriteSheetControls, TALKING_PRESET, WALKER_PRESET } from "./SheetEditor";
+import { SpriteCutoutLab } from "./SpriteCutout";
+import { SpriteBoxEditor } from "./SpriteBoxEditor";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
 import { ActEditor, ACT_TINTS } from "./ActEditor";
@@ -125,6 +128,7 @@ import type {
   LensFlarePreset,
   LensFlareSettings,
   LightPoint,
+  MapLocation,
   MeterKey,
   SceneNode,
   Story,
@@ -970,7 +974,7 @@ function CinematicPreview({
         </div>
       </div>
       {pOn && <ParallaxMidLayers cinematic={cinematic} resolve={media} />}
-      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"}>
+      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"} style={spriteGradeStyle(cinematic)}>
         <ForegroundExtras cinematic={cinematic} resolve={media} />
         <ForegroundLayer cinematic={cinematic} resolve={media} />
       </div>
@@ -1123,7 +1127,7 @@ function ForegroundPositionEditor({
           startRef.current = null;
         }}
       >
-        <div key={replayEpoch ?? 0}>
+        <div key={replayEpoch ?? 0} className="absolute inset-0" style={spriteGradeStyle(cinematic)}>
           <ForegroundLayer cinematic={cinematic} resolve={media} />
         </div>
         {/* crosshair marker at the anchor / focus point (also the pin) */}
@@ -2016,12 +2020,44 @@ function CinematicControls({
         )}
       </CollapsibleSection>
 
-      {/* ---- additional foreground images (stacked extras) ---- */}
-      <CollapsibleSection id="cin-foreground-extras" title="👥 Additional foreground images" titleClass="text-neon">
+      {/* ---- sprite sheet editor: stacked foreground sprites ---- */}
+      <CollapsibleSection id="cin-foreground-extras" title="🎞 Sprite sheet editor — foreground sprites" titleClass="text-neon">
         <p className="font-type text-[9px] text-paper/40">
-          Layer more characters, props or frames on top of the plate, each independently positioned, scaled and
-          mirrored. They render just behind the primary foreground above and parallax by their own depth.
+          Layer sprites over the plate — characters, props, cars, signs. Each one is positioned, scaled and
+          mirrored on the preview below, can loop a sprite-sheet animation, and parallaxes by its own depth.
         </p>
+        <div className="space-y-1 border border-gold/25 bg-gold/5 p-2 font-type text-[9px] leading-snug text-paper/55">
+          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">📐 How to make a sprite sheet (the whole recipe)</div>
+          <p>
+            <b className="text-paper/75">The fast way (no rules to remember):</b> get art with frames side by side on
+            ONE flat backdrop colour — from the 🤖 AI tab (sprite starters, or style-transfer your own upload), a
+            drawing, or a photo — then press <b>⚡ Upload art → auto-build</b> below. It removes the backdrop, slices
+            the frames, sets the sizes and animations, and files the sheet under 📁 sprites in the media library.
+            If removal eats into the art, set backdrop removal to <b>gentle</b>; if specks survive, <b>strong</b>;
+            for full manual control use Media ▸ ✂ Sprite Cutout Lab.
+          </p>
+          <p>
+            <b className="text-paper/75">Doing it by hand instead:</b> one transparent PNG, every frame EXACTLY the
+            same size, side by side. Frames count 0, 1, 2… left to right (extra rows continue the count). 3 frames of
+            200 × 300 → one 600 × 300 image, and Frame W/H below = 200 × 300 (a SINGLE frame, not the whole image).
+          </p>
+          <p>
+            <b className="text-paper/75">Sizes.</b> Exact size doesn't matter — the engine scales everything. Aim for
+            frames ≈ 384–512 px tall for characters, ≈ 256 px for props/signs, up to ≈ 640 px for big pieces (a car),
+            and keep the whole sheet under ≈ 4096 px a side. Bigger = crisper but heavier.
+          </p>
+          <p>
+            <b className="text-paper/75">Animations.</b> Just lists of frame numbers, e.g. loop = 0, 1, 2, 1.
+            Foreground sprites here play <b>loop</b> · stage walkers use <b>walk</b> + <b>idle</b> · talking
+            portraits use <b>talk</b> + <b>rest</b> (characters can also hold 🎭 alternate sheets — outfits/moods
+            switched by a beat's expression, see the Characters tab).
+          </p>
+          <p>
+            <b className="text-paper/75">Placing it.</b> Every sprite gets a live preview — drag it into position on
+            the scene, drag the ◢ corner (or scroll) to resize. Colour grades apply to sprites the same as the
+            background, so they always sit in the scene's look.
+          </p>
+        </div>
         {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
           const update = (patch: Partial<ForegroundExtra>) => {
             const n = [...(c.foregroundExtras ?? [])];
@@ -2044,9 +2080,23 @@ function CinematicControls({
               storyId={storyId}
               assetType="image"
               returnReference
+              preferFolder="sprites"
               value={extra.image || undefined}
               placeholder="Pick a transparent image…"
               onChange={(url) => update({ image: url ?? "" })}
+            />
+            {/* Live preview — drag the sprite onto the plate, corner-drag to resize. */}
+            <SpriteBoxEditor
+              mode="extra"
+              backgroundUrl={previewUrl}
+              image={media(extra.image) ?? extra.image ?? undefined}
+              sheet={extra.sheet}
+              resolve={media}
+              x={extra.x ?? 50}
+              y={extra.y ?? 80}
+              scale={extra.scale ?? 1}
+              flip={!!extra.flip}
+              onChange={(p) => update(p)}
             />
             <div className="grid grid-cols-2 gap-2">
               <Field label={`Position X ${extra.x ?? 50}% · Y ${extra.y ?? 80}%`}>
@@ -2080,6 +2130,21 @@ function CinematicControls({
               <input type="checkbox" checked={!!extra.flip} onChange={(e) => update({ flip: e.target.checked || undefined })} />
               ↔ Flip horizontally (face the other way)
             </label>
+            {/* ---- animate with a sprite sheet (flickering neon, rain-lashed flags) ---- */}
+            <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+              <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Animate with a sprite sheet</div>
+              <p className="font-type text-[9px] leading-snug text-paper/45">
+                Loop a frame grid instead of the static image — a flickering neon sign, a rain-lashed flag. The
+                "loop" animation plays on repeat; the static image above stays as your fallback. Position, scale,
+                flip and depth still apply.
+              </p>
+              <SpriteSheetControls
+                value={extra.sheet}
+                storyId={storyId}
+                preset={EXTRA_PRESET}
+                onChange={(sheet) => update({ sheet })}
+              />
+            </div>
           </div>
           );
         })}
@@ -3360,6 +3425,98 @@ function CharacterEditor({
                 <span className="font-type text-[9px] text-paper/40">Live preview — this is how it animates in-game while they speak.</span>
               </div>
 
+              {/* ---- one-image sprite sheet (takes over from the keyframes while set) ---- */}
+              <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+                <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet portrait</div>
+                <p className="font-type text-[9px] leading-snug text-paper/45">
+                  One image holding all the mouth/pose frames in a grid instead of loose files. Name a
+                  "talk" animation (plays while speaking) and a "rest" pose (held otherwise — a missing
+                  "rest" holds talk frame 1). While a sheet is set it takes over from the keyframes below;
+                  your keyframes stay saved and come back the moment you clear it. Position, scale and flip
+                  still use the sliders below.
+                </p>
+                <SpriteSheetControls
+                  value={c.talkingSheet}
+                  storyId={story.id}
+                  preset={TALKING_PRESET}
+                  onChange={(sheet) => {
+                    const next = deepClone(story);
+                    next.characters.find((x) => x.id === c.id)!.talkingSheet = sheet;
+                    onUpdate(next);
+                  }}
+                />
+                {/* ---- alternate sheets: outfits / moods / poses ---- */}
+                {(c.talkingSheet || (c.talkingSheets ?? []).length > 0) && (
+                  <div className="mt-1 space-y-1 border border-purple-400/25 bg-purple-400/5 p-1.5">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-purple-300">🎭 Alternate sheets (outfits · moods · poses)</div>
+                    <p className="font-type text-[8px] leading-snug text-paper/45">
+                      Give a variant a name (e.g. <b>raincoat</b>, <b>furious</b>), then type that same name into a
+                      dialogue beat's <b>expression</b> field — while this character speaks that beat, the variant's
+                      sheet takes over. Every other beat uses the main sheet above.
+                    </p>
+                    {(c.talkingSheets ?? []).map((v, vi) => (
+                      <div key={vi} className="space-y-1 border border-noir-700 p-1.5">
+                        <div className="flex items-center gap-1">
+                          <input
+                            className="flex-1 border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-purple-300 outline-none"
+                            value={v.name}
+                            placeholder="variant name (matches beat expression)…"
+                            onChange={(e) => {
+                              const next = deepClone(story);
+                              next.characters.find((x) => x.id === c.id)!.talkingSheets![vi].name = e.target.value;
+                              onUpdate(next);
+                            }}
+                          />
+                          <button
+                            className="shrink-0 border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                            onClick={() => {
+                              const next = deepClone(story);
+                              const ch = next.characters.find((x) => x.id === c.id)!;
+                              ch.talkingSheets = (ch.talkingSheets ?? []).filter((_, j) => j !== vi);
+                              if (!ch.talkingSheets.length) delete ch.talkingSheets;
+                              onUpdate(next);
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        <SpriteSheetControls
+                          value={v.sheet}
+                          storyId={story.id}
+                          preset={TALKING_PRESET}
+                          onChange={(sheet) => {
+                            const next = deepClone(story);
+                            const ch = next.characters.find((x) => x.id === c.id)!;
+                            if (sheet) ch.talkingSheets![vi].sheet = sheet;
+                            else {
+                              ch.talkingSheets = (ch.talkingSheets ?? []).filter((_, j) => j !== vi);
+                              if (!ch.talkingSheets.length) delete ch.talkingSheets;
+                            }
+                            onUpdate(next);
+                          }}
+                        />
+                      </div>
+                    ))}
+                    <button
+                      className="border border-purple-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-purple-300 hover:bg-purple-400/10"
+                      onClick={() => {
+                        const next = deepClone(story);
+                        const ch = next.characters.find((x) => x.id === c.id)!;
+                        const seed = ch.talkingSheet ?? ch.talkingSheets?.[0]?.sheet;
+                        if (!seed) return;
+                        ch.talkingSheets = [
+                          ...(ch.talkingSheets ?? []),
+                          { name: `variant ${(ch.talkingSheets?.length ?? 0) + 1}`, sheet: deepClone(seed) },
+                        ];
+                        onUpdate(next);
+                      }}
+                    >
+                      ＋ Add alternate sheet
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <Field label="Resting pose (shown when they're on scene but NOT speaking)">
                 <div className="flex gap-1">
                   <ImagePicker
@@ -3458,6 +3615,32 @@ function CharacterEditor({
                 />
               </div>
 
+              {/* Live preview over the opening scene — drag to place, corner-drag to resize. */}
+              <SpriteBoxEditor
+                mode="talking"
+                backgroundUrl={(() => {
+                  const bg = story.scenes.find((s) => s.id === story.startSceneId)?.background;
+                  return bg ? media(bg) ?? bg : undefined;
+                })()}
+                image={(() => {
+                  const f = c.talkingRest ?? (c.talkingFrames ?? []).find(Boolean);
+                  return f ? media(f) ?? f : undefined;
+                })()}
+                sheet={c.talkingSheet}
+                resolve={media}
+                x={c.talkingX ?? 50}
+                y={c.talkingY ?? 0}
+                scale={c.talkingScale ?? 1}
+                flip={!!c.talkingFlip}
+                onChange={(p) => {
+                  const next = deepClone(story);
+                  const ch = next.characters.find((x) => x.id === c.id)!;
+                  if (p.x !== undefined) ch.talkingX = p.x;
+                  if (p.y !== undefined) ch.talkingY = p.y;
+                  if (p.scale !== undefined) ch.talkingScale = p.scale;
+                  onUpdate(next);
+                }}
+              />
               <div className="grid grid-cols-2 gap-2">
                 <Field label={`Position X ${c.talkingX ?? 50}%`}>
                   <input type="range" min={0} max={100} step={1} className="w-full accent-pink-500" value={c.talkingX ?? 50}
@@ -3474,6 +3657,14 @@ function CharacterEditor({
                 <Field label={`Frame time ${(c.talkingFrameDuration ?? 0.16).toFixed(2)}s`}>
                   <input type="range" min={0.04} max={0.6} step={0.02} className="w-full accent-pink-500" value={c.talkingFrameDuration ?? 0.16}
                     onChange={(e) => { const next = deepClone(story); next.characters.find((x) => x.id === c.id)!.talkingFrameDuration = Number(e.target.value); onUpdate(next); }} />
+                </Field>
+                <Field label={`Visibility when NOT speaking ${Math.round((c.talkingDim ?? 0.72) * 100)}% (100% = never fades)`}>
+                  <input type="range" min={0.2} max={1} step={0.02} className="w-full accent-pink-500" value={c.talkingDim ?? 0.72}
+                    onChange={(e) => {
+                      const next = deepClone(story);
+                      next.characters.find((x) => x.id === c.id)!.talkingDim = Number(e.target.value);
+                      onUpdate(next);
+                    }} />
                 </Field>
               </div>
               <label className="flex items-center gap-2 text-[9px] text-paper/55">
@@ -4307,7 +4498,7 @@ function StudioInner({
       beats.splice(to, 0, moved);
     });
   };
-  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
+  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle" | "map">("scene");
   // Storage is the source of truth for the ElevenLabs model (the Characters
   // tab can change it elsewhere), so re-read it whenever the tab changes.
   useEffect(() => {
@@ -6320,7 +6511,7 @@ function StudioInner({
                 (Game Objective → Characters → Items → Flags), then STRUCTURE
                 (Acts → Episodes) and the in-game look, then ASSETS, then ▶
                 Test. Story-wide tabs sit above the scene panels as before. */}
-            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
+            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "map", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -6342,6 +6533,7 @@ function StudioInner({
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
+                  map: "🗺 Map",
                   dialogueBox: "🎮 In-Game Theme",
                   globalTitle: "🎼 Newsstand Theme",
                   test: "▶ Test",
@@ -6524,6 +6716,9 @@ function StudioInner({
                 }}
               />
             )}
+            {tab === "map" && (
+              <MapEditor story={story} onUpdate={commit} />
+            )}
             {tab === "episodes" && (
               <EpisodeEditor
                 story={story}
@@ -6543,6 +6738,8 @@ function StudioInner({
                   indicator tells you whether uploads will survive a reload.
                 </HelpNote>
                 <MediaLibrary storyId={story.id} />
+                <SheetLab storyId={story.id} />
+                <SpriteCutoutLab storyId={story.id} />
               </>
             )}
             {tab === "ai" && <AiImageStudio storyId={story.id} />}
@@ -6602,6 +6799,46 @@ function StudioInner({
                       <span>Minimal HUD
                         <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
                           Fades scene-label/lead readouts until you hover — a cleaner, more cinematic frame.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* ---- investigation panels ---- */}
+                  <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🗂 Investigation panels</div>
+                    <p className="font-type text-[9px] leading-snug text-paper/45">
+                      Each panel is automatic: it only appears when this story actually uses the feature
+                      (corkboard needs a deduction board, travel map needs 🗺 Map locations). Tick a box to
+                      force one OFF for a cleaner frame even when the story defines it.
+                    </p>
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.hideCaseProgress}
+                        onChange={(e) => setBox({ hideCaseProgress: e.target.checked || undefined })} />
+                      <span>Hide ▤ Case Progress drawer
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          {story.deduction || story.map?.locations?.length ? "Shown by default." : "Shown by default (tracks perks, people met, clues)."}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.hideCorkboard}
+                        onChange={(e) => setBox({ hideCorkboard: e.target.checked || undefined })} />
+                      <span>Hide 📌 Corkboard
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          {story.deduction ? "This story HAS a deduction board — hiding removes the menu entry and the B key." : "This story has no deduction board, so the corkboard is already hidden automatically."}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.hideMap}
+                        onChange={(e) => setBox({ hideMap: e.target.checked || undefined })} />
+                      <span>Hide 🗺 Travel Map
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          {story.map?.locations?.length ? "This story HAS map locations — hiding removes the menu entry and the T key." : "This story has no map locations yet (add them on the 🗺 Map tab), so the map is already hidden automatically."}
                         </span>
                       </span>
                     </label>
@@ -8014,6 +8251,21 @@ function StudioInner({
                             procedural bob.
                           </p>
                         </Field>
+                        {/* ---- sprite-sheet walker (one image, gridded frames) ---- */}
+                        <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            One image holding a grid of frames (left→right, top→bottom, starting at 0). Beats loose
+                            frame files: define "walk" and "idle" and the walker animates and stands still properly.
+                            Overrides the sprite/walk-frame fields above while set.
+                          </p>
+                          <SpriteSheetControls
+                            value={scene.stage.playerSheet}
+                            storyId={story.id}
+                            preset={WALKER_PRESET}
+                            onChange={(sheet) => updateScene(scene.id, { stage: { ...scene.stage!, playerSheet: sheet } })}
+                          />
+                        </div>
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input
@@ -9689,6 +9941,7 @@ function StudioInner({
                             { v: "setFlag", label: "🚩 Set flag" },
                             { v: "showText", label: "💬 Show text" },
                             { v: "openBoard", label: "📌 Open corkboard" },
+                            { v: "openMap", label: "🗺 Open travel map" },
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
                             { v: "startDialogue", label: "🗣 Start conversation (stage)" },
                           ].map((t) => (
@@ -10681,5 +10934,219 @@ export function Studio(props: {
     <ReactFlowProvider>
       <StudioInner {...props} />
     </ReactFlowProvider>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  travel-map editor (🗺 Map tab)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Editor for Story.map — the flag-gated travel screen. Pins are placed by
+ * clicking the preview (the selected location moves to where you click), and
+ * unlocking uses the same gating vocabulary as choices: a comma-separated
+ * flag list here writes `gating.requiresFlags`. Deleting the last location
+ * removes `story.map` entirely so the player-side map vanishes cleanly.
+ */
+function MapEditor({ story, onUpdate }: { story: Story; onUpdate: (s: Story) => void }) {
+  const map = story.map ?? { locations: [] };
+  const resolveMedia = useResolvedMedia(story.id);
+  const flags = useMemo(() => collectFlags(story), [story]);
+  const [selectedLocId, setSelectedLocId] = useState<string | null>(map.locations[0]?.id ?? null);
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  const setMap = (patch: Partial<typeof map>) => onUpdate({ ...story, map: { ...map, ...patch } });
+  const updateLoc = (id: string, patch: Partial<MapLocation>) =>
+    setMap({ locations: map.locations.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
+  const removeLoc = (id: string) => {
+    const rest = map.locations.filter((l) => l.id !== id);
+    if (rest.length === 0 && !map.backgroundImage && !map.title) {
+      const { map: _gone, ...noMap } = story;
+      onUpdate(noMap as Story);
+    } else {
+      setMap({ locations: rest });
+    }
+    if (selectedLocId === id) setSelectedLocId(rest[0]?.id ?? null);
+  };
+  const addLoc = () => {
+    const id = `loc-${Date.now().toString(36)}`;
+    const loc: MapLocation = {
+      id,
+      label: `Location ${map.locations.length + 1}`,
+      targetSceneId: story.scenes[0]?.id ?? "",
+      x: 20 + ((map.locations.length * 17) % 60),
+      y: 25 + ((map.locations.length * 23) % 50),
+    };
+    setMap({ locations: [...map.locations, loc] });
+    setSelectedLocId(id);
+  };
+
+  const bgRaw = map.backgroundImage;
+  const bgResolved = resolveMedia(bgRaw) ?? bgRaw;
+  const bgStyle: React.CSSProperties = bgResolved
+    ? bgResolved.startsWith("gradient:")
+      ? { background: bgResolved.slice(9) }
+      : { backgroundImage: `url(${assetUrl(bgResolved)})`, backgroundSize: "cover", backgroundPosition: "center" }
+    : { background: "linear-gradient(160deg,#14141f 0%,#0c0c14 70%)" };
+
+  const placePin = (e: React.MouseEvent) => {
+    if (!selectedLocId || !previewRef.current) return;
+    const rect = previewRef.current.getBoundingClientRect();
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
+    updateLoc(selectedLocId, { x: Math.min(100, Math.max(0, x)), y: Math.min(100, Math.max(0, y)) });
+  };
+
+  const selected = map.locations.find((l) => l.id === selectedLocId) ?? null;
+
+  return (
+    <div className="space-y-3">
+      <div className="border border-gold/30 bg-gold/5 p-2">
+        <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🗺 Travel Map</div>
+        <p className="mt-1 font-type text-[10px] leading-snug text-paper/55">
+          A screen of destinations the player can jump to (menu → 🗺 Travel map, or T). Each location
+          unlocks when its required flags are set — earn the tip, open the door. Locked pins show as
+          “???” unless you hide them entirely. In play, travel resolves through note placeholders like
+          every other route, and the validator checks every pin.
+        </p>
+      </div>
+
+      <Field label="Map title (heading on the player's screen)">
+        <input className={inputCls} value={map.title ?? ""} placeholder="Travel Map"
+          onChange={(e) => setMap({ title: e.target.value || undefined })} />
+      </Field>
+
+      <Field label="Map artwork (pins are placed on this)">
+        <ImagePicker value={map.backgroundImage} storyId={story.id}
+          onChange={(v) => setMap({ backgroundImage: v })} placeholder="Pick the map image…" />
+      </Field>
+
+      {/* ---- map absorbs pure travel choices ---- */}
+      <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
+        <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={!!map.replaceTravelChoices}
+            onChange={(e) => setMap({ replaceTravelChoices: e.target.checked || undefined })}
+          />
+          <span>🗺 Map absorbs travel choices</span>
+        </label>
+        <p className="font-type text-[9px] leading-snug text-paper/45">
+          When on, a choice whose ONLY job is going to a scene an unlocked pin also reaches is hidden in
+          play — the choice rail shows a single “🗺 Open the map” action instead, so travel has one home.
+          Safety rails: choices that set flags, move meters, give items, reply in place, present evidence
+          or run a timer are NEVER absorbed (the map applies no consequences), and a locked pin never
+          absorbs a choice — the authored line stays until the pin is earned. Your choices are untouched
+          in the draft; this is purely a play-time swap.
+        </p>
+      </div>
+
+      {/* click-to-place preview */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-pulp text-[9px] uppercase tracking-widest text-paper/50">
+            {selected ? `Click the map to place “${selected.label}”` : "Add a location, then click the map to place its pin"}
+          </span>
+          <button onClick={addLoc} className="border border-gold/60 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/15">
+            + Add location
+          </button>
+        </div>
+        <div ref={previewRef} onClick={placePin}
+          className={`relative aspect-video w-full overflow-hidden border-2 border-noir-600 ${selected ? "cursor-crosshair" : ""}`}
+          style={bgStyle}>
+          {map.locations.map((loc) => (
+            <button
+              key={loc.id}
+              onClick={(e) => { e.stopPropagation(); setSelectedLocId(loc.id); }}
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
+              title={`${loc.label} → ${story.scenes.find((s) => s.id === loc.targetSceneId)?.title ?? loc.targetSceneId}`}
+            >
+              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-sm shadow-[0_2px_8px_rgba(0,0,0,0.8)] ${
+                loc.id === selectedLocId ? "border-neon bg-neon/25" : "border-gold bg-noir-950/85"
+              }`}>
+                {loc.icon ?? (loc.gating ? "🔒" : "📍")}
+              </span>
+              <span className={`mt-0.5 block whitespace-nowrap border px-1 font-pulp text-[8px] uppercase tracking-widest backdrop-blur-sm ${
+                loc.id === selectedLocId ? "border-neon/60 bg-noir-950/85 text-neon" : "border-gold/50 bg-noir-950/85 text-gold"
+              }`}>
+                {loc.label}
+              </span>
+            </button>
+          ))}
+          {map.locations.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center font-type text-xs italic text-paper/45">
+              No locations yet — “+ Add location” to drop the first pin.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* per-location editors */}
+      <div className="space-y-2">
+        {map.locations.map((loc) => {
+          const gateFlags = loc.gating?.requiresFlags ?? [];
+          const isSel = loc.id === selectedLocId;
+          return (
+            <div key={loc.id}
+              className={`space-y-1.5 border p-2 ${isSel ? "border-neon/60 bg-neon/5" : "border-noir-600 bg-noir-900/50"}`}
+              onClick={() => setSelectedLocId(loc.id)}>
+              <div className="flex items-center gap-2">
+                <input className={inputCls} value={loc.label}
+                  onChange={(e) => updateLoc(loc.id, { label: e.target.value })} placeholder="Location name" />
+                <input className={`${inputCls} !w-14 text-center`} value={loc.icon ?? ""} maxLength={4}
+                  onChange={(e) => updateLoc(loc.id, { icon: e.target.value || undefined })} placeholder="📍" title="Pin emoji" />
+                <button onClick={(e) => { e.stopPropagation(); removeLoc(loc.id); }}
+                  className="shrink-0 border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10">
+                  ✕
+                </button>
+              </div>
+              <Field label="Travels to scene">
+                <select className={inputCls} value={loc.targetSceneId}
+                  onChange={(e) => updateLoc(loc.id, { targetSceneId: e.target.value })}>
+                  {story.scenes.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.nodeType === "note" ? `📝 ${sc.title} (note — passes through)` : sc.title}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Unlocked by flags (comma-separated — empty = always open)">
+                <input className={inputCls} value={gateFlags.join(", ")} list={`map-flags-${story.id}`}
+                  onChange={(e) => {
+                    const requiresFlags = e.target.value.split(",").map((f) => f.trim()).filter(Boolean);
+                    const gating: Gating | undefined = requiresFlags.length
+                      ? { ...(loc.gating ?? {}), requiresFlags }
+                      : (() => {
+                          const { requiresFlags: _r, ...rest } = loc.gating ?? {};
+                          return Object.keys(rest).length ? rest : undefined;
+                        })();
+                    updateLoc(loc.id, { gating });
+                  }}
+                  placeholder="e.g. found_pier_tip" />
+              </Field>
+              {!!loc.gating && (
+                <>
+                  <Field label="Teaser on the locked pin (else an automatic hint)">
+                    <input className={inputCls} value={loc.lockedHint ?? ""}
+                      onChange={(e) => updateLoc(loc.id, { lockedHint: e.target.value || undefined })}
+                      placeholder="Someone in the diner knows the pier number…" />
+                  </Field>
+                  <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                    <input type="checkbox" checked={!!loc.hiddenWhenLocked}
+                      onChange={(e) => updateLoc(loc.id, { hiddenWhenLocked: e.target.checked || undefined })} />
+                    Hide the pin completely until unlocked (a secret place)
+                  </label>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <datalist id={`map-flags-${story.id}`}>
+        {flags.map((f) => <option key={f} value={f} />)}
+      </datalist>
+    </div>
   );
 }

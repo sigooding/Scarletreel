@@ -1,3 +1,4 @@
+import { spriteSheetIssues } from "./game/spriteSheet";
 import type {
   Choice,
   Consequences,
@@ -13,6 +14,7 @@ import type {
   HotspotActionType,
   Interrogation,
   Item,
+  MapLocation,
   MeterKey,
   RecapLine,
   SceneNode,
@@ -91,6 +93,68 @@ export function meetsGating(g: Gating | undefined, s: GlobalState): boolean {
     for (const [id, v] of Object.entries(g.minTrust)) if ((s.characterTrust[id] ?? 0) < v) return false;
   }
   return true;
+}
+
+/** Travel-map lens on the live state: which locations are drawn, and which
+ *  of those are open. Locked pins stay visible (as "???") unless the author
+ *  marked them hiddenWhenLocked. Pure — unlocks are DERIVED from the same
+ *  gating vocabulary as choices/hotspots (meetsGating), never stored, so a
+ *  loaded save or NG+ run can't disagree with the flags that earned access. */
+export function mapLocationsView(
+  story: Story,
+  s: GlobalState
+): { location: MapLocation; unlocked: boolean }[] {
+  return (story.map?.locations ?? [])
+    .map((location) => ({ location, unlocked: meetsGating(location.gating, s) }))
+    .filter(({ unlocked, location }) => unlocked || !location.hiddenWhenLocked);
+}
+
+/** True when the story ships a usable travel map and the theme hasn't hidden
+ *  it — the single gate for the HUD menu entry, the T hotkey, hotspot
+ *  openMap actions and the overlay itself. */
+export function mapAvailable(story: Story): boolean {
+  return (story.map?.locations?.length ?? 0) > 0 && !story.dialogueBox?.hideMap;
+}
+
+/** A choice whose ONLY job is walking somewhere: it navigates, and carries
+ *  no consequences, memory, reply behaviour, presented item, timer or group
+ *  semantics. Only these are safe for the travel map to absorb — replacing
+ *  anything richer would silently delete authored side effects (map travel
+ *  applies none). */
+export function choiceIsPureTravel(c: Choice): boolean {
+  if (!c.targetSceneId || c.reply) return false;
+  const cq = c.consequences as Record<string, unknown> | undefined;
+  const hasConsequences = !!cq && Object.values(cq).some((v) => v !== undefined && v !== null);
+  return (
+    !hasConsequences &&
+    !c.memoryLog &&
+    !c.rememberLine &&
+    !c.presentItem &&
+    !c.quickTime &&
+    !c.timeLimitSeconds &&
+    !c.exclusiveGroup &&
+    !c.timedOutTargetSceneId &&
+    !c.timedOutConsequences
+  );
+}
+
+/** Which of this scene's choices the travel map replaces right now (an
+ *  opt-in via map.replaceTravelChoices): pure-travel choices whose target an
+ *  UNLOCKED pin also reaches. The choice rail hides these and shows a single
+ *  "Open the map" action instead — one road out, not two buttons for the
+ *  same journey. A locked pin never absorbs a choice (the choice may be the
+ *  only way in until the pin's gate is earned), and non-pure choices are
+ *  never touched. Pure and state-derived, so saves can't disagree. */
+export function mapReplacedChoiceIds(story: Story, scene: SceneNode, s: GlobalState): Set<string> {
+  const out = new Set<string>();
+  if (!story.map?.replaceTravelChoices || !mapAvailable(story)) return out;
+  const open = new Set(
+    (story.map.locations ?? []).filter((l) => meetsGating(l.gating, s)).map((l) => l.targetSceneId)
+  );
+  for (const c of scene.choices ?? []) {
+    if (choiceIsPureTravel(c) && open.has(c.targetSceneId!)) out.add(c.id);
+  }
+  return out;
 }
 
 /** The scene a heat bust should route to, or null when no bust is due:
@@ -663,6 +727,7 @@ export function collectFlags(story: Story): string[] {
     }
   });
   story.deduction?.connections.forEach((c) => flags.add(c.flagSet));
+  story.map?.locations.forEach((loc) => fromGate(loc.gating));
   return [...flags].sort();
 }
 
@@ -1189,6 +1254,53 @@ export function validateStory(story: Story): ValidationIssue[] {
     issues.push({ severity: "error", sceneId: null, message: `Duplicate character id "${id}". Dialogue voices and trust will collide.` })
   );
 
+  // Talking-portrait sprite sheets: surface malformed sheets as warnings so a
+  // bad frame list is caught in the Check tab, not as a frozen portrait in play.
+  story.characters.forEach((c) => {
+    if (c.talkingSheet)
+      spriteSheetIssues(c.talkingSheet, "talking sheet", ["talk", "rest"]).forEach((msg) =>
+        issues.push({ severity: "warning", sceneId: null, message: `Character "${c.name}": ${msg}` })
+      );
+  });
+
+  // Travel map: every pin must land on a real scene, ids must be unique, and
+  // a dead-end note target would strand the traveller (bypassedSceneId can't
+  // route past a note with no way out).
+  if (story.map) {
+    duplicates(story.map.locations.map((l) => l.id)).forEach((id) =>
+      issues.push({ severity: "error", sceneId: null, message: `Duplicate map location id "${id}".` })
+    );
+    story.map.locations.forEach((loc) => {
+      if (!ids.has(loc.targetSceneId)) {
+        issues.push({ severity: "error", sceneId: null, message: `Map location "${loc.label || loc.id}" → missing scene "${loc.targetSceneId}".` });
+        return;
+      }
+      const resolved = story.scenes.find((s) => s.id === bypassedSceneId(story, loc.targetSceneId));
+      if (resolved?.nodeType === "note")
+        issues.push({ severity: "error", sceneId: resolved.id, message: `Map location "${loc.label || loc.id}" travels to note placeholder "${resolved.title}" with no route out — the traveller would be stranded.` });
+      if (!(loc.x >= 0 && loc.x <= 100 && loc.y >= 0 && loc.y <= 100))
+        issues.push({ severity: "warning", sceneId: null, message: `Map location "${loc.label || loc.id}" pin sits off the map (x/y must be 0–100%).` });
+      if (loc.hiddenWhenLocked && !loc.gating)
+        issues.push({ severity: "warning", sceneId: null, message: `Map location "${loc.label || loc.id}" is hiddenWhenLocked but has no gating — it can never be hidden.` });
+    });
+    // Map-absorbs-travel: warn when the switch is on but can never fire —
+    // either nothing to absorb, or every matching choice carries side
+    // effects (which absorption deliberately never touches).
+    if (story.map.replaceTravelChoices) {
+      const targets = new Set(story.map.locations.map((l) => l.targetSceneId));
+      const absorbable = story.scenes.some((sc) =>
+        (sc.choices ?? []).some((c) => choiceIsPureTravel(c) && targets.has(c.targetSceneId!))
+      );
+      if (!absorbable)
+        issues.push({
+          severity: "warning",
+          sceneId: null,
+          message:
+            "Map replaceTravelChoices is on, but no scene has a pure travel choice matching a pin — the setting does nothing. (Choices with flags/meters/items/replies are never absorbed.)",
+        });
+    }
+  }
+
   if (!ids.has(story.startSceneId))
     issues.push({ severity: "error", sceneId: null, message: `Start scene "${story.startSceneId}" does not exist.` });
   const startScene = story.scenes.find((s) => s.id === story.startSceneId);
@@ -1202,6 +1314,21 @@ export function validateStory(story: Story): ValidationIssue[] {
   });
 
   // ---- STAGE nodes (Telltale-style walkable scenes) ----
+  // (Runs for EVERY scene first: animated foreground extras live on any node.)
+  for (const sc of story.scenes) {
+    // Malformed sprite sheets on foreground extras (scene- or beat-level
+    // cinematics) warn here instead of rendering nothing in play.
+    const extraSheets = [
+      ...(sc.cinematic?.foregroundExtras ?? []),
+      ...(sc.dialogueBeats ?? []).flatMap((b) => b.cinematic?.foregroundExtras ?? []),
+    ];
+    extraSheets.forEach((e, xi) => {
+      if (e.sheet)
+        spriteSheetIssues(e.sheet, `foreground extra #${xi + 1} sprite sheet`, ["loop"]).forEach((msg) =>
+          issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}": ${msg}` })
+        );
+    });
+  }
   for (const sc of story.scenes) {
     if (sc.nodeType !== "stage") {
       if (sc.stage)
@@ -1234,6 +1361,10 @@ export function validateStory(story: Story): ValidationIssue[] {
         issues.push({ severity: "warning", sceneId: sc.id, message: `${label} spawn point sits outside the walkable floor band — the character snaps to the floor edge on entry.` });
       if ((sc.stage.walkFrames?.length ?? 0) === 1)
         issues.push({ severity: "warning", sceneId: sc.id, message: `${label} walk cycle has a single frame — add at least 2 frames or clear the list to use the procedural bob.` });
+      if (sc.stage.playerSheet)
+        spriteSheetIssues(sc.stage.playerSheet, "walker sprite sheet", ["walk", "idle"]).forEach((msg) =>
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label} ${msg}` })
+        );
     }
     // Conversations that end in nothing: a stage conversation with no
     // choices and no after-beat route just closes — fine — but if the ONLY
@@ -1254,6 +1385,10 @@ export function validateStory(story: Story): ValidationIssue[] {
     story.startSceneId,
     ...seasonEpisodes(story).map((ep) => ep.startSceneId),
     story.briefing?.heatFailSceneId ?? "",
+    // Travel-map destinations are entry points too: the player reaches them
+    // through the 🗺 map screen, not through a scene edge, so a location
+    // only visitable by travelling must not read as "unreachable".
+    ...(story.map?.locations ?? []).map((loc) => loc.targetSceneId),
   ].filter(Boolean);
   while (queue.length) {
     const cur = queue.pop()!;
@@ -1613,6 +1748,9 @@ export function validateStory(story: Story): ValidationIssue[] {
     }
   });
   story.deduction?.connections.forEach((connection) => grantableFlags.add(connection.flagSet));
+  // A map location's gate is a real read: a flag whose only purpose is to
+  // open a travel destination is used, not orphaned.
+  story.map?.locations.forEach((loc) => loc.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag)));
   requiredFlags.forEach((flag) => {
     if (!grantableFlags.has(flag))
       issues.push({ severity: "error", sceneId: null, message: `Flag "${flag}" is required by a gate but no choice, hotspot, puzzle, or board connection sets it.` });
