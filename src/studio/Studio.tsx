@@ -239,6 +239,7 @@ function StageFloorEditor({
   onObstacleDelete,
   floorPoints,
   onFloorPoints,
+  onResizeProp,
 }: {
   background: string;
   media: (v?: string) => string | undefined;
@@ -296,6 +297,10 @@ function StageFloorEditor({
    *  path instead of a flat band. */
   floorPoints?: { x: number; y: number }[];
   onFloorPoints?: (pts: { x: number; y: number }[]) => void;
+  /** ↕↔ RESIZE A PROP — drag the ↔ handle on an NPC/prop's corner to scale it
+   *  live (feet stay planted on the marker). Writes the hotspot's zone width,
+   *  with x recentred so the marker doesn't drift. */
+  onResizeProp?: (id: string, bounds: { x: number; y: number; w: number; h: number }) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const worldW = Math.max(100, worldWidth ?? 100);
@@ -314,6 +319,7 @@ function StageFloorEditor({
     | { kind: { hsId: string }; offX: number }
     | { kind: { entryId: string }; offX: number }
     | { kind: { pt: number }; offX: number; offY: number }
+    | { kind: { propResize: string }; offX: number }
     | null
   >(null);
   /** 🧭 Path mode: the walkable zone is an editable polygon (floorPoints). */
@@ -352,6 +358,12 @@ function StageFloorEditor({
   const [obstacleMode, setObstacleMode] = useState(false);
   const [draftOb, setDraftOb] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const draftObStart = useRef<{ x: number; y: number } | null>(null);
+
+  // ▶ WALK-CYCLE PREVIEW — play the walker's walk animation on the plate so
+  // the author sees the frames/fps without a playtest. Sheets play their
+  // "walk" animation; image/emoji walkers bob procedurally.
+  const [playWalk, setPlayWalk] = useState(false);
+  const walkFps = player?.sheet?.animations?.walk?.fps;
 
   // The player's drawn height as a % of the plate (clamped so the walker can't
   // blow through the plate or vanish) — reused by the emoji glyph so IT scales
@@ -399,6 +411,10 @@ function StageFloorEditor({
           onFloorPoints?.(next);
           e.preventDefault();
           return;
+        } else if (kind.startsWith("propsize:")) {
+          const hs = hotspots.find((h) => h.id === kind.slice(9));
+          if (!hs) return;
+          drag.current = { kind: { propResize: hs.id }, offX: 0 };
         } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
@@ -445,6 +461,16 @@ function StageFloorEditor({
           onFloor(round1(Math.min(floor.bottom - 4, Math.max(0, p.y))), floor.bottom);
         } else if (d.kind === "floor-bottom") {
           onFloor(floor.top, round1(Math.min(100, Math.max(floor.top + 4, p.y))));
+        } else if (typeof d.kind === "object" && "propResize" in d.kind) {
+          // ↕↔ drag the prop's corner handle: width follows the pointer, feet
+          // (the marker) stay planted — x recentres so the prop scales in place.
+          const hs = hotspots.find((h) => h.id === (d.kind as { propResize: string }).propResize);
+          if (!hs) return;
+          const m = marker(hs);
+          const nx = clamp(p.x / scale, 0, worldW);
+          const maxW = 2 * Math.min(m.x, worldW - m.x);
+          const newW = clamp(Math.abs(nx - m.x) * 2, 1.5, Math.max(1.5, maxW));
+          onResizeProp?.(hs.id, { x: round1(m.x - newW / 2), y: hs.bounds.y, w: round1(newW), h: hs.bounds.h });
         } else if (typeof d.kind === "object" && "hsId" in d.kind) {
           const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
           if (!hs) return;
@@ -666,6 +692,15 @@ function StageFloorEditor({
                     className={`w-full select-none object-contain object-bottom drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]`}
                   />
                 )}
+                {/* ↕↔ RESIZE — drag the corner handle to scale the prop/NPC live,
+                    feet planted on the marker (writes the zone width). */}
+                <div
+                  data-drag={`propsize:${h.id}`}
+                  className="absolute -bottom-2 -right-2 z-10 flex h-4 w-4 cursor-ew-resize items-center justify-center rounded-full border border-neon bg-noir-950/95 text-neon shadow-[0_0_6px_rgba(255,46,136,0.5)]"
+                  title="Drag ↔ to resize (feet stay planted)"
+                >
+                  <span className="text-[9px] font-bold leading-none">↔</span>
+                </div>
               </div>
             ) : null}
             {/* the reticle + label. For art-carrying hotspots the name tag sits
@@ -739,22 +774,34 @@ function StageFloorEditor({
           {pscale.toFixed(2)}×
         </span>
         {player && sheetDrawable(player.sheet) ? (
-          <SheetSprite sheet={player.sheet!} anim="idle" fallbacks={["walk", "loop"]} height="100%" freezeOnFallback />
+          <SheetSprite
+            sheet={player.sheet!}
+            anim={playWalk ? "walk" : "idle"}
+            fallbacks={["walk", "idle", "loop"]}
+            height="100%"
+            freezeOnFallback={!playWalk}
+          />
         ) : player?.image && !player.image.startsWith("emoji:") ? (
           <img
             src={assetUrl(media(player.image) ?? player.image)}
             alt=""
-            className="h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]"
+            className={`h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] ${playWalk ? "stage2d-walk" : ""}`}
             draggable={false}
           />
         ) : (
           <span
-            className="block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]"
+            className={`block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] ${playWalk ? "stage2d-walk" : ""}`}
             style={{ fontSize: `${playerHPct * 0.8}cqh` }}
           >
             {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
           </span>
         )}
+        {/* ▶ walk indicator + fps while the cycle preview plays */}
+        {playWalk ? (
+          <span className="absolute -top-6 right-0 z-40 rounded border border-gold/50 bg-noir-950/90 px-1 font-pulp text-[7px] uppercase tracking-wider text-gold">
+            ▶ walk{walkFps ? ` ${walkFps}fps` : ""}
+          </span>
+        ) : null}
         <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
       </div>
     </div>
@@ -802,6 +849,20 @@ function StageFloorEditor({
     </button>
   );
 
+  // ▶ Walk-cycle preview — play the walker's walk animation on the plate so
+  // the author sees the frames and fps without a playtest.
+  const walkToolBtn = (
+    <button
+      onClick={() => setPlayWalk((v) => !v)}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        playWalk ? "border-gold bg-gold/20 text-gold" : "border-gold/40 bg-noir-900 text-gold/80 hover:bg-gold/10"
+      }`}
+      title={playWalk ? "Stop the walk-cycle preview" : "Play the character's walk animation on the plate"}
+    >
+      {playWalk ? "⏸ Walk" : "▶ Walk"}
+    </button>
+  );
+
   return (
     <>
       {expanded ? (
@@ -817,10 +878,11 @@ function StageFloorEditor({
             </span>
             <div className="flex items-center gap-3">
               <span className="hidden font-type text-[10px] text-paper/50 xl:block">
-                drag floor edges · spawn · markers · <b className="text-cyan-neon">↕</b> resize · <b className="text-neon">🧭</b> path · <b className="text-crimson">🚧</b> obstacles
+                drag floor edges · spawn · markers · <b className="text-cyan-neon">↕</b> resize · <b className="text-neon">🧭</b> path · <b className="text-crimson">🚧</b> obstacles · <b className="text-gold">▶</b> walk
               </span>
               {pathToolBtn}
               {obstacleToolBtn}
+              {walkToolBtn}
               <button
                 onClick={() => setExpanded(false)}
                 className="border border-gold/40 bg-noir-900 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
@@ -838,6 +900,7 @@ function StageFloorEditor({
             <div className="flex items-center gap-1.5">
               {pathToolBtn}
               {obstacleToolBtn}
+              {walkToolBtn}
               <button
                 onClick={() => setExpanded(true)}
                 className="border border-cyan-neon/40 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
@@ -9432,11 +9495,13 @@ function StudioInner({
                       <>
                         <p className="font-type text-[10px] leading-snug text-paper/55">
                           Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. The <b className="text-cyan-neon">↕</b>{" "}
-                          handle on the character's head resizes it live. <b className="text-neon">🧭 Make path</b> turns the
-                          walkable zone into a polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding
-                          path. Arm <b className="text-crimson">🚧 Draw obstacle</b> and drag a box to fence off furniture.
-                          Markers sit where the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a
-                          stage node: narrative is the caption below + 💬 show-text markers.
+                          handle on the character's head resizes it live; the <b className="text-neon">↔</b> on a prop/NPC's
+                          corner scales that object (feet stay planted). <b className="text-gold">▶ Walk</b> previews the
+                          walker's walk cycle. <b className="text-neon">🧭 Make path</b> turns the walkable zone into a
+                          polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding path. Arm{" "}
+                          <b className="text-crimson">🚧 Draw obstacle</b> and drag a box to fence off furniture. Markers sit
+                          where the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
+                          narrative is the caption below + 💬 show-text markers.
                         </p>
                         <StageFloorEditor
                           background={scene.background}
@@ -9500,6 +9565,11 @@ function StudioInner({
                                   ? { ...h, bounds: { ...h.bounds, x: Math.round((cx - h.bounds.w / 2) * 10) / 10, y: Math.round((baseY - h.bounds.h) * 10) / 10 } }
                                   : h
                               ),
+                            })
+                          }
+                          onResizeProp={(hsId, bounds) =>
+                            updateScene(scene.id, {
+                              hotspots: (scene.hotspots ?? []).map((h) => (h.id === hsId ? { ...h, bounds } : h)),
                             })
                           }
                         />
