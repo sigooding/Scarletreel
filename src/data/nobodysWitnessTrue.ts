@@ -2913,24 +2913,24 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_b_desh1",
           characterId: "desh",
-          expression: "mid-conversation, exactly as before",
-          text: "— all I'm saying is, if the machine can tell it's the WRONG item, the machine already knows what the right item is. So why's it asking me?",
+          expression: "mid-conversation, listening to the record",
+          text: "— I'm telling you, this is the same song. Same little horn, same sad man getting to the chorus and giving up. How does a jukebox know when you're already having a bad night?",
         },
         {
           id: "nwt_b_moe1",
           characterId: "moe",
-          text: "It's not asking you.",
+          text: "It doesn't know.",
         },
         {
           id: "nwt_b_desh2",
           characterId: "desh",
           expression: "genuinely puzzled",
-          text: "It says please.",
+          text: "Then why's it keep picking this one?",
         },
         {
           id: "nwt_b_moe2",
           characterId: "moe",
-          text: "That's not asking. That's a recording of somebody who asked once, in nineteen ninety-something, and now it just plays.",
+          text: "Because you keep putting money in it. Machines don't have sympathy, Desh. They have habits.",
         },
         {
           id: "nwt_b_vo2",
@@ -3026,7 +3026,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_b_moe8",
           characterId: "moe",
           expression: "last line, to Desh, casual, back to it",
-          text: "It plays a recording, Desh. That's all it is. It's a recording.",
+          text: "Put another quarter in if you want the ending. It won't make it a different song.",
         },
       ],
       hotspots: [
