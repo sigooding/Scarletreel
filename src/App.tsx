@@ -1039,10 +1039,24 @@ export default function App() {
                 const found = endingsFound(s);
                 const total = endingsTotal(s);
                 return (
-                  <button
+                  // Not a <button>: the card contains its own buttons (export,
+                  // import, hide, resume) and nesting interactive elements
+                  // inside a button is invalid HTML — React errors on it and
+                  // the inner file-picker label can misfire. role="button" +
+                  // tabIndex keeps the card keyboard-playable.
+                  <div
                     key={s.id + idx}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => play(s)}
-                    className={`group relative overflow-hidden border-2 border-noir-600 bg-noir-800 text-left shadow-2xl transition-transform hover:-translate-y-1 hover:border-neon focus-visible:border-neon ${
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        play(s);
+                      }
+                    }}
+                    className={`group relative cursor-pointer overflow-hidden border-2 border-noir-600 bg-noir-800 text-left shadow-2xl transition-transform hover:-translate-y-1 hover:border-neon focus-visible:border-neon ${
                       verticalRack ? "flex w-full flex-col" : ""
                     }`}
                   >
@@ -1232,7 +1246,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>

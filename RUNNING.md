@@ -37,7 +37,7 @@ guessing.
 npm test
 ```
 
-Runs two suites under plain Node. No test framework — the TypeScript bodies are
+Runs three suites under plain Node. No test framework — the TypeScript bodies are
 bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
 
 1. **Engine tests** (`npm run test:engine`) — the pure-logic checks: gating,
@@ -68,6 +68,14 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    `npm run test:media:real` additionally pushes the shipped 45.9 MB
    `nobodys-witness-draft.reel.json` (69 scenes, 86 bundled assets) through the
    same import path and asserts every reference resolves.
+
+3. **DOM smoke test** (`npm run test:dom`) — mounts the real `<App/>` in
+   [happy-dom](https://github.com/capricorn86/happy-dom) (a devDependency) and
+   clicks through the newsstand, the ending gallery, the Studio, and a real
+   playthrough of Nobody's Witness. Any `console.error`/`console.warn`,
+   uncaught throw, or error-boundary trip on those screens fails the run —
+   this is what catches invalid DOM nesting (React logs it as an error) and
+   mount-time crashes that the pure-logic suites can't see.
 
 ### Blank/white screen, or art missing but text showing
 
