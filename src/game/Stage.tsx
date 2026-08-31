@@ -795,23 +795,27 @@ export function Stage({
         }
       }}
     >
-      {/* THE WORLD — one continuous strip on wide worlds; the camera pans it
-          via translateX(-cam%). Single-screen rooms render this at 100% with
-          no transform, which is exactly the old behaviour. */}
+      {/* THE WORLD — one continuous strip on wide worlds. The container is a
+          single VIEWPORT (100% wide) so child `left: ${x}%` values are in
+          screen-%, and the camera pans it via translateX(-cam%) in the same
+          units — the walker stays centred as it moves. The wide background
+          and the path overlay are worldW-wide children, so they pan through
+          the viewport. Single-screen rooms render this at 100% with no
+          transform, exactly the old behaviour. */}
       <div
         className="absolute inset-y-0 left-0"
         style={{
-          width: `${worldW}%`,
+          width: "100%",
           transform: `translateX(-${cam}%)`,
           willChange: wide ? "transform" : undefined,
         }}
       >
-        {/* the world's own background on wide worlds — the plate pans with
-            the camera instead of standing still behind it */}
+        {/* the world's own background on wide worlds — spans the whole strip
+            and pans with the camera instead of standing still behind it */}
         {wide && background ? (
           <div
-            className="absolute inset-0"
-            style={{ backgroundImage: `url(${background})`, backgroundSize: "cover", backgroundPosition: "center" }}
+            className="absolute inset-y-0 left-0"
+            style={{ width: `${worldW}%`, backgroundImage: `url(${background})`, backgroundSize: "cover", backgroundPosition: "center" }}
             aria-hidden
           />
         ) : null}
@@ -822,7 +826,8 @@ export function Stage({
             itself, so the winding walkable zone is what reads. */}
         {usingPath ? (
           <svg
-            className="pointer-events-none absolute inset-0 h-full w-full"
+            className="pointer-events-none absolute inset-y-0 left-0 h-full"
+            style={{ width: `${worldW}%` }}
             viewBox={`0 0 ${worldW} 100`}
             preserveAspectRatio="none"
             aria-hidden
@@ -833,13 +838,13 @@ export function Stage({
         ) : (
           <>
             <div
-              className="pointer-events-none absolute inset-x-0"
-              style={{ top: 0, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
+              className="pointer-events-none absolute left-0"
+              style={{ top: 0, width: `${worldW}%`, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
               aria-hidden
             />
             <div
-              className="pointer-events-none absolute inset-x-0"
-              style={{ top: `${floor.bottom}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
+              className="pointer-events-none absolute left-0"
+              style={{ top: `${floor.bottom}%`, width: `${worldW}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
               aria-hidden
             />
           </>
