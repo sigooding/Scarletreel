@@ -68,6 +68,7 @@ import {
   VERB_ICON,
   VERB_IDS,
   VERB_LABEL,
+  verbsForScene,
   uid,
   validateStory,
   type ValidationIssue,
@@ -205,6 +206,65 @@ function bgStyle(bg: string): React.CSSProperties {
   if (resolved.startsWith("gradient:")) return { background: resolved.slice(9) };
   if (resolved.startsWith("video:")) return { background: "#0c0c14" };
   return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
+}
+
+/**
+ * VerbMenuPiePreview — the object-first verb menu (Full Throttle's skull pie)
+ * rendered at editor scale, so authors can tune it without a playtest: the
+ * ring of verb chips + the centrepiece `verbMenuIcon` sprite. Same geometry
+ * as Stage.tsx, shrunk.
+ */
+function VerbMenuPiePreview({
+  verbs,
+  icon,
+  media,
+  size = 200,
+}: {
+  verbs: CursorKind[];
+  icon?: string;
+  media: (v?: string) => string | undefined;
+  size?: number;
+}) {
+  const n = Math.max(1, verbs.length);
+  const R = size * 0.36; // verb ring radius (in-game 128 / 340 ≈ 0.376)
+  const center = size / 2;
+  return (
+    <div
+      className="relative shrink-0 rounded-full border border-noir-600 bg-noir-950/80"
+      style={{ width: size, height: size, boxShadow: "0 0 30px rgba(232,178,60,0.18)" }}
+    >
+      {verbs.map((v, i) => {
+        const rad = ((i * 360) / n - 90) * (Math.PI / 180);
+        const x = center + R * Math.cos(rad);
+        const y = center + R * Math.sin(rad);
+        return (
+          <div
+            key={v}
+            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-full border border-noir-600 bg-noir-950/95 px-2 py-1"
+            style={{ left: x, top: y }}
+          >
+            <span className="text-base leading-none" aria-hidden>
+              {VERB_ICON[v]}
+            </span>
+            <span className="font-pulp text-[6px] uppercase tracking-widest text-paper/70">{v}</span>
+          </div>
+        );
+      })}
+      {/* centrepiece — the story's verbMenuIcon (or the default skull) */}
+      <div
+        className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 border-gold/60 bg-noir-950 shadow-[0_0_18px_rgba(232,178,60,0.35)]"
+        style={{ width: size * 0.31, height: size * 0.31 }}
+      >
+        {icon?.startsWith("emoji:") ? (
+          <span className="text-2xl leading-none">{icon.slice("emoji:".length)}</span>
+        ) : icon ? (
+          <img src={assetUrl(media(icon) ?? icon)} alt="" draggable={false} className="h-full w-full object-cover" />
+        ) : (
+          <span className="text-2xl leading-none">💀</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -8028,43 +8088,69 @@ function StudioInner({
                   {/* ---- CURSOR ART (per verb) ---- */}
                   <CursorArtEditor story={story} onUpdate={commit} media={media} themeVars={inGameThemeVars(dbox)} />
 
-                  {/* ---- VERB MENU ICON (skull pie centrepiece) ---- */}
+                  {/* ---- VERB MENU (skull pie) — opt-in, live preview + icon ---- */}
                   {(() => {
                     const icon = story.verbMenuIcon;
+                    const enabled = story.verbMenuEnabled !== false;
+                    // Preview verbs: the union of every stage room's coin so the
+                    // author sees the fullest ring (or the core five).
+                    const stageScenes = story.scenes.filter((s) => s.nodeType === "stage");
+                    const pieVerbs = verbsForScene({ stage: { ...(stageScenes[0]?.stage ?? {}) }, hotspots: (stageScenes[0]?.hotspots ?? []) as Hotspot[] });
+                    const previewVerbs = pieVerbs.length ? pieVerbs : CORE_VERB_IDS;
                     return (
-                      <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5" style={inGameThemeVars(dbox)}>
-                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">💀 Verb menu icon (skull pie)</div>
-                        <p className="font-type text-[9px] leading-snug text-paper/45">
-                          The sprite in the MIDDLE of the object-first verb menu (Full Throttle's skull) — shown BIG at
-                          the centre of the ring of verbs when the pie opens (see <b>Hold to open</b> on the Walkable
-                          Stage panel). An image url / <code>asset:</code> / <code>emoji:</code>. Empty keeps the
-                          default skull emoji.
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-gold/40 bg-noir-950 shadow-[0_0_18px_rgba(232,178,60,0.25)]">
-                            {icon?.startsWith("emoji:") ? (
-                              <span className="text-3xl leading-none">{icon.slice("emoji:".length)}</span>
-                            ) : icon ? (
-                              <img src={assetUrl(media(icon) ?? icon)} alt="" draggable={false} className="h-full w-full object-cover" />
-                            ) : (
-                              <span className="text-3xl leading-none">💀</span>
-                            )}
-                          </span>
-                          <input
-                            className={`${inputCls} min-w-0 flex-1`}
-                            value={icon ?? ""}
-                            placeholder="/img/ft-skull.png · asset:… · emoji:💀"
-                            onChange={(e) => commit({ ...story, verbMenuIcon: e.target.value || undefined })}
-                          />
+                      <div className="border border-gold/30 bg-gold/5 p-2 space-y-2" style={inGameThemeVars(dbox)}>
+                        <div className="flex items-center justify-between">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">💀 Verb menu (skull pie)</div>
+                          <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-paper/70">
+                            <input
+                              type="checkbox"
+                              checked={enabled}
+                              onChange={(e) => commit({ ...story, verbMenuEnabled: e.target.checked ? undefined : false })}
+                            />
+                            <span className={enabled ? "text-gold" : "text-paper/40"}>{enabled ? "On" : "Off (never shown)"}</span>
+                          </label>
                         </div>
-                        {icon ? (
-                          <button
-                            className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
-                            onClick={() => commit({ ...story, verbMenuIcon: undefined })}
-                          >
-                            ⟲ Use the default skull
-                          </button>
-                        ) : null}
+                        <p className="font-type text-[9px] leading-snug text-paper/45">
+                          The object-first verb menu — Full Throttle's skull pie. <b>Opt-in</b>: it only appears on a
+                          Walkable Stage whose <b>Object-first verb menu</b> is on (see that panel). This switch is the
+                          story-wide kill-switch: off = it never shows, in any scene. The sprite below sits at the
+                          centre of the ring.
+                        </p>
+                        <div className="flex items-start gap-3">
+                          <VerbMenuPiePreview verbs={previewVerbs} icon={icon} media={media} size={168} />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <Field label="Menu icon (centrepiece)">
+                              <ImagePicker
+                                value={icon && !icon.startsWith("emoji:") ? icon : undefined}
+                                onChange={(v) => commit({ ...story, verbMenuIcon: v })}
+                                placeholder="Pick an image… (or type an emoji below)"
+                                preferFolder="sprites"
+                              />
+                            </Field>
+                            <div className="flex items-center gap-2">
+                              <input
+                                className={`${inputCls} min-w-0 flex-1`}
+                                value={icon ?? ""}
+                                placeholder="…or an emoji: 💀 ☠️ 👁 🕹"
+                                onChange={(e) => commit({ ...story, verbMenuIcon: e.target.value || undefined })}
+                              />
+                              {icon ? (
+                                <button
+                                  className="shrink-0 border border-paper/30 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:text-gold"
+                                  onClick={() => commit({ ...story, verbMenuIcon: undefined })}
+                                >
+                                  ⟲ default 💀
+                                </button>
+                              ) : null}
+                            </div>
+                            <p className="font-type text-[9px] leading-snug text-paper/40">
+                              Make it any sprite: pick an uploaded image, or cut one out in the{" "}
+                              <b className="text-paper/60">🎞 Sprite sheet editor</b> /{" "}
+                              <b className="text-paper/60">Background remover</b> and pick it here. A transparent PNG
+                              reads best in the ring.
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     );
                   })()}
@@ -9966,6 +10052,17 @@ function StudioInner({
                                   </span>
                                 </label>
                               ) : null}
+                              {objectMenuOn ? (
+                                <div className="flex items-start gap-2 border border-cyan-neon/25 bg-cyan-neon/5 p-1.5">
+                                  <VerbMenuPiePreview verbs={verbsForScene(scene)} icon={scene.stage.objectMenuIcon ?? story.verbMenuIcon} media={media} size={150} />
+                                  <div className="min-w-0 flex-1 font-type text-[9px] leading-snug text-paper/50">
+                                    <b className="text-cyan-neon">Live preview</b> — the exact ring this room shows when the
+                                    pie opens, with your menu icon in the middle. {st.objectMenuHold ? "Hold-to-open" : "Click-to-open"} is{" "}
+                                    {story.verbMenuEnabled === false ? <b className="text-crimson">disabled story-wide (see 🎮 In-game theme ▸ 💀 Verb menu)</b> : "on"}. Tune the icon on the
+                                    🎮 In-game theme tab.
+                                  </div>
+                                </div>
+                              ) : null}
                               <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
                                 <input
                                   type="checkbox"
@@ -10123,6 +10220,23 @@ function StudioInner({
                             <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
                               Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
                               classic look; the near/far sliders above only control the walk-toward-camera perspective.
+                            </span>
+                          </Field>
+                          <Field label="Default pose (named animation)">
+                            <input
+                              className={inputCls}
+                              value={scene.stage.playerPose ?? ""}
+                              placeholder="e.g. bend · crouch · reach"
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerPose: e.target.value.trim() || undefined },
+                                })
+                              }
+                            />
+                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                              A named animation on the player's sprite sheet held for the WHOLE scene (a hunched
+                              lookout, a seated figure). Leave empty for the normal idle/walk. A{" "}
+                              <b className="text-gold">🧍 Set player pose</b> hotspot can override it mid-scene.
                             </span>
                           </Field>
                         </div>
@@ -11833,6 +11947,7 @@ function StudioInner({
                             { v: "openMap", label: "🗺 Open travel map" },
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
                             { v: "startDialogue", label: "🗣 Start conversation (stage)" },
+                            { v: "setPlayerPose", label: "🧍 Set player pose (stage)" },
                           ].map((t) => (
                             <option key={t.v} value={t.v}>{t.label}</option>
                           ))}
@@ -12225,6 +12340,41 @@ function StudioInner({
                           }
                         />
                       </Field>
+                    )}
+                    {h.action.type === "setPlayerPose" && (
+                      <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
+                        <Field label="Pose (named animation on the player's sheet)">
+                          <input
+                            className={inputCls}
+                            value={h.action.playerPose ?? ""}
+                            placeholder="e.g. bend · crouch · reach"
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.playerPose = e.target.value.trim() || undefined;
+                              })
+                            }
+                          />
+                          <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                            The walker switches to this animation when the hotspot fires — a "bend down" to look under
+                            the bar. Empty clears back to idle / the scene's default pose. Add the animation to the
+                            player's sprite sheet (Characters tab ▸ walk sheet) under a name like "bend".
+                          </span>
+                        </Field>
+                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                          <input
+                            type="checkbox"
+                            checked={!!h.action.playerPoseOnce}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.playerPoseOnce = e.target.checked || undefined;
+                              })
+                            }
+                          />
+                          ▶ Play once, then revert (a quick bend-and-straighten)
+                        </label>
+                      </div>
                     )}
                     {h.action.type === "useItem" && (
                       <Field label="Consumes item (from Gating requirement)">

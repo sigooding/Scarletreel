@@ -66,7 +66,8 @@ export type HotspotActionType =
   | "openMap"
   | "useItem"
   | "patternPuzzle"
-  | "startDialogue";
+  | "startDialogue"
+  | "setPlayerPose";
 
 export interface HotspotAction {
   type: HotspotActionType;
@@ -82,6 +83,16 @@ export interface HotspotAction {
   /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
    * a conversation. This action needs no payload of its own — the scene's
    * beats ARE the payload. Any flagSet / meterChange here still applies. */
+  /** setPlayerPose hotspots switch the WALKER's sprite animation to a named
+   *  pose — a "bend down" to look under the bar, a "crouch", a "reach". Not
+   *  a flag: the pose IS the animation name on the player's sheet. Flags are
+   *  for persistent state; here they're optional — `gating` decides WHEN the
+   *  pose fires, and `flagSet` can still record that it happened. */
+  playerPose?: string;
+  /** When true, the pose plays ONCE then the walker reverts to idle/scene
+   *  default (a transient "bend down and back up"). Default false = hold the
+   *  pose until movement or another pose clears it. */
+  playerPoseOnce?: boolean;
 }
 
 export interface Hotspot {
@@ -983,6 +994,12 @@ export interface StageSettings {
   playerFarScale?: number;
   /** Base scale of the player sprite (default 1). */
   playerScale?: number;
+  /** Named animation to force the walker into (from the player's sprite
+   *  sheet), e.g. "bend", "crouch", "reach" — held for the WHOLE scene as
+   *  the walker's default pose instead of idle. The sprite still flips
+   *  left/right with facing; movement plays this pose rather than the walk
+   *  cycle. A `setPlayerPose` hotspot action can override it mid-scene. */
+  playerPose?: string;
   /** When interaction labels show on markers:
    *  - "proximity" (default): labels fade in as the character approaches
    *  - "always": every marker wears its label (busy but explicit)
@@ -1394,6 +1411,14 @@ export interface Story {
    *  unset keeps the default skull emoji and every non-opt-in game is
    *  untouched. Authored on the 🎮 In-game theme tab, beside the cursors. */
   verbMenuIcon?: string;
+  /** OPT-IN master switch for the object-first verb menu (the skull pie).
+   *  The menu is already per-scene opt-in (StageSettings.objectVerbMenu);
+   *  this is the STORY-wide kill-switch. Default undefined = "on" (scenes
+   *  that opt in keep their menu, so existing stories like Full Throttle are
+   *  untouched). Set `false` to disable the pie everywhere — every scene's
+   *  objectVerbMenu / objectMenuHold is ignored — so a game that never uses
+   *  it never shows it. Authored on the 🎮 In-game theme tab. */
+  verbMenuEnabled?: boolean;
   /** Default "that doesn't work" lines for the verb coin, per verb. An
    *  author-supplied Hotspot.wrongVerbText wins; otherwise one of these is
    *  picked (varied, so repeating a failed verb doesn't read like a loop). */

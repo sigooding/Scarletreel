@@ -26,7 +26,7 @@ import type { VerbId } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
 import { SheetSprite } from "./SheetSprite";
-import { sheetDrawable } from "./spriteSheet";
+import { sheetAnim, sheetDrawable } from "./spriteSheet";
 import { presetStyle } from "./animation";
 
 /**
@@ -96,6 +96,9 @@ export function Stage({
   onEdgeExit,
   onEdgeLocked,
   edgeUnlocked,
+  pose,
+  poseOnce,
+  onPoseEnd,
 }: {
   settings: StageSettings;
   hotspots: Hotspot[];
@@ -132,6 +135,13 @@ export function Stage({
   /** Whether an edge exit's gate currently passes (red arrow = open,
    *  yellow = locked). Defaults to open. */
   edgeUnlocked?: (edge: "left" | "right") => boolean;
+  /** The walker's current POSE — a named animation on the player's sheet
+   *  overriding idle/walk (a "bend", "crouch"). Undefined = normal. */
+  pose?: string;
+  /** When true, play `pose` once then call onPoseEnd (transient). */
+  poseOnce?: boolean;
+  /** Fired when a one-shot pose's loop completes — Game clears the pose. */
+  onPoseEnd?: () => void;
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
   /** WIDE WORLD: room width in viewport-% (100 = single screen). */
@@ -694,6 +704,20 @@ export function Stage({
 
   const isEmoji = (settings.playerImage ?? "").startsWith("emoji:");
   const emoji = isEmoji ? settings.playerImage!.slice("emoji:".length) : "🕵️";
+  // POSE — a named animation overriding idle/walk (a "bend down"). One-shot
+  // poses play their loop once then revert via onPoseEnd.
+  const poseAnim = pose && hasSheet ? sheetAnim(settings.playerSheet!, pose, ["idle"]) : null;
+  useEffect(() => {
+    if (!pose || !poseOnce || !onPoseEnd || !hasSheet) return;
+    const a = sheetAnim(settings.playerSheet!, pose, ["idle"]);
+    if (!a || a.frames.length < 2) {
+      onPoseEnd();
+      return;
+    }
+    const fps = a.fps && a.fps > 0 ? a.fps : 8;
+    const t = window.setTimeout(onPoseEnd, Math.max(200, (a.frames.length / fps) * 1000));
+    return () => window.clearTimeout(t);
+  }, [pose, poseOnce, onPoseEnd, hasSheet, settings.playerSheet]);
   // Perspective: big up close, small in the distance (near/far ends are
   // authorable; `depthScale` still works as "shrink by this much at the back").
   const playerDepth = stageSpriteScale(pos.y, floor, settings) * baseScale;
@@ -1054,7 +1078,12 @@ export function Stage({
             tracks the feet so the party overlaps like people standing in a
             room, not like stickers. */}
         {(() => {
-          const da = dirAnim(dir, walking);
+          // A POSE overrides the directional idle/walk: the named animation
+          // plays (still flipping with facing), and movement keeps the pose
+          // rather than switching to the walk cycle.
+          const da = poseAnim
+            ? { anim: poseAnim && pose ? pose : "idle", fallbacks: ["idle", "walk"], flip: dir === "left" }
+            : dirAnim(dir, walking);
           const flip = da.flip ? -1 : 1;
           return (
             <div
@@ -1073,7 +1102,7 @@ export function Stage({
                     anim={da.anim}
                     fallbacks={da.fallbacks}
                     height={96}
-                    freezeOnFallback={!walking}
+                    freezeOnFallback={!walking && !poseAnim}
                     className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
                   />
                 ) : walkFrames.length > 0 ? (

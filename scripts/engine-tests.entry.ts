@@ -404,6 +404,19 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     const trapped = craftIssues([{ ...stageBase, hotspots: [] }]);
     check("stage: a stage node with no way out is an error", has(trapped, /has no way out/));
 
+    // setPlayerPose is a legal action: it needs no target scene and doesn't
+    // replay a reward, so it validates clean even when repeatable.
+    const pose = craftIssues([
+      {
+        ...stageBase,
+        hotspots: [
+          { id: "bend", label: "Look under", bounds: { x: 20, y: 60, w: 10, h: 20 }, cursor: "look", isRepeatable: true, action: { type: "setPlayerPose", playerPose: "bend", playerPoseOnce: true } },
+          ...stageBase.hotspots!,
+        ],
+      },
+    ]);
+    check("stage: setPlayerPose validates clean (no target scene, no reward warning)", !has(pose, /needs a target scene|replay rewards/), pose.filter((i) => /pose|target scene|replay/i.test(i.message)));
+
     // A talk marker with no beats to play does nothing.
     const muteTalk = craftIssues([
       {

@@ -3159,6 +3159,12 @@ function CasePlayer({
    *  a foreground extra flagged `occludes` is drawn OVER the character while
    *  they stand behind it, so they disappear behind the counter. */
   const [walkerFeet, setWalkerFeet] = useState<{ x: number; y: number } | null>(null);
+  /** The walker's current POSE (a named sheet animation, e.g. "bend") — set by
+   *  a `setPlayerPose` hotspot action, held until movement or another pose.
+   *  Transient presentation, so it lives here rather than in the save state. */
+  const [playerPose, setPlayerPose] = useState<string | null>(null);
+  /** Whether the current pose is a one-shot (play once, then revert). */
+  const [playerPoseOnce, setPlayerPoseOnce] = useState(false);
   const occludersInFront = useMemo(() => {
     const extras = scene?.cinematic?.foregroundExtras ?? [];
     const front = new Set<number>();
@@ -3436,6 +3442,8 @@ function CasePlayer({
     if (scene.nodeType === "stage") {
       setStageConvo(restoring && restoring.beatIdx > 0 ? "open" : "closed");
       setStageCaption(null);
+      setPlayerPose(null); // a fresh scene starts in its own default pose
+      setPlayerPoseOnce(false);
       if (!restoring && scene.stage?.enterCaption) {
         showStageCaption(scene.stage.enterCaption, "info");
       }
@@ -5232,6 +5240,14 @@ function CasePlayer({
         case "meterChange":
           completeHotspot(hs, undefined, act, markUsed);
           break;
+        case "setPlayerPose":
+          // Switch the walker to a named animation (a "bend down"), once or
+          // held. Empty pose = back to idle/scene default.
+          audio.click();
+          setPlayerPose(act.playerPose ?? null);
+          setPlayerPoseOnce(!!act.playerPoseOnce);
+          completeHotspot(hs, undefined, act, markUsed);
+          break;
         case "openBoard":
           setOverlay({ type: "board" });
           break;
@@ -5886,16 +5902,25 @@ function CasePlayer({
               // icon); a scene can still override it with its own.
               objectMenuIcon: scene.stage.objectMenuIcon ?? story.verbMenuIcon,
               spawn: entrySpawn,
+              // Story-wide kill-switch: verbMenuEnabled:false disables the
+              // object-first pie everywhere, even on scenes that opted in.
+              ...(story.verbMenuEnabled === false ? { objectVerbMenu: false, objectMenuHold: false } : {}),
             }}
             hotspots={visibleHotspots}
             unlocked={(hs) => meetsGating(hs.gating, state)}
             onInteract={(hs, ctx) => activateHotspot(hs, ctx)}
             active={stageWalking}
+            pose={playerPose ?? scene.stage.playerPose}
+            poseOnce={playerPoseOnce}
+            onPoseEnd={() => {
+              setPlayerPose(null);
+              setPlayerPoseOnce(false);
+            }}
             cursorStyle={cursorStyle}
             onVerbChange={setCoinVerb}
             {...(hasOccluders ? { onPosChange: setWalkerFeet } : {})}
             {...(dropRequest ? { dropRequest } : {})}
-            verbs={scene.stage.verbCoin || scene.stage.objectVerbMenu ? verbsForScene(scene) : undefined}
+            verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene(scene) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}
             onEdgeExit={(edge) => {
