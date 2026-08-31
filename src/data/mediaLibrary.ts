@@ -447,6 +447,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
   });
   visit(story.coverImage);
   visit(story.dialogueBox?.backgroundImage);
+  visit(story.map?.backgroundImage);
 }
 
 /** Every IndexedDB asset id a story references (via `asset:` or `video:asset:`),
@@ -553,6 +554,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
   });
   apply(next, "coverImage");
   if (next.dialogueBox) apply(next.dialogueBox, "backgroundImage");
+  if (next.map) apply(next.map, "backgroundImage");
   return next;
 }
 
@@ -749,6 +751,10 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
   if (next.dialogueBox?.backgroundImage) {
     next.dialogueBox.backgroundImage =
       (await compact(next.dialogueBox.backgroundImage, "image", `${next.title} dialogue box`)) || undefined;
+  }
+  if (next.map?.backgroundImage) {
+    next.map.backgroundImage =
+      (await compact(next.map.backgroundImage, "image", `${next.title} travel map`)) || undefined;
   }
   return next;
 }
@@ -993,6 +999,9 @@ export async function bundleVoiceFileRefs(
   next.coverImage = await bundleValue(next.coverImage);
   if (next.dialogueBox) {
     await apply(next.dialogueBox, "backgroundImage");
+  }
+  if (next.map) {
+    await apply(next.map, "backgroundImage");
   }
 
   return { story: next, assets, missing };

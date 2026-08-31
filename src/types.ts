@@ -52,6 +52,7 @@ export type HotspotActionType =
   | "showText"
   | "meterChange"
   | "openBoard"
+  | "openMap"
   | "useItem"
   | "patternPuzzle"
   | "startDialogue";
@@ -1050,6 +1051,50 @@ export interface DeductionBoard {
   connections: DeductionConnection[];
 }
 
+/**
+ * One travel destination on the story's map screen.
+ *
+ * Unlocking is DERIVED, never stored: a location is open exactly when its
+ * `gating` passes against the live GlobalState (same `meetsGating` used by
+ * choices and hotspots — flags, items, meters, trust all work). No unlock
+ * list is written to the save, so loads, replays and NG+ can never disagree
+ * with the story state that earned the access.
+ */
+export interface MapLocation {
+  id: string;
+  /** Pin label, e.g. "The Blue Room". */
+  label: string;
+  /** Scene the player lands on when travelling here. Resolved through
+   * bypassedSceneId, so a note placeholder target passes through to the
+   * first real scene like every other route. */
+  targetSceneId: string;
+  /** Pin position on the map image, in percent (0–100) of width/height. */
+  x: number;
+  y: number;
+  /** Same gating vocabulary as choices/hotspots. Absent = always open. */
+  gating?: Gating;
+  /** true → a locked pin is not drawn at all (a secret place). Default
+   * false → a locked pin shows as "???" so the player knows somewhere is
+   * still waiting to be earned. */
+  hiddenWhenLocked?: boolean;
+  /** One teasing line shown on a locked (visible) pin, e.g. "Someone in the
+   * diner knows the pier number." Falls back to the generic gating hint. */
+  lockedHint?: string;
+  /** Emoji drawn on the pin (default 📍). */
+  icon?: string;
+}
+
+/** The story's travel map — a screen of flag-gated destinations. When
+ * present (with at least one location) the player gets a 🗺 Travel Map entry
+ * in the HUD menu and the T hotkey. When absent nothing map-related renders. */
+export interface StoryMap {
+  /** Heading over the map screen (default "Travel Map"). */
+  title?: string;
+  /** Map artwork (url / gradient: / asset:). The pins are placed on this. */
+  backgroundImage?: string;
+  locations: MapLocation[];
+}
+
 export interface Story {
   id: string;
   title: string;
@@ -1060,6 +1105,9 @@ export interface Story {
   items: Item[];
   characters: Character[];
   deduction?: DeductionBoard;
+  /** Optional travel map: flag/item/meter-gated destinations the player can
+   * jump to from the 🗺 map screen. See StoryMap. */
+  map?: StoryMap;
   /** explicit win/lose rules surfaced to the player */
   briefing?: CaseBriefing;
   /** Optional episodic structure. When present the story is presented as a
@@ -1153,6 +1201,22 @@ export interface DialogueBoxTheme {
   /** Hide the small ⏱ countdown / autosave style readouts and similar HUD
    * chrome for a cleaner, more cinematic frame. */
   minimalHud?: boolean;
+
+  /* ------------------------------------------------------------------ *
+   *  Investigation panel visibility
+   * ------------------------------------------------------------------ *
+   * Each panel is AUTO by default: it only appears when the story actually
+   * uses the feature (corkboard needs `deduction`, travel map needs `map`
+   * with locations; case progress always has content so auto = shown).
+   * These flags force a panel OFF for stories that want a cleaner frame.
+   * There is deliberately no "force show" — surfacing an empty corkboard or
+   * map a story never feeds would only confuse the player. */
+  /** Hide the ▤ Case Progress drawer (top-left) entirely. */
+  hideCaseProgress?: boolean;
+  /** Hide the 📌 Corkboard even when the story defines a deduction board. */
+  hideCorkboard?: boolean;
+  /** Hide the 🗺 Travel Map even when the story defines map locations. */
+  hideMap?: boolean;
 }
 
 /** Named in-game HUD colour schemes (see HUD_THEMES in src/cinematic.ts). */

@@ -37,6 +37,8 @@ import {
   gatingHint,
   heatBustTarget,
   isEpisodic,
+  mapAvailable,
+  mapLocationsView,
   meetsGating,
   METER_LABELS,
   nextEpisode,
@@ -2203,6 +2205,108 @@ function MetersHUD({
 }
 
 /* ------------------------------------------------------------------ */
+/*  travel map                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The 🗺 travel-map overlay: the story's map artwork with one pin per
+ * location. Unlocks are derived live from meetsGating (flags/items/meters —
+ * the same vocabulary as choices), so nothing map-related is stored in the
+ * save. Locked pins show as "???" with the author's teaser (or the generic
+ * gating hint); hiddenWhenLocked pins aren't drawn at all.
+ */
+function TravelMap({
+  story,
+  state,
+  currentSceneId,
+  visitedScenes,
+  onTravel,
+  onClose,
+}: {
+  story: Story;
+  state: GlobalState;
+  currentSceneId: string;
+  visitedScenes: Set<string>;
+  onTravel: (sceneId: string) => void;
+  onClose: () => void;
+}) {
+  const pins = mapLocationsView(story, state);
+  const bg = story.map?.backgroundImage;
+  const bgStyle: React.CSSProperties = bg
+    ? bg.startsWith("gradient:")
+      ? { background: bg.slice(9) }
+      : { backgroundImage: `url(${assetUrl(bg)})`, backgroundSize: "cover", backgroundPosition: "center" }
+    : { background: "linear-gradient(160deg,#14141f 0%,#0c0c14 70%)" };
+  const unlockedCount = pins.filter((p) => p.unlocked).length;
+  return (
+    <Modal title={story.map?.title ?? "Travel Map"} onClose={onClose} wide>
+      <p className="mb-2 font-type text-[10px] uppercase tracking-widest text-paper/40">
+        {unlockedCount}/{story.map?.locations.length ?? 0} destinations open · what you learn opens doors · T or Esc closes
+      </p>
+      <div className="relative aspect-video min-h-[340px] w-full overflow-hidden border-2 border-noir-700 select-none" style={bgStyle}>
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/25" aria-hidden />
+        {pins.map(({ location: loc, unlocked }) => {
+          const here = bypassedSceneId(story, loc.targetSceneId) === currentSceneId;
+          const visited = visitedScenes.has(bypassedSceneId(story, loc.targetSceneId));
+          const hint = loc.lockedHint ?? gatingHint(loc.gating, story) ?? "Locked — you need something more.";
+          return (
+            <div
+              key={loc.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
+            >
+              {unlocked ? (
+                <button
+                  onClick={() => {
+                    if (here) return;
+                    onTravel(loc.targetSceneId);
+                  }}
+                  disabled={here}
+                  className={`group flex flex-col items-center gap-0.5 ${here ? "cursor-default" : "cursor-pointer"}`}
+                  title={here ? `${loc.label} — you are here` : `Travel to ${loc.label}`}
+                >
+                  <span
+                    className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-lg shadow-[0_2px_10px_rgba(0,0,0,0.8)] transition-transform ${
+                      here
+                        ? "border-cyan-neon bg-cyan-neon/25 text-cyan-neon"
+                        : "border-gold bg-noir-950/85 group-hover:scale-125 group-hover:border-neon"
+                    }`}
+                  >
+                    {loc.icon ?? "📍"}
+                  </span>
+                  <span
+                    className={`whitespace-nowrap border px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-widest backdrop-blur-sm ${
+                      here
+                        ? "border-cyan-neon/60 bg-noir-950/85 text-cyan-neon"
+                        : "border-gold/60 bg-noir-950/85 text-gold group-hover:border-neon group-hover:text-neon"
+                    }`}
+                  >
+                    {here ? `◉ ${loc.label}` : loc.label}
+                    {visited && !here && <span className="ml-1 text-paper/50" title="Visited">✓</span>}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex flex-col items-center gap-0.5 opacity-70" title={hint}>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-paper/25 bg-noir-950/85 text-lg grayscale">
+                    🔒
+                  </span>
+                  <span className="whitespace-nowrap border border-paper/25 bg-noir-950/85 px-1.5 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-paper/50 backdrop-blur-sm">
+                    ???
+                  </span>
+                  <span className="max-w-[180px] text-center font-type text-[9px] italic leading-tight text-paper/45">
+                    {hint}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  deduction board                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -2677,6 +2781,7 @@ type Overlay =
   | { type: "instructions" }
   | { type: "inspect"; item: Item }
   | { type: "board" }
+  | { type: "map" }
   | { type: "relationships" }
   | { type: "log" }
   | { type: "save" }
@@ -4995,6 +5100,9 @@ function CasePlayer({
         case "openBoard":
           setOverlay({ type: "board" });
           break;
+        case "openMap":
+          if (mapAvailable(story)) setOverlay({ type: "map" });
+          break;
         case "patternPuzzle":
           if (hs.action.patternPuzzle) {
             setPatternPuzzle({ config: hs.action.patternPuzzle, hotspot: hs });
@@ -5287,7 +5395,16 @@ function CasePlayer({
         skipCurrentText();
       }
       if (e.key === "b" || e.key === "B") {
-        if (story.deduction) setOverlay({ type: "board" });
+        if (story.deduction && !story.dialogueBox?.hideCorkboard) setOverlay({ type: "board" });
+      }
+      if (e.key === "t" || e.key === "T") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          if (mapAvailable(story)) {
+            e.preventDefault();
+            setOverlay((o) => (o?.type === "map" ? null : { type: "map" }));
+          }
+        }
       }
       if (e.key === "l" || e.key === "L") {
         const tag = (e.target as HTMLElement).tagName;
@@ -5320,7 +5437,7 @@ function CasePlayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, story.deduction, soundOn, enableSound, triggerHint]);
+  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, story.deduction, story.map, story.dialogueBox, soundOn, enableSound, triggerHint]);
 
   if (!scene)
     return (
@@ -5719,13 +5836,15 @@ function CasePlayer({
       {/* HUD */}
       {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
         <>
-          <MetersHUD
-            state={state}
-            story={story}
-            sceneTitle={scene.title}
-            encounteredCharacters={encounteredCharacters}
-            visitedCount={visitedScenes.size}
-          />
+          {!story.dialogueBox?.hideCaseProgress && (
+            <MetersHUD
+              state={state}
+              story={story}
+              sceneTitle={scene.title}
+              encounteredCharacters={encounteredCharacters}
+              visitedCount={visitedScenes.size}
+            />
+          )}
           {!scene.hideSceneTitle && (
             <div
               key={`scene-title-${sceneId}-${entrySeq}`}
@@ -5958,7 +6077,7 @@ function CasePlayer({
                 >
                   🗂 Case File
                 </button>
-                {story.deduction && (
+                {story.deduction && !story.dialogueBox?.hideCorkboard && (
                   <button
                     onClick={() => {
                       setMenuOpen(false);
@@ -5967,6 +6086,18 @@ function CasePlayer({
                     className="hud-menu-item text-crimson"
                   >
                     📌 Corkboard (B)
+                  </button>
+                )}
+                {mapAvailable(story) && (
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setOverlay({ type: "map" });
+                    }}
+                    className="hud-menu-item text-gold"
+                    title="The city map — travel to any place you've unlocked (T)"
+                  >
+                    🗺 Travel map (T)
                   </button>
                 )}
                 {dialogueLog.length > 0 && (
@@ -7310,6 +7441,20 @@ function CasePlayer({
             const cost = perks.heat ? 2 : 1;
             setState((s) => applyConsequences(story, { meterChanges: [{ meter: "Suspicion", delta: cost }] }, s));
             pushToast(`${revelation} (+${cost} Heat)`, "fail");
+          }}
+        />
+      )}
+
+      {overlay?.type === "map" && mapAvailable(story) && (
+        <TravelMap
+          story={story}
+          state={state}
+          currentSceneId={sceneId}
+          visitedScenes={visitedScenes}
+          onClose={() => setOverlay(null)}
+          onTravel={(target) => {
+            setOverlay(null);
+            goToScene(target);
           }}
         />
       )}

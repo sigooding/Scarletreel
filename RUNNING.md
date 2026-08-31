@@ -139,6 +139,36 @@ exempt from the unreachable / no-exits checks. The placeholder text lives in
 scene). The inspector offers "Convert to full scene" (clears `nodeType`) once
 the real scene is written.
 
+### Travel map (`story.map`)
+
+The 🗺 Travel Map is a screen of flag-gated destinations (HUD menu → Travel
+map, or T; a hotspot can use action `openMap`). Design contract:
+
+- **Unlocks are derived, never stored.** A pin is open exactly when its
+  `gating` passes `meetsGating` against the live state — the same vocabulary
+  as choices/hotspots (flags, items, meters, trust). Nothing map-related is
+  written to the save, so loads, replays and NG+ can never disagree with the
+  flags that earned access.
+- Locked pins render as "???" with the author's `lockedHint` (or the generic
+  gating hint); `hiddenWhenLocked` pins aren't drawn at all until earned.
+- Travel resolves through `bypassedSceneId` like every other route, so note
+  placeholders pass through.
+- The validator checks every pin (missing target = error, dead-end note
+  target = stranding error, off-map x/y = warning) and seeds reachability
+  with map targets so a map-only location isn't flagged unreachable.
+- `map.backgroundImage` is a media-bearing field: it's wired into
+  `visitStoryMediaRefs` / `resolveStoryMedia` / `compactStoryMedia` and
+  seeded in the import/export round-trip suite. Keep it that way.
+- Panel visibility is AUTO (map shows only when locations exist; corkboard
+  only with a deduction board) with explicit hide overrides in the In-Game
+  Theme tab (`dialogueBox.hideMap` / `hideCorkboard` / `hideCaseProgress`).
+  There is deliberately no "force show" — an empty corkboard or map would
+  only confuse the player.
+
+The demo case is **Crosstown** (`src/data/mapDemo.ts`): two pins open at
+start, one locked-visible, one hidden, plus parallel gated choices so the
+deep-walker can prove the endings without the map.
+
 ### ElevenLabs model & cost estimate
 
 The chosen model lives in localStorage (`scarlet-ai-voice-model`).

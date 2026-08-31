@@ -17,6 +17,8 @@ import {
   beatLie,
   combineItems,
   collectFlags,
+  mapAvailable,
+  mapLocationsView,
   collectMemoryTags,
   composureRemaining,
   DEFAULT_WRONG_EVIDENCE_LIMIT,
@@ -2059,6 +2061,111 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // An unknown id returns the settings as handed in, so the node's look is
   // whatever it was — here a hand-made combination, matching no preset.
   check("credits presets: unknown id changes nothing the picker sees", matchCreditsPreset(unknown) === undefined, matchCreditsPreset(unknown));
+}
+
+/* ================================================================== *
+ *  travel map — unlock derivation, availability, validator rules
+ * ================================================================== */
+{
+  const scn = (id: string, extra: Partial<SceneNode> = {}): SceneNode => ({
+    id,
+    title: id,
+    background: "",
+    prose: "p",
+    choices: [],
+    hotspots: [],
+    dialogueBeats: [],
+    ...extra,
+  });
+  const S: Story = {
+    id: "map-t",
+    title: "Map T",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "a",
+    items: [{ id: "key", name: "Key", icon: "🔑", description: "", flavorText: "" }],
+    characters: [],
+    scenes: [
+      scn("a", { choices: [{ id: "c1", text: "go", targetSceneId: "end", attitudeTag: "Neutral" }] }),
+      scn("b"),
+      scn("note1", { nodeType: "note", choices: [{ id: "n1", text: "", targetSceneId: "b", attitudeTag: "Neutral" }] }),
+      scn("deadnote", { nodeType: "note" }),
+      scn("end", { isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "r" } }),
+    ],
+    map: {
+      backgroundImage: "/img/map.jpg",
+      locations: [
+        { id: "l-open", label: "Open", targetSceneId: "a", x: 10, y: 10 },
+        { id: "l-flag", label: "Flagged", targetSceneId: "b", x: 20, y: 20, gating: { requiresFlags: ["tip"] } },
+        { id: "l-item", label: "Keyed", targetSceneId: "b", x: 30, y: 30, gating: { requiresItems: ["key"] } },
+        { id: "l-secret", label: "Secret", targetSceneId: "b", x: 40, y: 40, gating: { requiresFlags: ["deep"] }, hiddenWhenLocked: true },
+      ],
+    },
+  };
+
+  // -- unlock view is pure gating over live state --------------------------
+  const s0 = createInitialState(S);
+  let view = mapLocationsView(S, s0);
+  check("map: hiddenWhenLocked pin not drawn while locked", !view.some((v) => v.location.id === "l-secret"), view.map((v) => v.location.id));
+  check("map: visible pins = open + locked-visible", view.length === 3);
+  check("map: ungated pin open from the start", view.find((v) => v.location.id === "l-open")?.unlocked === true);
+  check("map: flag-gated pin locked before the flag", view.find((v) => v.location.id === "l-flag")?.unlocked === false);
+
+  const s1 = { ...s0, activeFlags: new Set([...s0.activeFlags, "tip", "deep"]) };
+  view = mapLocationsView(S, s1);
+  check("map: flag unlock derives live from activeFlags", view.find((v) => v.location.id === "l-flag")?.unlocked === true);
+  check("map: hidden pin surfaces once its flag is set", view.find((v) => v.location.id === "l-secret")?.unlocked === true);
+
+  const s2 = { ...s0, inventory: [...s0.inventory, S.items[0]] };
+  check("map: item gating works too (same vocabulary as choices)", mapLocationsView(S, s2).find((v) => v.location.id === "l-item")?.unlocked === true);
+
+  // -- availability gate ----------------------------------------------------
+  check("map: available when locations exist", mapAvailable(S));
+  check("map: NOT available with no map", !mapAvailable({ ...S, map: undefined }));
+  check("map: NOT available with zero locations", !mapAvailable({ ...S, map: { locations: [] } }));
+  check("map: theme hideMap wins over content", !mapAvailable({ ...S, dialogueBox: { hideMap: true } }));
+
+  // -- validator ------------------------------------------------------------
+  const has = (st: Story, re: RegExp) => validateStory(st).some((i) => re.test(i.message));
+  check("map validator: clean story has no map issues", !has(S, /[Mm]ap location/));
+  check(
+    "map validator: missing target scene is an error",
+    has({ ...S, map: { locations: [{ id: "x", label: "X", targetSceneId: "nope", x: 1, y: 1 }] } }, /missing scene "nope"/)
+  );
+  check(
+    "map validator: duplicate location ids are an error",
+    has({ ...S, map: { locations: [
+      { id: "dup", label: "A", targetSceneId: "a", x: 1, y: 1 },
+      { id: "dup", label: "B", targetSceneId: "b", x: 2, y: 2 },
+    ] } }, /Duplicate map location id/)
+  );
+  check(
+    "map validator: pin to a dead-end note is a stranding error",
+    has({ ...S, map: { locations: [{ id: "n", label: "N", targetSceneId: "deadnote", x: 1, y: 1 }] } }, /note placeholder/)
+  );
+  check(
+    "map validator: pin to a routed note is fine (bypass carries the traveller)",
+    !has({ ...S, map: { locations: [{ id: "n", label: "N", targetSceneId: "note1", x: 1, y: 1 }] } }, /note placeholder/)
+  );
+  check(
+    "map validator: off-map pin coordinates warn",
+    has({ ...S, map: { locations: [{ id: "o", label: "O", targetSceneId: "a", x: 140, y: 1 }] } }, /off the map/)
+  );
+  check(
+    "map validator: hiddenWhenLocked without gating warns",
+    has({ ...S, map: { locations: [{ id: "h", label: "H", targetSceneId: "a", x: 1, y: 1, hiddenWhenLocked: true }] } }, /never be hidden/)
+  );
+
+  // -- reachability & flag bookkeeping --------------------------------------
+  check(
+    "map reachability: a map-only scene is NOT flagged unreachable",
+    !validateStory(S).some((i) => i.sceneId === "b" && /unreachable/.test(i.message))
+  );
+  check(
+    "map reachability: without the map the same scene IS unreachable",
+    validateStory({ ...S, map: undefined }).some((i) => i.sceneId === "b" && /unreachable/.test(i.message))
+  );
+  check("map flags: collectFlags sees map gate flags", collectFlags(S).includes("tip") && collectFlags(S).includes("deep"));
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

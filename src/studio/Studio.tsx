@@ -125,6 +125,7 @@ import type {
   LensFlarePreset,
   LensFlareSettings,
   LightPoint,
+  MapLocation,
   MeterKey,
   SceneNode,
   Story,
@@ -4307,7 +4308,7 @@ function StudioInner({
       beats.splice(to, 0, moved);
     });
   };
-  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
+  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle" | "map">("scene");
   // Storage is the source of truth for the ElevenLabs model (the Characters
   // tab can change it elsewhere), so re-read it whenever the tab changes.
   useEffect(() => {
@@ -6320,7 +6321,7 @@ function StudioInner({
                 (Game Objective → Characters → Items → Flags), then STRUCTURE
                 (Acts → Episodes) and the in-game look, then ASSETS, then ▶
                 Test. Story-wide tabs sit above the scene panels as before. */}
-            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
+            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "map", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -6342,6 +6343,7 @@ function StudioInner({
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
+                  map: "🗺 Map",
                   dialogueBox: "🎮 In-Game Theme",
                   globalTitle: "🎼 Newsstand Theme",
                   test: "▶ Test",
@@ -6524,6 +6526,9 @@ function StudioInner({
                 }}
               />
             )}
+            {tab === "map" && (
+              <MapEditor story={story} onUpdate={commit} />
+            )}
             {tab === "episodes" && (
               <EpisodeEditor
                 story={story}
@@ -6602,6 +6607,46 @@ function StudioInner({
                       <span>Minimal HUD
                         <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
                           Fades scene-label/lead readouts until you hover — a cleaner, more cinematic frame.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {/* ---- investigation panels ---- */}
+                  <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
+                    <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🗂 Investigation panels</div>
+                    <p className="font-type text-[9px] leading-snug text-paper/45">
+                      Each panel is automatic: it only appears when this story actually uses the feature
+                      (corkboard needs a deduction board, travel map needs 🗺 Map locations). Tick a box to
+                      force one OFF for a cleaner frame even when the story defines it.
+                    </p>
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.hideCaseProgress}
+                        onChange={(e) => setBox({ hideCaseProgress: e.target.checked || undefined })} />
+                      <span>Hide ▤ Case Progress drawer
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          {story.deduction || story.map?.locations?.length ? "Shown by default." : "Shown by default (tracks perks, people met, clues)."}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.hideCorkboard}
+                        onChange={(e) => setBox({ hideCorkboard: e.target.checked || undefined })} />
+                      <span>Hide 📌 Corkboard
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          {story.deduction ? "This story HAS a deduction board — hiding removes the menu entry and the B key." : "This story has no deduction board, so the corkboard is already hidden automatically."}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={!!dbox.hideMap}
+                        onChange={(e) => setBox({ hideMap: e.target.checked || undefined })} />
+                      <span>Hide 🗺 Travel Map
+                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+                          {story.map?.locations?.length ? "This story HAS map locations — hiding removes the menu entry and the T key." : "This story has no map locations yet (add them on the 🗺 Map tab), so the map is already hidden automatically."}
                         </span>
                       </span>
                     </label>
@@ -9689,6 +9734,7 @@ function StudioInner({
                             { v: "setFlag", label: "🚩 Set flag" },
                             { v: "showText", label: "💬 Show text" },
                             { v: "openBoard", label: "📌 Open corkboard" },
+                            { v: "openMap", label: "🗺 Open travel map" },
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
                             { v: "startDialogue", label: "🗣 Start conversation (stage)" },
                           ].map((t) => (
@@ -10681,5 +10727,198 @@ export function Studio(props: {
     <ReactFlowProvider>
       <StudioInner {...props} />
     </ReactFlowProvider>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  travel-map editor (🗺 Map tab)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Editor for Story.map — the flag-gated travel screen. Pins are placed by
+ * clicking the preview (the selected location moves to where you click), and
+ * unlocking uses the same gating vocabulary as choices: a comma-separated
+ * flag list here writes `gating.requiresFlags`. Deleting the last location
+ * removes `story.map` entirely so the player-side map vanishes cleanly.
+ */
+function MapEditor({ story, onUpdate }: { story: Story; onUpdate: (s: Story) => void }) {
+  const map = story.map ?? { locations: [] };
+  const resolveMedia = useResolvedMedia(story.id);
+  const flags = useMemo(() => collectFlags(story), [story]);
+  const [selectedLocId, setSelectedLocId] = useState<string | null>(map.locations[0]?.id ?? null);
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  const setMap = (patch: Partial<typeof map>) => onUpdate({ ...story, map: { ...map, ...patch } });
+  const updateLoc = (id: string, patch: Partial<MapLocation>) =>
+    setMap({ locations: map.locations.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
+  const removeLoc = (id: string) => {
+    const rest = map.locations.filter((l) => l.id !== id);
+    if (rest.length === 0 && !map.backgroundImage && !map.title) {
+      const { map: _gone, ...noMap } = story;
+      onUpdate(noMap as Story);
+    } else {
+      setMap({ locations: rest });
+    }
+    if (selectedLocId === id) setSelectedLocId(rest[0]?.id ?? null);
+  };
+  const addLoc = () => {
+    const id = `loc-${Date.now().toString(36)}`;
+    const loc: MapLocation = {
+      id,
+      label: `Location ${map.locations.length + 1}`,
+      targetSceneId: story.scenes[0]?.id ?? "",
+      x: 20 + ((map.locations.length * 17) % 60),
+      y: 25 + ((map.locations.length * 23) % 50),
+    };
+    setMap({ locations: [...map.locations, loc] });
+    setSelectedLocId(id);
+  };
+
+  const bgRaw = map.backgroundImage;
+  const bgResolved = resolveMedia(bgRaw) ?? bgRaw;
+  const bgStyle: React.CSSProperties = bgResolved
+    ? bgResolved.startsWith("gradient:")
+      ? { background: bgResolved.slice(9) }
+      : { backgroundImage: `url(${assetUrl(bgResolved)})`, backgroundSize: "cover", backgroundPosition: "center" }
+    : { background: "linear-gradient(160deg,#14141f 0%,#0c0c14 70%)" };
+
+  const placePin = (e: React.MouseEvent) => {
+    if (!selectedLocId || !previewRef.current) return;
+    const rect = previewRef.current.getBoundingClientRect();
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
+    updateLoc(selectedLocId, { x: Math.min(100, Math.max(0, x)), y: Math.min(100, Math.max(0, y)) });
+  };
+
+  const selected = map.locations.find((l) => l.id === selectedLocId) ?? null;
+
+  return (
+    <div className="space-y-3">
+      <div className="border border-gold/30 bg-gold/5 p-2">
+        <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🗺 Travel Map</div>
+        <p className="mt-1 font-type text-[10px] leading-snug text-paper/55">
+          A screen of destinations the player can jump to (menu → 🗺 Travel map, or T). Each location
+          unlocks when its required flags are set — earn the tip, open the door. Locked pins show as
+          “???” unless you hide them entirely. In play, travel resolves through note placeholders like
+          every other route, and the validator checks every pin.
+        </p>
+      </div>
+
+      <Field label="Map title (heading on the player's screen)">
+        <input className={inputCls} value={map.title ?? ""} placeholder="Travel Map"
+          onChange={(e) => setMap({ title: e.target.value || undefined })} />
+      </Field>
+
+      <Field label="Map artwork (pins are placed on this)">
+        <ImagePicker value={map.backgroundImage} storyId={story.id}
+          onChange={(v) => setMap({ backgroundImage: v })} placeholder="Pick the map image…" />
+      </Field>
+
+      {/* click-to-place preview */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-pulp text-[9px] uppercase tracking-widest text-paper/50">
+            {selected ? `Click the map to place “${selected.label}”` : "Add a location, then click the map to place its pin"}
+          </span>
+          <button onClick={addLoc} className="border border-gold/60 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/15">
+            + Add location
+          </button>
+        </div>
+        <div ref={previewRef} onClick={placePin}
+          className={`relative aspect-video w-full overflow-hidden border-2 border-noir-600 ${selected ? "cursor-crosshair" : ""}`}
+          style={bgStyle}>
+          {map.locations.map((loc) => (
+            <button
+              key={loc.id}
+              onClick={(e) => { e.stopPropagation(); setSelectedLocId(loc.id); }}
+              className="absolute -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
+              title={`${loc.label} → ${story.scenes.find((s) => s.id === loc.targetSceneId)?.title ?? loc.targetSceneId}`}
+            >
+              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-sm shadow-[0_2px_8px_rgba(0,0,0,0.8)] ${
+                loc.id === selectedLocId ? "border-neon bg-neon/25" : "border-gold bg-noir-950/85"
+              }`}>
+                {loc.icon ?? (loc.gating ? "🔒" : "📍")}
+              </span>
+              <span className={`mt-0.5 block whitespace-nowrap border px-1 font-pulp text-[8px] uppercase tracking-widest backdrop-blur-sm ${
+                loc.id === selectedLocId ? "border-neon/60 bg-noir-950/85 text-neon" : "border-gold/50 bg-noir-950/85 text-gold"
+              }`}>
+                {loc.label}
+              </span>
+            </button>
+          ))}
+          {map.locations.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center font-type text-xs italic text-paper/45">
+              No locations yet — “+ Add location” to drop the first pin.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* per-location editors */}
+      <div className="space-y-2">
+        {map.locations.map((loc) => {
+          const gateFlags = loc.gating?.requiresFlags ?? [];
+          const isSel = loc.id === selectedLocId;
+          return (
+            <div key={loc.id}
+              className={`space-y-1.5 border p-2 ${isSel ? "border-neon/60 bg-neon/5" : "border-noir-600 bg-noir-900/50"}`}
+              onClick={() => setSelectedLocId(loc.id)}>
+              <div className="flex items-center gap-2">
+                <input className={inputCls} value={loc.label}
+                  onChange={(e) => updateLoc(loc.id, { label: e.target.value })} placeholder="Location name" />
+                <input className={`${inputCls} !w-14 text-center`} value={loc.icon ?? ""} maxLength={4}
+                  onChange={(e) => updateLoc(loc.id, { icon: e.target.value || undefined })} placeholder="📍" title="Pin emoji" />
+                <button onClick={(e) => { e.stopPropagation(); removeLoc(loc.id); }}
+                  className="shrink-0 border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10">
+                  ✕
+                </button>
+              </div>
+              <Field label="Travels to scene">
+                <select className={inputCls} value={loc.targetSceneId}
+                  onChange={(e) => updateLoc(loc.id, { targetSceneId: e.target.value })}>
+                  {story.scenes.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.nodeType === "note" ? `📝 ${sc.title} (note — passes through)` : sc.title}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Unlocked by flags (comma-separated — empty = always open)">
+                <input className={inputCls} value={gateFlags.join(", ")} list={`map-flags-${story.id}`}
+                  onChange={(e) => {
+                    const requiresFlags = e.target.value.split(",").map((f) => f.trim()).filter(Boolean);
+                    const gating: Gating | undefined = requiresFlags.length
+                      ? { ...(loc.gating ?? {}), requiresFlags }
+                      : (() => {
+                          const { requiresFlags: _r, ...rest } = loc.gating ?? {};
+                          return Object.keys(rest).length ? rest : undefined;
+                        })();
+                    updateLoc(loc.id, { gating });
+                  }}
+                  placeholder="e.g. found_pier_tip" />
+              </Field>
+              {!!loc.gating && (
+                <>
+                  <Field label="Teaser on the locked pin (else an automatic hint)">
+                    <input className={inputCls} value={loc.lockedHint ?? ""}
+                      onChange={(e) => updateLoc(loc.id, { lockedHint: e.target.value || undefined })}
+                      placeholder="Someone in the diner knows the pier number…" />
+                  </Field>
+                  <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                    <input type="checkbox" checked={!!loc.hiddenWhenLocked}
+                      onChange={(e) => updateLoc(loc.id, { hiddenWhenLocked: e.target.checked || undefined })} />
+                    Hide the pin completely until unlocked (a secret place)
+                  </label>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <datalist id={`map-flags-${story.id}`}>
+        {flags.map((f) => <option key={f} value={f} />)}
+      </datalist>
+    </div>
   );
 }

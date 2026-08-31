@@ -13,6 +13,7 @@ import type {
   HotspotActionType,
   Interrogation,
   Item,
+  MapLocation,
   MeterKey,
   RecapLine,
   SceneNode,
@@ -91,6 +92,27 @@ export function meetsGating(g: Gating | undefined, s: GlobalState): boolean {
     for (const [id, v] of Object.entries(g.minTrust)) if ((s.characterTrust[id] ?? 0) < v) return false;
   }
   return true;
+}
+
+/** Travel-map lens on the live state: which locations are drawn, and which
+ *  of those are open. Locked pins stay visible (as "???") unless the author
+ *  marked them hiddenWhenLocked. Pure — unlocks are DERIVED from the same
+ *  gating vocabulary as choices/hotspots (meetsGating), never stored, so a
+ *  loaded save or NG+ run can't disagree with the flags that earned access. */
+export function mapLocationsView(
+  story: Story,
+  s: GlobalState
+): { location: MapLocation; unlocked: boolean }[] {
+  return (story.map?.locations ?? [])
+    .map((location) => ({ location, unlocked: meetsGating(location.gating, s) }))
+    .filter(({ unlocked, location }) => unlocked || !location.hiddenWhenLocked);
+}
+
+/** True when the story ships a usable travel map and the theme hasn't hidden
+ *  it — the single gate for the HUD menu entry, the T hotkey, hotspot
+ *  openMap actions and the overlay itself. */
+export function mapAvailable(story: Story): boolean {
+  return (story.map?.locations?.length ?? 0) > 0 && !story.dialogueBox?.hideMap;
 }
 
 /** The scene a heat bust should route to, or null when no bust is due:
@@ -663,6 +685,7 @@ export function collectFlags(story: Story): string[] {
     }
   });
   story.deduction?.connections.forEach((c) => flags.add(c.flagSet));
+  story.map?.locations.forEach((loc) => fromGate(loc.gating));
   return [...flags].sort();
 }
 
@@ -1189,6 +1212,28 @@ export function validateStory(story: Story): ValidationIssue[] {
     issues.push({ severity: "error", sceneId: null, message: `Duplicate character id "${id}". Dialogue voices and trust will collide.` })
   );
 
+  // Travel map: every pin must land on a real scene, ids must be unique, and
+  // a dead-end note target would strand the traveller (bypassedSceneId can't
+  // route past a note with no way out).
+  if (story.map) {
+    duplicates(story.map.locations.map((l) => l.id)).forEach((id) =>
+      issues.push({ severity: "error", sceneId: null, message: `Duplicate map location id "${id}".` })
+    );
+    story.map.locations.forEach((loc) => {
+      if (!ids.has(loc.targetSceneId)) {
+        issues.push({ severity: "error", sceneId: null, message: `Map location "${loc.label || loc.id}" → missing scene "${loc.targetSceneId}".` });
+        return;
+      }
+      const resolved = story.scenes.find((s) => s.id === bypassedSceneId(story, loc.targetSceneId));
+      if (resolved?.nodeType === "note")
+        issues.push({ severity: "error", sceneId: resolved.id, message: `Map location "${loc.label || loc.id}" travels to note placeholder "${resolved.title}" with no route out — the traveller would be stranded.` });
+      if (!(loc.x >= 0 && loc.x <= 100 && loc.y >= 0 && loc.y <= 100))
+        issues.push({ severity: "warning", sceneId: null, message: `Map location "${loc.label || loc.id}" pin sits off the map (x/y must be 0–100%).` });
+      if (loc.hiddenWhenLocked && !loc.gating)
+        issues.push({ severity: "warning", sceneId: null, message: `Map location "${loc.label || loc.id}" is hiddenWhenLocked but has no gating — it can never be hidden.` });
+    });
+  }
+
   if (!ids.has(story.startSceneId))
     issues.push({ severity: "error", sceneId: null, message: `Start scene "${story.startSceneId}" does not exist.` });
   const startScene = story.scenes.find((s) => s.id === story.startSceneId);
@@ -1254,6 +1299,10 @@ export function validateStory(story: Story): ValidationIssue[] {
     story.startSceneId,
     ...seasonEpisodes(story).map((ep) => ep.startSceneId),
     story.briefing?.heatFailSceneId ?? "",
+    // Travel-map destinations are entry points too: the player reaches them
+    // through the 🗺 map screen, not through a scene edge, so a location
+    // only visitable by travelling must not read as "unreachable".
+    ...(story.map?.locations ?? []).map((loc) => loc.targetSceneId),
   ].filter(Boolean);
   while (queue.length) {
     const cur = queue.pop()!;
@@ -1613,6 +1662,9 @@ export function validateStory(story: Story): ValidationIssue[] {
     }
   });
   story.deduction?.connections.forEach((connection) => grantableFlags.add(connection.flagSet));
+  // A map location's gate is a real read: a flag whose only purpose is to
+  // open a travel destination is used, not orphaned.
+  story.map?.locations.forEach((loc) => loc.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag)));
   requiredFlags.forEach((flag) => {
     if (!grantableFlags.has(flag))
       issues.push({ severity: "error", sceneId: null, message: `Flag "${flag}" is required by a gate but no choice, hotspot, puzzle, or board connection sets it.` });

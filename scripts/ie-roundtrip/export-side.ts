@@ -146,6 +146,11 @@ story.acts = [
 ];
 story.coverImage = await up("image", "cover", png("cover"));
 story.dialogueBox = { ...(story.dialogueBox ?? {}), backgroundImage: await up("image", "dlgbox-bg", png("dlgbox-bg")) };
+story.map = {
+  title: "Round-Trip City",
+  backgroundImage: await up("image", "map-bg", png("map-bg")),
+  locations: [{ id: "rt-loc", label: "The Docks", targetSceneId: scene0.id, x: 50, y: 50 }],
+};
 
 /* ------------------------------------------------------------------ */
 /*  2. compactStoryMedia: data URLs -> asset: refs (localStorage-safe) */
@@ -267,6 +272,7 @@ legacy.episodes = [
 seeded.push(legacy.episodes[0].titleCardMusicUrl!);
 legacy.coverImage = raw("cover");
 legacy.dialogueBox = { ...(legacy.dialogueBox ?? {}), backgroundImage: raw("dlgbox") };
+legacy.map = { locations: [{ id: "lg-loc", label: "Old Pier", targetSceneId: legacy.scenes[0].id, x: 20, y: 80 }], backgroundImage: raw("map-bg") };
 
 const compactedLegacy = await compactStoryMedia(legacy);
 const legacyJson = JSON.stringify(compactedLegacy);

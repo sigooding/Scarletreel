@@ -4,6 +4,7 @@ import { LAST_CALL_ON_PIER_7 } from "./lastCallOnPier7";
 import { QTE_DEMO } from "./qteDemo";
 import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
+import { MAP_DEMO } from "./mapDemo";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
 import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
 import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
@@ -81,4 +82,5 @@ export const STORIES: Story[] = [
   QTE_DEMO,
   PERK_RANGE,
   PATTERN_PUZZLE_DEMO,
+  MAP_DEMO,
 ];
