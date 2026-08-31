@@ -383,7 +383,19 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               Walking onto a hotspot zone fires it <b>through the same hotspot action</b> — give-item pickups, show-text, exits
               and gating all behave identically; it's only the input that changes from click-the-zone to walk-to-the-zone.
               Set the spawn point, walk speed, reach distance and sprite (image / <code>emoji:…</code>). Put hotspots where the
-              player should walk to something. Try the office in <b>Demo Lab: Press the Lie</b>.
+              player should walk to something. The 💀 <b>object-first verb menu</b> (Full Throttle's skull) can open on
+              click, or <b>hold-to-open</b> as a big circular pie in the middle of the screen — its centrepiece sprite
+              is set on the 🎮 <b>In-game theme</b> tab. Try the office in <b>Demo Lab: Press the Lie</b>.
+            </p>
+            <p>
+              <b>🎥 Wide worlds & walk-off exits (Scene tab → Walkable Stage).</b> <b>World width</b> makes a room a
+              scrolling strip several screens long — the camera follows the player (a LucasArts alley). Markers, spawns and
+              barriers are then placed in % of the whole strip (dashed viewport frames show what one screen holds).
+              <b>Walk-off-screen exits</b> put the red/yellow edge arrow on the plate: walk into the edge (or click the arrow)
+              and the character strides off-screen into the target scene — yellow means gated, with a locked line. <b>Entry
+              spawns</b> (cyan dots, draggable) pick where the player appears depending on the room they arrived from.
+              <b>Character size</b> (<code>stage.playerScale</code>) fits the walker to the scene — the 🕵️ on the plate grows
+              and shrinks live (1 = classic look; near/far sliders still control the walk-toward-camera perspective).
             </p>
           </Section>
 

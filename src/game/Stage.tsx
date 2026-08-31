@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { Hotspot, StageSettings } from "../types";
+import type { Hotspot, StageExitEdge, StageSettings } from "../types";
 import { CURSOR_ICON, hotspotAnswersVerb } from "../logic";
 import {
   STAGE2D_DEFAULT_REACH,
   STAGE2D_DEFAULT_SPEED,
+  STAGE_GRID_STEP,
   VERB_ICON,
   VERB_LABEL,
   clampToFloor,
   hotspotAtPoint,
   posReachesMarker,
+  stageAtWorldEdge,
   stageBlocked,
+  stageCamX,
   stageFloor,
   stageMarkerPoint,
+  stagePlayerScale,
   stageRoute,
   stageSpeedScale,
   stageSpriteScale,
@@ -38,14 +42,28 @@ import { presetStyle } from "./animation";
  *  - walks the character to a marker and fires it through `onInteract` —
  *    the exact same callback a clicked hotspot uses, so gating, items,
  *    showText, exits and conversations all behave.
+ *  - WIDE WORLDS (`worldWidth > 100`): the room is one continuous strip
+ *    wider than the viewport, the camera pans after the walker (a LucasArts
+ *    scrolling alley), and the plate edge becomes a WALK-OFF-SCREEN EXIT
+ *    (`exitEdges`): red/yellow chevron arrows sit at the viewport edges and
+ *    the character literally walks off the plate into the next scene.
  *
- * Coordinates are scene percentages (0–100). x is a % of plate width, y a
- * % of plate height; the y step is aspect-corrected so walk speed is
- * uniform across the plate. `active` is false while a conversation plays
- * or an overlay is open: movement stops and the markers hide.
+ * Coordinates are scene percentages (0–100) of the WORLD: x is a % of world
+ * width, y a % of plate height; the y step is aspect-corrected so walk
+ * speed is uniform across the plate. `active` is false while a conversation
+ * plays or an overlay is open: movement stops and the markers hide.
  */
 
 const HINT_RADIUS = 16; // scene-width % — labels fade in within this of a marker
+
+/** HOLD-TO-OPEN skull pie (stage.objectMenuHold): press an object this long
+ *  before the big circular menu opens in the middle of the screen. */
+const PIE_HOLD_MS = 320;
+/** Pie geometry, px from the screen-centre: verbs sit on this ring, the
+ *  skull fills the inner disc (releasing there cancels). */
+const PIE_VERB_RADIUS = 128;
+const PIE_SKULL_RADIUS = 52;
+const PIE_HIT_SLACK = 26; // generous pickup around the verb ring
 
 /** An inventory item the USE verb can arm. */
 export interface CoinItem {
@@ -66,6 +84,10 @@ export function Stage({
   dropRequest,
   cursorStyle,
   onVerbChange,
+  background,
+  onEdgeExit,
+  onEdgeLocked,
+  edgeUnlocked,
 }: {
   settings: StageSettings;
   hotspots: Hotspot[];
@@ -90,15 +112,30 @@ export function Stage({
   cursorStyle?: React.CSSProperties;
   /** Reports the coin's selected verb upward — it drives the cursor art. */
   onVerbChange?: (verb: VerbId) => void;
+  /** The room's plate image — rendered by Stage itself on WIDE worlds so it
+   *  pans with the camera (Game's plate stays fixed to the viewport). */
+  background?: string;
+  /** Walk-off-screen exit: the walker has left the world edge. Game routes
+   *  to the edge's targetSceneId (with its own fade). */
+  onEdgeExit?: (edge: "left" | "right") => void;
+  /** The walker clicked a LOCKED edge arrow — Game shows the exit's
+   *  lockedLine as a caption. */
+  onEdgeLocked?: (edge: "left" | "right", line: string) => void;
+  /** Whether an edge exit's gate currently passes (red arrow = open,
+   *  yellow = locked). Defaults to open. */
+  edgeUnlocked?: (edge: "left" | "right") => boolean;
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
   const floor = stageFloor(settings);
-  const spawn = clampToFloor(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, floor);
+  /** WIDE WORLD: room width in viewport-% (100 = single screen). */
+  const worldW = Math.max(100, settings.worldWidth ?? 100);
+  const wide = worldW > 100;
+  const spawn = clampToFloor(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, floor, worldW);
   const speed = settings.speed ?? STAGE2D_DEFAULT_SPEED;
   const reach = settings.reach ?? STAGE2D_DEFAULT_REACH;
   const keyboard = settings.keyboard !== false;
   const hints = settings.hints ?? "proximity";
-  const baseScale = settings.playerScale ?? 1;
+  const baseScale = stagePlayerScale(settings);
 
   const obstacles = settings.obstacles ?? [];
   const [pos, setPos] = useState(spawn);
@@ -168,6 +205,18 @@ export function Stage({
   // picked and is waiting for an inventory item to arm.
   const [menu, setMenu] = useState<{ hs: Hotspot; x: number; y: number } | null>(null);
   const [menuUse, setMenuUse] = useState<Hotspot | null>(null);
+  // HOLD-TO-OPEN (stage.objectMenuHold): press and hold an object and the
+  // big skull pie opens in the MIDDLE of the screen; release over a verb to
+  // act with it. The gesture runs on window listeners (so the pointer can
+  // roam the pie freely) and the hover is computed geometrically — the pie
+  // itself never intercepts the pointer.
+  const holdMode = settings.objectMenuHold === true && objectMenu && !coinOn;
+  const holdTimerRef = useRef<number | null>(null);
+  const holdRef = useRef<{ hs: Hotspot; startX: number; startY: number } | null>(null);
+  const pieRef = useRef<{ open: boolean; cx: number; cy: number; verbs: VerbId[] }>({ open: false, cx: 0, cy: 0, verbs: [] });
+  const [pieHover, setPieHover] = useState<VerbId | null>(null);
+  const pieHoverRef = useRef<VerbId | null>(null);
+  pieHoverRef.current = pieHover;
   /** The verbs an object answers, for the menu (respects the room's verb list). */
   const menuVerbs = (hs: Hotspot): VerbId[] => {
     const room = verbs ?? [];
@@ -192,6 +241,16 @@ export function Stage({
   // so it fires through a ref that always points at the latest callback.
   const interactRef = useRef(onInteract);
   interactRef.current = onInteract;
+  const exitCbRef = useRef(onEdgeExit);
+  exitCbRef.current = onEdgeExit;
+  const lockedCbRef = useRef(onEdgeLocked);
+  lockedCbRef.current = onEdgeLocked;
+  const edgeUnlockedRef = useRef(edgeUnlocked);
+  edgeUnlockedRef.current = edgeUnlocked;
+  /** WALK-OFF-SCREEN EXIT — the edge the walker is currently leaving by.
+   *  While set, the character ignores input and keeps walking horizontally
+   *  off the plate; once they're clear of the world edge, onEdgeExit fires. */
+  const exitRef = useRef<"left" | "right" | null>(null);
   const frameClock = useRef(0);
   const frameDur = Math.max(0.04, settings.walkFrameDuration ?? 0.14);
   const walkFrames = (settings.walkFrames ?? []).filter(Boolean);
@@ -199,16 +258,25 @@ export function Stage({
   // it actually has a drawable animation.
   const hasSheet = sheetDrawable(settings.playerSheet);
 
+  /** THE CAMERA — the left edge of the viewport in world-% (0 on a
+   *  single-screen room). Follows the walker with light smoothing; the world
+   *  div is translated by -cam, so markers, props and the walker all pan
+   *  together. */
+  const camRef = useRef(0);
+  const [cam, setCam] = useState(0);
+
   const aspect = () => {
     const el = plateRef.current;
     if (!el || el.clientHeight === 0) return 16 / 9;
     return el.clientWidth / el.clientHeight;
   };
 
+  /** Map a pointer event to WORLD coordinates: the viewport % plus whatever
+   *  the camera is currently showing. */
   const platePoint = (e: React.PointerEvent): { x: number; y: number } => {
     const r = plateRef.current!.getBoundingClientRect();
     return {
-      x: ((e.clientX - r.left) / r.width) * 100,
+      x: ((e.clientX - r.left) / r.width) * 100 + camRef.current,
       y: ((e.clientY - r.top) / r.height) * 100,
     };
   };
@@ -237,6 +305,7 @@ export function Stage({
   useEffect(() => {
     if (!active) {
       setWalking(false);
+      exitRef.current = null;
       return;
     }
     let raf = 0;
@@ -249,43 +318,75 @@ export function Stage({
       let next: { x: number; y: number } = cur;
       let moved = false;
       let arrived = false;
+      let stop = false;
 
-      const ks = keysRef.current;
-      const kb =
-        ks.has("arrowleft") || ks.has("a") ? -1 : ks.has("arrowright") || ks.has("d") ? 1 : 0;
-      const vf =
-        ks.has("arrowup") || ks.has("w") ? -1 : ks.has("arrowdown") || ks.has("s") ? 1 : 0;
-
-      if (kb !== 0 || vf !== 0) {
-        // Keyboard: walk directly, normalised so diagonals aren't faster.
-        const len = Math.hypot(kb, vf) || 1;
-        // Walking away from the camera covers less SCREEN per second — the
-        // sprite is smaller, so the step should be too.
+      // WALK-OFF-SCREEN phase: no input, no clamps — the character strides
+      // off the world edge, then the exit fires (the scene fades out).
+      const exiting = exitRef.current;
+      if (exiting) {
+        const dirSign = exiting === "left" ? -1 : 1;
         const step = speed * stageSpeedScale(cur.y, floor, settings) * dt;
-        const want = { x: cur.x + (kb / len) * step, y: cur.y + (vf / len) * step / a };
-        // Wall sliding: if the diagonal is blocked, take whichever single
-        // axis still works, so brushing a counter skims along it instead of
-        // pinning the character in place.
-        if (obstacles.length && stageBlocked(want.x, want.y, obstacles, floor, a)) {
-          const slideX = { x: want.x, y: cur.y };
-          const slideY = { x: cur.x, y: want.y };
-          if (!stageBlocked(slideX.x, slideX.y, obstacles, floor, a)) next = slideX;
-          else if (!stageBlocked(slideY.x, slideY.y, obstacles, floor, a)) next = slideY;
-        } else {
-          next = clampToFloor(want.x, want.y, floor);
-        }
-        if (kb !== 0 || vf !== 0) setDir(dirOf(kb, vf));
-        moved = next.x !== cur.x || next.y !== cur.y;
-      } else if (targetRef.current) {
-        const t = targetRef.current;
-        const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings), dt, a);
-        next = clampToFloor(r.x, r.y, floor);
-        if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
+        next = { x: cur.x + dirSign * step, y: cur.y };
         moved = true;
-        if (r.arrived) arrived = true;
+        setDir(exiting);
+        if ((dirSign < 0 && next.x <= -2.4) || (dirSign > 0 && next.x >= worldW + 2.4)) {
+          exitRef.current = null;
+          stop = true;
+          exitCbRef.current?.(exiting);
+        }
+      } else {
+        const ks = keysRef.current;
+        const kb =
+          ks.has("arrowleft") || ks.has("a") ? -1 : ks.has("arrowright") || ks.has("d") ? 1 : 0;
+        const vf =
+          ks.has("arrowup") || ks.has("w") ? -1 : ks.has("arrowdown") || ks.has("s") ? 1 : 0;
+
+        if (kb !== 0 || vf !== 0) {
+          // Keyboard: walk directly, normalised so diagonals aren't faster.
+          const len = Math.hypot(kb, vf) || 1;
+          // Walking away from the camera covers less SCREEN per second — the
+          // sprite is smaller, so the step should be too.
+          const step = speed * stageSpeedScale(cur.y, floor, settings) * dt;
+          const want = { x: cur.x + (kb / len) * step, y: cur.y + (vf / len) * step / a };
+          // Wall sliding: if the diagonal is blocked, take whichever single
+          // axis still works, so brushing a counter skims along it instead of
+          // pinning the character in place.
+          if (obstacles.length && stageBlocked(want.x, want.y, obstacles, floor, a, worldW)) {
+            const slideX = { x: want.x, y: cur.y };
+            const slideY = { x: cur.x, y: want.y };
+            if (!stageBlocked(slideX.x, slideX.y, obstacles, floor, a, worldW)) next = slideX;
+            else if (!stageBlocked(slideY.x, slideY.y, obstacles, floor, a, worldW)) next = slideY;
+          } else {
+            next = clampToFloor(want.x, want.y, floor, worldW);
+          }
+          if (kb !== 0 || vf !== 0) setDir(dirOf(kb, vf));
+          moved = next.x !== cur.x || next.y !== cur.y;
+        } else if (targetRef.current) {
+          const t = targetRef.current;
+          const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings), dt, a);
+          next = clampToFloor(r.x, r.y, floor, worldW);
+          if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
+          moved = true;
+          if (r.arrived) arrived = true;
+        }
+
+        // WALK-OFF-SCREEN trigger: the walker reached a world edge with an
+        // open exit there — start the leaving phase.
+        if (!exiting && (settings.exitEdges?.left || settings.exitEdges?.right)) {
+          const at = stageAtWorldEdge(next.x, worldW);
+          if (at) {
+            const ex = settings.exitEdges[at];
+            if (ex && (!ex.gating || edgeUnlockedRef.current?.(at))) {
+              targetRef.current = null;
+              routeRef.current = [];
+              exitRef.current = at;
+              setWalking(true);
+            }
+          }
+        }
       }
 
-      if (moved) {
+      if (moved && !exiting) {
         setPos(next);
         setWalking(true);
         // Cycle the walk frames while moving.
@@ -301,7 +402,7 @@ export function Stage({
         // usually arrive because they clicked the marker.
         for (const hs of hotspotsRef.current) {
           if (firedRef.current.has(hs.id)) continue;
-          const m = stageMarkerPoint(hs, floor);
+          const m = stageMarkerPoint(hs, floor, worldW);
           if (!posReachesMarker(next, m, reach, a)) continue;
           // A coin room is verb-first: only the marker the player actually
           // aimed at fires, and it fires with the verb they picked. Brushing
@@ -321,15 +422,18 @@ export function Stage({
         // Which marker is "near" (for proximity labels)?
         let best: { id: string; d: number } | null = null;
         for (const hs of hotspotsRef.current) {
-          const m = stageMarkerPoint(hs, floor);
+          const m = stageMarkerPoint(hs, floor, worldW);
           const a2 = a;
           const d = Math.hypot(next.x - m.x, (next.y - m.y) * a2);
           if (!best || d < best.d) best = { id: hs.id, d };
         }
         setNearId(best && best.d <= HINT_RADIUS ? best.id : null);
+      } else if (exiting && moved) {
+        setPos(next);
+        setWalking(true);
       }
 
-      if (arrived) {
+      if (arrived && !exiting) {
         const rest = routeRef.current;
         if (rest.length) {
           // Next corner of the route.
@@ -343,6 +447,15 @@ export function Stage({
         }
       }
 
+      // Camera follows the walker (wide worlds only).
+      if (wide) {
+        const target = stageCamX(next.x, worldW);
+        camRef.current += (target - camRef.current) * Math.min(1, dt * 8);
+        const shown = Math.round(camRef.current * 10) / 10;
+        if (Math.abs(shown - cam) > 0.011) setCam(shown);
+      }
+
+      if (stop) return;
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -350,13 +463,19 @@ export function Stage({
     // hotspots/unlocked/onInteract are read via refs/closures that the
     // parent re-creates each render; the loop intentionally persists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, speed, reach, floor.top, floor.bottom, obstacles.length, settings.depthScale, settings.playerNearScale, settings.playerFarScale]);
+  }, [active, speed, reach, floor.top, floor.bottom, obstacles.length, settings.depthScale, settings.playerNearScale, settings.playerFarScale, worldW]);
 
   // Reset position when a fresh scene mounts (component keyed by scene id).
   useEffect(() => {
     setPos(spawn);
     firedRef.current.clear();
     targetRef.current = null;
+    exitRef.current = null;
+    if (wide) {
+      const startCam = stageCamX(spawn.x, worldW);
+      camRef.current = startCam;
+      setCam(startCam);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -383,7 +502,7 @@ export function Stage({
         itemId: v === "use" ? ctx?.itemId ?? heldRef.current ?? undefined : undefined,
       };
     }
-    const m = stageMarkerPoint(hs, floor);
+    const m = stageMarkerPoint(hs, floor, worldW);
     const a = aspect();
     const cur = posRef.current;
     const dx = cur.x - m.x;
@@ -400,7 +519,7 @@ export function Stage({
       ty = m.y + ((dy / dist) * stop) / a;
     }
     firedRef.current.clear();
-    const route = stageRoute(cur, { x: tx, y: ty }, obstacles, floor);
+    const route = stageRoute(cur, { x: tx, y: ty }, obstacles, floor, STAGE_GRID_STEP, worldW);
     if (route.length) {
       setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur.x, m.y - cur.y));
       if (followRoute(route)) return;
@@ -423,6 +542,30 @@ export function Stage({
     walkToMarker(hs, { verb: v, itemId: v === "use" ? itemId : undefined });
   };
 
+  /** HOLD-TO-OPEN: the player pressed an object. A quick release walks to it;
+   *  holding past PIE_HOLD_MS opens the big skull pie in the middle of the
+   *  screen with the verbs this object answers. */
+  const beginHold = (hs: Hotspot, e: React.PointerEvent) => {
+    holdRef.current = { hs, startX: e.clientX, startY: e.clientY };
+    pieRef.current.open = false;
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    holdTimerRef.current = window.setTimeout(() => {
+      holdTimerRef.current = null;
+      const g = holdRef.current;
+      if (!g) return;
+      const vs = menuVerbs(g.hs);
+      if (!vs.length) return; // nothing to pick — release does nothing
+      const pie = pieRef.current;
+      pie.open = true;
+      pie.cx = window.innerWidth / 2;
+      pie.cy = window.innerHeight / 2;
+      pie.verbs = vs;
+      setMenu({ hs: g.hs, x: 50, y: 50 });
+      setMenuUse(null);
+      setPieHover(null);
+    }, PIE_HOLD_MS);
+  };
+
   // An item dropped on a scene object: walk over, then USE it there.
   const dropKeyRef = useRef<number | null>(null);
   useEffect(() => {
@@ -434,6 +577,106 @@ export function Stage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dropRequest?.key]);
 
+  // HOLD-TO-OPEN GESTURE — window listeners live for the whole stage mount
+  // but only act while a hold is in progress (holdRef set). Before the pie
+  // opens, straying >12px cancels the hold (so a drag never misfires); a
+  // release before the threshold is a quick TAP and walks to the object.
+  // Once the pie is open, hover is geometric — angle/distance from the
+  // screen-centre — so the pie itself never needs to intercept the pointer.
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const g = holdRef.current;
+      if (!g) return;
+      const pie = pieRef.current;
+      if (!pie.open) {
+        if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) > 12) {
+          if (holdTimerRef.current !== null) {
+            window.clearTimeout(holdTimerRef.current);
+            holdTimerRef.current = null;
+          }
+          holdRef.current = null;
+        }
+        return;
+      }
+      const dx = e.clientX - pie.cx;
+      const dy = e.clientY - pie.cy;
+      const dist = Math.hypot(dx, dy);
+      let v: VerbId | null = null;
+      if (dist >= PIE_SKULL_RADIUS && dist <= PIE_VERB_RADIUS + PIE_HIT_SLACK) {
+        const n = pie.verbs.length;
+        if (n > 0) {
+          const ang = (Math.atan2(dy, dx) * 180) / Math.PI; // -180..180, 0 = right
+          const sector = 360 / n;
+          const idx = Math.floor(((((ang + 90 + sector / 2) % 360) + 360) % 360) / sector) % n;
+          v = pie.verbs[idx];
+        }
+      }
+      if (v !== pieHoverRef.current) {
+        setPieHover(v);
+        if (v) audio.hover();
+      }
+    };
+    const onUp = (e: PointerEvent) => {
+      const g = holdRef.current;
+      if (!g) return;
+      holdRef.current = null;
+      if (holdTimerRef.current !== null) {
+        // Quick tap (or a hold cancelled before the threshold): walking to
+        // the object is the tap's meaning — HOLDING is what opens the pie.
+        window.clearTimeout(holdTimerRef.current);
+        holdTimerRef.current = null;
+        if (!pieRef.current.open) walkToMarker(g.hs);
+        return;
+      }
+      const pie = pieRef.current;
+      if (!pie.open) return;
+      const dx = e.clientX - pie.cx;
+      const dy = e.clientY - pie.cy;
+      const dist = Math.hypot(dx, dy);
+      const v = pieHoverRef.current;
+      pie.open = false;
+      setMenu(null);
+      setMenuUse(null);
+      setPieHover(null);
+      if (v && dist >= PIE_SKULL_RADIUS && dist <= PIE_VERB_RADIUS + PIE_HIT_SLACK) {
+        // pickVerb with USE+items keeps the pie up (armed for an item) —
+        // exactly like the click-to-open menu.
+        pickVerb(g.hs, v);
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+      holdRef.current = null;
+    };
+    // The handlers only touch refs + stable setters; the mount-time closure
+    // is all that's ever needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Click an edge arrow: locked exits say their line; open exits walk the
+   *  character to the world edge, where the leaving phase takes over. */
+  const clickEdge = (edge: "left" | "right") => {
+    if (!active) return;
+    const ex = settings.exitEdges?.[edge];
+    if (!ex) return;
+    const open = !ex.gating || !!edgeUnlockedRef.current?.(edge);
+    if (!open) {
+      audio.fail();
+      lockedCbRef.current?.(edge, ex.lockedLine ?? "Not yet. Something's still holding you here.");
+      return;
+    }
+    audio.click();
+    targetRef.current =
+      edge === "left" ? { x: 0.7, y: posRef.current.y } : { x: worldW - 0.7, y: posRef.current.y };
+    routeRef.current = [];
+    setDir(edge);
+    setWalking(true);
+  };
+
   const isEmoji = (settings.playerImage ?? "").startsWith("emoji:");
   const emoji = isEmoji ? settings.playerImage!.slice("emoji:".length) : "🕵️";
   // Perspective: big up close, small in the distance (near/far ends are
@@ -441,6 +684,35 @@ export function Stage({
   const playerDepth = stageSpriteScale(pos.y, floor, settings) * baseScale;
 
   const markerIcon = (hs: Hotspot) => CURSOR_ICON[hs.cursor] ?? "◆";
+
+  // The skull-pie centrepiece: the story's verbMenuIcon sprite (In-game
+  // theme) resolved through Game, or a stage override — big in the middle of
+  // the ring of verbs, exactly like Full Throttle's flaming skull.
+  const menuIcon = settings.objectMenuIcon;
+  const menuIconEl =
+    menuIcon?.startsWith("emoji:") ? (
+      <span className="text-5xl leading-none">{menuIcon.slice("emoji:".length)}</span>
+    ) : menuIcon ? (
+      <img src={assetUrl(menuIcon)} alt="" draggable={false} className="h-full w-full select-none object-cover" />
+    ) : (
+      <span className="text-5xl leading-none">💀</span>
+    );
+
+  // Edge arrows — the LucasArts red (open) / yellow (locked) chevron. On a
+  // single-screen room they sit at the plate edges whenever an exit exists;
+  // on a wide world each arrow only shows while the camera is parked at that
+  // end of the strip (you can't walk left past the left end).
+  const edgeArrow = (edge: "left" | "right"): { exit: StageExitEdge; open: boolean } | null => {
+    const ex = settings.exitEdges?.[edge];
+    if (!ex || !active || exitRef.current) return null;
+    if (wide) {
+      const atEnd = edge === "left" ? cam <= 0.6 : cam >= worldW - 100 - 0.6;
+      if (!atEnd) return null;
+    }
+    return { exit: ex, open: !ex.gating || !!edgeUnlockedRef.current?.(edge) };
+  };
+  const leftArrow = edgeArrow("left");
+  const rightArrow = edgeArrow("right");
 
   return (
     <div
@@ -453,7 +725,7 @@ export function Stage({
         setMenu(null);
         setMenuUse(null);
         const p = platePoint(e);
-        const floorPoint = clampToFloor(p.x, p.y, floor);
+        const floorPoint = clampToFloor(p.x, p.y, floor, worldW);
         audio.click();
         setRipple({ x: floorPoint.x, y: floorPoint.y, key: Date.now() });
         // Clicking a zone walks to that zone's marker; empty floor walks
@@ -462,7 +734,7 @@ export function Stage({
         const hit = hotspotAtPoint(hotspotsRef.current, p);
         if (hit) {
           if (objectMenu && !coinOn) {
-            const m = stageMarkerPoint(hit, floor);
+            const m = stageMarkerPoint(hit, floor, worldW);
             setMenu({ hs: hit, x: m.x, y: m.y });
           } else {
             walkToMarker(hit);
@@ -471,7 +743,7 @@ export function Stage({
           // Empty floor: just walk — routed around the furniture. The fired
           // set persists, so brushed-past markers don't re-rattle on every
           // stroll.
-          const route = stageRoute(posRef.current, floorPoint, obstacles, floor);
+          const route = stageRoute(posRef.current, floorPoint, obstacles, floor, STAGE_GRID_STEP, worldW);
           if (route.length) {
             routeRef.current = route.slice(1);
             targetRef.current = { x: route[0].x, y: route[0].y };
@@ -484,155 +756,248 @@ export function Stage({
         }
       }}
     >
-      {/* the floor — two soft edge-shades so the walkable band reads without
-          painting a obvious rectangle over the art */}
+      {/* THE WORLD — one continuous strip on wide worlds; the camera pans it
+          via translateX(-cam%). Single-screen rooms render this at 100% with
+          no transform, which is exactly the old behaviour. */}
       <div
-        className="pointer-events-none absolute inset-x-0"
-        style={{ top: 0, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
-        aria-hidden
-      />
-      <div
-        className="pointer-events-none absolute inset-x-0"
-        style={{ top: `${floor.bottom}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
-        aria-hidden
-      />
+        className="absolute inset-y-0 left-0"
+        style={{
+          width: `${worldW}%`,
+          transform: `translateX(-${cam}%)`,
+          willChange: wide ? "transform" : undefined,
+        }}
+      >
+        {/* the world's own background on wide worlds — the plate pans with
+            the camera instead of standing still behind it */}
+        {wide && background ? (
+          <div
+            className="absolute inset-0"
+            style={{ backgroundImage: `url(${background})`, backgroundSize: "cover", backgroundPosition: "center" }}
+            aria-hidden
+          />
+        ) : null}
 
-      {/* walk target ripple */}
-      {ripple && active && (
-        <span
-          key={ripple.key}
-          className="stage2d-ripple pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neon/70"
-          style={{ left: `${ripple.x}%`, top: `${ripple.y}%` }}
-          onAnimationEnd={() => setRipple(null)}
-        />
-      )}
-
-      {/* interaction markers — one per visible hotspot, standing where the
-          thing stands. The object art (NPC / prop) and the reticle+label are
-          SEPARATE plate-anchored elements so percent widths stay relative to
-          the plate; both depth-sort by the marker's y. */}
-      {hotspots.map((hs) => {
-        const m = stageMarkerPoint(hs, floor);
-        const ok = unlocked(hs);
-        const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, m, HINT_RADIUS, aspect())));
-        const z = 50 + Math.round(m.y);
-        return (
-          <div key={hs.id} className="contents">
-            {/* the object itself (NPC / prop art), feet planted on the marker */}
-            {hs.image || sheetDrawable(hs.sheet) ? (
-              <div
-                className={`pointer-events-none absolute ${ok ? "" : "opacity-80 saturate-[0.7]"}`}
-                style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: z }}
-              >
-                {(() => {
-                  const preset = presetStyle(hs.anim);
-                  const inner = (child: React.ReactNode) =>
-                    preset.className ? (
-                      <div className={preset.className} style={{ ...(preset.vars as React.CSSProperties), transformOrigin: "50% 100%" }} aria-hidden>
-                        {child}
-                      </div>
-                    ) : (
-                      child
-                    );
-                  if (sheetDrawable(hs.sheet))
-                    return inner(
-                      <div
-                        style={{ width: "100%", aspectRatio: `${Math.max(1, hs.sheet.frameWidth)} / ${Math.max(1, hs.sheet.frameHeight)}` }}
-                      >
-                        <SheetSprite
-                          sheet={hs.sheet}
-                          anim="loop"
-                          fallbacks={["idle", "walk"]}
-                          height="100%"
-                          className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]"
-                        />
-                      </div>
-                    );
-                  return inner(
-                    <img
-                      src={assetUrl(hs.image!)}
-                      alt=""
-                      draggable={false}
-                      className={`pointer-events-none w-full select-none object-contain object-bottom drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]`}
-                    />
-                  );
-                })()}
-              </div>
-            ) : null}
-            <button
-              tabIndex={active ? 0 : -1}
-              aria-label={`${hs.label}${ok ? "" : " (locked)"}`}
-              data-hs-id={hs.id}
-              disabled={!active}
-              className={`stage-marker pointer-events-auto absolute ${ok ? "" : "stage-marker-locked"}`}
-              style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: z + 1 }}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                if (!active) return;
-                audio.click();
-                if (objectMenu && !coinOn) {
-                  // OBJECT-FIRST: click the object → a pie menu of its verbs
-                  // pops up next to it (Full Throttle's "skull").
-                  setMenu({ hs, x: m.x, y: m.y });
-                  setMenuUse(null);
-                } else {
-                  walkToMarker(hs);
-                }
-              }}
-              onClick={() => {
-                // Keyboard activation (Enter on a focused marker) — the
-                // pointer path is handled above; this is idempotent.
-                if (active && !(objectMenu && !coinOn)) walkToMarker(hs);
-              }}
-              onMouseEnter={() => active && audio.hover()}
-            >
-              <span className={`stage-marker-label ${near ? "stage-marker-label-on" : ""}`}>
-                {coinOn ? VERB_ICON[verb] : markerIcon(hs)} {hs.label}
-                {verb === "use" && heldItem ? ` ← ${inventory?.find((i) => i.id === heldItem)?.name ?? ""}` : ""}
-                {!ok && " 🔒"}
-              </span>
-              <span className="stage-marker-reticle" aria-hidden />
-            </button>
-          </div>
-        );
-      })}
-
-      {/* OBJECT-FIRST VERB MENU — a small pie of the verbs THIS object
-          answers, popped up at the object (Full Throttle's "skull"). USE
-          expands to the inventory when the object accepts items. */}
-      {objectMenu && menu && active ? (
+        {/* the floor — two soft edge-shades so the walkable band reads without
+            painting a obvious rectangle over the art */}
         <div
-          className="pointer-events-auto absolute z-[78] -translate-x-1/2"
-          style={{ left: `${menu.x}%`, top: `${Math.max(8, menu.y - 8)}%`, transform: "translate(-50%,-100%)" }}
-        >
-          <div className="flex flex-col items-center gap-1.5 rounded border border-noir-700 bg-noir-950/92 p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.6)] backdrop-blur-sm">
-            <span className="max-w-[160px] truncate px-1 font-pulp text-[8px] uppercase tracking-widest text-paper/50">{menu.hs.label}</span>
-            <div className="flex flex-wrap justify-center gap-1">
-              {menuVerbs(menu.hs).map((v) => (
-                <button
-                  key={v}
-                  aria-label={VERB_LABEL[v]}
-                  className="flex min-w-[40px] flex-col items-center rounded border px-1.5 py-1 font-pulp text-[9px] uppercase tracking-wide transition-colors border-noir-700 bg-noir-900/85 text-paper/80 hover:border-gold hover:text-gold"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    audio.click();
-                    pickVerb(menu.hs, v);
-                  }}
+          className="pointer-events-none absolute inset-x-0"
+          style={{ top: 0, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute inset-x-0"
+          style={{ top: `${floor.bottom}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
+          aria-hidden
+        />
+
+        {/* walk target ripple */}
+        {ripple && active && (
+          <span
+            key={ripple.key}
+            className="stage2d-ripple pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neon/70"
+            style={{ left: `${ripple.x}%`, top: `${ripple.y}%` }}
+            onAnimationEnd={() => setRipple(null)}
+          />
+        )}
+
+        {/* interaction markers — one per visible hotspot, standing where the
+            thing stands. The object art (NPC / prop) and the reticle+label are
+            SEPARATE plate-anchored elements so percent widths stay relative to
+            the plate; both depth-sort by the marker's y. */}
+        {hotspots.map((hs) => {
+          const m = stageMarkerPoint(hs, floor, worldW);
+          const ok = unlocked(hs);
+          const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, m, HINT_RADIUS, aspect())));
+          const z = 50 + Math.round(m.y);
+          return (
+            <div key={hs.id} className="contents">
+              {/* the object itself (NPC / prop art), feet planted on the marker */}
+              {hs.image || sheetDrawable(hs.sheet) ? (
+                <div
+                  className={`pointer-events-none absolute ${ok ? "" : "opacity-80 saturate-[0.7]"}`}
+                  style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: z }}
                 >
-                  <span className="text-sm leading-none" aria-hidden>{VERB_ICON[v]}</span>
-                  {v}
-                </button>
-              ))}
+                  {(() => {
+                    const preset = presetStyle(hs.anim);
+                    const inner = (child: React.ReactNode) =>
+                      preset.className ? (
+                        <div className={preset.className} style={{ ...(preset.vars as React.CSSProperties), transformOrigin: "50% 100%" }} aria-hidden>
+                          {child}
+                        </div>
+                      ) : (
+                        child
+                      );
+                    if (sheetDrawable(hs.sheet))
+                      return inner(
+                        <div
+                          style={{ width: "100%", aspectRatio: `${Math.max(1, hs.sheet.frameWidth)} / ${Math.max(1, hs.sheet.frameHeight)}` }}
+                        >
+                          <SheetSprite
+                            sheet={hs.sheet}
+                            anim="loop"
+                            fallbacks={["idle", "walk"]}
+                            height="100%"
+                            className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]"
+                          />
+                        </div>
+                      );
+                    return inner(
+                      <img
+                        src={assetUrl(hs.image!)}
+                        alt=""
+                        draggable={false}
+                        className={`pointer-events-none w-full select-none object-contain object-bottom drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]`}
+                      />
+                    );
+                  })()}
+                </div>
+              ) : null}
+              <button
+                tabIndex={active ? 0 : -1}
+                aria-label={`${hs.label}${ok ? "" : " (locked)"}`}
+                data-hs-id={hs.id}
+                disabled={!active}
+                className={`stage-marker pointer-events-auto absolute ${ok ? "" : "stage-marker-locked"}`}
+                style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: z + 1 }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  if (!active) return;
+                  audio.click();
+                  if (holdMode) {
+                    // OBJECT-FIRST, HOLD-TO-OPEN: press and hold → the big
+                    // skull pie opens in the middle of the screen; a quick
+                    // tap walks to the object (the gesture lives on window
+                    // listeners, so nothing else needs handling here).
+                    beginHold(hs, e);
+                  } else if (objectMenu && !coinOn) {
+                    // OBJECT-FIRST, CLICK-TO-OPEN: the object → a small pie
+                    // menu of its verbs pops up next to it (FT's "skull").
+                    setMenu({ hs, x: m.x, y: m.y });
+                    setMenuUse(null);
+                  } else {
+                    walkToMarker(hs);
+                  }
+                }}
+                onClick={() => {
+                  // Keyboard activation (Enter on a focused marker) — the
+                  // pointer path is handled above; this is idempotent.
+                  if (active && !(objectMenu && !coinOn)) walkToMarker(hs);
+                }}
+                onMouseEnter={() => active && audio.hover()}
+              >
+                <span className={`stage-marker-label ${near ? "stage-marker-label-on" : ""}`}>
+                  {coinOn ? VERB_ICON[verb] : markerIcon(hs)} {hs.label}
+                  {verb === "use" && heldItem ? ` ← ${inventory?.find((i) => i.id === heldItem)?.name ?? ""}` : ""}
+                  {!ok && " 🔒"}
+                </span>
+                <span className="stage-marker-reticle" aria-hidden />
+              </button>
             </div>
-            {menuUse && menuUse.id === menu.hs.id ? (
-              <div className="flex max-w-[200px] flex-wrap justify-center gap-1 border-t border-noir-700 pt-1">
-                {((inventory ?? []).length
-                  ? inventory!
-                  : []).map((it) => (
+          );
+        })}
+
+        {/* OBJECT-FIRST VERB MENU — a small pie of the verbs THIS object
+            answers, popped up at the object (Full Throttle's "skull"). USE
+            expands to the inventory when the object accepts items. */}
+        {objectMenu && !holdMode && menu && active ? (
+          <div
+            className="pointer-events-auto absolute z-[78] -translate-x-1/2"
+            style={{ left: `${menu.x}%`, top: `${Math.max(8, menu.y - 8)}%`, transform: "translate(-50%,-100%)" }}
+          >
+            <div className="flex flex-col items-center gap-1.5 rounded border border-noir-700 bg-noir-950/92 p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.6)] backdrop-blur-sm">
+              <span className="max-w-[160px] truncate px-1 font-pulp text-[8px] uppercase tracking-widest text-paper/50">{menu.hs.label}</span>
+              <div className="flex flex-wrap justify-center gap-1">
+                {menuVerbs(menu.hs).map((v) => (
+                  <button
+                    key={v}
+                    aria-label={VERB_LABEL[v]}
+                    className="flex min-w-[40px] flex-col items-center rounded border px-1.5 py-1 font-pulp text-[9px] uppercase tracking-wide transition-colors border-noir-700 bg-noir-900/85 text-paper/80 hover:border-gold hover:text-gold"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      audio.click();
+                      pickVerb(menu.hs, v);
+                    }}
+                  >
+                    <span className="text-sm leading-none" aria-hidden>{VERB_ICON[v]}</span>
+                    {v}
+                  </button>
+                ))}
+              </div>
+              {menuUse && menuUse.id === menu.hs.id ? (
+                <div className="flex max-w-[200px] flex-wrap justify-center gap-1 border-t border-noir-700 pt-1">
+                  {((inventory ?? []).length
+                    ? inventory!
+                    : []).map((it) => (
+                      <button
+                        key={it.id}
+                        className="flex items-center gap-1 rounded border border-noir-700 bg-noir-900/85 px-1.5 py-1 font-type text-[10px] text-paper/80 hover:border-gold hover:text-gold"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          audio.click();
+                          pickVerb(menu.hs, "use", it.id);
+                        }}
+                      >
+                        <span aria-hidden>{it.icon ?? "📦"}</span> {it.name}
+                      </button>
+                    ))}
+                  {(inventory ?? []).length === 0 ? (
+                    <span className="px-1 font-type text-[9px] italic text-paper/40">Nothing to use here — nothing in your pockets.</span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {/* HOLD-TO-OPEN SKULL PIE — press and hold an object and this BIG
+            circular menu opens in the MIDDLE of the screen: the story's
+            verbMenuIcon sprite sits large in the centre, the verbs the
+            object answers ring it. Release over a verb to act; release over
+            the skull or outside to cancel. The pie never intercepts the
+            pointer — the window-gesture computes hover geometrically. */}
+        {holdMode && menu && active ? (
+          <div className="pointer-events-none fixed left-1/2 top-1/2 z-[95] -translate-x-1/2 -translate-y-1/2 select-none" aria-hidden>
+            <div className="relative h-[340px] w-[340px]">
+              {pieRef.current.verbs.map((v, i) => {
+                const n = Math.max(1, pieRef.current.verbs.length);
+                const rad = ((i * 360) / n - 90) * (Math.PI / 180);
+                const x = 50 + (PIE_VERB_RADIUS / 3.4) * Math.cos(rad);
+                const y = 50 + (PIE_VERB_RADIUS / 3.4) * Math.sin(rad);
+                const hovered = pieHover === v;
+                return (
+                  <div
+                    key={v}
+                    data-pie-verb={v}
+                    aria-label={VERB_LABEL[v]}
+                    className={`absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-full border px-3.5 py-2 transition-all duration-100 ${
+                      hovered
+                        ? "scale-110 border-gold bg-noir-900 text-gold shadow-[0_0_26px_rgba(232,178,60,0.45)]"
+                        : "border-noir-600 bg-noir-950/90 text-paper/70"
+                    }`}
+                    style={{ left: `${x}%`, top: `${y}%` }}
+                  >
+                    <span className="text-2xl leading-none" aria-hidden>{VERB_ICON[v]}</span>
+                    <span className="font-pulp text-[8px] uppercase tracking-widest">{v}</span>
+                  </div>
+                );
+              })}
+              {/* the skull — the story's verbMenuIcon sprite, big in the middle */}
+              <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1">
+                <div className="flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-full border-2 border-gold/60 bg-noir-950 shadow-[0_0_34px_rgba(232,178,60,0.4)]">
+                  {menuIconEl}
+                </div>
+                <span className="whitespace-nowrap font-pulp text-[8px] uppercase tracking-widest text-paper/45">
+                  {menuUse && menuUse.id === menu.hs.id ? "pick an item to use" : "release on a verb · skull cancels"}
+                </span>
+              </div>
+              {menuUse && menuUse.id === menu.hs.id ? (
+                <div className="absolute left-1/2 top-[calc(50%+92px)] flex -translate-x-1/2 flex-wrap justify-center gap-1.5">
+                  {(inventory ?? []).map((it) => (
                     <button
                       key={it.id}
-                      className="flex items-center gap-1 rounded border border-noir-700 bg-noir-900/85 px-1.5 py-1 font-type text-[10px] text-paper/80 hover:border-gold hover:text-gold"
+                      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-gold/50 bg-noir-950/95 px-3 py-1.5 font-type text-[11px] text-paper/85 hover:border-gold hover:text-gold"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -643,13 +1008,109 @@ export function Stage({
                       <span aria-hidden>{it.icon ?? "📦"}</span> {it.name}
                     </button>
                   ))}
-                {(inventory ?? []).length === 0 ? (
-                  <span className="px-1 font-type text-[9px] italic text-paper/40">Nothing to use here — nothing in your pockets.</span>
-                ) : null}
-              </div>
-            ) : null}
+                  {(inventory ?? []).length === 0 ? (
+                    <span className="font-type text-[9px] italic text-paper/40">Nothing in your pockets.</span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
+
+        {/* the player character — outer handles position + facing (scaleX for
+            left/right, directional anims for up/down) + depth scale, inner
+            handles the idle/walk bob so the transforms don't fight. z-index
+            tracks the feet so the party overlaps like people standing in a
+            room, not like stickers. */}
+        {(() => {
+          const da = dirAnim(dir, walking);
+          const flip = da.flip ? -1 : 1;
+          return (
+            <div
+              className="pointer-events-none absolute z-[52]"
+              style={{
+                left: `${pos.x}%`,
+                top: `${pos.y}%`,
+                transform: `translate(-50%,-92%) scaleX(${flip}) scale(${playerDepth})`,
+                zIndex: 50 + Math.round(pos.y),
+              }}
+            >
+              <div className={walking && walkFrames.length < 2 && !hasSheet ? "stage2d-walk" : walking ? "" : "stage2d-idle"}>
+                {hasSheet ? (
+                  <SheetSprite
+                    sheet={settings.playerSheet!}
+                    anim={da.anim}
+                    fallbacks={da.fallbacks}
+                    height={96}
+                    freezeOnFallback={!walking}
+                    className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+                  />
+                ) : walkFrames.length > 0 ? (
+                  <img
+                    src={assetUrl(walkFrames[walking ? frameIdx % walkFrames.length : 0])}
+                    alt=""
+                    className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+                    draggable={false}
+                  />
+                ) : settings.playerImage && !isEmoji ? (
+                  <img
+                    src={assetUrl(settings.playerImage)}
+                    alt=""
+                    className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
+                    draggable={false}
+                  />
+                ) : (
+                  <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]">{emoji}</span>
+                )}
+                {/* ground shadow (not mirrored or bobbed) */}
+                <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${flip})` }} />
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* EDGE ARROWS — fixed to the VIEWPORT (not the world): the red/yellow
+          chevron of the classic adventure. Click to walk off the edge. */}
+      {leftArrow ? (
+        <button
+          className="pointer-events-auto absolute top-1/2 z-[70] -translate-y-1/2 select-none"
+          style={{ left: 6 }}
+          title={leftArrow.exit.label ?? "walk left"}
+          aria-label={leftArrow.exit.label ?? "Walk off the left edge"}
+          onClick={() => clickEdge("left")}
+        >
+          <span
+            className={`flex h-16 w-9 flex-col items-center justify-center gap-0.5 rounded-r-lg border-2 font-pulp text-[9px] uppercase tracking-widest shadow-[0_4px_16px_rgba(0,0,0,0.5)] transition-colors ${
+              leftArrow.open
+                ? "border-red-300 bg-red-700/90 text-white hover:bg-red-500"
+                : "border-yellow-200 bg-yellow-600/90 text-yellow-950 hover:bg-yellow-500"
+            }`}
+          >
+            <span className="text-xl leading-none" aria-hidden>◀</span>
+            {leftArrow.open ? "OUT" : "LOCKED"}
+          </span>
+        </button>
+      ) : null}
+      {rightArrow ? (
+        <button
+          className="pointer-events-auto absolute top-1/2 z-[70] -translate-y-1/2 select-none"
+          style={{ right: 6 }}
+          title={rightArrow.exit.label ?? "walk right"}
+          aria-label={rightArrow.exit.label ?? "Walk off the right edge"}
+          onClick={() => clickEdge("right")}
+        >
+          <span
+            className={`flex h-16 w-9 flex-col items-center justify-center gap-0.5 rounded-l-lg border-2 font-pulp text-[9px] uppercase tracking-widest shadow-[0_4px_16px_rgba(0,0,0,0.5)] transition-colors ${
+              rightArrow.open
+                ? "border-red-300 bg-red-700/90 text-white hover:bg-red-500"
+                : "border-yellow-200 bg-yellow-600/90 text-yellow-950 hover:bg-yellow-500"
+            }`}
+          >
+            <span className="text-xl leading-none" aria-hidden>▶</span>
+            {rightArrow.open ? "OUT" : "LOCKED"}
+          </span>
+        </button>
       ) : null}
 
       {/* VERB COIN — bottom-left, the way a LucasArts room puts it. Pick a
@@ -718,58 +1179,6 @@ export function Stage({
           </div>
         </div>
       ) : null}
-
-      {/* the player character — outer handles position + facing (scaleX for
-          left/right, directional anims for up/down) + depth scale, inner
-          handles the idle/walk bob so the transforms don't fight. z-index
-          tracks the feet so the party overlaps like people standing in a
-          room, not like stickers. */}
-      {(() => {
-        const da = dirAnim(dir, walking);
-        const flip = da.flip ? -1 : 1;
-        return (
-          <div
-            className="pointer-events-none absolute z-[52]"
-            style={{
-              left: `${pos.x}%`,
-              top: `${pos.y}%`,
-              transform: `translate(-50%,-92%) scaleX(${flip}) scale(${playerDepth})`,
-              zIndex: 50 + Math.round(pos.y),
-            }}
-          >
-            <div className={walking && walkFrames.length < 2 && !hasSheet ? "stage2d-walk" : walking ? "" : "stage2d-idle"}>
-              {hasSheet ? (
-                <SheetSprite
-                  sheet={settings.playerSheet!}
-                  anim={da.anim}
-                  fallbacks={da.fallbacks}
-                  height={96}
-                  freezeOnFallback={!walking}
-                  className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
-                />
-              ) : walkFrames.length > 0 ? (
-                <img
-                  src={assetUrl(walkFrames[walking ? frameIdx % walkFrames.length : 0])}
-                  alt=""
-                  className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
-                  draggable={false}
-                />
-              ) : settings.playerImage && !isEmoji ? (
-                <img
-                  src={assetUrl(settings.playerImage)}
-                  alt=""
-                  className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
-                  draggable={false}
-                />
-              ) : (
-                <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]">{emoji}</span>
-              )}
-              {/* ground shadow (not mirrored or bobbed) */}
-              <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${flip})` }} />
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }

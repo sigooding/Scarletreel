@@ -60,6 +60,7 @@ import {
   unassignedScenes,
   seasonEpisodes,
   stageFloor as stageFloorOf,
+  stagePlayerScale,
   storyEdges,
   CURSOR_ICON,
   CURSOR_SLOTS,
@@ -225,6 +226,11 @@ function StageFloorEditor({
   onMoveMarker,
   selectedHotspotId,
   onSelectHotspot,
+  worldWidth,
+  entrySpawns,
+  entrySceneTitles,
+  onEntrySpawn,
+  playerScale,
 }: {
   background: string;
   media: (v?: string) => string | undefined;
@@ -235,14 +241,32 @@ function StageFloorEditor({
    *  sprite sheet / image / emoji) standing on the plate at spawn — not a
    *  stand-in 🕵️. See docs/adventure-mode.md §"Placing the character". */
   player?: { image?: string; sheet?: import("./../game/spriteSheet").SpriteSheet };
+  /** Per-scene character size (stage.playerScale) — the preview walker grows
+   *  and shrinks with it, exactly as the game draws it (clamped 0.15–4× via
+   *  logic.stagePlayerScale). Without this you'd author the size blind. */
+  playerScale?: number;
   onFloor: (top: number, bottom: number) => void;
   onSpawn: (x: number, y: number) => void;
   onMoveMarker: (hotspotId: string, cx: number, baseY: number) => void;
   selectedHotspotId?: string | null;
   onSelectHotspot?: (id: string) => void;
+  /** Wide world: world width in viewport-% (100 = single screen). The whole
+   *  strip renders shrunk to the plate, with dashed viewport frames. */
+  worldWidth?: number;
+  /** Extra spawn points keyed by the scene you ARRIVED from (cyan dots). */
+  entrySpawns?: Record<string, { x: number; y: number }>;
+  /** sceneId -> title, for the entry-dot labels. */
+  entrySceneTitles?: Record<string, string>;
+  onEntrySpawn?: (sceneId: string, x: number, y: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const drag = useRef<null | { kind: "floor-top" | "floor-bottom" | "spawn" | { hsId: string }; offX: number }>(null);
+  const worldW = Math.max(100, worldWidth ?? 100);
+  /** Editor scale: a wide world is shrunk to fit the plate. */
+  const scale = 100 / worldW;
+  /** Character size as the GAME draws it (same clamp) — the preview walker
+   *  stands on the plate at spawn, so its height must follow playerScale. */
+  const pscale = stagePlayerScale({ playerScale });
+  const drag = useRef<null | { kind: "floor-top" | "floor-bottom" | "spawn" | { hsId: string } | { entryId: string }; offX: number }>(null);
 
   const pct = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
@@ -268,8 +292,10 @@ function StageFloorEditor({
         if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
-          drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x };
+          drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x * scale };
           onSelectHotspot?.(hs.id);
+        } else if (kind.startsWith("entry:")) {
+          drag.current = { kind: { entryId: kind.slice(6) }, offX: 0 };
         } else {
           drag.current = { kind: kind as "floor-top" | "floor-bottom" | "spawn", offX: 0 };
         }
@@ -281,18 +307,22 @@ function StageFloorEditor({
         const p = pct(e);
         const d = drag.current;
         if (d.kind === "spawn") {
-          onSpawn(round1(Math.min(99, Math.max(1, p.x))), round1(Math.min(100, Math.max(0, p.y))));
+          onSpawn(round1(Math.min(99, Math.max(1, p.x / scale))), round1(Math.min(100, Math.max(0, p.y))));
         } else if (d.kind === "floor-top") {
           onFloor(round1(Math.min(floor.bottom - 4, Math.max(0, p.y))), floor.bottom);
         } else if (d.kind === "floor-bottom") {
           onFloor(floor.top, round1(Math.min(100, Math.max(floor.top + 4, p.y))));
-        } else if (typeof d.kind === "object") {
+        } else if (typeof d.kind === "object" && "hsId" in d.kind) {
           const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
           if (!hs) return;
           const w = hs.bounds.w;
-          const cx = Math.min(100 - w / 2, Math.max(w / 2, p.x - d.offX));
+          // Wide worlds: markers may sit anywhere in the strip, not just the
+          // first screen (the x clamp uses the WORLD width, not 100).
+          const cx = Math.min(worldW - w / 2, Math.max(w / 2, p.x / scale - d.offX / scale));
           const baseY = Math.min(100, Math.max(0, p.y));
           onMoveMarker(hs.id, round1(cx), round1(baseY));
+        } else if (typeof d.kind === "object" && "entryId" in d.kind) {
+          onEntrySpawn?.((d.kind as { entryId: string }).entryId, round1(Math.min(99, Math.max(1, p.x / scale))), round1(Math.min(100, Math.max(0, p.y))));
         }
       }}
       onPointerUp={() => {
@@ -306,6 +336,35 @@ function StageFloorEditor({
         className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
         style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
       />
+      {/* VIEWPORT FRAMES — on a wide world, the dashed lines mark each
+          screen the camera shows; what you see between two lines is what the
+          player sees at once. */}
+      {worldW > 100 ? (
+        <>
+          {Array.from({ length: Math.floor(worldW / 100) }, (_, i) => {
+            const left = i * 100 * scale;
+            return (
+              <div key={i}>
+                <div
+                  className="pointer-events-none absolute inset-y-0 z-[15] border-l-2 border-dashed border-cyan-neon/50"
+                  style={{ left: `${left}%` }}
+                />
+                <span
+                  className="pointer-events-none absolute z-[15] -translate-x-1/2 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/80"
+                  style={{ left: `${left}%`, top: 4 }}
+                >
+                  {i === 0 ? "▶ screen 1" : `▶ screen ${i + 1}`}
+                </span>
+              </div>
+            );
+          })}
+          <span
+            className="pointer-events-none absolute right-1 top-4 z-[15] rounded border border-cyan-neon/40 bg-noir-950/80 px-1 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/80"
+          >
+            world {worldW}% — camera pans {worldW - 100}%
+          </span>
+        </>
+      ) : null}
       {/* floor edge handles */}
       <div
         data-drag="floor-top"
@@ -323,7 +382,8 @@ function StageFloorEditor({
       >
         <span className="h-1 w-full bg-neon/70" />
       </div>
-      {/* markers — one per hotspot, at its zone base */}
+      {/* markers — one per hotspot, at its zone base (world-scaled on wide
+          worlds) */}
       {hotspots.map((h) => {
         const m = marker(h);
         const sel = selectedHotspotId === h.id;
@@ -334,7 +394,7 @@ function StageFloorEditor({
             className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
               sel ? "text-neon" : "text-gold"
             }`}
-            style={{ left: `${m.x}%`, top: `${m.y}%` }}
+            style={{ left: `${m.x * scale}%`, top: `${m.y}%` }}
             title={`${h.label} — drag to move`}
           >
             <span className="whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
@@ -344,11 +404,29 @@ function StageFloorEditor({
           </div>
         );
       })}
-      {/* spawn — the REAL walker standing on the plate */}
+      {/* ENTRY SPAWNS — cyan dots: where the walker appears when arriving
+          from another room (drag to move; scene entrySpawns in the panel) */}
+      {Object.entries(entrySpawns ?? {}).map(([fromId, p]) => (
+        <div
+          key={fromId}
+          data-drag={`entry:${fromId}`}
+          className="absolute z-[18] flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
+          style={{ left: `${p.x * scale}%`, top: `${p.y}%` }}
+          title={`Entry from ${entrySceneTitles?.[fromId] ?? fromId} — drag to move`}
+        >
+          <span className="whitespace-nowrap border border-cyan-neon/60 bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider text-cyan-neon">
+            from {entrySceneTitles?.[fromId] ?? fromId}
+          </span>
+          <span className="h-2.5 w-2.5 rotate-45 border border-cyan-neon bg-black/30" />
+        </div>
+      ))}
+      {/* spawn — the REAL walker standing on the plate, at the scene's
+          character size (playerScale): scale 1 = the old 26%-tall figure,
+          2× = twice as tall on the plate, exactly as the game draws it. */}
       <div
         data-drag="spawn"
-        className="absolute z-30 flex h-[26%] -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
-        style={{ left: `${spawn.x}%`, top: `${spawn.y}%` }}
+        className="absolute z-30 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
+        style={{ left: `${spawn.x * scale}%`, top: `${spawn.y}%`, height: `${Math.min(55, 26 * pscale)}%` }}
         title="Drag: character spawn point"
       >
         {player && sheetDrawable(player.sheet) ? (
@@ -4471,11 +4549,15 @@ function HotspotCanvas({
   onBarrierDrawRef.current = onBarrierDraw;
   const onSpawnMoveRef = useRef(onSpawnMove);
   onSpawnMoveRef.current = onSpawnMove;
+  /** WIDE WORLD: the canvas shows the whole strip shrunk to fit; pointer
+   *  positions are scaled up to world-% and rendering scaled back down. */
+  const worldW = Math.max(100, scene.stage?.worldWidth ?? 100);
+  const scale = 100 / worldW;
 
   const pct = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
     return {
-      x: Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)),
+      x: Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)) / scale,
       y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
     };
   };
@@ -4552,12 +4634,29 @@ function HotspotCanvas({
           <span className="absolute left-1 top-0 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/70">walkable floor</span>
         </div>
       ) : null}
+      {/* WIDE WORLD: dashed viewport frames — what the player's camera
+          shows at once. */}
+      {worldW > 100 ? (
+        <>
+          {Array.from({ length: Math.floor(worldW / 100) }, (_, i) => {
+            const left = i * 100 * scale;
+            return (
+              <div key={i}>
+                <div className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-cyan-neon/40" style={{ left: `${left}%` }} />
+                <span className="pointer-events-none absolute z-[15] -translate-x-1/2 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/70" style={{ left: `${left}%`, top: 4 }}>
+                  {i === 0 ? "▶ screen 1" : `▶ screen ${i + 1}`}
+                </span>
+              </div>
+            );
+          })}
+        </>
+      ) : null}
       {/* 🚶 THE PLAYER — where they start. Bright and named in spawn mode,
           a ghost in the other modes so you can place things around them. */}
       {spawn ? (
         <div
           className={`pointer-events-none absolute flex flex-col items-center ${spawnMode ? "" : "opacity-40"}`}
-          style={{ left: `${spawn.x}%`, top: `${spawn.y}%`, transform: "translate(-50%,-100%)", height: "28%" }}
+          style={{ left: `${spawn.x * scale}%`, top: `${spawn.y}%`, transform: "translate(-50%,-100%)", height: "28%" }}
           title="Player start"
         >
           {player && sheetDrawable(player.sheet) ? (
@@ -4584,9 +4683,9 @@ function HotspotCanvas({
           }}
           className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} text-[8px] uppercase tracking-wider text-crimson`}
           style={{
-            left: `${b.x}%`,
+            left: `${b.x * scale}%`,
             top: `${b.y}%`,
-            width: `${b.w}%`,
+            width: `${b.w * scale}%`,
             height: `${b.h}%`,
             backgroundImage:
               "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
@@ -4606,7 +4705,7 @@ function HotspotCanvas({
             className={`absolute border-2 text-[8px] uppercase tracking-wider ${
               selectedId === h.id ? "border-neon bg-neon/20 text-neon" : "border-gold/70 bg-gold/10 text-gold"
             } ${barrierMode ? "pointer-events-none opacity-40" : ""}`}
-            style={{ left: `${h.bounds.x}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w}%`, height: `${h.bounds.h}%` }}
+            style={{ left: `${h.bounds.x * scale}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w * scale}%`, height: `${h.bounds.h}%` }}
             title={h.label}
           >
             {h.image ? (
@@ -4637,7 +4736,7 @@ function HotspotCanvas({
       {draft && (
         <div
           className={`absolute border-2 border-dashed ${barrierMode ? "border-crimson bg-crimson/10" : "border-cyan-neon bg-cyan-neon/10"}`}
-          style={{ left: `${draft.x}%`, top: `${draft.y}%`, width: `${draft.w}%`, height: `${draft.h}%` }}
+          style={{ left: `${draft.x * scale}%`, top: `${draft.y}%`, width: `${draft.w * scale}%`, height: `${draft.h}%` }}
         />
       )}
     </div>
@@ -7462,6 +7561,47 @@ function StudioInner({
                   {/* ---- CURSOR ART (per verb) ---- */}
                   <CursorArtEditor story={story} onUpdate={commit} media={media} themeVars={inGameThemeVars(dbox)} />
 
+                  {/* ---- VERB MENU ICON (skull pie centrepiece) ---- */}
+                  {(() => {
+                    const icon = story.verbMenuIcon;
+                    return (
+                      <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5" style={inGameThemeVars(dbox)}>
+                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">💀 Verb menu icon (skull pie)</div>
+                        <p className="font-type text-[9px] leading-snug text-paper/45">
+                          The sprite in the MIDDLE of the object-first verb menu (Full Throttle's skull) — shown BIG at
+                          the centre of the ring of verbs when the pie opens (see <b>Hold to open</b> on the Walkable
+                          Stage panel). An image url / <code>asset:</code> / <code>emoji:</code>. Empty keeps the
+                          default skull emoji.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-gold/40 bg-noir-950 shadow-[0_0_18px_rgba(232,178,60,0.25)]">
+                            {icon?.startsWith("emoji:") ? (
+                              <span className="text-3xl leading-none">{icon.slice("emoji:".length)}</span>
+                            ) : icon ? (
+                              <img src={assetUrl(media(icon) ?? icon)} alt="" draggable={false} className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="text-3xl leading-none">💀</span>
+                            )}
+                          </span>
+                          <input
+                            className={`${inputCls} min-w-0 flex-1`}
+                            value={icon ?? ""}
+                            placeholder="/img/ft-skull.png · asset:… · emoji:💀"
+                            onChange={(e) => commit({ ...story, verbMenuIcon: e.target.value || undefined })}
+                          />
+                        </div>
+                        {icon ? (
+                          <button
+                            className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
+                            onClick={() => commit({ ...story, verbMenuIcon: undefined })}
+                          >
+                            ⟲ Use the default skull
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+
                   {/* ---- PLAYER CHARACTER (story-wide walker) ---- */}
                   {(() => {
                     const ps = story.playerSprite ?? {};
@@ -8904,6 +9044,15 @@ function StudioInner({
                           }}
                           hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds }))}
                           selectedHotspotId={null}
+                          worldWidth={scene.stage.worldWidth}
+                          playerScale={scene.stage.playerScale}
+                          entrySpawns={scene.stage.entrySpawns}
+                          entrySceneTitles={Object.fromEntries(story.scenes.map((s) => [s.id, s.title]))}
+                          onEntrySpawn={(fromId, x, y) =>
+                            updateScene(scene.id, {
+                              stage: { ...scene.stage!, entrySpawns: { ...(scene.stage!.entrySpawns ?? {}), [fromId]: { x, y } } },
+                            })
+                          }
                           onFloor={(top, bottom) =>
                             updateScene(scene.id, { stage: { ...scene.stage!, floor: { top, bottom } } })
                           }
@@ -8918,6 +9067,213 @@ function StudioInner({
                             })
                           }
                         />
+                        <Field label="World width — how many screens the room spans (100 = one, the classic plate)">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="range" min={100} max={400} step={100} className="w-full accent-cyan-400"
+                              value={scene.stage.worldWidth ?? 100}
+                              onChange={(e) => {
+                                const w = Number(e.target.value);
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, worldWidth: w > 100 ? w : undefined },
+                                });
+                              }}
+                            />
+                            <span className="w-12 text-right font-pulp text-[10px] text-cyan-neon">
+                              {scene.stage.worldWidth ?? 100}%
+                            </span>
+                          </div>
+                          <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                            One continuous scrolling strip (a LucasArts alley): the camera follows the walker and pans
+                            across the plate. Every coordinate on this plate (spawn, markers, barriers) is a % of the
+                            <b> whole strip</b> — the dashed frames show what one screen of the player's viewport holds.
+                            Use a wide background image so the pan has art to show.
+                          </p>
+                        </Field>
+                        {/* ---- edge exits: walk off the screen into the next scene ---- */}
+                        <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">
+                            ➡ Walk-off-screen exits (the red/yellow edge arrow)
+                          </div>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            The LucasArts screen edge: the player walks (or clicks the arrow) into the world's edge and
+                            the character strides off the plate into the target scene. Red = open, yellow = locked
+                            (shows the locked line). Only left/right edges get arrows.
+                          </p>
+                          {(["left", "right"] as const).map((edge) => {
+                            const ex = scene.stage?.exitEdges?.[edge];
+                            const setExit = (patch: Partial<NonNullable<typeof ex>>) =>
+                              updateScene(scene.id, {
+                                stage: {
+                                  ...scene.stage!,
+                                  exitEdges: {
+                                    ...(scene.stage!.exitEdges ?? {}),
+                                    [edge]: { targetSceneId: scene.stage!.exitEdges?.[edge]?.targetSceneId ?? "", ...(scene.stage!.exitEdges?.[edge] ?? {}), ...patch },
+                                  },
+                                },
+                              });
+                            return (
+                              <div key={edge} className="space-y-1 border border-noir-700 bg-noir-950/60 p-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/60">
+                                    {edge === "left" ? "◀ left edge" : "right edge ▶"}
+                                  </span>
+                                  {ex ? (
+                                    <button
+                                      type="button"
+                                      className="font-type text-[9px] text-red-400/80 hover:text-red-300"
+                                      onClick={() => {
+                                        const next = { ...(scene.stage!.exitEdges ?? {}) };
+                                        delete next[edge];
+                                        updateScene(scene.id, { stage: { ...scene.stage!, exitEdges: Object.keys(next).length ? next : undefined } });
+                                      }}
+                                    >
+                                      ✕ remove
+                                    </button>
+                                  ) : null}
+                                </div>
+                                {ex ? (
+                                  <>
+                                    <Field label="Leaves to scene">
+                                      <select
+                                        className={inputCls}
+                                        value={ex.targetSceneId}
+                                        onChange={(e) => setExit({ targetSceneId: e.target.value })}
+                                      >
+                                        <option value="">— pick a scene —</option>
+                                        {story.scenes.filter((s) => s.id !== scene.id).map((s) => (
+                                          <option key={s.id} value={s.id}>{s.title}</option>
+                                        ))}
+                                      </select>
+                                    </Field>
+                                    <div className="grid grid-cols-2 gap-1">
+                                      <Field label="Arrow label (tooltip)">
+                                        <input
+                                          className={inputCls}
+                                          value={ex.label ?? ""}
+                                          placeholder="the road"
+                                          onChange={(e) => setExit({ label: e.target.value || undefined })}
+                                        />
+                                      </Field>
+                                      <Field label="Flag set on exit">
+                                        <input
+                                          className={inputCls}
+                                          value={ex.flagSet ?? ""}
+                                          placeholder="ft_left"
+                                          onChange={(e) => setExit({ flagSet: e.target.value || undefined })}
+                                        />
+                                      </Field>
+                                    </div>
+                                    <Field label="Locked line + locked-until flag (empty flag = always open)">
+                                      <input
+                                        className={inputCls}
+                                        value={ex.lockedLine ?? ""}
+                                        placeholder="Not yet — something's still holding you here."
+                                        onChange={(e) => setExit({ lockedLine: e.target.value || undefined })}
+                                      />
+                                      <input
+                                        className={`${inputCls} mt-1`}
+                                        value={ex.gating?.requiresFlags?.[0] ?? ""}
+                                        placeholder="Flag that must be set (e.g. ft_keys_found)"
+                                        onChange={(e) =>
+                                          setExit({
+                                            gating: e.target.value
+                                              ? { requiresFlags: [e.target.value] }
+                                              : undefined,
+                                          })
+                                        }
+                                      />
+                                    </Field>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btn-tool w-full"
+                                    onClick={() => setExit({ targetSceneId: "" })}
+                                  >
+                                    ＋ Add {edge} edge exit
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* ---- entry spawns: where you appear when arriving from each room ---- */}
+                        {(() => {
+                          const incomers = story.scenes.filter((s) => {
+                            if (s.id === scene.id) return false;
+                            const exitsToHere =
+                              (s.hotspots ?? []).some((h) => h.action.targetSceneId === scene.id) ||
+                              (s.choices ?? []).some((c) => c.targetSceneId === scene.id) ||
+                              Object.values(s.stage?.exitEdges ?? {}).some((e) => e?.targetSceneId === scene.id);
+                            return exitsToHere;
+                          });
+                          if (!incomers.length) return null;
+                          return (
+                            <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+                              <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">
+                                🚪 Entry spawns (cyan dots on the plate)
+                              </div>
+                              <p className="font-type text-[9px] leading-snug text-paper/45">
+                                Where the walker appears depends on the room they came from. Drag the cyan dots on the
+                                plate, or set numbers here. Unset = the room's own spawn.
+                              </p>
+                              {incomers.map((inc) => {
+                                const p = scene.stage?.entrySpawns?.[inc.id];
+                                return (
+                                  <div key={inc.id} className="flex items-center gap-1.5">
+                                    <span className="w-32 truncate font-type text-[9px] text-paper/60" title={inc.title}>
+                                      from {inc.title}:
+                                    </span>
+                                    <input
+                                      type="number" min={1} max={399} className={`${inputCls} w-16`}
+                                      value={p?.x ?? ""}
+                                      placeholder="x"
+                                      onChange={(e) => {
+                                        const x = Number(e.target.value);
+                                        updateScene(scene.id, {
+                                          stage: {
+                                            ...scene.stage!,
+                                            entrySpawns: { ...(scene.stage!.entrySpawns ?? {}), [inc.id]: { x: x || 50, y: p?.y ?? 86 } },
+                                          },
+                                        });
+                                      }}
+                                    />
+                                    <input
+                                      type="number" min={1} max={99} className={`${inputCls} w-16`}
+                                      value={p?.y ?? ""}
+                                      placeholder="y"
+                                      onChange={(e) => {
+                                        const y = Number(e.target.value);
+                                        updateScene(scene.id, {
+                                          stage: {
+                                            ...scene.stage!,
+                                            entrySpawns: { ...(scene.stage!.entrySpawns ?? {}), [inc.id]: { x: p?.x ?? 50, y: y || 86 } },
+                                          },
+                                        });
+                                      }}
+                                    />
+                                    {p ? (
+                                      <button
+                                        type="button"
+                                        className="font-type text-[9px] text-red-400/80 hover:text-red-300"
+                                        onClick={() => {
+                                          const next = { ...(scene.stage!.entrySpawns ?? {}) };
+                                          delete next[inc.id];
+                                          updateScene(scene.id, { stage: { ...scene.stage!, entrySpawns: Object.keys(next).length ? next : undefined } });
+                                        }}
+                                      >
+                                        ✕
+                                      </button>
+                                    ) : (
+                                      <span className="font-type text-[8px] italic text-paper/35">default spawn</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                         <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
                           <textarea
                             className={`${inputCls} h-14 font-type`}
@@ -9087,6 +9443,23 @@ function StudioInner({
                                   click-to-activate rooms, are unchanged.
                                 </span>
                               </label>
+                              {objectMenuOn ? (
+                                <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
+                                  <input
+                                    type="checkbox"
+                                    className="mt-0.5"
+                                    checked={!!st.objectMenuHold}
+                                    onChange={(e) => updateScene(scene.id, { stage: { ...st, objectMenuHold: e.target.checked || undefined } })}
+                                  />
+                                  <span>
+                                    <span className="font-pulp uppercase tracking-widest text-amber-300">⏱ Hold to open — classic skull pie</span>
+                                    <br />
+                                    Press AND HOLD an object and a BIG circular menu opens in the middle of the screen —
+                                    release over a verb to act, over the skull or outside to cancel. Quick taps just walk
+                                    to the object. Off (default): the menu opens on click, next to the object.
+                                  </span>
+                                </label>
+                              ) : null}
                               <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
                                 <input
                                   type="checkbox"
@@ -9141,7 +9514,7 @@ function StudioInner({
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input
-                              type="number" min={1} max={99} className={inputCls}
+                              type="number" min={1} max={Math.max(99, (scene.stage.worldWidth ?? 100) - 1)} className={inputCls}
                               value={scene.stage.spawn?.x ?? 50}
                               onChange={(e) =>
                                 updateScene(scene.id, {
@@ -9230,16 +9603,21 @@ function StudioInner({
                               }
                             />
                           </Field>
-                          <Field label="Sprite scale (default 1)">
+                          <Field label={`Character size ${(scene.stage.playerScale ?? 1).toFixed(2)}× (whole scene)`}>
                             <input
-                              type="number" min={0.3} max={3} step={0.1} className={inputCls}
+                              type="range" min={0.3} max={3} step={0.05} className="w-full accent-cyan-400"
                               value={scene.stage.playerScale ?? 1}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const s = Number(e.target.value);
                                 updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerScale: Number(e.target.value) || undefined },
-                                })
-                              }
+                                  stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
+                                });
+                              }}
                             />
+                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                              Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
+                              classic look; the near/far sliders above only control the walk-toward-camera perspective.
+                            </span>
                           </Field>
                         </div>
                         <Field label="Interaction labels on markers">

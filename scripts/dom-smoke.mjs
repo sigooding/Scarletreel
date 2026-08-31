@@ -138,7 +138,7 @@ const report = (phase, extra = "") => {
   } else {
     console.log("  no console errors/warnings");
   }
-  console.log("  text:", (container.textContent || "").replace(/\s+/g, " ").slice(0, 220));
+  console.log("  text:", (container.textContent || "").replace(/\\s+/g, " ").slice(0, 220));
   const n = problems.length;
   problems.length = 0;
   return { crashed, n };
@@ -399,6 +399,94 @@ if (clickByText(/Throttle & Ash/i)) {
   }
   failed |= report("THROTTLE & ASH (point-and-click)").crashed;
 } else console.log("!! could not find the Throttle & Ash card");
+root.unmount();
+
+// Phase 9: Full Throttle — the recreated opening. Advance through the
+// credits / limo / pitch cutscenes into the INSIDE-THE-DUMPSTER stage,
+// punch the lid (object-first menu), climb out, and confirm the alley is a
+// WIDE WORLD: a 200% strip with the camera transform and the bike + door
+// markers laid out past x=100 (the right screen of the strip).
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/Full Throttle/i)) {
+  await sleep(1500);
+  clickByText(/^\\u25b6?\\s*Play/i) || clickByText(/Play/i);
+  await sleep(3000);
+  // Step through the cutscenes until the first stage mounts (the dumpster).
+  let stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
+  for (let i = 0; i < 110 && !stageMarkers.length; i++) {
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = [...container.querySelectorAll("button")].find((b) => /continue|\\u25b6/.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(300);
+    stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
+  }
+  const inDumpster = stageMarkers.some((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
+  // Object-first menu, HOLD-TO-OPEN (stage.objectMenuHold — the classic
+  // skull pie): press and HOLD the marker and a big circular menu opens in
+  // the middle of the screen — verb chips from 12 o'clock, clockwise, with
+  // the skull in the centre. Release over a verb's sector to act, so the
+  // release point is computed from the verb's index (geometry, not clicks).
+  const holdAndPick = async (el, verbLabel) => {
+    el.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 60, clientY: 60, button: 0, pointerType: "mouse" }));
+    await sleep(480); // past the 320 ms hold threshold
+    const chips = [...container.querySelectorAll("[data-pie-verb]")];
+    const i = chips.findIndex((c) => (c.getAttribute("aria-label") || "") === verbLabel);
+    if (i < 0) return false;
+    const n = chips.length;
+    const cx = win.innerWidth / 2;
+    const cy = win.innerHeight / 2;
+    const R = 120; // inside the verb ring (52–154 px from the centre)
+    const ang = ((-90 + (i * 360) / n) * Math.PI) / 180;
+    const x = cx + R * Math.cos(ang);
+    const y = cy + R * Math.sin(ang);
+    win.dispatchEvent(new win.PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
+    await sleep(60);
+    win.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
+    return true;
+  };
+  const lid = stageMarkers.find((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
+  let punched = false;
+  if (lid) {
+    if (await holdAndPick(lid, "Punch")) {
+      for (let i = 0; i < 30 && !punched; i++) {
+        await sleep(500);
+        punched = /punch the lid/.test((container.textContent || "").replace(/\\s+/g, " "));
+      }
+      if (!punched) console.log("!! the punch never landed after the hold-release");
+    } else console.log("!! the skull pie never opened (or Punch wasn't offered)");
+  } else console.log("!! the dumpster-lid marker never rendered");
+  // The climb-out marker is gated on ft_free — it unlocks after the punch.
+  let climbed = false;
+  const climb = [...container.querySelectorAll("button")].find((b) => /climb out/.test(b.getAttribute("aria-label") || ""));
+  if (climb) {
+    if (await holdAndPick(climb, "Go to")) {
+      for (let i = 0; i < 40 && !climbed; i++) {
+        await sleep(500);
+        climbed = /behind the kickstand|keys permitting/i.test((container.textContent || "").replace(/\\s+/g, " "));
+      }
+    } else console.log("!! the skull pie never opened for the climb-out marker");
+  } else console.log("!! the climb-out marker never appeared after the punch");
+  // The WIDE WORLD: the strip renders at 200% with the camera transform, and
+  // the right-screen markers (bike + door) are laid out past x=100.
+  const html = container.innerHTML;
+  const wideWorld = /width:\\s*200%/.test(html) && /translateX/.test(html);
+  const alleyMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
+  const labels = alleyMarkers.map((b) => b.getAttribute("aria-label") || "");
+  const bikeThere = labels.some((l) => /your bike/.test(l));
+  const doorThere = labels.some((l) => /kickstand door/i.test(l));
+  const dumpsterThere = labels.some((l) => /^the dumpster/.test(l));
+  console.log("\\n=== FULL THROTTLE (dumpster → wide alley) ===");
+  console.log("  inside-dumpster stage:", inDumpster, "| lid punched:", punched, "| climbed out:", climbed);
+  console.log("  wide world 200% strip + camera:", wideWorld, "| markers:", alleyMarkers.length, "|", JSON.stringify(labels));
+  console.log("  dumpster:", dumpsterThere, "| bike:", bikeThere, "| door:", doorThere);
+  if (!inDumpster || !punched || !climbed || !wideWorld || !dumpsterThere || !bikeThere || !doorThere) failed = true;
+  // Same happy-dom rAF artifact as the Throttle & Ash phase: walking storms
+  // setPos before React can commit, which logs max-update-depth warnings.
+  for (let i = problems.length - 1; i >= 0; i--) {
+    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
+  }
+  failed |= report("FULL THROTTLE (wide-world opening)").crashed;
+} else console.log("!! could not find the Full Throttle card");
 root.unmount();
 
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");

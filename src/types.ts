@@ -928,6 +928,22 @@ export interface StageSettings {
    *  the inventory when the object accepts items. Off (default): the classic
    *  flow (and the verb-first coin) is unchanged. See docs/adventure-mode.md. */
   objectVerbMenu?: boolean;
+  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (Full Throttle's
+   *  classic skull pie): instead of opening the pie the instant you click an
+   *  object, the player PRESSES AND HOLDS the object and a BIG circular menu
+   *  opens in the middle of the screen — the story's `verbMenuIcon` sprite
+   *  sits large in the centre, the verbs the object answers ring it. Release
+   *  over a verb to act; release over the skull or outside to cancel. A quick
+   *  tap just walks to the object. Off (default): the menu opens on click,
+   *  next to the object, exactly as before. */
+  objectMenuHold?: boolean;
+  /** The sprite at the CENTRE of the object-first skull pie menu (see
+   *  `objectVerbMenu` / `objectMenuHold`) — an image url / `asset:` token or
+   *  an `emoji:` glyph, rendered BIG in the middle of the ring of verbs so
+   *  the menu wears the game's own art (Full Throttle's flaming skull).
+   *  Default: a skull emoji. Normally set story-wide on the 🎮 In-game theme
+   *  tab (Story.verbMenuIcon); a stage value overrides it. */
+  objectMenuIcon?: string;
   /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
    *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
    *  procedurally instead. Frame 0 doubles as the idle pose. */
@@ -973,6 +989,44 @@ export interface StageSettings {
    *  corners a person would actually turn at); the keyboard slides along them
    *  instead of stopping dead. See src/logic.ts `stageRoute`. */
   obstacles?: { x: number; y: number; w: number; h: number }[];
+  /** WIDE WORLD — how many viewport-widths the room spans (default 100 =
+   *  one screen, the classic single plate). 200 = two screens side by side,
+   *  like a LucasArts scrolling alley: the camera follows the walker and
+   *  pans across the plate, and every coordinate (spawn, hotspots, floor,
+   *  obstacles, entrySpawns) is a % of the WIDE world, not the viewport.
+   *  Set it and author the world as one continuous strip; the player never
+   *  notices the seams. Pair with `exitEdges` for the world's ends. */
+  worldWidth?: number;
+  /** WALK-OFF-SCREEN EXITS — the red/yellow edge-arrow of the LucasArts
+   *  adventure. When the walker reaches the world's left/right edge (or the
+   *  viewport edge on a single-screen room) and an exit is defined there,
+   *  the character keeps walking off-screen and the scene routes to
+   *  `targetSceneId`. A red chevron arrow sits at the plate edge when the
+   *  exit is open; yellow when `gating` shuts it (clicking a yellow arrow
+   *  says `lockedLine`). Only left/right edges get arrows — the floor band
+   *  bounds the top/bottom. */
+  exitEdges?: Partial<Record<"left" | "right", StageExitEdge>>;
+  /** ENTRY SPAWNS — where the walker appears depends on which room they
+   *  came from: keyed by the PREVIOUS scene id (the exact id used in the
+   *  exit's targetSceneId / goToScene action). Falls back to `spawn`.
+   *  Essential on a wide world with several doors — walk in from the bar
+   *  and you stand at the bar's door, not back at the dumpster. */
+  entrySpawns?: Record<string, { x: number; y: number }>;
+}
+
+/** One walk-off-screen exit of a stage room (see StageSettings.exitEdges). */
+export interface StageExitEdge {
+  /** where the player lands after walking off the edge */
+  targetSceneId: string;
+  /** optional flag set the moment the character steps off the edge */
+  flagSet?: string;
+  /** while this gate is shut the edge arrow renders YELLOW (locked) and
+   *  clicking it plays `lockedLine` instead of leaving */
+  gating?: Gating;
+  /** the line said when the exit is locked (caption over the floor) */
+  lockedLine?: string;
+  /** short label for the arrow tooltip / editor, e.g. "the road" */
+  label?: string;
 }
 
 export interface SceneNode {
@@ -1325,6 +1379,13 @@ export interface Story {
    *  art the game keeps its system cursors. Authored on the 🎮 In-game theme
    *  tab. See CursorArt. */
   cursorArt?: Partial<Record<import("./types").CursorKind | "default", CursorArt>>;
+  /** The sprite at the CENTRE of the object-first skull pie menu (Full
+   *  Throttle's skull — see StageSettings.objectVerbMenu / objectMenuHold).
+   *  An image url / `asset:` token or an `emoji:` glyph; rendered BIG in the
+   *  middle of the ring of verbs whenever the pie opens. Purely additive:
+   *  unset keeps the default skull emoji and every non-opt-in game is
+   *  untouched. Authored on the 🎮 In-game theme tab, beside the cursors. */
+  verbMenuIcon?: string;
   /** Default "that doesn't work" lines for the verb coin, per verb. An
    *  author-supplied Hotspot.wrongVerbText wins; otherwise one of these is
    *  picked (varied, so repeating a failed verb doesn't read like a loop). */

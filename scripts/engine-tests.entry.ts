@@ -64,12 +64,15 @@ import {
   recordPresentation,
   resolveBeatText,
   SAVE_SCHEMA,
+  storyEdges,
   validateStory,
   writeSave,
   type GlobalState,
   stageBlocked,
   stageLineClear,
   stageRoute,
+  stageCamX,
+  stageAtWorldEdge,
   STAGE_AGENT_RADIUS,
   STAGE_GRID_STEP,
   extraOccludes,
@@ -78,6 +81,7 @@ import {
   resolveCursor,
   cursorArtFor,
   CURSOR_SLOTS,
+  stagePlayerScale,
   stageSpeedScale,
   stageSpriteScale,
   validateStory,
@@ -94,6 +98,7 @@ import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } fr
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
+import { FULL_THROTTLE } from "../src/data/fullThrottle";
 import { THROTTLE_ASH } from "../src/data/throttleAsh";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
@@ -820,6 +825,34 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: a click above the floor snaps to its top edge", snappedUp.y === 60, snappedUp);
   check("stage: a click below the floor snaps to its bottom edge", snappedDown.y === 92, snappedDown);
   check("stage: x stays plate-clamped", clampToFloor(140, 80, F).x === 99);
+
+  // ---- WIDE WORLDS (worldWidth > 100) + walk-off-screen edge exits ----
+  // The camera follows the walker, clamped so the viewport never shows past
+  // the world's ends; a single-screen room (width 100) never moves.
+  check("stage: camera never moves on a single-screen room", stageCamX(10, 100) === 0 && stageCamX(90, 100) === 0);
+  check("stage: camera clamps at the left end of a wide world", stageCamX(20, 200) === 0);
+  check("stage: camera clamps at the right end of a wide world", stageCamX(190, 200) === 100);
+  check("stage: camera centres the walker mid-world", Math.abs(stageCamX(120, 200) - 70) < 1e-9);
+  // Edge detection: only at the very ends, and only at the world's own edges.
+  check("stage: edge detection — left", stageAtWorldEdge(0.5, 100) === "left");
+  check("stage: edge detection — right", stageAtWorldEdge(99.2, 100) === "right");
+  check("stage: edge detection — mid-world is not an edge", stageAtWorldEdge(50, 100) === null);
+  check("stage: edge detection uses the WORLD width", stageAtWorldEdge(199.4, 200) === "right" && stageAtWorldEdge(2, 200) === null);
+  // Wide-world clamping: x clamps to the world's own bounds, not 0–100.
+  check("stage: wide clamp keeps mid-world x", clampToFloor(150, 80, F, 200).x === 150);
+  check("stage: wide clamp bounds to the world edge", clampToFloor(250, 80, F, 200).x === 199);
+  check("stage: wide clamp keeps the floor band", clampToFloor(150, 10, F, 200).y === 60);
+  // stageBlocked treats beyond the world edge as blocked (the walker can't
+  // wander off unless an exit is walking them off).
+  check("stage: wide world — beyond the right edge is blocked", stageBlocked(201, 80, [], F, 16 / 9, 200));
+  check("stage: wide world — mid-world is clear", !stageBlocked(150, 80, [], F, 16 / 9, 200));
+  // A route across a wide world routes around an obstacle in the middle
+  // (the wall spans the middle of the band, leaving room above and below).
+  const wideWall = [{ x: 90, y: 62, w: 20, h: 12 }];
+  const wideRoute = stageRoute({ x: 20, y: 80 }, { x: 180, y: 80 }, wideWall, F, STAGE_GRID_STEP, 200);
+  check("stage: a wide-world route crosses the world", wideRoute.length > 0 && wideRoute[wideRoute.length - 1].x > 150, wideRoute);
+  const wideRouteNoObstacle = stageRoute({ x: 20, y: 80 }, { x: 180, y: 80 }, [], F, STAGE_GRID_STEP, 200);
+  check("stage: empty wide world walks straight across", wideRouteNoObstacle.length === 1 && Math.abs(wideRouteNoObstacle[0].x - 180) < 1e-9);
 
   // Depth: 1 at the bottom of the band, smaller at the top, flat at 0.
   const dTop = stageDepthScale(60, F, 0.35);
@@ -1638,6 +1671,77 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("examine: a discovery beat is gated on each examined flag", discoveryBeats.length === 3, discoveryBeats.map((b) => b.id));
   check("examine: pickups grant the watch + note", examineZones.some((h) => h.action.itemGranted === "mabel_watch") && examineZones.some((h) => h.action.itemGranted === "mabel_note"));
   check("examine: the note cross-links to Act Two (Ruiz beat)", (sceneById.get("nd_street")!.dialogueBeats ?? []).some((b) => b.conditionRule?.requiresFlags?.includes("examined_note")));
+}
+
+/* ================================================================== */
+/*  4b. Full Throttle — the recreated opening, walked end to end        */
+/* ================================================================== */
+// The FT recreation's puzzle chain is gated end to end: punch the dumpster
+// lid, climb out into the wide alley, kick in the bar door, TALK to Quohog
+// (which is what unlocks the shakedown), grab the keys, and ride out into
+// the Rottwheeler QTE duel — where hesitating routes to a game-over ending.
+{
+  const S = FULL_THROTTLE;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+
+  // The ride is locked until the keys are in hand.
+  check("ft: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft_keys"] }, st));
+  // Inside the dumpster: the lid opens with a punch (ft_free), and climbing
+  // out is gated on it — no punching, no leaving.
+  check("ft: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft_free"] }, st));
+  apply(hs("ft_dump", "fth_lid").action);
+  check("ft: punching the lid sets ft_free", st.activeFlags.has("ft_free"));
+  check("ft: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft_free"] }, st));
+  // The alley: the door kick is a one-way flag, and the bike tells Ben the
+  // keys are gone before Quohog can hand them over.
+  apply(hs("ft_alley", "fth_door").action);
+  check("ft: kicking the door sets ft_door_open", st.activeFlags.has("ft_door_open"));
+  check("ft: the bike flags the missing keys", hs("ft_alley", "fth_bike").action.flagSet === "ft_noticed_keys");
+  // Inside the bar: the shakedown only opens after the CONVERSATION (the
+  // talk marker sets ft_quohog_talked; the grab marker is gated on it).
+  check("ft: grabbing Quohog is locked before the talk", !meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
+  apply(hs("ft_bar", "fth_quohog").action);
+  check("ft: talking to Quohog sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
+  check("ft: the shakedown unlocks after the talk", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
+  apply(hs("ft_bar", "fth_quohog_grab").action);
+  check("ft: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft_keys"));
+  check("ft: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft_keys"] }, st));
+  // The bar's walk-off-screen exit is a real scene edge.
+  check("ft: the bar has a left-edge exit to the alley", S.scenes.find((s) => s.id === "ft_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft_alley");
+  check("ft: storyEdges carries the walk-off edge", storyEdges(S).some((e) => e.id === "e-ft_bar-edge-left" && e.target === "ft_alley"));
+  // The Rottwheeler duel: two QTE choices, each routing hesitation to the
+  // game-over road instead of a graceful fail-forward.
+  const ride = byId.get("ft_ride")!;
+  const fight1 = ride.choices!.find((c) => c.id === "ftc_fight1")!;
+  check("ft: the duel is a real QTE", fight1.quickTime === true && (fight1.timeLimitSeconds ?? 0) > 0 && fight1.qtePrompt);
+  check("ft: QTE hesitation routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
+  const dead = byId.get("ft_ride_dead")!;
+  check("ft: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
+  check("ft: beating the fight reaches Part One", byId.get("ft_ride3")!.choices!.some((c) => c.targetSceneId === "ft_tbc"));
+  const tbc = byId.get("ft_tbc")!;
+  check("ft: Part One is a victory ending", tbc.isEnding === true && tbc.endingData?.tier === "victory-silver");
+  // Every gated marker in the chain is actually reachable: the flags it
+  // needs are set by the step before it (no permanent locks).
+  const flagsSet = new Set<string>();
+  S.scenes.forEach((sc) => {
+    (sc.hotspots ?? []).forEach((h) => {
+      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      h.gating?.requiresFlags?.forEach((f) => flagsSet.add(f));
+      Object.values(sc.stage?.exitEdges ?? {}).forEach((e) => e?.gating?.requiresFlags?.forEach((f) => flagsSet.add(f)));
+    });
+  });
+  check("ft: every gated flag has an author somewhere in the chain", ["ft_free", "ft_door_open", "ft_quohog_talked", "ft_noticed_keys"].every((f) => flagsSet.has(f)));
+  // The skull pie (hold-to-open + theme sprite): on wherever object-first is,
+  // with the story's own centrepiece — and only there ("as an option only").
+  check("ft: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
+  check("ft: the skull pie wears the story's own sprite", S.verbMenuIcon === "/img/ft-skull.png");
+  check("ft: no other story opts into the hold gesture", THROTTLE_ASH.scenes.every((sc) => !sc.stage?.objectMenuHold) && !THROTTLE_ASH.verbMenuIcon);
 }
 
 /* ================================================================== */
@@ -2860,6 +2964,12 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("depth: clamped inside the band", Math.abs(stageSpriteScale(20, floor, room) - 0.6) < 1e-9 && Math.abs(stageSpriteScale(99, floor, room) - 1) < 1e-9);
   const pinned: StageSettings = { spawn: { x: 50, y: 90 }, playerNearScale: 1.3, playerFarScale: 0.5 };
   check("depth: an author can pin both ends", Math.abs(stageSpriteScale(90, floor, pinned) - 1.3) < 1e-9 && Math.abs(stageSpriteScale(60, floor, pinned) - 0.5) < 1e-9);
+  /* CHARACTER SIZE (stage.playerScale) — the flat whole-scene multiplier */
+  check("playerScale: defaults to 1", Math.abs(stagePlayerScale({}) - 1) < 1e-9);
+  check("playerScale: explicit value passes through", Math.abs(stagePlayerScale({ playerScale: 1.4 }) - 1.4) < 1e-9);
+  check("playerScale: a tiny character can't vanish (clamped low)", Math.abs(stagePlayerScale({ playerScale: 0.05 }) - 0.15) < 1e-9);
+  check("playerScale: a giant can't blow through the plate (clamped high)", Math.abs(stagePlayerScale({ playerScale: 9 }) - 4) < 1e-9);
+  check("playerScale: applies ON TOP of depth — the renderer multiplies, stageSpriteScale doesn't read it", Math.abs(stageSpriteScale(70, floor, { ...room, playerScale: 2 }) - stageSpriteScale(70, floor, room)) < 1e-9);
   check("depth: walking away is slower across the screen", stageSpeedScale(60, floor, room) < stageSpeedScale(90, floor, room));
   check("depth: speed never drops to a crawl", stageSpeedScale(60, floor, pinned) >= 0.35);
 
