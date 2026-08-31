@@ -13012,6 +13012,7 @@ function StudioInner({
                             const s = d.scenes.find((x) => x.id === scene.id)!;
                             const ch = s.choices!.find((x) => x.id === c.id)!;
                             ch.quickTime = e.target.checked || undefined;
+                            if (e.target.checked) ch.ride = undefined; // mutually exclusive with the ride minigame
                             // A quick-time prompt with no timer produces no countdown
                             // ring or banner in-game. Give it a sensible default
                             // deadline so the feature is visible the moment it's on.
@@ -13127,6 +13128,163 @@ function StudioInner({
                                   if (e.target.value !== "" && Number(e.target.value) !== 0)
                                     list.push({ meter: "Suspicion", delta: Number(e.target.value) });
                                   ch.timedOutConsequences = { ...(ch.timedOutConsequences ?? {}), meterChanges: list.length ? list : undefined };
+                                })
+                              }
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    )}
+                    {/* ---- Ride minigame (Full Throttle road chase) ---- */}
+                    <label className="flex items-center gap-2 border border-emerald-500/25 bg-emerald-500/5 p-1.5 text-[9px] text-paper/70">
+                      <input
+                        type="checkbox"
+                        checked={!!c.ride}
+                        onChange={(e) =>
+                          mutate((d) => {
+                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                            const ch = s.choices!.find((x) => x.id === c.id)!;
+                            if (e.target.checked) {
+                              ch.ride = ch.ride ?? {};
+                              ch.quickTime = undefined; // mutually exclusive with quick-time
+                            } else {
+                              ch.ride = undefined;
+                            }
+                          })
+                        }
+                      />
+                      <span>
+                        🏍 <b className="text-emerald-400">Ride minigame</b> — a steerable road chase (dodge oncoming traffic). Survive to the target; crash routes to the timed-out target. Mutually exclusive with quick-time.
+                      </span>
+                    </label>
+                    {c.ride && (
+                      <div className="space-y-1.5 border border-emerald-500/25 bg-emerald-500/5 p-1.5">
+                        <Field label="Big on-screen prompt (defaults to 'RIDE')">
+                          <input
+                            className={inputCls}
+                            placeholder="OUTRUN THE ROTTWHEELER"
+                            value={c.ride.prompt ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.choices!.find((x) => x.id === c.id)!.ride!.prompt = e.target.value || undefined;
+                              })
+                            }
+                          />
+                        </Field>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label="Lanes (2–5)">
+                            <input
+                              type="number"
+                              min={2}
+                              max={5}
+                              className={inputCls}
+                              value={c.ride.lanes ?? 3}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.lanes = Number(e.target.value) || 3;
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Duration (seconds)">
+                            <input
+                              type="number"
+                              min={4}
+                              max={120}
+                              className={inputCls}
+                              value={c.ride.durationSeconds ?? 18}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.durationSeconds = Number(e.target.value) || 18;
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Spawn rate (ms)">
+                            <input
+                              type="number"
+                              min={400}
+                              max={5000}
+                              className={inputCls}
+                              value={c.ride.spawnMs ?? 1200}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.spawnMs = Number(e.target.value) || 1200;
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Traffic speed (screen-heights/sec)">
+                            <input
+                              type="number"
+                              min={0.2}
+                              max={2}
+                              step={0.05}
+                              className={inputCls}
+                              value={c.ride.speed ?? 0.5}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.speed = Number(e.target.value) || 0.5;
+                                })
+                              }
+                            />
+                          </Field>
+                        </div>
+                        <Field label="Rider's vehicle (image url / emoji: tag / emoji glyph)">
+                          <input
+                            className={inputCls}
+                            placeholder="emoji:🏍"
+                            value={c.ride.vehicleImage ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.choices!.find((x) => x.id === c.id)!.ride!.vehicleImage = e.target.value || undefined;
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Oncoming traffic (comma-separated — emoji: tags, urls, or glyphs)">
+                          <input
+                            className={inputCls}
+                            placeholder="emoji:🚚, emoji:🚗, emoji:🚓"
+                            value={c.ride.traffic?.join(", ") ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                const list = e.target.value.split(",").map((x) => x.trim()).filter(Boolean);
+                                s.choices!.find((x) => x.id === c.id)!.ride!.traffic = list.length ? list : undefined;
+                              })
+                            }
+                          />
+                        </Field>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label="Win caption (clean run)">
+                            <input
+                              className={inputCls}
+                              placeholder="You catch him."
+                              value={c.ride.winText ?? ""}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.winText = e.target.value || undefined;
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Crash caption">
+                            <input
+                              className={inputCls}
+                              placeholder="You went down."
+                              value={c.ride.crashText ?? ""}
+                              onChange={(e) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.crashText = e.target.value || undefined;
                                 })
                               }
                             />

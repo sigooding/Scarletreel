@@ -1780,12 +1780,12 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // The bar's walk-off-screen exit is a real scene edge.
   check("ft: the bar has a left-edge exit to the alley", S.scenes.find((s) => s.id === "ft_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft_alley");
   check("ft: storyEdges carries the walk-off edge", storyEdges(S).some((e) => e.id === "e-ft_bar-edge-left" && e.target === "ft_alley"));
-  // The Rottwheeler duel: two QTE choices, each routing hesitation to the
-  // game-over road instead of a graceful fail-forward.
+  // The Rottwheeler duel: two steerable ride minigames, each routing a crash
+  // to the game-over road instead of a graceful fail-forward.
   const ride = byId.get("ft_ride")!;
   const fight1 = ride.choices!.find((c) => c.id === "ftc_fight1")!;
-  check("ft: the duel is a real QTE", fight1.quickTime === true && (fight1.timeLimitSeconds ?? 0) > 0 && fight1.qtePrompt);
-  check("ft: QTE hesitation routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
+  check("ft: the duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2 && (fight1.ride.durationSeconds ?? 18) > 0);
+  check("ft: ride crash routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
   const dead = byId.get("ft_ride_dead")!;
   check("ft: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
   check("ft: beating the fight reaches Part One", byId.get("ft_ride3")!.choices!.some((c) => c.targetSceneId === "ft_tbc"));
@@ -1897,11 +1897,11 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("ft2: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft2_keys"));
   check("ft2: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft2_keys"] }, st));
 
-  // QTE DUEL with a real game-over branch.
+  // RIDE DUEL with a real game-over branch.
   const ride = byId.get("ft2_ride")!;
   const fight = ride.choices!.find((c) => c.id === "ft2c_fight")!;
-  check("ft2: the duel is a real QTE", fight.quickTime === true && (fight.timeLimitSeconds ?? 0) > 0 && fight.qtePrompt);
-  check("ft2: QTE hesitation routes to the game-over ending", fight.timedOutTargetSceneId === "ft2_ride_dead");
+  check("ft2: the duel is a playable ride", !!fight.ride && (fight.ride.lanes ?? 3) >= 2 && (fight.ride.durationSeconds ?? 18) > 0);
+  check("ft2: ride crash routes to the game-over ending", fight.timedOutTargetSceneId === "ft2_ride_dead");
   const dead = byId.get("ft2_ride_dead")!;
   check("ft2: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
   check("ft2: winning reaches Part One", byId.get("ft2_tbc")!.isEnding === true && byId.get("ft2_tbc")!.endingData?.tier === "victory-silver");

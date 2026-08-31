@@ -97,6 +97,7 @@ import { SheetSprite } from "./SheetSprite";
 import { sheetDrawable, type SpriteSheet } from "./spriteSheet";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
+import { RideGame } from "./RideGame";
 import { RouteMap } from "./RouteMap";
 import { actOfScene } from "./routeGraph";
 import { emptyCoverage, readCoverage, recordRun, recordVisit, writeCoverage, type PlaytestCoverage } from "./playtestCoverage";
@@ -2959,6 +2960,7 @@ function CasePlayer({
    * the screen with the ledger puzzle. Solved → reward consequences + close;
    * wrong → wrongSubmissionConsequences + retry or consequence scene. */
   const [patternPuzzle, setPatternPuzzle] = useState<{ config: PatternPuzzleConfig; hotspot: Hotspot } | null>(null);
+  const [rideChoice, setRideChoice] = useState<Choice | null>(null);
   /* EXAMINE — hold-to-inspect. While active, the camera zooms onto the
    * hotspot bounds and a meter fills over examineSeconds; releasing early
    * aborts, completion fires the hotspot's normal action (pickup / the
@@ -4891,6 +4893,13 @@ function CasePlayer({
       }
       // Playtest coverage: this branch was actually taken (replies included).
       markCoverage("choice", `${sceneId}:${choice.id}`);
+      // A ride choice launches the steerable minigame instead of navigating at
+      // once — the win/crash routes happen in <RideGame> via finishRide.
+      if (choice.ride) {
+        audio.click();
+        setRideChoice(choice);
+        return;
+      }
       // Conversational replies answer in place: apply consequences, stay in the
       // scene, and let the newly-unlocked gated beat become the response.
       if (choice.reply) {
@@ -5072,6 +5081,77 @@ function CasePlayer({
     // copy dropped previously-spent replies, making one-shot replies
     // re-pickable (a trust farm inside an interrogation).
     [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure, usedChoices]
+  );
+
+  /** Route out of a finished ride minigame. `won` = you ran the target down
+   *  (apply the choice's consequences, head to targetSceneId); a crash applies
+   *  the timed-out consequences and heads to timedOutTargetSceneId, the same
+   *  "you hesitated" convention the QTE timeout uses. */
+  const finishRide = useCallback(
+    (choice: Choice, won: boolean) => {
+      const liveScene = story.scenes.find((s) => s.id === sceneId);
+      if (!choiceRepeats(choice)) {
+        setUsedChoices((old) => {
+          const next = new Set(old);
+          next.add(`${sceneId}:${choice.id}`);
+          return next;
+        });
+      }
+      const perks = getPerks(stateRef.current);
+      let cons = won ? presentationConsequences(choice) : choice.timedOutConsequences;
+      if (cons?.trustChanges && (perks.velvetTongue || perks.heat)) {
+        cons = {
+          ...cons,
+          trustChanges: cons.trustChanges.map((t) => {
+            let d = t.delta;
+            if (d > 0 && perks.velvetTongue) d += 1;
+            if (d > 0 && perks.heat) d = Math.max(1, Math.floor(d / 2));
+            return { ...t, delta: d };
+          }),
+        };
+      }
+      if (cons?.meterChanges && perks.ironNerve && choice.attitudeTag === "Aggressive") {
+        cons = {
+          ...cons,
+          meterChanges: cons.meterChanges.map((m) =>
+            m.meter === "Suspicion" && m.delta > 0 ? { ...m, delta: 0 } : m
+          ),
+        };
+      }
+      if (cons?.trustChanges?.length) {
+        cons.trustChanges.forEach((t) => {
+          const ch = story.characters.find((c) => c.id === t.characterId);
+          if (!ch) return;
+          if (t.delta > 0) pushToast(`♥ ${ch.name.split(" ")[0]} trusts you a little more (+${t.delta}).`, "success");
+          else if (t.delta < 0) pushToast(`✖ ${ch.name.split(" ")[0]} likes you less (${t.delta}).`, "fail");
+        });
+      }
+      if (cons?.addItems?.length) {
+        cons.addItems.forEach((id) => {
+          const it = story.items.find((i) => i.id === id);
+          if (it && !stateRef.current.inventory.some((x) => x.id === id)) {
+            pushToast(`🎁 Received: ${it.icon} ${it.name}`, "success");
+          }
+        });
+      }
+      if (cons?.meterChanges?.some((m) => m.meter === "Suspicion" && m.delta > 0)) {
+        const sus = cons.meterChanges.find((m) => m.meter === "Suspicion")!;
+        pushToast(`🔥 Heat rising (+${sus.delta}).`, "fail");
+      }
+      setState(
+        (s) => recordPresentation(choice, story, recordMemory(choice, applyConsequences(story, cons, s)))
+      );
+      if (choice.rememberLine) setRemember((r) => ({ line: choice.rememberLine!, key: (r?.key ?? 0) + 1 }));
+      if (choice.rememberLine || choice.memoryLog) {
+        setEpisodeHighlights((h) => (h.includes(choice.text) ? h : [...h, choice.text].slice(-6)));
+      }
+      recordJourney(choice, won ? undefined : { timedOut: true });
+      const dest = won ? choice.targetSceneId : choice.timedOutTargetSceneId ?? choice.targetSceneId;
+      setRideChoice(null);
+      if (dest && dest !== sceneId) leaveFor(dest, liveScene?.partBreak);
+      else if (dest) goToScene(dest);
+    },
+    [story, sceneId, goToScene, pushToast, recordJourney, leaveFor]
   );
 
   const previousPerks = useRef<Perks>(getPerks(state));
@@ -7801,6 +7881,15 @@ function CasePlayer({
             if (dest) window.setTimeout(() => goToScene(dest), 100);
           }}
           onClose={() => setPatternPuzzle(null)}
+        />
+      )}
+
+      {rideChoice && (
+        <RideGame
+          config={rideChoice.ride!}
+          onWin={() => finishRide(rideChoice, true)}
+          onCrash={() => finishRide(rideChoice, false)}
+          onClose={() => setRideChoice(null)}
         />
       )}
 

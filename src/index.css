@@ -2211,3 +2211,45 @@ body,
   transform: translateY(-2px) scale(1.08);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
 }
+
+/* ---------------------------------------------------------------------
+   RIDE MINIGAME (Full Throttle highway chase) — the scrolling road,
+   the oncoming traffic and the rider's bike are styled here so the
+   RideGame component can stay lean. All motion is CSS/RAF-driven.
+   --------------------------------------------------------------------- */
+.road-scroll {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgb(242 232 213 / 0.22) 0px,
+    rgb(242 232 213 / 0.22) 34px,
+    transparent 34px,
+    transparent 88px
+  );
+  background-size: 100% 88px;
+  animation: road-scroll 0.55s linear infinite;
+}
+@keyframes road-scroll {
+  from { background-position: 0 0; }
+  to { background-position: 0 88px; }
+}
+/* Oncoming traffic sways slightly as it bears down on you. */
+.road-traffic {
+  animation: road-sway 0.7s ease-in-out infinite;
+}
+@keyframes road-sway {
+  0%, 100% { transform: translateX(0) scale(1); }
+  50% { transform: translateX(3px) scale(1.05); }
+}
+/* The bike leans into its lane changes. */
+.road-vehicle {
+  transition: transform 150ms ease-out;
+}
+/* The crash: the bike goes over in its lane, then settles. */
+.road-crash {
+  animation: road-crash 0.5s cubic-bezier(0.3, 0, 0.4, 1) both;
+}
+@keyframes road-crash {
+  0% { transform: rotate(0deg) translateY(0); opacity: 1; }
+  40% { transform: rotate(70deg) translateY(8px); opacity: 1; }
+  100% { transform: rotate(95deg) translateY(26px); opacity: 0.55; }
+}

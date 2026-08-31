@@ -232,6 +232,36 @@ export interface Choice {
    * Default false — you flash it, you keep it. The choice being one-shot
    * already prevents showing the same item twice for two reactions. */
   consumePresentedItem?: boolean;
+  /** OPT-IN playable ride minigame (Full Throttle's road sequence). Picking
+   *  this choice launches a steering game instead of navigating at once: the
+   *  player weaves through oncoming traffic for the ride's duration — survive
+   *  to `targetSceneId` (the choice's `consequences` apply on the win), crash
+   *  to `timedOutTargetSceneId`. Mutually exclusive with `quickTime`. */
+  ride?: RideConfig;
+}
+
+/** A playable vehicle-ride minigame (Full Throttle's highway chase): steer
+ *  left/right across lanes, dodging oncoming traffic. Reaching the end wins
+ *  the ride; a crash routes to the choice's `timedOutTargetSceneId`. */
+export interface RideConfig {
+  /** number of lanes (default 3) */
+  lanes?: number;
+  /** seconds the ride lasts before you run the target down (default 18) */
+  durationSeconds?: number;
+  /** oncoming traffic sprites — image urls / `asset:` / `emoji:` (default 🚗) */
+  traffic?: string[];
+  /** the rider's vehicle (image url / `asset:` / `emoji:`) — default 🏍 */
+  vehicleImage?: string;
+  /** ms between traffic spawns (default 1200) */
+  spawnMs?: number;
+  /** traffic scroll speed, as a fraction of screen height per second (default 0.5) */
+  speed?: number;
+  /** the big prompt shown at the top while riding */
+  prompt?: string;
+  /** caption shown on a clean run (default "You catch him.") */
+  winText?: string;
+  /** caption shown on a crash (default "You went down.") */
+  crashText?: string;
 }
 
 /** A catch-them-in-a-lie beat. Authored on a DialogueBeat via `beat.lie`:

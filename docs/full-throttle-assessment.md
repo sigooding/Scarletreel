@@ -124,18 +124,24 @@ you. That's now in the engine:
   (`ft_dump` — punch the lid, then climb out), which is the true first
   playable screen of the original.
 
-### B. 🔶 PARTLY DONE — the Rottwheeler duel is now a QTE fight
+### B. ✅ DONE — the ride is now a steerable locomotion minigame
 
-The duel is no longer narrated as plain beats: `ft_ride` → `ft_ride2` are
-**quick-time choices** (⚡ HIT HIM! / ⚡ BOOT HIM! with heartbeat sting and
-shaky-cam). Hesitate on either and the clock routes to `ft_ride_dead` — a
-`gameover` ending ("KILLED ON HIGHWAY 9"), because the original really does
-kill you if you lose the fight. The crash, Miranda and the "asphalt" bookend
-still play as beats, and the whole golden path (punch → climb → kick → talk →
-shake down → ride → duel) is asserted in the engine tests.
+The ride is no longer a QTE cutscene: `ft_ride` → `ft_ride2` (and the Corville
+Run's `ft2_ride`) are now **playable road chases**. A choice carrying
+`choice.ride` (see `RideConfig` in `src/types.ts`, rendered by
+`src/game/RideGame.tsx`) launches a steerable arcade sequence — Ben's bike
+sits at the bottom of the frame in a lane, oncoming traffic scrolls toward
+him, and you weave with ←/→ (or A/D, or tap a lane on touch) to dodge it.
+Survive the ride's duration and you run the target down (the choice's
+`consequences` apply and you head to `targetSceneId`); let traffic reach you
+and you crash — routed to `timedOutTargetSceneId` exactly like the old QTE
+hesitation path, so losing is still the `gameover` "KILLED ON HIGHWAY 9"
+ending. The `ftc_fight2` win still sets `ft_rott_beaten`, so the milestone and
+flag note stay intact. Crash, Miranda and the "asphalt" bookend still play as
+beats; the whole golden path is asserted in the engine tests.
 
-What's still missing is a *locomotion* minigame — the engine has no vehicle
-physics, so the ride itself is a cutscene; the fight is timing, not steering.
+It's opt-in: a story that never sets `ride` is untouched, and the old
+`quickTime` QTE machinery still works for non-ride deadlines.
 
 ### C. ✅ DONE — topic-list dialogue (`startDialogue.topics`)
 
@@ -183,12 +189,21 @@ a hotspot's own `sheet` already loops a "polish the glass" idle).
   floor, drinking at each end. Engine tests assert the sheet + patrol shape;
   the DOM smoke test confirms he renders in the bar.
 
-### E. Inventory as a right-click skull
+### E. ✅ DONE — inventory as a right-click skull
 
 FT shows the inventory as a stretched skull with items in its mouth, opened
-with right-click. Here it's a bottom-left "Jacket" container. The container
-mode is a good match visually; what's missing is **right-click-to-open** and a
-**use-item-on-item at the cursor** beyond drag-to-combine.
+with right-click. The engine's `container` inventory mode already matched the
+visual; the two missing pieces are now in `src/game/InventoryDock.tsx`:
+
+- **Right-click-to-open**: right-clicking the dock toggles it open/closed —
+  the skull-pop gesture, no left-click required.
+- **Right-click verb menu on items**: right-clicking an item pops a small
+  context menu at the cursor with **🔍 Inspect**, **✋ Use on…**, and (when the
+  story has a recipe) **🔗 Combine…**. "Use on…" enters a targeting mode — the
+  next click on a scene object *uses* the item there, or on another item
+  *combines* the two at the cursor, with an on-screen hint and Esc to cancel.
+  This is the "use-item-on-item at the cursor" affordance beyond the existing
+  drag-to-combine.
 
 ---
 
@@ -212,11 +227,10 @@ mode is a good match visually; what's missing is **right-click-to-open** and a
 | 1 | ~~`kick` (and `punch`) verbs + per-object answers~~ **DONE (opt-in)** | — |
 | 2 | ~~Object-first verb menu (the "skull")~~ **DONE (opt-in; hold-to-open skull pie + theme sprite)** | — |
 | 3 | ~~Walk-off-screen edge exits + camera~~ **DONE (wide worlds, edge arrows, entry spawns — see §A)** | — |
-| 4 | ~~Bike/combat minigame~~ **🔶 PARTLY — QTE duel with a real game-over (see §B); no vehicle locomotion yet** | — |
+| 4 | ~~Bike/combat minigame~~ **DONE — steerable ride minigame (`choice.ride`, see §B)** | — |
 | 5 | ~~Topic-list dialogue~~ **DONE (opt-in `topics[]` — see §C)** | — |
 | 6 | ~~NPC schedules / walk cycles~~ **DONE (ambient `stage.npcs` — see §D)** | — |
 
-The remaining Full Throttle gaps are the two "feel" pieces the engine still
-lacks: the **bike-riding locomotion** minigame (the ride is a QTE cutscene, not
-steering — see §B) and the **right-click inventory** (skull-in-the-mouth,
-use-item-on-item at the cursor — see §E).
+All six Full Throttle "feel" gaps are now closed: the wide-world scroll, the
+hold-to-open skull pie, walk-off edges, the steerable bike-riding minigame,
+topic-list dialogue, and the right-click skull inventory.
