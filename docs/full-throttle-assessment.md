@@ -5,6 +5,15 @@ a faithful point-and-click reconstruction of the opening act of LucasArts'
 *Full Throttle* (1995), authored in this engine's **adventure mode** and
 registered in the catalogue (`src/data/stories.ts`). It recreates, in order:
 
+> **Also see `src/data/fullThrottleOriginal.ts` — "Full Throttle"**, the
+> true-to-the-original opening rebuilt as its own story specifically to
+> showcase the two "feel" features: the **right-click flaming-skull inventory**
+> (`inventoryDisplay.startClosed` — opened with a right-click, right-click an
+> item for the verb menu) and the **steerable ride minigame** (`choice.ride`
+> — weave the lanes against the Rottwheelers). It is the same opening act,
+> not a reimagining: Ben is the Polecats' leader, the keys come off Quohog,
+> and the ride is a real road chase.
+
 1. **Opening credits** — Ben's flash-forward narration ("Whenever I smell
    asphalt, I think of Maureen…") over a night-ride still, as a `credits` node.
 2. **The limo scene** — the full "Ripburger, you're dumber than dirt!" exchange.

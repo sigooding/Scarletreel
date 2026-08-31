@@ -107,6 +107,7 @@ import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
 import { FULL_THROTTLE } from "../src/data/fullThrottle";
 import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
+import { FULL_THROTTLE_ORIGINAL } from "../src/data/fullThrottleOriginal";
 import { THROTTLE_ASH } from "../src/data/throttleAsh";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
@@ -1915,6 +1916,54 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     });
   });
   check("ft2: every gated flag has an author in the chain", ["ft2_free", "ft2_door", "ft2_quohog_talked"].every((f) => flagsSet.has(f)));
+}
+
+/* ================================================================== */
+/*  4c. FULL THROTTLE — the original opening, faithfully (the NEW      */
+/*  story). Exercises the two "feel" features: the right-click skull   */
+/*  inventory and the steerable ride minigame.                         */
+/* ================================================================== */
+{
+  const S = FULL_THROTTLE_ORIGINAL;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+  const issues = validateStory(S);
+  check("fto: the story validates with no errors", issues.filter((i) => i.severity === "error").length === 0);
+
+  // THE RIGHT-CLICK SKULL: the inventory is a container skull, waiting
+  // closed until right-clicked open.
+  check("fto: inventory is a container skull", S.inventoryDisplay?.mode === "container" && !!S.inventoryDisplay.image);
+  check("fto: the skull starts closed (right-click to open)", S.inventoryDisplay?.startClosed === true);
+
+  // THE RIDE: both duel passes are steerable rides, not quick-times.
+  const fight1 = byId.get("fto_ride")!.choices!.find((c) => c.id === "ftoc_fight1")!;
+  const fight2 = byId.get("fto_ride2")!.choices!.find((c) => c.id === "ftoc_fight2")!;
+  check("fto: the first duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2);
+  check("fto: the second duel is harder (more lanes)", !!fight2.ride && (fight2.ride.lanes ?? 0) > (fight1.ride.lanes ?? 3));
+  check("fto: a crash routes to the game-over ending", fight1.timedOutTargetSceneId === "fto_ride_dead" && fight2.timedOutTargetSceneId === "fto_ride_dead");
+  check("fto: winning the duel still sets the Rottwheeler flag", fight2.consequences?.setFlags?.includes("fto_rott_beaten"));
+
+  // PUZZLE CHAIN, end to end (the faithful opening).
+  check("fto: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["fto_free"] }, st));
+  apply(hs("fto_dump", "ftoh_lid").action);
+  check("fto: punching the lid sets fto_free", st.activeFlags.has("fto_free"));
+  check("fto: ride-out is locked before the keys", !meetsGating({ requiresItems: ["fto_keys"] }, st));
+  const quohogTopics = hs("fto_bar", "ftoh_quohog").action.topics;
+  check("fto: Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  apply(quohogTopics!.find((t) => t.id === "fto_topic_keys")!);
+  check("fto: asking for the keys sets fto_quohog_talked", st.activeFlags.has("fto_quohog_talked"));
+  apply(hs("fto_bar", "ftoh_quohog_grab").action);
+  check("fto: the shakedown hands over the keys", st.inventory.some((i) => i.id === "fto_keys"));
+  check("fto: ride-out unlocks with the keys", meetsGating({ requiresItems: ["fto_keys"] }, st));
+
+  // Faithful characters: Ben is the Polecats' LEADER (not chasing them).
+  const ben = S.characters.find((c) => c.id === "ben");
+  check("fto: Ben is the leader of the Polecats", ben?.role === "Leader of the Polecats");
 }
 
 /* ================================================================== */
