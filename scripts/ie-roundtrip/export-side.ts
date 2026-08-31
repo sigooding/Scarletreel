@@ -124,7 +124,17 @@ const beats: DialogueBeat[] = [
 beats[0].cinematic = {
   foregroundImage: await up("image", "beat0-fg", png("beat0-fg")),
   foregroundAnimation: { mode: "frames", frames: [await up("image", "beat0-frame0", png("beat0-frame0"))] },
-  foregroundExtras: [{ image: await up("image", "beat0-extra", png("beat0-extra")) }],
+  foregroundExtras: [
+    {
+      image: await up("image", "beat0-extra", png("beat0-extra")),
+      sheet: {
+        image: await up("image", "beat0-xsheet", png("beat0-xsheet")),
+        frameWidth: 32,
+        frameHeight: 32,
+        animations: { loop: { frames: [0, 1, 2], fps: 12 } },
+      },
+    },
+  ],
   parallaxLayers: [{ image: await up("image", "beat0-parallax", png("beat0-parallax")), depth: 0.2 }],
 };
 scene1.dialogueBeats = beats;
@@ -150,6 +160,12 @@ story.characters[0] = {
   avatarUrl: await up("image", "char0-avatar", png("char0-avatar")),
   talkingFrames: [await up("image", "char0-talk0", png("char0-talk0"))],
   talkingRest: await up("image", "char0-talkRest", png("char0-talkRest")),
+  talkingSheet: {
+    image: await up("image", "char0-talksheet", png("char0-talksheet")),
+    frameWidth: 64,
+    frameHeight: 64,
+    animations: { rest: { frames: [0] }, talk: { frames: [0, 1], fps: 6 } },
+  },
 };
 story.acts = [
   {
@@ -226,7 +242,7 @@ seeded.push(L0.musicUrl!, L0.sceneAudioUrl!, L0.narrationAudioUrl!);
 L0.cinematic = {
   foregroundImage: raw("s-fg"),
   foregroundAnimation: { mode: "frames", frames: [raw("s-frame")] },
-  foregroundExtras: [{ image: raw("s-extra") }],
+  foregroundExtras: [{ image: raw("s-extra"), sheet: { image: raw("s-xsheet"), frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0, 1] } } } }],
   parallaxLayers: [{ image: raw("s-parallax"), depth: 0.4 }],
 };
 L0.credits = { ...(L0.credits ?? {}), montage: [raw("s-montage")] };
@@ -263,6 +279,12 @@ legacy.characters[0] = {
   avatarUrl: raw("char-avatar"),
   talkingFrames: [raw("char-talk")],
   talkingRest: raw("char-rest"),
+  talkingSheet: {
+    image: raw("char-talksheet"),
+    frameWidth: 64,
+    frameHeight: 64,
+    animations: { talk: { frames: [0, 1] } },
+  },
 };
 legacy.acts = [
   {

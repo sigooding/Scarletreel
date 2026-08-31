@@ -15,7 +15,7 @@ import {
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
 import { SheetSprite } from "./SheetSprite";
-import { sheetAnim } from "./spriteSheet";
+import { sheetDrawable } from "./spriteSheet";
 
 /**
  * Stage — the walkable layer of a STAGE node (Telltale-style exploration).
@@ -90,7 +90,7 @@ export function Stage({
   const walkFrames = (settings.walkFrames ?? []).filter(Boolean);
   // A sprite sheet (one image, gridded frames) beats loose walkFrames when
   // it actually has a drawable animation.
-  const hasSheet = !!settings.playerSheet && !!sheetAnim(settings.playerSheet, "walk", ["idle"]);
+  const hasSheet = sheetDrawable(settings.playerSheet);
 
   const aspect = () => {
     const el = plateRef.current;
@@ -371,6 +371,7 @@ export function Stage({
               anim={walking ? "walk" : "idle"}
               fallbacks={walking ? ["idle"] : ["walk"]}
               height={96}
+              freezeOnFallback={!walking}
               className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
             />
           ) : walkFrames.length > 0 ? (

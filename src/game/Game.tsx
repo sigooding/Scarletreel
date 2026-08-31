@@ -84,6 +84,8 @@ import {
 } from "./Episode";
 import { Flowchart } from "./Flowchart";
 import { Stage } from "./Stage";
+import { SheetSprite } from "./SheetSprite";
+import { sheetDrawable, type SpriteSheet } from "./spriteSheet";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
 import { RouteMap } from "./RouteMap";
@@ -725,7 +727,7 @@ function ForegroundExtraImage({
 }) {
   const r = resolve ?? ((v?: string) => v);
   const src = assetUrl(r(extra.image));
-  if (!src) return null;
+  if (!src && !sheetDrawable(extra.sheet)) return null;
   const x = clamp(extra.x ?? 50, 0, 100);
   const y = clamp(extra.y ?? 50, 0, 100);
   const scale = Math.max(0.05, extra.scale ?? 1);
@@ -750,6 +752,32 @@ function ForegroundExtraImage({
     justifyContent: "center",
   };
   const flipScale = extra.flip ? -1 : 1;
+  // An animated extra: the sprite sheet replaces the static image entirely.
+  if (sheetDrawable(extra.sheet)) {
+    return (
+      <div className="absolute" style={boxStyle} aria-hidden>
+        <SheetSprite
+          sheet={extra.sheet}
+          anim="loop"
+          resolve={r}
+          height="100%"
+          className={zoom ? "fg-zoom" : ""}
+          style={{
+            transformOrigin: `${ax}% ${ay}%`,
+            transform: zoom ? undefined : `scaleX(${flipScale})`,
+            ...(zoom
+              ? ({
+                  "--fg-base": String(flipScale),
+                  "--fg-zoom": String(zoom),
+                  "--fg-zoom-dur": `${zoomDur}s`,
+                } as React.CSSProperties)
+              : {}),
+          }}
+        />
+      </div>
+    );
+  }
+  if (!src) return null;
   if (src.startsWith("gradient:")) {
     return <div className="absolute" style={{ ...boxStyle, background: src.slice(9) }} aria-hidden />;
   }
@@ -1005,6 +1033,7 @@ function ForegroundFrames({
 function StageSprite({
   frames,
   rest,
+  sheet,
   animate,
   frameDuration,
   x,
@@ -1015,6 +1044,7 @@ function StageSprite({
 }: {
   frames: string[];
   rest?: string;
+  sheet?: SpriteSheet;
   animate: boolean;
   frameDuration: number;
   x: number;
@@ -1023,7 +1053,8 @@ function StageSprite({
   flip: boolean;
   dim: boolean;
 }) {
-  const cycle = animate && frames.length > 1;
+  const useSheet = sheetDrawable(sheet);
+  const cycle = !useSheet && animate && frames.length > 1;
   const [i, setI] = useState(0);
   useEffect(() => {
     setI(0);
@@ -1047,7 +1078,7 @@ function StageSprite({
     };
   }, [cycle, frames.length, frameDuration]);
   const shown = cycle ? frames[i] : rest ?? frames[0];
-  if (!shown) return null;
+  if (!useSheet && !shown) return null;
   const heightPct = Math.min(96, Math.max(20, 72 * Math.max(0.2, scale)));
   return (
     <div
@@ -1061,7 +1092,17 @@ function StageSprite({
         transition: "opacity .3s ease",
       }}
     >
-      <img src={assetUrl(shown)} alt="" className="h-full w-auto max-w-none object-contain" />
+      {useSheet ? (
+        <SheetSprite
+          sheet={sheet!}
+          anim={animate ? "talk" : "rest"}
+          fallbacks={animate ? ["rest", "idle"] : ["idle", "talk"]}
+          height="100%"
+          freezeOnFallback={!animate}
+        />
+      ) : (
+        <img src={assetUrl(shown)} alt="" className="h-full w-auto max-w-none object-contain" />
+      )}
     </div>
   );
 }
@@ -5471,7 +5512,7 @@ function CasePlayer({
     () =>
       scene && scene.nodeType !== "credits" && scene.nodeType !== "cutscene"
         ? story.characters.filter((c) => {
-            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest)) return false;
+            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest || sheetDrawable(c.talkingSheet))) return false;
             return (scene.dialogueBeats ?? []).some((b) => b.characterId === c.id);
           })
         : [],
@@ -5638,6 +5679,7 @@ function CasePlayer({
               key={c.id}
               frames={frames}
               rest={c.talkingRest}
+              sheet={c.talkingSheet}
               animate={isActive && animateActive}
               frameDuration={c.talkingFrameDuration ?? 0.16}
               x={c.talkingX ?? 50}

@@ -67,7 +67,7 @@ import {
   type GlobalState,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
-import { sheetAnim, sheetCols, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
+import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, Story } from "../src/types";
@@ -2226,8 +2226,23 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     spriteSheetIssues({ ...sheet, animations: { walk: { frames: [-1] } } }, "walker").some((m) => /negative/.test(m))
   );
   check(
-    "sheet issues: no walk/idle animation warns",
-    spriteSheetIssues({ ...sheet, animations: { dance: { frames: [0] } } }, "walker").some((m) => /walk|idle/.test(m))
+    "sheet issues: missing expected animation names hint",
+    spriteSheetIssues({ ...sheet, animations: { dance: { frames: [0] } } }, "walker", ["walk", "idle"]).some((m) => /walk|idle/.test(m))
+  );
+  check(
+    "sheet issues: no hint when an expected name is present",
+    !spriteSheetIssues(sheet, "walker", ["walk", "idle"]).length
+  );
+
+  // -- drawable test used by walker / portraits / extras ----------------------
+  check("sheet: a full sheet is drawable", sheetDrawable(sheet));
+  check("sheet: undefined is not drawable", !sheetDrawable(undefined));
+  check("sheet: no image is not drawable", !sheetDrawable({ ...sheet, image: "" }));
+  check("sheet: zero frame size is not drawable", !sheetDrawable({ ...sheet, frameHeight: 0 }));
+  check("sheet: empty animations is not drawable", !sheetDrawable({ ...sheet, animations: {} }));
+  check(
+    "sheet: an all-empty animation is not drawable",
+    !sheetDrawable({ ...sheet, animations: { walk: { frames: [] } } })
   );
 
   // -- story validator wiring: stage.playerSheet problems surface as warnings --
@@ -2250,6 +2265,36 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("sheet validator wiring: bad playerSheet surfaces as story warnings", sheetIssues.length >= 2, sheetIssues.length);
   check("sheet validator wiring: sheet problems are warnings, not errors", sheetIssues.every((i) => i.severity === "warning"));
   check("sheet validator wiring: warnings attach to the stage scene", sheetIssues.every((i) => i.sceneId === "st"));
+
+  // -- validator wiring: talking sheets and animated extras -------------------
+  const richStory: Story = JSON.parse(JSON.stringify(stageStory)) as Story;
+  richStory.scenes[0].stage = undefined as never;
+  richStory.scenes[0].nodeType = undefined as never;
+  richStory.scenes[0].choices = [{ id: "c", text: "On", targetSceneId: "end" }] as never;
+  richStory.characters = [
+    {
+      id: "ch", name: "Mara", role: "singer", avatarUrl: "emoji:🎤", trustMeter: 0,
+      talkingSheet: { image: "", frameWidth: 64, frameHeight: 64, animations: { talk: { frames: [-2] } } },
+    },
+  ] as never;
+  richStory.scenes[0].cinematic = {
+    foregroundExtras: [{ image: "", sheet: { image: "x.png", frameWidth: 0, frameHeight: 32, animations: { loop: { frames: [0] } } } }],
+  } as never;
+  const richIssues = validateStory(richStory);
+  const talkWarn = richIssues.filter((i) => /talking sheet/.test(i.message));
+  check("talking sheet: malformed sheet warns at story level", talkWarn.length >= 2, talkWarn.length);
+  check("talking sheet: names the character", talkWarn.every((i) => /Mara/.test(i.message)));
+  check("talking sheet: warnings not errors", talkWarn.every((i) => i.severity === "warning"));
+  const extraWarn = richIssues.filter((i) => /foreground extra .*sprite sheet/i.test(i.message));
+  check("extra sheet: malformed extra sheet warns on the scene", extraWarn.length >= 1, extraWarn.length);
+  check("extra sheet: attaches to the owning scene", extraWarn.every((i) => i.sceneId === "st"));
+  const cleanChars: Story = JSON.parse(JSON.stringify(richStory)) as Story;
+  cleanChars.characters[0].talkingSheet = { image: "s.png", frameWidth: 64, frameHeight: 64, animations: { talk: { frames: [0, 1] }, rest: { frames: [0] } } };
+  cleanChars.scenes[0].cinematic = undefined as never;
+  check(
+    "talking sheet: a well-formed sheet raises no sheet warnings",
+    !validateStory(cleanChars).some((i) => /talking sheet|sprite sheet/i.test(i.message))
+  );
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

@@ -395,7 +395,10 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     if (!c) return;
     visit(c.foregroundImage);
     c.foregroundAnimation?.frames?.forEach(visit);
-    c.foregroundExtras?.forEach((e) => visit(e.image));
+    c.foregroundExtras?.forEach((e) => {
+      visit(e.image);
+      visit(e.sheet?.image);
+    });
     c.parallaxLayers?.forEach((l) => visit(l.image));
   };
   // A DialogueBeat carries audio/background/cinematic. The contradiction
@@ -438,6 +441,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     visit(c.avatarUrl);
     c.talkingFrames?.forEach(visit);
     visit(c.talkingRest);
+    visit(c.talkingSheet?.image);
   });
   story.acts?.forEach((a) => visit(a.titleCardImage));
   story.episodes?.forEach((ep) => {
@@ -511,7 +515,10 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     // — visitStoryMediaRefs (and so the export bundler) visits them, so the
     // play-time resolver must as well or their refs survive as literal
     // "asset:<id>" URLs and render nothing.
-    c.foregroundExtras?.forEach((e) => apply(e, "image"));
+    c.foregroundExtras?.forEach((e) => {
+      apply(e, "image");
+      if (e.sheet) apply(e.sheet, "image");
+    });
     c.parallaxLayers?.forEach((l) => apply(l, "image"));
   };
   const applyLieBeat = (beat?: { audioUrl?: string; background?: string; cinematic?: CinematicSettings }) => {
@@ -546,6 +553,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     apply(c, "avatarUrl");
     if (c.talkingFrames?.length) c.talkingFrames = c.talkingFrames.map((f) => resolveMediaValue(f, map) ?? f);
     if (c.talkingRest) c.talkingRest = resolveMediaValue(c.talkingRest, map) ?? c.talkingRest;
+    if (c.talkingSheet) apply(c.talkingSheet, "image");
   });
   next.acts?.forEach((a) => apply(a, "titleCardImage"));
   next.episodes?.forEach((ep) => {
@@ -690,6 +698,7 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
       for (const e of sc.cinematic.foregroundExtras) {
         const out = await compact(e.image, "image", sc.title);
         e.image = out ?? e.image;
+        if (e.sheet?.image) e.sheet.image = (await compact(e.sheet.image, "image", `${sc.title} extra sheet`)) ?? e.sheet.image;
       }
     }
     if (sc.cinematic?.parallaxLayers?.length) {
@@ -715,6 +724,7 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
         for (const e of b.cinematic.foregroundExtras) {
           const out = await compact(e.image, "image", sc.title);
           e.image = out ?? e.image;
+          if (e.sheet?.image) e.sheet.image = (await compact(e.sheet.image, "image", `${sc.title} extra sheet`)) ?? e.sheet.image;
         }
       }
       if (b.cinematic?.parallaxLayers?.length) {
@@ -741,6 +751,8 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
       ).filter((f): f is string => !!f);
     }
     c.talkingRest = (await compact(c.talkingRest, "image", `${c.name} resting`)) || undefined;
+    if (c.talkingSheet?.image)
+      c.talkingSheet.image = (await compact(c.talkingSheet.image, "image", `${c.name} talking sheet`)) ?? c.talkingSheet.image;
   }
   for (const a of next.acts ?? []) {
     a.titleCardImage = await compact(a.titleCardImage, "image", a.title || a.label || "act");
@@ -993,6 +1005,7 @@ export async function bundleVoiceFileRefs(
       ).filter((f): f is string => !!f);
     }
     c.talkingRest = await bundleValue(c.talkingRest);
+    if (c.talkingSheet?.image) c.talkingSheet.image = (await bundleValue(c.talkingSheet.image)) ?? c.talkingSheet.image;
   }
   for (const a of next.acts ?? []) {
     a.titleCardImage = await bundleValue(a.titleCardImage);

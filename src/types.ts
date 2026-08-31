@@ -492,6 +492,11 @@ export interface CreditsSettings {
 export interface ForegroundExtra {
   /** image url / `gradient:` / `asset:` reference */
   image: string;
+  /** Animate this extra with a sprite sheet (flickering neon, a rain-lashed
+   * flag) instead of the static `image`. Plays the sheet's "loop" animation
+   * (or the first one defined) on repeat. While set it replaces `image` in
+   * play; `image` is kept as the author's static fallback. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
   /** how the image fits its box (default contain) */
   fit?: "contain" | "cover" | "fill" | "native";
   /** image scale (default 1) */
@@ -1037,6 +1042,13 @@ export interface Character {
   /** resting/neutral pose shown when this character is on-scene but NOT the
    * active speaker (falls back to talkingFrames[0] if unset). */
   talkingRest?: string;
+  /** Talking portrait as ONE sprite-sheet image instead of loose frame files.
+   * Named animations the engine looks up: "talk" while this character is the
+   * active speaker, "rest" otherwise (a missing "rest" holds talk frame 1).
+   * TAKES OVER from talkingFrames/talkingRest while set — the keyframe fields
+   * are untouched and take effect again the moment the sheet is cleared.
+   * Position/scale/flip still come from talkingX/Y/Scale/Flip. */
+  talkingSheet?: import("./game/spriteSheet").SpriteSheet;
   /** mirror the sprite horizontally (face left) so two speakers can face
    * each other across the frame. */
   talkingFlip?: boolean;

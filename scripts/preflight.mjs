@@ -171,6 +171,16 @@ function assetRefs(story) {
     (sc.credits?.montage ?? []).forEach((m) => m.startsWith("/") && refs.add(m));
     (sc.cinematic?.foregroundAnimation?.frames ?? []).forEach((f) => refs.add(f));
     (sc.cinematic?.foregroundImage?.startsWith("/") && refs.add(sc.cinematic.foregroundImage));
+    (sc.cinematic?.foregroundExtras ?? []).forEach((e) => {
+      e.image?.startsWith("/") && refs.add(e.image);
+      e.sheet?.image?.startsWith("/") && refs.add(e.sheet.image);
+    });
+    (sc.dialogueBeats ?? []).forEach((b) =>
+      (b.cinematic?.foregroundExtras ?? []).forEach((e) => {
+        e.image?.startsWith("/") && refs.add(e.image);
+        e.sheet?.image?.startsWith("/") && refs.add(e.sheet.image);
+      })
+    );
     [sc.musicUrl, sc.sceneAudioUrl, sc.narrationAudioUrl].forEach((u) => u?.startsWith("/") && refs.add(u));
     (sc.dialogueBeats ?? []).forEach((b) => b.audioUrl?.startsWith("/") && refs.add(b.audioUrl));
     if (sc.stage) {
@@ -179,7 +189,12 @@ function assetRefs(story) {
       sc.stage.playerSheet?.image?.startsWith("/") && refs.add(sc.stage.playerSheet.image);
     }
   });
-  story.characters.forEach((c) => c.avatarUrl?.startsWith("/") && refs.add(c.avatarUrl));
+  story.characters.forEach((c) => {
+    c.avatarUrl?.startsWith("/") && refs.add(c.avatarUrl);
+    (c.talkingFrames ?? []).forEach((f) => f.startsWith("/") && refs.add(f));
+    c.talkingRest?.startsWith("/") && refs.add(c.talkingRest);
+    c.talkingSheet?.image?.startsWith("/") && refs.add(c.talkingSheet.image);
+  });
   story.items.forEach((i) => i.iconUrl?.startsWith("/") && refs.add(i.iconUrl));
   story.coverImage?.startsWith("/") && refs.add(story.coverImage);
   (story.acts ?? []).forEach((a) => a.titleCardImage?.startsWith("/") && refs.add(a.titleCardImage));

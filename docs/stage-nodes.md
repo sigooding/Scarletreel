@@ -84,6 +84,11 @@ bundler, the import/export round-trip seed, and the preflight asset-exists
 check. `spriteSheetIssues()` (src/game/spriteSheet.ts) validates sheets and
 surfaces problems as Check-tab warnings.
 
+> Sprite sheets also drive **talking portraits** (`character.talkingSheet`)
+> and **animated foreground extras** (`foregroundExtra.sheet`), and the
+> Media tab has a **Sheet slicer** for working out any sheet's grid — see
+> `docs/sprite-sheets.md` for the full picture.
+
 ## Authoring recipe (the Telltale loop)
 
 1. **Floor & spawn** — drag the neon band and 🕵️ dot in the Scene tab's

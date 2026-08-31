@@ -1213,6 +1213,15 @@ export function validateStory(story: Story): ValidationIssue[] {
     issues.push({ severity: "error", sceneId: null, message: `Duplicate character id "${id}". Dialogue voices and trust will collide.` })
   );
 
+  // Talking-portrait sprite sheets: surface malformed sheets as warnings so a
+  // bad frame list is caught in the Check tab, not as a frozen portrait in play.
+  story.characters.forEach((c) => {
+    if (c.talkingSheet)
+      spriteSheetIssues(c.talkingSheet, "talking sheet", ["talk", "rest"]).forEach((msg) =>
+        issues.push({ severity: "warning", sceneId: null, message: `Character "${c.name}": ${msg}` })
+      );
+  });
+
   // Travel map: every pin must land on a real scene, ids must be unique, and
   // a dead-end note target would strand the traveller (bypassedSceneId can't
   // route past a note with no way out).
@@ -1248,6 +1257,21 @@ export function validateStory(story: Story): ValidationIssue[] {
   });
 
   // ---- STAGE nodes (Telltale-style walkable scenes) ----
+  // (Runs for EVERY scene first: animated foreground extras live on any node.)
+  for (const sc of story.scenes) {
+    // Malformed sprite sheets on foreground extras (scene- or beat-level
+    // cinematics) warn here instead of rendering nothing in play.
+    const extraSheets = [
+      ...(sc.cinematic?.foregroundExtras ?? []),
+      ...(sc.dialogueBeats ?? []).flatMap((b) => b.cinematic?.foregroundExtras ?? []),
+    ];
+    extraSheets.forEach((e, xi) => {
+      if (e.sheet)
+        spriteSheetIssues(e.sheet, `foreground extra #${xi + 1} sprite sheet`, ["loop"]).forEach((msg) =>
+          issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}": ${msg}` })
+        );
+    });
+  }
   for (const sc of story.scenes) {
     if (sc.nodeType !== "stage") {
       if (sc.stage)
@@ -1281,7 +1305,7 @@ export function validateStory(story: Story): ValidationIssue[] {
       if ((sc.stage.walkFrames?.length ?? 0) === 1)
         issues.push({ severity: "warning", sceneId: sc.id, message: `${label} walk cycle has a single frame — add at least 2 frames or clear the list to use the procedural bob.` });
       if (sc.stage.playerSheet)
-        spriteSheetIssues(sc.stage.playerSheet, "walker sprite sheet").forEach((msg) =>
+        spriteSheetIssues(sc.stage.playerSheet, "walker sprite sheet", ["walk", "idle"]).forEach((msg) =>
           issues.push({ severity: "warning", sceneId: sc.id, message: `${label} ${msg}` })
         );
     }
