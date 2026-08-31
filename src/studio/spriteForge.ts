@@ -172,11 +172,27 @@ function presetAnimations(kind: ForgeKind, n: number): ForgedSheet["animations"]
   }
 }
 
+/** Optional keying overrides for forgeSpriteSheet. */
+export interface ForgeOptions {
+  /** colour distance treated as backdrop (default 60). Lower = gentler —
+   * keeps more of the art; higher = stronger — eats further into it. */
+  tolerance?: number;
+  /** feathered band beyond the tolerance (default 40) */
+  softness?: number;
+}
+
+/** Named strengths for the auto-key, surfaced anywhere auto-build runs. */
+export const FORGE_STRENGTHS: { id: string; label: string; tolerance: number; softness: number }[] = [
+  { id: "gentle", label: "gentle (keeps detail)", tolerance: 35, softness: 25 },
+  { id: "normal", label: "normal", tolerance: 60, softness: 40 },
+  { id: "strong", label: "strong (dirty backdrop)", tolerance: 90, softness: 50 },
+];
+
 /** The whole job in one call: key the backdrop, find the frames, crop and
  * scale them to a uniform bottom-aligned grid, and hand back the sheet PNG
  * with engine-ready animations. Throws with a readable message when the
  * image doesn't cut cleanly (e.g. the backdrop wasn't flat). */
-export async function forgeSpriteSheet(imageUrl: string, kind: ForgeKind): Promise<ForgedSheet> {
+export async function forgeSpriteSheet(imageUrl: string, kind: ForgeKind, options?: ForgeOptions): Promise<ForgedSheet> {
   const img = await loadImage(imageUrl);
   const stage = document.createElement("canvas");
   stage.width = img.naturalWidth;
@@ -186,7 +202,12 @@ export async function forgeSpriteSheet(imageUrl: string, kind: ForgeKind): Promi
   sctx.drawImage(img, 0, 0);
   const src = sctx.getImageData(0, 0, stage.width, stage.height);
 
-  const keyed = applyKey(src, sampleCorners(src.data, src.width, src.height), 60, 40);
+  const keyed = applyKey(
+    src,
+    sampleCorners(src.data, src.width, src.height),
+    options?.tolerance ?? 60,
+    options?.softness ?? 40
+  );
   const keyedCanvas = document.createElement("canvas");
   keyedCanvas.width = src.width;
   keyedCanvas.height = src.height;

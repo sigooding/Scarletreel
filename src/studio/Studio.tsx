@@ -2029,28 +2029,33 @@ function CinematicControls({
         <div className="space-y-1 border border-gold/25 bg-gold/5 p-2 font-type text-[9px] leading-snug text-paper/55">
           <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">📐 How to make a sprite sheet (the whole recipe)</div>
           <p>
-            <b className="text-paper/75">1 · One PNG, equal frames.</b> Put every frame of the animation side by side in
-            one transparent PNG. Every frame must be EXACTLY the same size. Frames count 0, 1, 2… left to right
-            (extra rows continue the count).
+            <b className="text-paper/75">The fast way (no rules to remember):</b> get art with frames side by side on
+            ONE flat backdrop colour — from the 🤖 AI tab (sprite starters, or style-transfer your own upload), a
+            drawing, or a photo — then press <b>⚡ Upload art → auto-build</b> below. It removes the backdrop, slices
+            the frames, sets the sizes and animations, and files the sheet under 📁 sprites in the media library.
+            If removal eats into the art, set backdrop removal to <b>gentle</b>; if specks survive, <b>strong</b>;
+            for full manual control use Media ▸ ✂ Sprite Cutout Lab.
           </p>
           <p>
-            <b className="text-paper/75">2 · The maths.</b> 3 frames, each 200 wide × 300 tall → one 600 × 300 image.
-            In the controls below, Frame W/H is the size of a SINGLE frame (200 × 300) — not the whole image.
+            <b className="text-paper/75">Doing it by hand instead:</b> one transparent PNG, every frame EXACTLY the
+            same size, side by side. Frames count 0, 1, 2… left to right (extra rows continue the count). 3 frames of
+            200 × 300 → one 600 × 300 image, and Frame W/H below = 200 × 300 (a SINGLE frame, not the whole image).
           </p>
           <p>
-            <b className="text-paper/75">3 · Good frame sizes.</b> Talking portraits ≈ 150–260 × 384 · props and signs
-            ≈ 100–300 px · big set pieces (a car) up to ≈ 640 px. Keep the finished sheet under ≈ 4096 px a side.
+            <b className="text-paper/75">Sizes.</b> Exact size doesn't matter — the engine scales everything. Aim for
+            frames ≈ 384–512 px tall for characters, ≈ 256 px for props/signs, up to ≈ 640 px for big pieces (a car),
+            and keep the whole sheet under ≈ 4096 px a side. Bigger = crisper but heavier.
           </p>
           <p>
-            <b className="text-paper/75">4 · Name the animations.</b> Foreground sprites here play <b>loop</b> on
-            repeat · stage walkers use <b>walk</b> + <b>idle</b> · talking portraits use <b>talk</b> + <b>rest</b>.
-            An animation is just a list of frame numbers, e.g. loop = 0, 1, 2, 1.
+            <b className="text-paper/75">Animations.</b> Just lists of frame numbers, e.g. loop = 0, 1, 2, 1.
+            Foreground sprites here play <b>loop</b> · stage walkers use <b>walk</b> + <b>idle</b> · talking
+            portraits use <b>talk</b> + <b>rest</b> (characters can also hold 🎭 alternate sheets — outfits/moods
+            switched by a beat's expression, see the Characters tab).
           </p>
           <p>
-            <b className="text-paper/75">5 · Or skip all of it.</b> Every sheet editor below has
-            <b> ⚡ Upload art → auto-build</b>: upload frames on one flat backdrop colour and it cuts out, slices and
-            fills the settings in for you. The 🤖 AI tab does the same from a prompt · Media ▸ ✂ Sprite Cutout Lab
-            for manual cutouts · Media ▸ 🎞 Sheet slicer to inspect a finished sheet.
+            <b className="text-paper/75">Placing it.</b> Every sprite gets a live preview — drag it into position on
+            the scene, drag the ◢ corner (or scroll) to resize. Colour grades apply to sprites the same as the
+            background, so they always sit in the scene's look.
           </p>
         </div>
         {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
@@ -2075,6 +2080,7 @@ function CinematicControls({
               storyId={storyId}
               assetType="image"
               returnReference
+              preferFolder="sprites"
               value={extra.image || undefined}
               placeholder="Pick a transparent image…"
               onChange={(url) => update({ image: url ?? "" })}

@@ -93,6 +93,7 @@ export function AssetDropdown({
   onChange,
   placeholder,
   returnReference = false,
+  preferFolder,
 }: {
   storyId?: string;
   assetType: AssetType;
@@ -101,6 +102,8 @@ export function AssetDropdown({
   placeholder?: string;
   /** return `asset:<id>` instead of a large data URL (for localStorage config) */
   returnReference?: boolean;
+  /** library folder to surface first in the image browser */
+  preferFolder?: string;
 }) {
   const assets = useAllAssets(assetType);
   // Images get the rich browser: every built-in /img asset + all uploads +
@@ -116,6 +119,7 @@ export function AssetDropdown({
         allowClear
         returnReference={returnReference}
         placeholder={placeholder ?? "Pick an image…"}
+        preferFolder={preferFolder}
       />
     );
   }

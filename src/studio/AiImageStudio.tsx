@@ -4,11 +4,12 @@ import {
   AI_PROVIDERS,
   generateAiImage,
   loadAiSettings,
+  providerReferenceSupport,
   saveAiSettings,
   type AiImageSettings,
   type AiProviderSettings,
 } from "../data/aiImages";
-import { forgeSpriteSheet, type ForgedSheet, type ForgeKind } from "./spriteForge";
+import { FORGE_STRENGTHS, forgeSpriteSheet, type ForgedSheet, type ForgeKind } from "./spriteForge";
 
 const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
@@ -97,6 +98,11 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
   const [forgeError, setForgeError] = useState<string | null>(null);
   const [forging, setForging] = useState(false);
   const [copiedSheet, setCopiedSheet] = useState(false);
+  const [keyStrength, setKeyStrength] = useState("normal");
+  // Style transfer: a reference image + how closely to match it (providers
+  // that support image-to-image only).
+  const [refImage, setRefImage] = useState<string | null>(null);
+  const [refMatch, setRefMatch] = useState(0.55);
   const storageAvailable = useStorageAvailable();
 
   const provider = settings.provider;
@@ -117,7 +123,8 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
     setForged(null);
     setForgeError(null);
     try {
-      const sheet = await forgeSpriteSheet(imageDataUrl, kind);
+      const strength = FORGE_STRENGTHS.find((f) => f.id === keyStrength) ?? FORGE_STRENGTHS[1];
+      const sheet = await forgeSpriteSheet(imageDataUrl, kind, strength);
       const up = await uploadDataUrlAsset(storyId, `sprite-sheet-${kind}-${Date.now()}.png`, "image", sheet.dataUrl, "sprites");
       const image = up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl;
       const json = JSON.stringify(
@@ -145,7 +152,12 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
     setSaved(null);
     setForged(null);
     setForgeError(null);
-    const res = await generateAiImage(settings, finalPrompt);
+    const refSupport = providerReferenceSupport(provider, cfg.model);
+    const res = await generateAiImage(
+      settings,
+      finalPrompt,
+      refImage && refSupport ? { dataUrl: refImage, match: refMatch } : undefined
+    );
     setBusy(false);
     if (res.ok && res.dataUrl) {
       setResult(res.dataUrl);
@@ -348,14 +360,29 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
           ))}
         </div>
         {spriteKind ? (
-          <p className="font-type text-[8px] leading-snug text-cyan-neon/80">
-            ⚙ Sprite mode ON — after generating, the magenta backdrop is keyed out, the frames are sliced, the sheet
-            is built with its animations and saved to the media library automatically. Edit the prompt first — swap
-            in your own character description where it says so.{" "}
-            <button className="underline hover:text-cyan-neon" onClick={() => setSpriteKind(null)}>
-              turn off
-            </button>
-          </p>
+          <>
+            <p className="font-type text-[8px] leading-snug text-cyan-neon/80">
+              ⚙ Sprite mode ON — after generating, the magenta backdrop is keyed out, the frames are sliced, the sheet
+              is built with its animations and saved to the media library automatically. Edit the prompt first — swap
+              in your own character description where it says so.{" "}
+              <button className="underline hover:text-cyan-neon" onClick={() => setSpriteKind(null)}>
+                turn off
+              </button>
+            </p>
+            <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+              backdrop removal:
+              <select
+                className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+                value={keyStrength}
+                onChange={(e) => setKeyStrength(e.target.value)}
+              >
+                {FORGE_STRENGTHS.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </select>
+              — use gentle if it eats into the art, strong if backdrop specks survive.
+            </label>
+          </>
         ) : (
           <p className="font-type text-[8px] leading-snug text-paper/45">
             Pick a starter and the whole job runs itself: generate → cut out → slice frames → build the sheet →
@@ -371,6 +398,69 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
       {applyStyle && (
         <input className={inputCls} value={styleSuffix} onChange={(e) => setStyleSuffix(e.target.value)} />
       )}
+
+      {/* ---- reference image: style transfer / image-to-image ---- */}
+      {(() => {
+        const support = providerReferenceSupport(provider, cfg.model);
+        if (!support)
+          return (
+            <p className="font-type text-[8px] text-paper/35">
+              🖼 Reference-image style transfer isn't available on this provider/model — OpenAI (gpt-image-1),
+              Stability AI and local A1111/Forge support it.
+            </p>
+          );
+        return (
+          <div className="space-y-1 border border-gold/25 bg-gold/5 p-1.5">
+            <div className="font-pulp text-[8px] uppercase tracking-widest text-gold">🖼 Reference image (style transfer)</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="cursor-pointer border border-gold/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10">
+                {refImage ? "⇄ replace" : "⇧ upload reference"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const r = new FileReader();
+                    r.onload = () => setRefImage(String(r.result));
+                    r.readAsDataURL(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {refImage && (
+                <>
+                  <img src={refImage} alt="reference" className="h-10 w-10 border border-noir-600 object-cover" />
+                  <button onClick={() => setRefImage(null)} className="text-[10px] text-crimson hover:underline">
+                    ✕ clear
+                  </button>
+                </>
+              )}
+            </div>
+            {refImage && support === "full" && (
+              <label className="block text-[10px] uppercase tracking-wider text-paper/50">
+                Match the reference {Math.round(refMatch * 100)}% (low = loosely inspired · high = barely changed)
+                <input
+                  type="range" min={0.1} max={0.9} step={0.05} value={refMatch}
+                  className="mt-0.5 w-full accent-gold"
+                  onChange={(e) => setRefMatch(Number(e.target.value))}
+                />
+              </label>
+            )}
+            {refImage && support === "fixed" && (
+              <p className="font-type text-[8px] text-paper/45">
+                This model takes the reference but decides itself how closely to follow it — describe the change you
+                want in the prompt.
+              </p>
+            )}
+            <p className="font-type text-[8px] leading-snug text-paper/45">
+              The generator redraws your image in the style the prompt describes — hand it a photo and ask for
+              "painted 1950 noir style", or hand it your existing character art to make variations that match.
+            </p>
+          </div>
+        );
+      })()}
 
       <button
         onClick={generate}

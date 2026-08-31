@@ -160,20 +160,64 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** Generate one image for the configured provider. Returns a PNG data URL. */
-export async function generateAiImage(settings: AiImageSettings, prompt: string): Promise<GenerateResult> {
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [head, b64] = dataUrl.split(",");
+  const mime = /data:([^;]+)/.exec(head)?.[1] ?? "image/png";
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+/** A reference image for style transfer / image-to-image generation.
+ * `match` is 0–1: how closely the output should follow the reference
+ * (1 = barely change it, 0 = only loosely inspired). */
+export interface AiReferenceImage {
+  dataUrl: string;
+  match: number;
+}
+
+/** Whether a provider can use a reference image, and how:
+ * "full" = image + adjustable match strength · "fixed" = image accepted but
+ * the model decides how closely to follow it · false = text-only. */
+export function providerReferenceSupport(id: AiProviderId, model?: string): "full" | "fixed" | false {
+  switch (id) {
+    case "openai":
+      // gpt-image-1 has an edits endpoint; dall-e-3 is text-only.
+      return (model || "gpt-image-1") === "gpt-image-1" ? "fixed" : false;
+    case "stability":
+      return "full"; // SD3 image-to-image with a strength parameter
+    case "a1111":
+      return "full"; // img2img with denoising_strength
+    case "together":
+    case "comfyui":
+      return false;
+    default:
+      return false;
+  }
+}
+
+/** Generate one image for the configured provider. Returns a PNG data URL.
+ * With `reference` set (and a provider that supports it), runs style
+ * transfer / image-to-image instead of pure text-to-image. */
+export async function generateAiImage(
+  settings: AiImageSettings,
+  prompt: string,
+  reference?: AiReferenceImage
+): Promise<GenerateResult> {
   const p = settings.providers[settings.provider];
   if (!p) return { ok: false, error: "No provider selected." };
+  const ref = reference && providerReferenceSupport(settings.provider, p.model) ? reference : undefined;
   try {
     switch (settings.provider) {
       case "openai":
-        return await openaiGenerate(p, prompt);
+        return await openaiGenerate(p, prompt, ref);
       case "stability":
-        return await stabilityGenerate(p, prompt);
+        return await stabilityGenerate(p, prompt, ref);
       case "together":
         return await togetherGenerate(p, prompt);
       case "a1111":
-        return await a1111Generate(p, prompt);
+        return await a1111Generate(p, prompt, ref);
       case "comfyui":
         return await comfyGenerate(p, prompt);
       default:
@@ -194,9 +238,29 @@ export async function generateAiImage(settings: AiImageSettings, prompt: string)
 
 /* ------------------------------ commercial ------------------------------ */
 
-async function openaiGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+async function openaiGenerate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
   if (!p.apiKey) return { ok: false, error: "Enter your OpenAI API key first." };
   const size = `${p.width ?? 1024}x${p.height ?? 1024}`;
+  // Style transfer / edit path: gpt-image-1's images/edits takes the
+  // reference image + prompt (the model decides how closely to follow it).
+  if (ref) {
+    const fd = new FormData();
+    fd.append("model", p.model || "gpt-image-1");
+    fd.append("image", dataUrlToBlob(ref.dataUrl), "reference.png");
+    fd.append("prompt", prompt);
+    fd.append("n", "1");
+    fd.append("size", size);
+    const res = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${p.apiKey}` },
+      body: fd,
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, error: json?.error?.message || `OpenAI ${res.status}` };
+    const b64 = json?.data?.[0]?.b64_json;
+    if (!b64) return { ok: false, error: "OpenAI returned no image." };
+    return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
+  }
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
@@ -223,13 +287,23 @@ async function openaiGenerate(p: AiProviderSettings, prompt: string): Promise<Ge
   return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
 }
 
-async function stabilityGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+async function stabilityGenerate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
   if (!p.apiKey) return { ok: false, error: "Enter your Stability AI API key first." };
   const fd = new FormData();
   fd.append("prompt", prompt);
   fd.append("output_format", "png");
-  if (p.aspectRatio) fd.append("aspect_ratio", p.aspectRatio);
-  const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
+  // Image-to-image (style transfer) runs on the SD3 endpoint. Stability's
+  // `strength` is "how much to CHANGE" (0 = identical, 1 = ignore the image),
+  // so it's the inverse of our "match the reference" slider.
+  const endpoint = ref
+    ? "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+    : "https://api.stability.ai/v2beta/stable-image/generate/core";
+  if (ref) {
+    fd.append("mode", "image-to-image");
+    fd.append("image", dataUrlToBlob(ref.dataUrl), "reference.png");
+    fd.append("strength", String(Math.min(1, Math.max(0, 1 - ref.match))));
+  } else if (p.aspectRatio) fd.append("aspect_ratio", p.aspectRatio);
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${p.apiKey}`, Accept: "image/*" },
     body: fd,
@@ -274,9 +348,12 @@ async function togetherGenerate(p: AiProviderSettings, prompt: string): Promise<
 
 /* -------------------------------- local -------------------------------- */
 
-async function a1111Generate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
+async function a1111Generate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
   const base = (p.baseUrl || "http://127.0.0.1:7860").replace(/\/+$/, "");
-  const res = await fetch(`${base}/sdapi/v1/txt2img`, {
+  // img2img for style transfer: denoising_strength is "how much to change"
+  // (0 = identical), so it's the inverse of our "match the reference" slider.
+  const endpoint = ref ? `${base}/sdapi/v1/img2img` : `${base}/sdapi/v1/txt2img`;
+  const res = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -290,6 +367,12 @@ async function a1111Generate(p: AiProviderSettings, prompt: string): Promise<Gen
       seed: -1,
       n_iter: 1,
       batch_size: 1,
+      ...(ref
+        ? {
+            init_images: [ref.dataUrl.split(",")[1] ?? ref.dataUrl],
+            denoising_strength: Math.min(1, Math.max(0, 1 - ref.match)),
+          }
+        : {}),
     }),
   });
   const json: any = await res.json().catch(() => null);

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { assetUrl } from "../assetPath";
 import { uploadDataUrlAsset, useResolvedMedia } from "../data/mediaLibrary";
 import { ImagePicker } from "./ImagePicker";
-import { forgeSpriteSheet, type ForgeKind } from "./spriteForge";
+import { FORGE_STRENGTHS, forgeSpriteSheet, type ForgeKind } from "./spriteForge";
 import { sheetCols, sheetFramePos, spriteSheetIssues, type SpriteSheet, type SpriteSheetAnimation } from "../game/spriteSheet";
 
 /* ------------------------------------------------------------------ */
@@ -199,6 +199,7 @@ export function SpriteSheetControls({
   // this editor in — the whole job in one click.
   const [forging, setForging] = useState(false);
   const [forgeMsg, setForgeMsg] = useState<string | null>(null);
+  const [keyStrength, setKeyStrength] = useState("normal");
   const autoBuild = async (file: File) => {
     setForging(true);
     setForgeMsg(null);
@@ -209,7 +210,8 @@ export function SpriteSheetControls({
         r.onerror = () => rej(new Error("could not read the file"));
         r.readAsDataURL(file);
       });
-      const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset));
+      const strength = FORGE_STRENGTHS.find((f) => f.id === keyStrength) ?? FORGE_STRENGTHS[1];
+      const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset), strength);
       const base = file.name.replace(/\.[a-z0-9]+$/i, "") || "sheet";
       const up = await uploadDataUrlAsset(storyId, `sheet-${base}.png`, "image", sheet.dataUrl, "sprites");
       onChange({
@@ -255,6 +257,20 @@ export function SpriteSheetControls({
             out, slices the frames by the gaps, and fills everything in. A single figure gives a 1-frame cutout.
           </span>
         </div>
+        <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+          backdrop removal:
+          <select
+            className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+            value={keyStrength}
+            onChange={(e) => setKeyStrength(e.target.value)}
+          >
+            {FORGE_STRENGTHS.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+          — gentle if it eats into the art · strong if backdrop specks survive. For full manual control use
+          Media ▸ ✂ Sprite Cutout Lab.
+        </label>
         {forgeMsg && <p className="font-type text-[9px] text-paper/60">{forgeMsg}</p>}
       </div>
       <Field label={pickerLabel}>
@@ -262,6 +278,7 @@ export function SpriteSheetControls({
           value={value?.image}
           storyId={storyId}
           includeGradients={false}
+          preferFolder="sprites"
           onChange={(v) =>
             v
               ? onChange({
