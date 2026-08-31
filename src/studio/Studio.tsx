@@ -12396,6 +12396,232 @@ function StudioInner({
                         </label>
                       </div>
                     )}
+                    {h.action.type === "startDialogue" && (
+                      <div className="space-y-2 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+                        <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">💬 Topic-list conversation (opt-in)</div>
+                        <p className="font-type text-[9px] leading-snug text-paper/45">
+                          Instead of playing this scene's Beats straight through, the talk opens as a HUB of questions
+                          the player can ask (Full Throttle's "ask the bartender…"). Pick a topic, its lines play, then
+                          it returns to the hub; <b>leave</b> ends the conversation. Leave empty to keep the classic
+                          linear conversation.
+                        </p>
+                        {(h.action.topics?.length ?? 0) === 0 ? (
+                          <button
+                            className="btn-tool w-full"
+                            onClick={() =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                const a = s.hotspots!.find((x) => x.id === h.id)!.action;
+                                a.topics = [
+                                  {
+                                    id: `topic_${uid()}`,
+                                    label: "What do you want to know?",
+                                    beats: [
+                                      { id: `b_${uid()}`, characterId: story.characters[0]?.id ?? "narrator", text: "The answer…" },
+                                    ],
+                                  },
+                                ];
+                              })
+                            }
+                          >
+                            ＋ Turn this into a topic list
+                          </button>
+                        ) : (
+                          <>
+                            <Field label="Hub heading (what the player sees above the questions)">
+                              <input
+                                className={inputCls}
+                                value={h.action.topicPrompt ?? ""}
+                                placeholder="What do you want to ask?"
+                                onChange={(e) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.hotspots!.find((x) => x.id === h.id)!.action.topicPrompt = e.target.value || undefined;
+                                  })
+                                }
+                              />
+                            </Field>
+                            <Field label="Leave option label">
+                              <input
+                                className={inputCls}
+                                value={h.action.topicLeaveLabel ?? ""}
+                                placeholder="Never mind"
+                                onChange={(e) =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.hotspots!.find((x) => x.id === h.id)!.action.topicLeaveLabel = e.target.value || undefined;
+                                  })
+                                }
+                              />
+                            </Field>
+                            {h.action.topics!.map((t, ti) => (
+                              <div key={t.id} className="space-y-1.5 border border-noir-700 bg-noir-950/60 p-1.5">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon">Q{ti + 1}</span>
+                                  <input
+                                    className={`${inputCls} min-w-0 flex-1`}
+                                    value={t.label}
+                                    placeholder="Where's my gang?"
+                                    onChange={(e) =>
+                                      mutate((d) => {
+                                        const s = d.scenes.find((x) => x.id === scene.id)!;
+                                        s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].label = e.target.value;
+                                      })
+                                    }
+                                  />
+                                  <button
+                                    className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                    title="Remove this topic"
+                                    onClick={() =>
+                                      mutate((d) => {
+                                        const s = d.scenes.find((x) => x.id === scene.id)!;
+                                        const a = s.hotspots!.find((x) => x.id === h.id)!.action;
+                                        a.topics = a.topics!.filter((_, j) => j !== ti);
+                                      })
+                                    }
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                <div className="flex items-center gap-3 text-[9px]">
+                                  <label className="flex shrink-0 items-center gap-1 text-paper/70">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!t.repeatable}
+                                      onChange={(e) =>
+                                        mutate((d) => {
+                                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                                          s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].repeatable = e.target.checked || undefined;
+                                        })
+                                      }
+                                    />
+                                    askable again
+                                  </label>
+                                  <label className="flex min-w-0 flex-1 items-center gap-1">
+                                    <span className="shrink-0 text-paper/50">sets flag</span>
+                                    <input
+                                      className={`${inputCls} min-w-0 flex-1`}
+                                      value={t.flagSet ?? ""}
+                                      placeholder="optional"
+                                      onChange={(e) =>
+                                        mutate((d) => {
+                                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                                          s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].flagSet = e.target.value.trim() || undefined;
+                                        })
+                                      }
+                                    />
+                                  </label>
+                                </div>
+                                <GatingEditor
+                                  sectionId={`topic-${t.id}`}
+                                  gating={t.gating}
+                                  items={story.items}
+                                  characters={story.characters}
+                                  flags={allFlags}
+                                  memoryTags={recallSuggestions}
+                                  onChange={(g) =>
+                                    mutate((d) => {
+                                      const s = d.scenes.find((x) => x.id === scene.id)!;
+                                      s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].gating = g;
+                                    })
+                                  }
+                                />
+                                <div className="space-y-1">
+                                  <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">Lines</div>
+                                  {t.beats.map((b, bi) => (
+                                    <div key={b.id} className="flex items-start gap-1">
+                                      <select
+                                        className={`${inputCls} w-24 shrink-0`}
+                                        value={b.characterId}
+                                        onChange={(e) =>
+                                          mutate((d) => {
+                                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                                            s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].beats[bi].characterId = e.target.value;
+                                          })
+                                        }
+                                      >
+                                        <option value="narrator">Narrator</option>
+                                        {story.characters.map((c) => (
+                                          <option key={c.id} value={c.id}>{c.name}</option>
+                                        ))}
+                                      </select>
+                                      <textarea
+                                        className={`${inputCls} min-w-0 flex-1 font-type`}
+                                        value={b.text}
+                                        rows={2}
+                                        onChange={(e) =>
+                                          mutate((d) => {
+                                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                                            s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].beats[bi].text = e.target.value;
+                                          })
+                                        }
+                                      />
+                                      <button
+                                        className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                        title="Remove line"
+                                        onClick={() =>
+                                          mutate((d) => {
+                                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                                            const a = s.hotspots!.find((x) => x.id === h.id)!.action;
+                                            a.topics![ti].beats = a.topics![ti].beats.filter((_, j) => j !== bi);
+                                          })
+                                        }
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ))}
+                                  <button
+                                    className="w-full border border-cyan-neon/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                                    onClick={() =>
+                                      mutate((d) => {
+                                        const s = d.scenes.find((x) => x.id === scene.id)!;
+                                        const a = s.hotspots!.find((x) => x.id === h.id)!.action;
+                                        const last = a.topics![ti].beats[a.topics![ti].beats.length - 1];
+                                        a.topics![ti].beats = [
+                                          ...a.topics![ti].beats,
+                                          { id: `b_${uid()}`, characterId: last?.characterId ?? story.characters[0]?.id ?? "narrator", text: "" },
+                                        ];
+                                      })
+                                    }
+                                  >
+                                    ＋ Add line
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex gap-1">
+                              <button
+                                className="flex-1 border border-cyan-neon/50 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                                onClick={() =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    const a = s.hotspots!.find((x) => x.id === h.id)!.action;
+                                    a.topics = [
+                                      ...(a.topics ?? []),
+                                      { id: `topic_${uid()}`, label: "…", beats: [{ id: `b_${uid()}`, characterId: story.characters[0]?.id ?? "narrator", text: "" }] },
+                                    ];
+                                  })
+                                }
+                              >
+                                ＋ Add topic
+                              </button>
+                              <button
+                                className="border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                                onClick={() =>
+                                  mutate((d) => {
+                                    const s = d.scenes.find((x) => x.id === scene.id)!;
+                                    s.hotspots!.find((x) => x.id === h.id)!.action.topics = undefined;
+                                  })
+                                }
+                              >
+                                ✕ Clear
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                     {h.action.type === "useItem" && (
                       <Field label="Consumes item (from Gating requirement)">
                         <select

@@ -83,6 +83,16 @@ export interface HotspotAction {
   /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
    * a conversation. This action needs no payload of its own — the scene's
    * beats ARE the payload. Any flagSet / meterChange here still applies. */
+  /** OPT-IN topic-list dialogue. When a `startDialogue` marker carries this,
+   *  the conversation is a HUB of askable topics (see DialogueTopic) instead
+   *  of the scene's linear `dialogueBeats`: pick a topic, its beats play, then
+   *  it returns to the hub; a leave option ends the conversation. Stories
+   *  without it are unchanged. */
+  topics?: DialogueTopic[];
+  /** Hub heading shown above the topic list (default "What do you want to ask?"). */
+  topicPrompt?: string;
+  /** The leave option's label (default "Never mind"). */
+  topicLeaveLabel?: string;
   /** setPlayerPose hotspots switch the WALKER's sprite animation to a named
    *  pose — a "bend down" to look under the bar, a "crouch", a "reach". Not
    *  a flag: the pose IS the animation name on the player's sheet. Flags are
@@ -338,6 +348,41 @@ export interface DialogueBeat {
   /** Hold time (seconds) between the finished line and the auto-route
    * (default 1.6). Ignored in "continue" mode. */
   afterBeatDelaySeconds?: number;
+}
+
+/**
+ * TOPIC-LIST DIALOGUE (opt-in) — one askable question in an NPC conversation
+ * hub, the way a LucasArts bartender works: walk up, pick what to ask, hear
+ * the answer, and (unless it's exhausted) ask again or ask something else.
+ *
+ * Authored on a `startDialogue` hotspot's action (`topics`). When a
+ * `startDialogue` marker carries `topics`, the conversation opens as a HUB of
+ * these instead of playing the scene's linear `dialogueBeats`. Each topic:
+ *  - `label` is the player-facing question ("Where's my gang?").
+ *  - `beats` are the exchange that plays when it's chosen (reusing the full
+ *    DialogueBeat machinery — voice, expressions, backgrounds, recalls).
+ *  - `gating` hides the topic until flags/items/trust are ready.
+ *  - a non-`repeatable` topic is exhausted after one ask (it stays in the hub
+ *    with a ✓ so the player knows it's covered); `repeatable` lets it replay.
+ *  - `flagSet` records that the topic was asked, so later topics, beats, or
+ *    the wider story can gate on it.
+ *
+ * Stories that never set `topics` are 100% unchanged — the scene's
+ * `dialogueBeats` play exactly as before.
+ */
+export interface DialogueTopic {
+  /** stable id — tracks "already asked" state and is what other topics gate on */
+  id: string;
+  /** the player-facing question / line shown on the hub */
+  label: string;
+  /** optional gate: hidden from the hub until flags/items/trust are met */
+  gating?: Gating;
+  /** the exchange played when this topic is chosen */
+  beats: DialogueBeat[];
+  /** askable more than once (default false — asked once, then exhausted) */
+  repeatable?: boolean;
+  /** flag set the moment the topic is chosen (gate later topics / story) */
+  flagSet?: string;
 }
 
 export interface EndingData {

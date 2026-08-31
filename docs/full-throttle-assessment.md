@@ -137,13 +137,27 @@ shake down → ride → duel) is asserted in the engine tests.
 What's still missing is a *locomotion* minigame — the engine has no vehicle
 physics, so the ride itself is a cutscene; the fight is timing, not steering.
 
-### C. Topic-list dialogue
+### C. ✅ DONE — topic-list dialogue (`startDialogue.topics`)
 
-Quohog's scene is linear beats. The original lets you *ask* Quohog about
-things and repeat them; topic trees are how a LucasArts bartender works. The
-engine's dialogue is beats + reply choices (gated, `hidden`, `memoryLog`), so a
-`topics[]` model on `startDialogue` (per-topic gates, an "exhausted" state, a
-"leave" node) would be needed for real NPC conversations.
+Quohog's scene is now a **topic hub**, not linear beats: talking opens a list
+of askable questions, each topic plays its own beats, and the conversation
+returns to the hub (a "leave" option ends it). The opt-in model is
+`action.topics` on a `startDialogue` marker (see `src/types.ts` →
+`DialogueTopic`):
+
+- `label` is the player-facing question; `beats` is the exchange that plays
+  (reusing the full `DialogueBeat` machinery — voice, expressions, recalls).
+- `gating` hides a topic until flags/items/trust are ready.
+- a non-`repeatable` topic is **exhausted** after one ask (stays in the hub
+  with a ✓); `repeatable` re-asks.
+- `flagSet` records the ask, so later topics/beats/hotspots gate on it — in
+  the recreation, the "My keys, Quohog." topic sets `ft_quohog_talked`, which
+  is what unlocks the grab (fist) marker.
+
+Stories that never set `topics` are 100% unchanged — the scene's linear
+`dialogueBeats` play exactly as before. Studio authors it on the Hotspots tab:
+a 🗣 Start-conversation marker gains a **💬 Topic-list conversation** editor
+(label, gate, "askable again", "sets flag", and per-topic lines).
 
 ### D. Static NPCs
 
@@ -181,9 +195,10 @@ mode is a good match visually; what's missing is **right-click-to-open** and a
 | 2 | ~~Object-first verb menu (the "skull")~~ **DONE (opt-in; hold-to-open skull pie + theme sprite)** | — |
 | 3 | ~~Walk-off-screen edge exits + camera~~ **DONE (wide worlds, edge arrows, entry spawns — see §A)** | — |
 | 4 | ~~Bike/combat minigame~~ **🔶 PARTLY — QTE duel with a real game-over (see §B); no vehicle locomotion yet** | — |
-| 5 | Topic-list dialogue | medium |
+| 5 | ~~Topic-list dialogue~~ **DONE (opt-in `topics[]` — see §C)** | — |
 | 6 | NPC schedules / walk cycles | medium |
 
-The next highest-leverage change is **#5** — a `topics[]` model on
-`startDialogue` so Quohog can be *asked* about things (per-topic gates,
-exhausted states) instead of the current linear beat conversation.
+The next highest-leverage change is **#6** — NPC idle/walk cycles so Quohog
+(and any scene NPC) can polish a glass, sway, or react instead of standing
+frozen — followed by the **bike-riding locomotion** minigame, the last big
+piece of Full Throttle's feel.

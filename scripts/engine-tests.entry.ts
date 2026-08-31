@@ -1763,12 +1763,16 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   apply(hs("ft_alley", "fth_door").action);
   check("ft: kicking the door sets ft_door_open", st.activeFlags.has("ft_door_open"));
   check("ft: the bike flags the missing keys", hs("ft_alley", "fth_bike").action.flagSet === "ft_noticed_keys");
-  // Inside the bar: the shakedown only opens after the CONVERSATION (the
-  // talk marker sets ft_quohog_talked; the grab marker is gated on it).
+  // Inside the bar: talking to Quohog is a TOPIC-LIST conversation, and the
+  // shakedown only opens after the player asks for the keys (the "My keys"
+  // topic sets ft_quohog_talked; the grab marker is gated on it).
   check("ft: grabbing Quohog is locked before the talk", !meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
-  apply(hs("ft_bar", "fth_quohog").action);
-  check("ft: talking to Quohog sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
-  check("ft: the shakedown unlocks after the talk", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
+  const quohogTopics = hs("ft_bar", "fth_quohog").action.topics;
+  check("ft: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  check("ft: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft_topic_keys" && t.flagSet === "ft_quohog_talked"));
+  apply(quohogTopics!.find((t) => t.id === "ft_topic_keys")!);
+  check("ft: asking for the keys sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
+  check("ft: the shakedown unlocks after asking", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
   apply(hs("ft_bar", "fth_quohog_grab").action);
   check("ft: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft_keys"));
   check("ft: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft_keys"] }, st));
@@ -1792,6 +1796,7 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   S.scenes.forEach((sc) => {
     (sc.hotspots ?? []).forEach((h) => {
       if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
       h.gating?.requiresFlags?.forEach((f) => flagsSet.add(f));
       Object.values(sc.stage?.exitEdges ?? {}).forEach((e) => e?.gating?.requiresFlags?.forEach((f) => flagsSet.add(f)));
     });
