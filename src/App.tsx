@@ -45,7 +45,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "37";
+const CONTENT_REVISION = "38";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -280,6 +280,7 @@ const REVISION_RESETS: Record<string, string[]> = {
   // (bus-ticket canon, diner census disambiguation, rental V.O. trim,
   // Rosa-duration fix). Retire any Studio snapshot so the new lines win.
   "37": ["nobodys-witness-true"],
+  "38": ["nobodys-witness-true"],
 };
 
 function migrateLegacyStoryStorage() {
