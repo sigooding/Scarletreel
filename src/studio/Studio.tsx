@@ -63,6 +63,7 @@ import {
   storyEdges,
   CURSOR_ICON,
   CURSOR_SLOTS,
+  CORE_VERB_IDS,
   VERB_ICON,
   VERB_IDS,
   VERB_LABEL,
@@ -218,6 +219,7 @@ function StageFloorEditor({
   floor,
   spawn,
   hotspots,
+  player,
   onFloor,
   onSpawn,
   onMoveMarker,
@@ -229,6 +231,10 @@ function StageFloorEditor({
   floor: { top: number; bottom: number };
   spawn: { x: number; y: number };
   hotspots: { id: string; label: string; cursor: string; bounds: { x: number; y: number; w: number; h: number } }[];
+  /** The player's appearance, so the room preview shows the REAL walker (its
+   *  sprite sheet / image / emoji) standing on the plate at spawn — not a
+   *  stand-in 🕵️. See docs/adventure-mode.md §"Placing the character". */
+  player?: { image?: string; sheet?: import("./../game/spriteSheet").SpriteSheet };
   onFloor: (top: number, bottom: number) => void;
   onSpawn: (x: number, y: number) => void;
   onMoveMarker: (hotspotId: string, cx: number, baseY: number) => void;
@@ -338,14 +344,28 @@ function StageFloorEditor({
           </div>
         );
       })}
-      {/* spawn dot */}
+      {/* spawn — the REAL walker standing on the plate */}
       <div
         data-drag="spawn"
-        className="absolute z-30 flex h-6 w-6 -translate-x-1/2 -translate-y-full cursor-move items-end justify-center"
+        className="absolute z-30 flex h-[26%] -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
         style={{ left: `${spawn.x}%`, top: `${spawn.y}%` }}
         title="Drag: character spawn point"
       >
-        <span className="text-lg leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">🕵️</span>
+        {player && sheetDrawable(player.sheet) ? (
+          <SheetSprite sheet={player.sheet!} anim="idle" fallbacks={["walk", "loop"]} height="100%" freezeOnFallback />
+        ) : player?.image && !player.image.startsWith("emoji:") ? (
+          <img
+            src={assetUrl(media(player.image) ?? player.image)}
+            alt=""
+            className="h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]"
+            draggable={false}
+          />
+        ) : (
+          <span className="text-3xl leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]">
+            {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
+          </span>
+        )}
+        <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
       </div>
     </div>
   );
@@ -7442,6 +7462,52 @@ function StudioInner({
                   {/* ---- CURSOR ART (per verb) ---- */}
                   <CursorArtEditor story={story} onUpdate={commit} media={media} themeVars={inGameThemeVars(dbox)} />
 
+                  {/* ---- PLAYER CHARACTER (story-wide walker) ---- */}
+                  {(() => {
+                    const ps = story.playerSprite ?? {};
+                    const setPs = (patch: Partial<typeof ps>) =>
+                      commit({ ...story, playerSprite: Object.keys({ ...ps, ...patch }).length ? { ...ps, ...patch } : undefined });
+                    return (
+                      <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
+                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🚶 Player character (story-wide walker)</div>
+                        <p className="font-type text-[9px] leading-snug text-paper/45">
+                          The walker every 🚶 stage scene uses unless that scene sets its own sprite in the
+                          <b> Walkable Stage</b> panel. Define the protagonist ONCE here. Leave empty to keep
+                          the per-scene default.
+                        </p>
+                        <Field label="Character image (emoji:… or image url / asset)">
+                          <input
+                            className={inputCls}
+                            value={ps.image ?? ""}
+                            placeholder="emoji:🏍 or /img/… or asset:…"
+                            onChange={(e) => setPs({ image: e.target.value || undefined })}
+                          />
+                        </Field>
+                        <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            One image, gridded frames with <b>walk</b> / <b>idle</b> (and optional directional
+                            <b> walk-up / walk-down / idle-up / idle-down</b>). Overrides the image field above while set.
+                          </p>
+                          <SpriteSheetControls
+                            value={ps.sheet}
+                            storyId={story.id}
+                            preset={WALKER_PRESET}
+                            onChange={(sheet) => setPs({ sheet })}
+                          />
+                        </div>
+                        {Object.keys(ps).length ? (
+                          <button
+                            className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
+                            onClick={() => commit({ ...story, playerSprite: undefined })}
+                          >
+                            ⟲ Clear (use per-scene walkers)
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+
                   {/* ---- investigation panels ---- */}
                   <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
                     <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🗂 Investigation panels</div>
@@ -8832,6 +8898,10 @@ function StudioInner({
                             stageFloorOf(scene.stage)
                           }
                           spawn={{ x: scene.stage.spawn?.x ?? 50, y: scene.stage.spawn?.y ?? 90 }}
+                          player={{
+                            image: scene.stage.playerImage,
+                            sheet: scene.stage.playerSheet,
+                          }}
                           hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds }))}
                           selectedHotspotId={null}
                           onFloor={(top, bottom) =>
@@ -8903,6 +8973,42 @@ function StudioInner({
                             preset={WALKER_PRESET}
                             onChange={(sheet) => updateScene(scene.id, { stage: { ...scene.stage!, playerSheet: sheet } })}
                           />
+                          {/* ---- directional preview: walk away / towards ---- */}
+                          {(() => {
+                            const sheet = scene.stage.playerSheet;
+                            if (!sheetDrawable(sheet)) return null;
+                            return (
+                              <div className="space-y-1 border-t border-cyan-neon/20 pt-1.5">
+                                <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
+                                  Directional preview (add <span className="text-cyan-neon">walk-up</span> / <span className="text-cyan-neon">walk-down</span> / <span className="text-cyan-neon">idle-up</span> / <span className="text-cyan-neon">idle-down</span> to the sheet)
+                                </div>
+                                <div className="flex items-end gap-2">
+                                  {(
+                                    [
+                                      ["up", "walk-up", "⬆ away"],
+                                      ["down", "walk-down", "⬇ toward"],
+                                      ["left", "walk", "⬅ left"],
+                                      ["right", "walk", "➡ right"],
+                                    ] as const
+                                  ).map(([key, anim, label]) => (
+                                    <div key={key} className="flex flex-col items-center gap-0.5">
+                                      <div className="flex h-14 items-end justify-center overflow-hidden rounded border border-noir-700 bg-noir-950/70">
+                                        <SheetSprite
+                                          sheet={sheet}
+                                          anim={anim}
+                                          fallbacks={anim === "walk-up" || anim === "walk-down" ? ["walk", "idle"] : ["idle"]}
+                                          height={44}
+                                          freezeOnFallback
+                                          style={key === "left" ? { transform: "scaleX(-1)" } : undefined}
+                                        />
+                                      </div>
+                                      <span className="font-type text-[8px] leading-none text-paper/50">{label}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                         {/* ---- obstacles: furniture the walker routes around ---- */}
                         {(() => {
@@ -8949,9 +9055,12 @@ function StudioInner({
                         {(() => {
                           const st = scene.stage!;
                           const coinOn = !!st.verbCoin;
+                          const objectMenuOn = !!st.objectVerbMenu;
+                          const extendedOn = !!st.extendedVerbs;
                           const chosen = st.verbs ?? [];
                           const setVerbs = (list: (typeof VERB_IDS)[number][]) =>
                             updateScene(scene.id, { stage: { ...st, verbCoin: coinOn, verbs: list.length ? list : undefined } });
+                          const shown = extendedOn ? VERB_IDS : CORE_VERB_IDS;
                           return (
                             <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
                               <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎛 Verb coin (pick a verb, then click)</div>
@@ -8963,10 +9072,40 @@ function StudioInner({
                                 />
                                 Show the verb coin in this room
                               </label>
+                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5"
+                                  checked={objectMenuOn}
+                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, objectVerbMenu: e.target.checked || undefined } })}
+                                />
+                                <span>
+                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (Full Throttle's skull)</span>
+                                  <br />
+                                  Click the OBJECT first, then pick a verb from a small pie menu that pops up next to it
+                                  (USE expands to your inventory). Off (default): the bottom-left verb coin, and classic
+                                  click-to-activate rooms, are unchanged.
+                                </span>
+                              </label>
+                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5"
+                                  checked={extendedOn}
+                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, extendedVerbs: e.target.checked || undefined } })}
+                                />
+                                <span>
+                                  <span className="font-pulp uppercase tracking-widest text-amber-300">👢 Kick · 👊 Punch</span>
+                                  <br />
+                                  Opt this room in to the two EXTRA body-verbs (they appear in the coin or the object
+                                  menu). Off (default), the coin stays the classic five — visual novels and other cases
+                                  never see kick/punch.
+                                </span>
+                              </label>
                               {coinOn ? (
                                 <>
                                   <div className="flex flex-wrap gap-1">
-                                    {VERB_IDS.map((v) => {
+                                    {shown.map((v) => {
                                       const on = chosen.includes(v) || (chosen.length === 0 && true);
                                       const picked = chosen.length ? chosen.includes(v) : true;
                                       return (
@@ -8990,8 +9129,8 @@ function StudioInner({
                                   </div>
                                   <p className="font-type text-[9px] leading-snug text-paper/40">
                                     The player picks a verb, then clicks an object — and USE arms an inventory item
-                                    first. Leave every verb on (default) to offer all five; untick the ones this room
-                                    can't answer. Objects reply per verb via each hotspot's <b>🎚 Verb coin</b> box,
+                                    first. Leave every verb on (default) to offer all {extendedOn ? "seven" : "five"}; untick the
+                                    ones this room can't answer. Objects reply per verb via each hotspot's <b>🎚 Verb coin</b> box,
                                     and anything they don't answer gets the story's "that doesn't work" line.
                                   </p>
                                 </>
@@ -10780,8 +10919,10 @@ function StudioInner({
                             })
                           }
                         >
-                          {["look", "take", "talk", "use", "go"].map((c) => (
-                            <option key={c}>{c}</option>
+                          {VERB_IDS.map((c) => (
+                            <option key={c} value={c}>
+                              {VERB_ICON[c]} {VERB_LABEL[c]}
+                            </option>
                           ))}
                         </select>
                       </Field>

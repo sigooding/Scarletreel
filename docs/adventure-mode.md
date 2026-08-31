@@ -43,6 +43,35 @@ Walkable Stage panel). The coin sits bottom-left; the player picks a verb —
 👁 look · ✋ take · 💬 talk · ⚙ use · ➜ go — then clicks the object. Rooms
 without the coin behave exactly as they always did.
 
+**Two extra body-verbs — 👢 kick · 👊 punch — are opt-in.** A room that wants
+them (a biker game, a melee-heavy point-and-click) sets `stage.extendedVerbs:
+true` (Studio: the **👢 Kick · 👊 Punch** toggle). Off (the default), the coin
+stays the classic five regardless of what the hotspots answer, so a visual
+novel or a classic case never sees them. Listing them explicitly in
+`stage.verbs` also works. Hotspots answer them like any other verb: `cursor:
+"kick"` sets the default and the marker icon, and `verbs: { kick: … }` adds
+per-verb flavour. `src/data/fullThrottle.ts` is the reference case.
+
+### Object-first verb menu (Full Throttle's "skull")
+
+Opt-in per room: `stage.objectVerbMenu: true` (Studio: 💀 **Object-first verb
+menu** on the 🎛 Verb-coin panel). Instead of the bottom-left coin (pick a verb,
+then click), the player **clicks the object first** and a small pie-style menu
+of the verbs *that object* answers pops up next to it — Full Throttle's
+flaming-skull gesture. USE expands to the inventory when the object accepts
+items. Off (default) the coin and the classic click-to-activate flow are
+unchanged. `fullThrottle.ts` turns it on for every room.
+
+### The protagonist, defined once
+
+A story can set its walker **story-wide** via `story.playerSprite` (Studio:
+🎮 In-game theme → 🚶 **Player character**): an `image` (emoji / url) and/or a
+`sprite sheet`. Every 🚶 stage scene uses it as the default; a scene that sets
+its own `stage.playerSheet` / `playerImage` overrides it. Purely additive —
+stories that never set it behave exactly as before. `fullThrottle.ts` defines
+Ben here (a four-frame walk sheet sliced from a magenta plate by
+`scripts/make-sprite-sheet.mjs`), so he's set once for the whole case.
+
 **USE arms an item:** pick ⚙ use and the satchel opens in a rail above the
 coin; click an item to arm it, then click what you want to use it on.
 
@@ -139,6 +168,27 @@ stage: {
 
 `depthScale: 0.35` still works exactly as before — it just means "shrink to
 0.65 at the back". Set either end explicitly for a stronger room.
+
+### Directional sprites — walk away / walk towards
+
+By default the walker uses one side-on sprite sheet (or image) and simply
+flips it left/right. But a sheet can also carry **directional** animations for
+facing *away* (up, back to camera) and *towards* (down, at the camera), named
+by convention:
+
+```
+walk      idle        ← side (left/right, mirrored via scaleX)
+walk-up   idle-up     ← facing AWAY (back to camera)
+walk-down idle-down   ← facing TOWARDS (at the camera)
+```
+
+The engine looks up `walk-up`/`walk-down`/`idle-up`/`idle-down` and falls back
+to the side `walk`/`idle` when they're absent, so a sheet with only `walk` and
+`idle` keeps behaving exactly as it always did. In Studio, the 🎞 **Sprite-sheet
+walker** panel shows a live **directional preview** (⬆ away / ⬇ toward / ⬅
+left / ➡ right) so you can check all four facings before you play, and the
+room's floor preview now draws the *actual* walker at the spawn point instead
+of a stand-in emoji.
 
 ### Walk-behind masks — the foreground art IS the mask
 
