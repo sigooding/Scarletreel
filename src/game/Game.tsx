@@ -369,6 +369,18 @@ function cinematicGradeClasses(c: CinematicSettings | undefined): string {
   return out.join(" ");
 }
 
+/** The clean (no-blur) grade filter for SPRITE layers — foreground extras,
+ * the primary foreground subject, hotspot object images, talking portraits
+ * and the stage walker. The plate takes the grade via its cin-grade-* class;
+ * sprites render in layers above it, so without this they'd float ungraded
+ * (full colour over a 1940s black & white plate). Same preset, same filter,
+ * so sprite pixels match the plate exactly. */
+export function spriteGradeStyle(c?: CinematicSettings): React.CSSProperties {
+  const grade = c?.colorGrade ? GRADE_PRESETS[c.colorGrade] : undefined;
+  if (!grade?.filter || grade.filter === "none") return {};
+  return { filter: grade.filter };
+}
+
 /** The split-tone wash + scratch layer that sit ABOVE a graded/filmed plate
  * (also the only grade treatment video cutscenes can show — a video frame
  * can't take a CSS filter). Render inside the same relative container as the
@@ -2045,7 +2057,7 @@ function BeatBackground({
               </div>
             </div>
             {pOn && <ParallaxMidLayers cinematic={l.cinematic} />}
-            <div className={pOn ? "parallax-fg absolute inset-0" : ""}>
+            <div className={`${pOn ? "parallax-fg " : ""}absolute inset-0`} style={spriteGradeStyle(l.cinematic)}>
               <ForegroundExtras cinematic={l.cinematic} />
               <ForegroundLayer cinematic={l.cinematic} />
             </div>
@@ -5580,6 +5592,7 @@ function CasePlayer({
                 loop
                 playsInline
                 className="absolute inset-0 h-full w-full object-cover"
+                style={spriteGradeStyle(bgCinematic)}
               />
               <LightGlow cinematic={bgCinematic} />
               <LensFlareLayer cinematic={bgCinematic} />
@@ -5603,7 +5616,10 @@ function CasePlayer({
         {hasParallax(bgCinematic) && (
           <ParallaxMidLayers key={`par-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
         )}
-        <div className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}>
+        <div
+          className={`absolute inset-0 ${hasParallax(bgCinematic) ? "parallax-fg" : ""}`}
+          style={spriteGradeStyle(bgCinematic)}
+        >
           {/* Additional stacked foreground images (extras) — render BELOW the
               primary subject so the main foregroundImage stays on top. */}
           <ForegroundExtras key={`fge-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
@@ -5683,9 +5699,11 @@ function CasePlayer({
       />
 
       {/* Characters on stage — the active speaker cycles their talking frames;
-          the others hold their resting pose. */}
-      {showStage &&
-        onStage.map((c) => {
+          the others hold their resting pose. Wrapped in a graded layer so the
+          portraits take the scene's colour grade like every other sprite. */}
+      {showStage && (
+        <div className="pointer-events-none absolute inset-0 z-[6]" style={spriteGradeStyle(bgCinematic)}>
+          {onStage.map((c) => {
           const isActive = c.id === activeSpeakerId;
           const frames = (c.talkingFrames ?? []).filter(Boolean);
           return (
@@ -5703,7 +5721,9 @@ function CasePlayer({
               dim={!isActive}
             />
           );
-        })}
+          })}
+        </div>
+      )}
 
       <div className="fx-halftone absolute inset-0" aria-hidden />
       {particleKind !== "none" && <Particles kind={particleKind as "rain" | "smoke" | "storm"} soundOn={soundOn} />}
@@ -5748,16 +5768,29 @@ function CasePlayer({
           the floor, the walking character and the interaction markers, and
           fires hotspots through activateHotspot exactly as a click would.
           While a conversation is open (stageTalking) the stage sleeps. */}
-      {isStage && scene.stage && sceneReady && !scene.isEnding && !overlay && (
-        <Stage
-          key={`stage-${sceneId}`}
-          settings={scene.stage}
-          hotspots={visibleHotspots}
-          unlocked={(hs) => meetsGating(hs.gating, state)}
-          onInteract={(hs) => activateHotspot(hs)}
-          active={stageWalking}
-        />
-      )}
+      {isStage && scene.stage && sceneReady && !scene.isEnding && !overlay && (() => {
+        const stageEl = (
+          <Stage
+            key={`stage-${sceneId}`}
+            settings={scene.stage}
+            hotspots={visibleHotspots}
+            unlocked={(hs) => meetsGating(hs.gating, state)}
+            onInteract={(hs) => activateHotspot(hs)}
+            active={stageWalking}
+          />
+        );
+        // Graded wrapper so the walker sprite matches the plate's colour
+        // grade; only added when a grade is active (a filter would otherwise
+        // change the containing block for no reason).
+        const g = spriteGradeStyle(bgCinematic);
+        return g.filter ? (
+          <div className="pointer-events-none absolute inset-0 z-[45]" style={g}>
+            {stageEl}
+          </div>
+        ) : (
+          stageEl
+        );
+      })()}
 
       {/* STAGE caption bar — showText / locked / entry lines play as a
           subtitle over the floor instead of the centre exam card. */}

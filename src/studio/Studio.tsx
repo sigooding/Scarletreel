@@ -41,7 +41,7 @@ import {
   resolveLensFlare,
   resolveLights,
 } from "../cinematic";
-import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
+import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor, spriteGradeStyle } from "../game/Game";
 import {
   characterOpinion,
   clamp,
@@ -974,7 +974,7 @@ function CinematicPreview({
         </div>
       </div>
       {pOn && <ParallaxMidLayers cinematic={cinematic} resolve={media} />}
-      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"}>
+      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"} style={spriteGradeStyle(cinematic)}>
         <ForegroundExtras cinematic={cinematic} resolve={media} />
         <ForegroundLayer cinematic={cinematic} resolve={media} />
       </div>
@@ -1127,7 +1127,7 @@ function ForegroundPositionEditor({
           startRef.current = null;
         }}
       >
-        <div key={replayEpoch ?? 0}>
+        <div key={replayEpoch ?? 0} className="absolute inset-0" style={spriteGradeStyle(cinematic)}>
           <ForegroundLayer cinematic={cinematic} resolve={media} />
         </div>
         {/* crosshair marker at the anchor / focus point (also the pin) */}
