@@ -47,6 +47,33 @@ const PROMPT_IDEAS = [
   "Vintage detective office, venetian blinds",
 ];
 
+/** One-click sprite-sheet starters. Each generates frames side by side on a
+ * flat magenta backdrop — cut the result out with Media ▸ ✂ Sprite Cutout Lab,
+ * then set the frame grid in the 🎞 Sheet slicer / sprite sheet editor. They
+ * skip the noir style suffix because each prompt carries its own style. */
+const SPRITE_SHEET_PROMPTS: { label: string; prompt: string }[] = [
+  {
+    label: "🗣 Talking portrait (3 frames)",
+    prompt:
+      "Three separate side-by-side waist-up portraits of the SAME character on one row: a 1950s noir character (describe them here). Painted classic Hollywood style, identical pose and lighting in all three, ONLY the mouth differs: panel 1 mouth open speaking, panel 2 mouth half-open mid-word, panel 3 mouth closed. Clear gaps of pure flat magenta (#FF00FF) between the figures and as the entire background.",
+  },
+  {
+    label: "🚶 Walk cycle (6 frames)",
+    prompt:
+      "Six side-by-side frames of the SAME character walking, full body, side view facing right, one complete walk cycle (contact, down, passing, up positions). Identical size and lighting in every frame, evenly spaced on one row. Painted cinematic style. Pure flat magenta (#FF00FF) background everywhere, clear gaps between frames.",
+  },
+  {
+    label: "💡 Flickering sign (3 frames)",
+    prompt:
+      "Three side-by-side frames of the SAME vintage neon sign: frame 1 fully lit and glowing, frame 2 half-dim, frame 3 dark with only a faint tube outline. Identical size and position in every frame, evenly spaced on one row. Painted cinematic style. Pure flat magenta (#FF00FF) background, clear gaps between frames.",
+  },
+  {
+    label: "🚗 Vehicle sprite (front view)",
+    prompt:
+      "A 1949 American sedan seen directly head-on from the front at night, headlights glowing, driver silhouetted through the windshield. Painted cinematic noir style, the entire car fully visible and centered. Solid flat pure magenta (#FF00FF) background all around, crisp edges, no shadows on the background.",
+  },
+];
+
 export function AiImageStudio({ storyId }: { storyId: string }) {
   const [settings, setSettings] = useState<AiImageSettings>(loadAiSettings);
   const [prompt, setPrompt] = useState("");
@@ -254,6 +281,28 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
             {idea}
           </button>
         ))}
+      </div>
+      <div className="space-y-1 border border-cyan-neon/25 bg-cyan-neon/5 p-1.5">
+        <div className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon">🎞 Sprite sheet starters</div>
+        <div className="flex flex-wrap gap-1">
+          {SPRITE_SHEET_PROMPTS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => {
+                setPrompt(p.prompt);
+                setApplyStyle(false); // the preset carries its own style; keep the magenta backdrop clean
+              }}
+              className="border border-cyan-neon/30 px-1.5 py-0.5 font-type text-[9px] text-cyan-neon/80 hover:border-cyan-neon hover:text-cyan-neon"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <p className="font-type text-[8px] leading-snug text-paper/45">
+          Frames come out on a flat magenta backdrop: cut them out in Media ▸ ✂ Sprite Cutout Lab, then set the
+          frame grid in Media ▸ 🎞 Sheet slicer or the scene's 🎞 Sprite sheet editor. Edit the prompt first —
+          swap in your own character description where it says so.
+        </p>
       </div>
       <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
         <input type="checkbox" checked={applyStyle} onChange={(e) => setApplyStyle(e.target.checked)} />

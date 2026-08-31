@@ -69,6 +69,7 @@ import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } f
 import { ImagePicker } from "./ImagePicker";
 import { EXTRA_PRESET, SheetLab, SpriteSheetControls, TALKING_PRESET, WALKER_PRESET } from "./SheetEditor";
 import { SpriteCutoutLab } from "./SpriteCutout";
+import { SpriteBoxEditor } from "./SpriteBoxEditor";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
 import { ActEditor, ACT_TINTS } from "./ActEditor";
@@ -2019,12 +2020,38 @@ function CinematicControls({
         )}
       </CollapsibleSection>
 
-      {/* ---- additional foreground images (stacked extras) ---- */}
-      <CollapsibleSection id="cin-foreground-extras" title="👥 Additional foreground images" titleClass="text-neon">
+      {/* ---- sprite sheet editor: stacked foreground sprites ---- */}
+      <CollapsibleSection id="cin-foreground-extras" title="🎞 Sprite sheet editor — foreground sprites" titleClass="text-neon">
         <p className="font-type text-[9px] text-paper/40">
-          Layer more characters, props or frames on top of the plate, each independently positioned, scaled and
-          mirrored. They render just behind the primary foreground above and parallax by their own depth.
+          Layer sprites over the plate — characters, props, cars, signs. Each one is positioned, scaled and
+          mirrored on the preview below, can loop a sprite-sheet animation, and parallaxes by its own depth.
         </p>
+        <div className="space-y-1 border border-gold/25 bg-gold/5 p-2 font-type text-[9px] leading-snug text-paper/55">
+          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">📐 How to make a sprite sheet (the whole recipe)</div>
+          <p>
+            <b className="text-paper/75">1 · One PNG, equal frames.</b> Put every frame of the animation side by side in
+            one transparent PNG. Every frame must be EXACTLY the same size. Frames count 0, 1, 2… left to right
+            (extra rows continue the count).
+          </p>
+          <p>
+            <b className="text-paper/75">2 · The maths.</b> 3 frames, each 200 wide × 300 tall → one 600 × 300 image.
+            In the controls below, Frame W/H is the size of a SINGLE frame (200 × 300) — not the whole image.
+          </p>
+          <p>
+            <b className="text-paper/75">3 · Good frame sizes.</b> Talking portraits ≈ 150–260 × 384 · props and signs
+            ≈ 100–300 px · big set pieces (a car) up to ≈ 640 px. Keep the finished sheet under ≈ 4096 px a side.
+          </p>
+          <p>
+            <b className="text-paper/75">4 · Name the animations.</b> Foreground sprites here play <b>loop</b> on
+            repeat · stage walkers use <b>walk</b> + <b>idle</b> · talking portraits use <b>talk</b> + <b>rest</b>.
+            An animation is just a list of frame numbers, e.g. loop = 0, 1, 2, 1.
+          </p>
+          <p>
+            <b className="text-paper/75">5 · Easy ways to get frames.</b> The 🤖 AI tab has one-click sprite-sheet
+            prompts (frames on a flat magenta backdrop) · Media ▸ ✂ Sprite Cutout Lab turns any art into a
+            transparent sprite · Media ▸ 🎞 Sheet slicer helps you find the frame grid of a finished sheet.
+          </p>
+        </div>
         {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
           const update = (patch: Partial<ForegroundExtra>) => {
             const n = [...(c.foregroundExtras ?? [])];
@@ -2050,6 +2077,19 @@ function CinematicControls({
               value={extra.image || undefined}
               placeholder="Pick a transparent image…"
               onChange={(url) => update({ image: url ?? "" })}
+            />
+            {/* Live preview — drag the sprite onto the plate, corner-drag to resize. */}
+            <SpriteBoxEditor
+              mode="extra"
+              backgroundUrl={previewUrl}
+              image={media(extra.image) ?? extra.image ?? undefined}
+              sheet={extra.sheet}
+              resolve={media}
+              x={extra.x ?? 50}
+              y={extra.y ?? 80}
+              scale={extra.scale ?? 1}
+              flip={!!extra.flip}
+              onChange={(p) => update(p)}
             />
             <div className="grid grid-cols-2 gap-2">
               <Field label={`Position X ${extra.x ?? 50}% · Y ${extra.y ?? 80}%`}>
@@ -3498,6 +3538,32 @@ function CharacterEditor({
                 />
               </div>
 
+              {/* Live preview over the opening scene — drag to place, corner-drag to resize. */}
+              <SpriteBoxEditor
+                mode="talking"
+                backgroundUrl={(() => {
+                  const bg = story.scenes.find((s) => s.id === story.startSceneId)?.background;
+                  return bg ? media(bg) ?? bg : undefined;
+                })()}
+                image={(() => {
+                  const f = c.talkingRest ?? (c.talkingFrames ?? []).find(Boolean);
+                  return f ? media(f) ?? f : undefined;
+                })()}
+                sheet={c.talkingSheet}
+                resolve={media}
+                x={c.talkingX ?? 50}
+                y={c.talkingY ?? 0}
+                scale={c.talkingScale ?? 1}
+                flip={!!c.talkingFlip}
+                onChange={(p) => {
+                  const next = deepClone(story);
+                  const ch = next.characters.find((x) => x.id === c.id)!;
+                  if (p.x !== undefined) ch.talkingX = p.x;
+                  if (p.y !== undefined) ch.talkingY = p.y;
+                  if (p.scale !== undefined) ch.talkingScale = p.scale;
+                  onUpdate(next);
+                }}
+              />
               <div className="grid grid-cols-2 gap-2">
                 <Field label={`Position X ${c.talkingX ?? 50}%`}>
                   <input type="range" min={0} max={100} step={1} className="w-full accent-pink-500" value={c.talkingX ?? 50}
