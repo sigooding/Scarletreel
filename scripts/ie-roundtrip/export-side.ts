@@ -107,6 +107,22 @@ scene0.stage = {
     frameHeight: 48,
     animations: { idle: { frames: [0] }, walk: { frames: [0, 1, 2, 3], fps: 10 } },
   },
+  npcs: [
+    {
+      id: "npc-ie",
+      image: await up("image", "stage-npc", png("stage-npc")),
+      x: 60,
+      y: 88,
+      facing: "left",
+      patrol: [{ x: 72, y: 88, pause: 2 }],
+      sheet: {
+        image: await up("image", "stage-npc-sheet", png("stage-npc-sheet")),
+        frameWidth: 32,
+        frameHeight: 48,
+        animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 8 } },
+      },
+    },
+  ],
 };
 
 // Dialogue beats (incl. a per-beat background override).

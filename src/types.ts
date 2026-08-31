@@ -1082,6 +1082,36 @@ export interface StageSettings {
    *  Essential on a wide world with several doors — walk in from the bar
    *  and you stand at the bar's door, not back at the dumpster. */
   entrySpawns?: Record<string, { x: number; y: number }>;
+  /** AMBIENT NPCS — scene actors that idle and (optionally) walk a patrol:
+   *  the bartender polishing a glass, a barfly pacing, a street vendor
+   *  swaying on their stool. Pure stage life — depth-scaled and z-sorted
+   *  with the walker, scrolling with the camera on wide worlds. Interaction
+   *  stays on hotspots; an NPC's sheet is the same SpriteSheet the walker
+   *  uses (`idle` at rest, `walk` while patrolling, each falling back to
+   *  the other). */
+  npcs?: StageNpc[];
+}
+
+/** An ambient scene actor (see StageSettings.npcs). */
+export interface StageNpc {
+  id: string;
+  /** Static fallback art (image url / `asset:` / `emoji:`) when no sheet. */
+  image?: string;
+  /** Sprite sheet — `idle` at rest, `walk` while patrolling. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Spawn position, % of the WIDE world (x 0–worldWidth, y 0–100). */
+  x: number;
+  y: number;
+  /** Flat scale on top of the depth scaling (default 1). */
+  scale?: number;
+  /** Initial facing (default "right"). */
+  facing?: "left" | "right";
+  /** Patrol route: walk from the spawn to each waypoint in turn, PAUSE idle
+   *  `pause` seconds at each, then loop back to the start. Omit to stand and
+   *  idle forever (the classic bartender). */
+  patrol?: { x: number; y: number; pause?: number }[];
+  /** Walk speed in world-% / second (default: the room's walker speed). */
+  speed?: number;
 }
 
 /** One walk-off-screen exit of a stage room (see StageSettings.exitEdges). */

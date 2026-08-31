@@ -44,6 +44,19 @@ const BEN2: SpriteSheet = {
   pixelated: true,
 };
 
+/** Barfly — an ambient NPC (the new `stage.npcs` system): idles at each
+ *  waypoint (frame 0) and walks a patrol between them (frames 1–3). */
+const BARFLY2: SpriteSheet = {
+  image: "/assets/sprites/ft2-barfly.png",
+  frameWidth: 151,
+  frameHeight: 256,
+  animations: {
+    idle: { frames: [0] },
+    walk: { frames: [1, 2, 3], fps: 8 },
+  },
+  pixelated: true,
+};
+
 /** Shared walker settings — every room opts into the Full Throttle controls:
  *  object-first (💀 skull) + hold-to-open, kick/punch, and the walker itself
  *  comes from the story-wide playerSprite (Ben, defined once). */
@@ -359,6 +372,22 @@ export const FULL_THROTTLE_CORVILLE: Story = {
         exitEdges: { left: { targetSceneId: "ft2_alley", label: "the alley" } },
         entrySpawns: { ft2_alley: { x: 44, y: 88 } },
         enterCaption: "Empty, except for the bartender. The Polecats are long gone.",
+        // 🚶 AMBIENT NPC — the new idle/walk-cycle system: a barfly paces the
+        // floor (walk cycle), pausing to drink at each end (idle), forever.
+        npcs: [
+          {
+            id: "ft2_barfly",
+            sheet: BARFLY2,
+            x: 60,
+            y: 88,
+            facing: "left",
+            patrol: [
+              { x: 34, y: 88, pause: 3.5 },
+              { x: 82, y: 88, pause: 4 },
+            ],
+            speed: 12,
+          },
+        ],
       },
       hotspots: [
         {

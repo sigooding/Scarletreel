@@ -565,11 +565,13 @@ if (clickByText(/Full Throttle — The Corville Run/i)) {
   const reachThere = barMarkers.some((b) => /reach over the bar/.test(b.getAttribute("aria-label") || ""));
   const quohogThere = barMarkers.some((b) => /quohog/i.test(b.getAttribute("aria-label") || ""));
   const grabLocked = barMarkers.some((b) => /grab quohog/i.test(b.getAttribute("aria-label") || "") && /🔒/.test(b.textContent || ""));
+  // The ambient barfly NPC (idle/walk cycle) renders its sheet in the bar.
+  const barflyThere = /ft2-barfly\.png/.test(container.innerHTML);
   console.log("\\n=== FULL THROTTLE — THE CORVILLE RUN (new version) ===");
   console.log("  dumpster:", inDumpster, "| lid punched:", punched, "| climbed out:", climbed);
   console.log("  wide 200% + camera:", wideWorld, "| bend marker:", bendThere);
-  console.log("  in bar:", inBar, "| reach-over pose marker:", reachThere, "| topic-list bartender:", quohogThere, "| grab locked:", grabLocked);
-  if (!inDumpster || !punched || !climbed || !wideWorld || !bendThere || !inBar || !reachThere || !quohogThere) failed = true;
+  console.log("  in bar:", inBar, "| reach-over pose marker:", reachThere, "| topic-list bartender:", quohogThere, "| grab locked:", grabLocked, "| barfly NPC:", barflyThere);
+  if (!inDumpster || !punched || !climbed || !wideWorld || !bendThere || !inBar || !reachThere || !quohogThere || !barflyThere) failed = true;
   for (let i = problems.length - 1; i >= 0; i--) {
     if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
   }

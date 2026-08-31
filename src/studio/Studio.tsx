@@ -146,6 +146,7 @@ import type {
   MapLocation,
   MeterKey,
   SceneNode,
+  StageNpc,
   Story,
 } from "../types";
 
@@ -10406,6 +10407,115 @@ function StudioInner({
                                 onClick={() => setObs([...obs, { x: 42, y: 70, w: 16, h: 12 }])}
                               >
                                 ＋ add obstacle
+                              </button>
+                            </div>
+                          );
+                        })()}
+                        {/* ---- ambient NPCs (idle / walk cycles) ---- */}
+                        {(() => {
+                          const st = scene.stage!;
+                          const npcs = st.npcs ?? [];
+                          const setNpcs = (list: StageNpc[]) =>
+                            updateScene(scene.id, { stage: { ...st, npcs: list.length ? list : undefined } });
+                          const setNpc = (i: number, patch: Partial<StageNpc>) =>
+                            setNpcs(npcs.map((n, j) => (j === i ? { ...n, ...patch } : n)));
+                          const setPatrol = (i: number, patrol: { x: number; y: number; pause?: number }[]) =>
+                            setNpc(i, { patrol: patrol.length ? patrol : undefined });
+                          return (
+                            <div className="space-y-2 border border-teal-400/30 bg-teal-400/5 p-2">
+                              <div className="font-pulp text-[9px] uppercase tracking-widest text-teal-300">
+                                🚶 Ambient NPCs (idle / walk cycles)
+                              </div>
+                              <p className="font-type text-[9px] leading-snug text-paper/45">
+                                Living set-dressing that idles and can patrol — a bartender polishing a glass, a barfly
+                                pacing the floor. Give one a sprite sheet with <b>idle</b> + <b>walk</b> animations: it
+                                idles at each waypoint and walks between them; no patrol stands it still forever.
+                                Interaction stays on the <b>Hotspots</b> tab — NPCs are pure stage life.
+                              </p>
+                              {npcs.map((n, i) => (
+                                <div key={i} className="space-y-1 border border-teal-400/20 p-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      className={`${inputCls} w-32`}
+                                      value={n.id}
+                                      title="NPC id"
+                                      onChange={(e) => setNpc(i, { id: e.target.value })}
+                                    />
+                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
+                                      facing
+                                      <select
+                                        className={inputCls}
+                                        value={n.facing ?? "right"}
+                                        onChange={(e) => setNpc(i, { facing: e.target.value as "left" | "right" })}
+                                      >
+                                        <option value="right">right</option>
+                                        <option value="left">left</option>
+                                      </select>
+                                    </label>
+                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
+                                      scale
+                                      <input
+                                        type="number"
+                                        min={0.15}
+                                        max={3}
+                                        step={0.05}
+                                        className={`${inputCls} w-14`}
+                                        value={n.scale ?? 1}
+                                        onChange={(e) => setNpc(i, { scale: Number(e.target.value) })}
+                                      />
+                                    </label>
+                                    <button
+                                      type="button"
+                                      className="ml-auto shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                      title="Remove this NPC"
+                                      onClick={() => setNpcs(npcs.filter((_, j) => j !== i))}
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="font-type text-[9px] text-paper/50">spawn</span>
+                                    <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="X %" value={Math.round(n.x)} onChange={(e) => setNpc(i, { x: Number(e.target.value) })} />
+                                    <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Y %" value={Math.round(n.y)} onChange={(e) => setNpc(i, { y: Number(e.target.value) })} />
+                                    <span className="font-type text-[9px] text-paper/50">speed</span>
+                                    <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s)" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
+                                  </div>
+                                  <SpriteSheetControls
+                                    value={n.sheet}
+                                    storyId={story.id}
+                                    preset={WALKER_PRESET}
+                                    onChange={(sheet) => setNpc(i, { sheet: sheet || undefined })}
+                                  />
+                                  <div className="space-y-1 border border-teal-400/15 p-1.5">
+                                    <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
+                                      🚏 Patrol (leave empty to idle forever)
+                                    </div>
+                                    {(n.patrol ?? []).map((wp, wi) => (
+                                      <div key={wi} className="flex items-center gap-1">
+                                        <span className="w-5 font-pulp text-[8px] text-paper/40">{wi + 1}</span>
+                                        <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="Waypoint X %" value={Math.round(wp.x)} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, x: Number(e.target.value) } : w)))} />
+                                        <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Waypoint Y %" value={Math.round(wp.y)} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, y: Number(e.target.value) } : w)))} />
+                                        <span className="font-type text-[8px] text-paper/50">pause</span>
+                                        <input type="number" min={0} max={60} step={0.5} className={`${inputCls} w-12`} title="Idle seconds here" value={wp.pause ?? 2} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, pause: Number(e.target.value) } : w)))} />
+                                        <button type="button" className="shrink-0 px-1 font-pulp text-[9px] text-crimson" onClick={() => setPatrol(i, (n.patrol ?? []).filter((_, k) => k !== wi))}>✕</button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      className="w-full border border-teal-400/30 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-teal-300 hover:bg-teal-400/10"
+                                      onClick={() => setPatrol(i, [...(n.patrol ?? []), { x: Math.round(n.x + 20), y: Math.round(n.y), pause: 2 }])}
+                                    >
+                                      ＋ add waypoint
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="w-full border border-teal-400/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-teal-300 hover:bg-teal-400/10"
+                                onClick={() => setNpcs([...npcs, { id: `npc_${Date.now().toString(36)}`, image: "emoji:🚶", x: 50, y: 88, scale: 1 }])}
+                              >
+                                ＋ add ambient NPC
                               </button>
                             </div>
                           );

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Hotspot, StageExitEdge, StageSettings } from "../types";
+import type { Hotspot, StageExitEdge, StageNpc, StageSettings } from "../types";
 import { CURSOR_ICON, hotspotAnswersVerb } from "../logic";
 import {
   STAGE2D_DEFAULT_REACH,
@@ -79,6 +79,120 @@ export interface CoinItem {
   name: string;
   icon?: string;
 }
+
+/** An ambient scene actor — idles (loops its `idle` animation) and, when it
+ *  carries a `patrol`, walks between the waypoints (switching to `walk`) and
+ *  pauses idle at each before looping back to the start. Rendered exactly
+ *  like the walker: depth-scaled by its y, flipped by facing, and z-sorted by
+ *  its feet so it overlaps the player the way people overlap in a room. */
+function StageNpcActor({
+  npc,
+  floor,
+  settings,
+}: {
+  npc: StageNpc;
+  floor: { top: number; bottom: number };
+  settings: StageSettings;
+}) {
+  const [pos, setPos] = useState({ x: npc.x, y: npc.y });
+  const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
+  const [walking, setWalking] = useState(false);
+  const posRef = useRef(pos);
+  posRef.current = pos;
+
+  const hasSheet = sheetDrawable(npc.sheet);
+
+  // Patrol loop — a single rAF drives the walk cycle. Waypoints are authored
+  // on the floor, so movement is a straight line between them (no A*, no
+  // obstacle routing — ambient NPCs keep it simple); speed is depth-scaled so
+  // a distant NPC doesn't skate.
+  useEffect(() => {
+    const waypoints = npc.patrol && npc.patrol.length > 0 ? npc.patrol : null;
+    if (!waypoints) return; // no patrol — idle forever, nothing to drive
+    let raf = 0;
+    let last = performance.now();
+    let idx = 0;
+    let idleUntil = 0;
+    const speed = npc.speed ?? settings.speed ?? STAGE2D_DEFAULT_SPEED;
+    const step = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (now < idleUntil) {
+        setWalking(false);
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const wp = waypoints[idx];
+      const cur = posRef.current;
+      const dx = wp.x - cur.x;
+      const dy = wp.y - cur.y;
+      const dist = Math.hypot(dx, dy);
+      if (Math.abs(dx) > 0.05) setFacing(dx > 0 ? "right" : "left");
+      if (dist <= 0.5) {
+        setPos({ x: wp.x, y: wp.y });
+        setWalking(false);
+        const pause = (wp.pause ?? 2) * 1000;
+        idx = (idx + 1) % waypoints.length;
+        idleUntil = now + pause;
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const t = Math.min(1, (speed * dt) / dist);
+      setPos({ x: cur.x + dx * t, y: cur.y + dy * t });
+      setWalking(true);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [npc.id, npc.patrol, npc.speed, settings.speed]);
+
+  const depth = stageSpriteScale(pos.y, floor, settings) * (npc.scale ?? 1);
+  const flip = facing === "left" ? -1 : 1;
+  const isEmoji = (npc.image ?? "").startsWith("emoji:");
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${pos.x}%`,
+        top: `${pos.y}%`,
+        transform: `translate(-50%,-92%) scaleX(${flip}) scale(${depth})`,
+        zIndex: 50 + Math.round(pos.y),
+      }}
+    >
+      {hasSheet ? (
+        <SheetSprite
+          sheet={npc.sheet!}
+          anim={walking ? "walk" : "idle"}
+          fallbacks={walking ? ["idle"] : ["walk"]}
+          height={96}
+          freezeOnFallback={!walking}
+          className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]"
+        />
+      ) : npc.image ? (
+        isEmoji ? (
+          <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]">
+            {npc.image!.slice("emoji:".length)}
+          </span>
+        ) : (
+          <img
+            src={assetUrl(npc.image!)}
+            alt=""
+            draggable={false}
+            className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]"
+          />
+        )
+      ) : (
+        <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]">🚶</span>
+      )}
+      {/* ground shadow (not mirrored) */}
+      <span
+        className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]"
+        style={{ transform: `scaleX(${flip})` }}
+      />
+    </div>
+  );
+}
+
 
 export function Stage({
   settings,
@@ -1133,6 +1247,14 @@ export function Stage({
             </div>
           );
         })()}
+
+        {/* AMBIENT NPCS — scene actors that idle and (optionally) patrol,
+            depth-scaled and z-sorted with the walker so everyone overlaps
+            like people standing in a room. Pure stage life: they don't take
+            input and don't gate anything. */}
+        {(settings.npcs ?? []).map((npc) => (
+          <StageNpcActor key={npc.id} npc={npc} floor={floor} settings={settings} />
+        ))}
       </div>
 
       {/* EDGE ARROWS — fixed to the VIEWPORT (not the world): the red/yellow

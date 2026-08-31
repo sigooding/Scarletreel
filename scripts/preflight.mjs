@@ -203,6 +203,10 @@ function assetRefs(story) {
       sc.stage.playerImage?.startsWith("/") && refs.add(sc.stage.playerImage);
       (sc.stage.walkFrames ?? []).forEach((f) => f.startsWith("/") && refs.add(f));
       sc.stage.playerSheet?.image?.startsWith("/") && refs.add(sc.stage.playerSheet.image);
+      (sc.stage.npcs ?? []).forEach((n) => {
+        n.image?.startsWith("/") && refs.add(n.image);
+        n.sheet?.image?.startsWith("/") && refs.add(n.sheet.image);
+      });
     }
   });
   story.characters.forEach((c) => {

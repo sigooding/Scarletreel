@@ -2119,6 +2119,12 @@ export function validateStory(story: Story): ValidationIssue[] {
         spriteSheetIssues(sc.stage.playerSheet, "walker sprite sheet", ["walk", "idle"]).forEach((msg) =>
           issues.push({ severity: "warning", sceneId: sc.id, message: `${label} ${msg}` })
         );
+      (sc.stage.npcs ?? []).forEach((npc) => {
+        if (!npc.sheet) return;
+        spriteSheetIssues(npc.sheet, `NPC "${npc.id}" sprite sheet`, ["idle", "walk"]).forEach((msg) =>
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label} ${msg}` })
+        );
+      });
     }
     // Conversations that end in nothing: a stage conversation with no
     // choices and no after-beat route just closes — fine — but if the ONLY

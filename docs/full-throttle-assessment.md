@@ -159,11 +159,29 @@ Stories that never set `topics` are 100% unchanged — the scene's linear
 a 🗣 Start-conversation marker gains a **💬 Topic-list conversation** editor
 (label, gate, "askable again", "sets flag", and per-topic lines).
 
-### D. Static NPCs
+### D. ✅ DONE — ambient NPC idle/walk cycles (`stage.npcs`)
 
-Only the player walks. Quohog stands behind the bar; in the original, scene
-NPCs idle (polish the glass) and react. The engine has sprite sheets and
-foreground extras but no NPC schedule/walk-cycle (documented gap #4).
+Scene NPCs are no longer frozen props. A room can now list **ambient NPCs**
+(`stage.npcs`, opt-in): each is a living actor that **idles** (loops its
+`idle` animation) and — when it carries a `patrol` — **walks a route**
+between waypoints (switching to `walk`), pausing idle at each before looping
+back. They use the exact same `SpriteSheet` model as the walker (`idle` /
+`walk`, each falling back to the other), and are depth-scaled by their y and
+z-sorted by their feet, so they overlap the player the way people overlap in
+a room — and scroll with the camera on wide worlds. NPCs are pure
+set-dressing: interaction still lives on hotspots (Quohog is a hotspot, and
+a hotspot's own `sheet` already loops a "polish the glass" idle).
+
+- **`StageNpc`**: `id` · `sheet` (or static `image`/`emoji:`) · `x`/`y` spawn
+  · `facing` · `scale` · `speed` · `patrol: { x, y, pause? }[]`.
+- No `patrol` = stand and idle forever (the classic bartender).
+- Studio: the 🚶 Walkable Stage panel gained an **🚶 Ambient NPCs** editor
+  (add/remove, sheet via the same sprite-sheet controls, spawn/facing/scale/
+  speed, and a per-NPC waypoint list).
+- `Full Throttle — The Corville Run` ships a patrolling **barfly** in the
+  Kickstand (`ft2_barfly`, `/assets/sprites/ft2-barfly.png`): he paces the
+  floor, drinking at each end. Engine tests assert the sheet + patrol shape;
+  the DOM smoke test confirms he renders in the bar.
 
 ### E. Inventory as a right-click skull
 
@@ -196,9 +214,9 @@ mode is a good match visually; what's missing is **right-click-to-open** and a
 | 3 | ~~Walk-off-screen edge exits + camera~~ **DONE (wide worlds, edge arrows, entry spawns — see §A)** | — |
 | 4 | ~~Bike/combat minigame~~ **🔶 PARTLY — QTE duel with a real game-over (see §B); no vehicle locomotion yet** | — |
 | 5 | ~~Topic-list dialogue~~ **DONE (opt-in `topics[]` — see §C)** | — |
-| 6 | NPC schedules / walk cycles | medium |
+| 6 | ~~NPC schedules / walk cycles~~ **DONE (ambient `stage.npcs` — see §D)** | — |
 
-The next highest-leverage change is **#6** — NPC idle/walk cycles so Quohog
-(and any scene NPC) can polish a glass, sway, or react instead of standing
-frozen — followed by the **bike-riding locomotion** minigame, the last big
-piece of Full Throttle's feel.
+The remaining Full Throttle gaps are the two "feel" pieces the engine still
+lacks: the **bike-riding locomotion** minigame (the ride is a QTE cutscene, not
+steering — see §B) and the **right-click inventory** (skull-in-the-mouth,
+use-item-on-item at the cursor — see §E).

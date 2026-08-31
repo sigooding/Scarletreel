@@ -1870,6 +1870,14 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // WALK-OFF EDGE: the bar's left edge walks back to the alley.
   check("ft2: the bar has a left-edge exit to the alley", byId.get("ft2_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft2_alley");
 
+  // AMBIENT NPC: the bar has a patrolling barfly with idle + walk animations.
+  const barfly = byId.get("ft2_bar")!.stage!.npcs?.find((n) => n.id === "ft2_barfly");
+  check("ft2: the bar has an ambient NPC", !!barfly);
+  check("ft2: the NPC carries a sprite sheet with idle + walk", !!barfly && !!barfly.sheet?.animations?.idle && !!barfly.sheet?.animations?.walk);
+  check("ft2: the NPC walks a patrol (≥2 waypoints)", !!barfly && (barfly.patrol?.length ?? 0) >= 2);
+  check("ft2: the NPC sheet validates clean", !!barfly && !!barfly.sheet && spriteSheetIssues(barfly.sheet, "npc", ["idle", "walk"]).length === 0);
+  check("ft2: no ambient NPC errors in the story check", ft2Issues.filter((i) => i.severity === "error").length === 0);
+
   // PUZZLE CHAIN (flag reachability, end to end).
   check("ft2: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft2_keys"] }, st));
   check("ft2: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft2_free"] }, st));

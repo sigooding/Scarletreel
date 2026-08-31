@@ -37,11 +37,13 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * REMAINING GAPS (ranked — see the assessment doc):
  *   1. No bike-riding locomotion — the Rottwheeler duel is a QTE fight, the
  *      crash is narrated (the assessment's planned minigame is partly in).
- *   2. Static NPCs — Quohog stands behind the bar; no idle/walk cycle.
- *   3. Inventory opens as a bottom-left "Jacket", not a right-click skull.
+ *   2. Inventory opens as a bottom-left "Jacket", not a right-click skull.
  *
- * Topic-list dialogue (the old #3) is now IN: Quohog's conversation is a
- * hub of askable questions (action.topics) — the LucasArts bartender.
+ * Topic-list dialogue and ambient NPC idle/walk cycles are now IN:
+ *   • Quohog's conversation is a hub of askable questions (action.topics) —
+ *     the LucasArts bartender.
+ *   • Scene NPCs idle and patrol via stage.npcs (see the Corville Run's
+ *     barfly in fullThrottleCorville.ts).
  */
 
 /** Ben's walk cycle — four frames, sliced from a flat-magenta plate by
