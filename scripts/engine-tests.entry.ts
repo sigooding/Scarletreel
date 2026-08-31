@@ -106,6 +106,7 @@ import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframe
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
 import { FULL_THROTTLE } from "../src/data/fullThrottle";
+import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
 import { THROTTLE_ASH } from "../src/data/throttleAsh";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
@@ -1807,6 +1808,99 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("ft: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
   check("ft: the skull pie wears the story's own sprite", S.verbMenuIcon === "/img/ft-skull.png");
   check("ft: no other story opts into the hold gesture", THROTTLE_ASH.scenes.every((sc) => !sc.stage?.objectMenuHold) && !THROTTLE_ASH.verbMenuIcon);
+}
+
+/* ================================================================== */
+/*  4c. Full Throttle — The Corville Run (new version) BETA TEST        */
+/* ================================================================== */
+// The reimagined FT exercises every engine feature at once: a NEW sprite
+// sheet with named POSE animations, a scene default pose (crouch), transient
+// setPlayerPose hotspots (bend/reach), the hold-to-open skull pie with a NEW
+// centrepiece, a 200%-wide world with entry spawns, walk-off edge exits, a
+// point-stretched walk path, A* obstacles, topic-list dialogue, and a QTE
+// duel with a game-over branch.
+{
+  const S = FULL_THROTTLE_CORVILLE;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+
+  // The story validates cleanly and is registered in the catalogue.
+  check("ft2: story validates (no errors)", validateStory(S).filter((i) => i.severity === "error").length === 0, validateStory(S).slice(0, 4));
+  check("ft2: starts on the credits", S.startSceneId === "ft2_credits" && byId.get("ft2_credits")!.nodeType === "credits");
+
+  // NEW SPRITE + POSES: the player sprite is a sheet with the pose animations
+  // the hotspots drive, and every transient pose is a known animation.
+  const sheet = S.playerSprite?.sheet;
+  check("ft2: the player is a sprite sheet (not an emoji)", !!sheet && !!sheet.image && sheet.frameWidth > 0 && sheet.frameHeight > 0);
+  check("ft2: the sheet has all five pose animations", sheet && ["idle", "walk", "bend", "crouch", "reach"].every((a) => !!(sheet.animations as Record<string, unknown>)[a]));
+
+  // SCENE DEFAULT POSE: the dumpster starts Ben in a crouch.
+  check("ft2: the dumpster defaults Ben to a crouch", byId.get("ft2_dump")!.stage!.playerPose === "crouch");
+
+  // TRANSIENT POSES: bend (alley) and reach (bar) are setPlayerPose actions.
+  check("ft2: looking under the dumpster is a transient bend", hs("ft2_alley", "ft2h_under").action.type === "setPlayerPose" && hs("ft2_alley", "ft2h_under").action.playerPose === "bend" && hs("ft2_alley", "ft2h_under").action.playerPoseOnce === true);
+  check("ft2: reaching over the bar is a transient reach", hs("ft2_bar", "ft2h_reach").action.type === "setPlayerPose" && hs("ft2_bar", "ft2h_reach").action.playerPose === "reach");
+
+  // SKULL PIE: hold-to-open everywhere object-first is on, with the NEW icon.
+  check("ft2: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
+  check("ft2: the skull pie wears the new sprite", S.verbMenuIcon === "/assets/sprites/ft2-skull.png");
+  check("ft2: extended verbs (kick/punch) are on in every stage", S.scenes.filter((s) => s.nodeType === "stage").every((s) => s.stage!.extendedVerbs === true));
+
+  // WIDE WORLD + CAMERA: the alley is a 200% strip with per-source spawns.
+  const alley = byId.get("ft2_alley")!;
+  check("ft2: the alley is a wide world", alley.stage!.worldWidth === 200);
+  check("ft2: entry spawns depend on where you came from", alley.stage!.entrySpawns!.ft2_dump?.x === 8 && alley.stage!.entrySpawns!.ft2_bar?.x === 168);
+
+  // WALK PATH + OBSTACLES: the bar uses a point-stretched path, the alley has
+  // obstacles to route around.
+  check("ft2: the bar uses a point-stretched walk path", (byId.get("ft2_bar")!.stage!.floorPoints?.length ?? 0) >= 4);
+  check("ft2: the alley has A* obstacles", (alley.stage!.obstacles?.length ?? 0) >= 1);
+
+  // WALK-OFF EDGE: the bar's left edge walks back to the alley.
+  check("ft2: the bar has a left-edge exit to the alley", byId.get("ft2_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft2_alley");
+
+  // PUZZLE CHAIN (flag reachability, end to end).
+  check("ft2: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft2_keys"] }, st));
+  check("ft2: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft2_free"] }, st));
+  apply(hs("ft2_dump", "ft2h_lid").action);
+  check("ft2: punching the lid sets ft2_free", st.activeFlags.has("ft2_free"));
+  check("ft2: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft2_free"] }, st));
+  apply(hs("ft2_alley", "ft2h_door").action);
+  check("ft2: kicking the door sets ft2_door", st.activeFlags.has("ft2_door"));
+  check("ft2: grabbing Quohog is locked before the talk", !meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
+  const quohogTopics = hs("ft2_bar", "ft2h_quohog").action.topics;
+  check("ft2: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  check("ft2: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft2_topic_keys" && t.flagSet === "ft2_quohog_talked"));
+  apply(quohogTopics!.find((t) => t.id === "ft2_topic_keys")!);
+  check("ft2: asking for the keys sets ft2_quohog_talked", st.activeFlags.has("ft2_quohog_talked"));
+  check("ft2: the shakedown unlocks after asking", meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
+  apply(hs("ft2_bar", "ft2h_grab").action);
+  check("ft2: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft2_keys"));
+  check("ft2: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft2_keys"] }, st));
+
+  // QTE DUEL with a real game-over branch.
+  const ride = byId.get("ft2_ride")!;
+  const fight = ride.choices!.find((c) => c.id === "ft2c_fight")!;
+  check("ft2: the duel is a real QTE", fight.quickTime === true && (fight.timeLimitSeconds ?? 0) > 0 && fight.qtePrompt);
+  check("ft2: QTE hesitation routes to the game-over ending", fight.timedOutTargetSceneId === "ft2_ride_dead");
+  const dead = byId.get("ft2_ride_dead")!;
+  check("ft2: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
+  check("ft2: winning reaches Part One", byId.get("ft2_tbc")!.isEnding === true && byId.get("ft2_tbc")!.endingData?.tier === "victory-silver");
+
+  // Every gated flag is actually produced somewhere in the chain.
+  const flagsSet = new Set<string>();
+  S.scenes.forEach((sc) => {
+    (sc.hotspots ?? []).forEach((h) => {
+      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
+    });
+  });
+  check("ft2: every gated flag has an author in the chain", ["ft2_free", "ft2_door", "ft2_quohog_talked"].every((f) => flagsSet.has(f)));
 }
 
 /* ================================================================== */

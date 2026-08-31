@@ -1,5 +1,6 @@
 import type { Story } from "../types";
 import { FULL_THROTTLE } from "./fullThrottle";
+import { FULL_THROTTLE_CORVILLE } from "./fullThrottleCorville";
 import { NOBODYS_WITNESS_FLAGSHIP } from "./nobodysWitnessFlagship";
 import { LAST_CALL_ON_PIER_7 } from "./lastCallOnPier7";
 import { QTE_DEMO } from "./qteDemo";
@@ -68,6 +69,7 @@ import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  FULL_THROTTLE_CORVILLE,
   FULL_THROTTLE,
   THROTTLE_ASH,
   NOBODYS_WITNESS_TRUE,

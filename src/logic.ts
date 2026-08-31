@@ -2066,7 +2066,9 @@ export function validateStory(story: Story): ValidationIssue[] {
       if (!doorOut && !edgeOut && !sc.autoAdvanceTargetSceneId && !(sc.choices ?? []).some((c) => c.targetSceneId))
         issues.push({ severity: "error", sceneId: sc.id, message: `${label} has no way out. Add a hotspot with action "→ Go to scene" (a door/exit marker the player walks to), a walk-off-screen edge exit, or an auto-advance target.` });
     }
-    if ((sc.hotspots ?? []).some((h) => h.action.type === "startDialogue") && (sc.dialogueBeats ?? []).length === 0)
+    const starters = (sc.hotspots ?? []).filter((h) => h.action.type === "startDialogue");
+    const topicStarter = starters.some((h) => (h.action.topics?.length ?? 0) > 0);
+    if (starters.length > 0 && !topicStarter && (sc.dialogueBeats ?? []).length === 0)
       issues.push({ severity: "error", sceneId: sc.id, message: `${label} has a "Start conversation" marker but no dialogue beats — write the conversation in the Beats tab or the marker does nothing.` });
     if ((sc.dialogueBeats ?? []).length > 0 && !(sc.hotspots ?? []).some((h) => h.action.type === "startDialogue"))
       issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has dialogue beats but no "Start conversation" (🗣) hotspot — nobody can trigger the conversation. Add a talk marker (Hotspots tab → action type "🗣 Start conversation").` });
@@ -2199,7 +2201,8 @@ export function validateStory(story: Story): ValidationIssue[] {
           issues.push({ severity: "warning", sceneId: sc.id, message: `Hotspot "${h.label}" is gated on memory/flag "${tag}" but no choice sets that memoryLog tag and no such flag exists.` });
       });
       const { x, y, w, h: height } = h.bounds;
-      if (x < 0 || y < 0 || w <= 0 || height <= 0 || x + w > 100 || y + height > 100)
+      const maxX = Math.max(100, sc.stage?.worldWidth ?? 100);
+      if (x < 0 || y < 0 || w <= 0 || height <= 0 || x + w > maxX || y + height > 100)
         issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" has invalid percentage bounds.` });
       if (h.action.itemGranted && !itemIds.has(h.action.itemGranted))
         issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" grants unknown item "${h.action.itemGranted}".` });

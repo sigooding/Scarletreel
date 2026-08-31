@@ -407,7 +407,7 @@ root.unmount();
 // WIDE WORLD: a 200% strip with the camera transform and the bike + door
 // markers laid out past x=100 (the right screen of the strip).
 root = await mountFresh(); problems.length = 0;
-if (clickByText(/Full Throttle/i)) {
+if (clickByText(/Full Throttle — The Kickstand/i)) {
   await sleep(1500);
   clickByText(/^\\u25b6?\\s*Play/i) || clickByText(/Play/i);
   await sleep(3000);
@@ -487,6 +487,94 @@ if (clickByText(/Full Throttle/i)) {
   }
   failed |= report("FULL THROTTLE (wide-world opening)").crashed;
 } else console.log("!! could not find the Full Throttle card");
+root.unmount();
+
+// Phase 10: Full Throttle — The Corville Run (the NEW version). Exercises the
+// new sprite sheet + poses, the new skull-pie centrepiece, the setPlayerPose
+// hotspots, the point-stretched walk path, and the topic-list bartender —
+// end to end from the dumpster through the bar.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/Full Throttle — The Corville Run/i)) {
+  await sleep(1500);
+  clickByText(/^\\u25b6?\\s*Play/i) || clickByText(/Play/i);
+  await sleep(3000);
+  let stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
+  for (let i = 0; i < 110 && !stageMarkers.length; i++) {
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = [...container.querySelectorAll("button")].find((b) => /continue|\\u25b6/.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(300);
+    stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
+  }
+  const holdAndPick = async (el, verbLabel) => {
+    el.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 60, clientY: 60, button: 0, pointerType: "mouse" }));
+    await sleep(480);
+    const chips = [...container.querySelectorAll("[data-pie-verb]")];
+    const i = chips.findIndex((c) => (c.getAttribute("aria-label") || "") === verbLabel);
+    if (i < 0) return false;
+    const n = chips.length;
+    const cx = win.innerWidth / 2;
+    const cy = win.innerHeight / 2;
+    const R = 120;
+    const ang = ((-90 + (i * 360) / n) * Math.PI) / 180;
+    const x = cx + R * Math.cos(ang);
+    const y = cy + R * Math.sin(ang);
+    win.dispatchEvent(new win.PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
+    await sleep(60);
+    win.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
+    return true;
+  };
+  // Dumpster: the lid marker renders (the new player sheet + crouch pose).
+  const inDumpster = stageMarkers.some((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
+  const lid = stageMarkers.find((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
+  let punched = false;
+  if (lid) {
+    if (await holdAndPick(lid, "Punch")) {
+      for (let i = 0; i < 30 && !punched; i++) {
+        await sleep(500);
+        punched = /punch the lid/.test((container.textContent || "").replace(/\\s+/g, " "));
+      }
+    } else console.log("!! FT2: the skull pie never opened (or Punch wasn't offered)");
+  } else console.log("!! FT2: the dumpster-lid marker never rendered");
+  let climbed = false;
+  const climb = [...container.querySelectorAll("button")].find((b) => /climb out/.test(b.getAttribute("aria-label") || ""));
+  if (climb) {
+    if (await holdAndPick(climb, "Go to")) {
+      for (let i = 0; i < 40 && !climbed; i++) {
+        await sleep(500);
+        climbed = /behind the kickstand|keys permitting/i.test((container.textContent || "").replace(/\\s+/g, " "));
+      }
+    }
+  } else console.log("!! FT2: the climb-out marker never appeared after the punch");
+  // Wide alley: 200% strip + camera, and the setPlayerPose "bend" marker.
+  const html = container.innerHTML;
+  const wideWorld = /width:\\s*200%/.test(html) && /translateX/.test(html);
+  const bendThere = [...container.querySelectorAll("button")].some((b) => /look under the dumpster/.test(b.getAttribute("aria-label") || ""));
+  // Kick the door into the bar (the walk path + topic-list bartender live there).
+  let inBar = false;
+  const door = [...container.querySelectorAll("button")].find((b) => /kickstand door/i.test(b.getAttribute("aria-label") || ""));
+  if (door) {
+    if (await holdAndPick(door, "Kick")) {
+      for (let i = 0; i < 40 && !inBar; i++) {
+        await sleep(500);
+        inBar = /reach over the bar/.test((container.textContent || "").replace(/\\s+/g, " "));
+      }
+    } else console.log("!! FT2: the skull pie never opened for the door kick");
+  } else console.log("!! FT2: the Kickstand door marker never rendered");
+  const barMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
+  const reachThere = barMarkers.some((b) => /reach over the bar/.test(b.getAttribute("aria-label") || ""));
+  const quohogThere = barMarkers.some((b) => /quohog/i.test(b.getAttribute("aria-label") || ""));
+  const grabLocked = barMarkers.some((b) => /grab quohog/i.test(b.getAttribute("aria-label") || "") && /🔒/.test(b.textContent || ""));
+  console.log("\\n=== FULL THROTTLE — THE CORVILLE RUN (new version) ===");
+  console.log("  dumpster:", inDumpster, "| lid punched:", punched, "| climbed out:", climbed);
+  console.log("  wide 200% + camera:", wideWorld, "| bend marker:", bendThere);
+  console.log("  in bar:", inBar, "| reach-over pose marker:", reachThere, "| topic-list bartender:", quohogThere, "| grab locked:", grabLocked);
+  if (!inDumpster || !punched || !climbed || !wideWorld || !bendThere || !inBar || !reachThere || !quohogThere) failed = true;
+  for (let i = problems.length - 1; i >= 0; i--) {
+    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
+  }
+  failed |= report("FULL THROTTLE — THE CORVILLE RUN").crashed;
+} else console.log("!! could not find the Full Throttle — The Corville Run card");
 root.unmount();
 
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
