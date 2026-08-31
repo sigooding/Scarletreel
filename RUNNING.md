@@ -42,8 +42,8 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
 
 1. **Engine tests** (`npm run test:engine`) — the pure-logic checks: gating,
    memory/flag recalls, flag collection, the validator, the act-membership
-   walk, and full The Neon Diner playthroughs (a gold run and a full-mistake
-   fold run).
+   walk, playtest coverage, the background-remover keying maths, and full The
+   Neon Diner playthroughs (a gold run and a full-mistake fold run).
 
 2. **Import/export round trip** (`npm run test:media`) — exercises the real
    `src/data/mediaLibrary.ts` against a real IndexedDB
@@ -71,11 +71,29 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
 
 3. **DOM smoke test** (`npm run test:dom`) — mounts the real `<App/>` in
    [happy-dom](https://github.com/capricorn86/happy-dom) (a devDependency) and
-   clicks through the newsstand, the ending gallery, the Studio, and a real
-   playthrough of Nobody's Witness. Any `console.error`/`console.warn`,
+   clicks through the newsstand, the ending gallery, the Studio (including the
+   🛠 Media Tools and ▶ Test tabs), and a real playthrough of Nobody's
+   Witness. Any `console.error`/`console.warn`,
    uncaught throw, or error-boundary trip on those screens fails the run —
    this is what catches invalid DOM nesting (React logs it as an error) and
    mount-time crashes that the pure-logic suites can't see.
+
+### Building a sprite sheet from a generated plate
+
+The AI tab builds sheets in the browser (generate on flat magenta → key the
+backdrop → slice the frames → write the sheet). To do the same headlessly —
+for a rebuild, or for art generated elsewhere — use the command-line twin:
+
+```bash
+node scripts/make-sprite-sheet.mjs \
+  --in plates/tintin-talk.png \
+  --out public/assets/sprites/tt-tintin-talk.png \
+  --key ff00ff --height 384 --frames 3
+```
+
+It prints the `frameWidth × frameHeight` grid to paste into a story's sheet
+config. See **docs/sprite-sheets.md** for the pipeline and the shipped
+catalogue (the whole *Tintin* cast was built this way).
 
 ### Blank/white screen, or art missing but text showing
 

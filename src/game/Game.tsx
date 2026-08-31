@@ -58,6 +58,13 @@ import {
   sceneById,
   seasonEpisodes,
   CURSOR_ICON,
+  VERB_LABEL,
+  extraOccludes,
+  inventoryDisplay,
+  resolveCursor,
+  resolveVerbAction,
+  verbsForScene,
+  wrongVerbLine,
   stageCaptionMs,
   uid,
   writeSave,
@@ -85,12 +92,15 @@ import {
 } from "./Episode";
 import { Flowchart } from "./Flowchart";
 import { Stage } from "./Stage";
+import { InventoryDock } from "./InventoryDock";
 import { SheetSprite } from "./SheetSprite";
 import { sheetDrawable, type SpriteSheet } from "./spriteSheet";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
 import { RouteMap } from "./RouteMap";
 import { actOfScene } from "./routeGraph";
+import { emptyCoverage, readCoverage, recordRun, recordVisit, writeCoverage, type PlaytestCoverage } from "./playtestCoverage";
+import { motionAnimatable, motionAnimation, motionKeyframes, presetStyle } from "./animation";
 import type {
   Choice,
   CinematicSettings,
@@ -105,6 +115,9 @@ import type {
   GameSave,
   GlobalState,
   Hotspot,
+  HotspotAction,
+  CursorKind,
+  VerbId,
   Act,
   Item,
   JourneyStep,
@@ -734,9 +747,12 @@ export function ForegroundLayer({
 function ForegroundExtraImage({
   extra,
   resolve,
+  motionName,
 }: {
   extra: ForegroundExtra;
   resolve?: (v?: string) => string | undefined;
+  /** set when this extra has a motion path — the compiled animation name */
+  motionName?: string;
 }) {
   const r = resolve ?? ((v?: string) => v);
   const src = assetUrl(r(extra.image));
@@ -765,11 +781,38 @@ function ForegroundExtraImage({
     justifyContent: "center",
   };
   const flipScale = extra.flip ? -1 : 1;
+  // Motion + idle preset. The path animates the BOX (left/top/transform), so
+  // it carries the anchor translate through CSS variables; the preset animates
+  // a WRAPPER around the art, so its transforms never fight the box's.
+  const moving = motionName && motionAnimatable(extra.motion) ? motionAnimation(extra.motion, motionName) : null;
+  if (moving) {
+    Object.assign(boxStyle, moving, {
+      "--ex-ax": `${(-ax).toFixed(2)}%`,
+      "--ex-ay": `${(-ay).toFixed(2)}%`,
+    } as React.CSSProperties);
+  }
+  const preset = presetStyle(extra.anim);
+  const innerStyle: React.CSSProperties = {
+    height: "100%",
+    ...(fit === "cover" || fit === "fill" ? { width: "100%" } : {}),
+    ...(preset.className ? { display: "flex", alignItems: "flex-end", justifyContent: "center" } : {}),
+    ...(preset.vars as React.CSSProperties),
+  };
+  /** Wrap the art so a preset can transform it without disturbing placement. */
+  const withPreset = (child: React.ReactNode) =>
+    preset.className ? (
+      <div className={`${preset.className}`} style={innerStyle} aria-hidden>
+        {child}
+      </div>
+    ) : (
+      child
+    );
   // An animated extra: the sprite sheet replaces the static image entirely.
   if (sheetDrawable(extra.sheet)) {
     return (
       <div className="absolute" style={boxStyle} aria-hidden>
-        <SheetSprite
+        {withPreset(
+          <SheetSprite
           sheet={extra.sheet}
           anim="loop"
           resolve={r}
@@ -786,7 +829,8 @@ function ForegroundExtraImage({
                 } as React.CSSProperties)
               : {}),
           }}
-        />
+          />
+        )}
       </div>
     );
   }
@@ -796,54 +840,89 @@ function ForegroundExtraImage({
   }
   return (
     <div className="absolute" style={boxStyle} aria-hidden>
-      <img
-        src={src}
-        alt=""
-        draggable={false}
-        className={`select-none ${
-          fit === "cover"
-            ? "h-full w-full object-cover"
-            : fit === "fill"
-              ? "h-full w-full"
-              : "h-auto w-auto max-h-full max-w-full object-contain"
-        } ${zoom ? "fg-zoom" : ""}`}
-        style={{
-          transformOrigin: `${ax}% ${ay}%`,
-          transform: zoom ? undefined : `scaleX(${flipScale})`,
-          height: fit === "cover" || fit === "fill" ? "100%" : undefined,
-          width: fit === "cover" || fit === "fill" ? "100%" : undefined,
-          ...(zoom
-            ? ({
-                "--fg-base": String(flipScale),
-                "--fg-zoom": String(zoom),
-                "--fg-zoom-dur": `${zoomDur}s`,
-              } as React.CSSProperties)
-            : {}),
-        }}
-      />
+      {withPreset(
+        <img
+          src={src}
+          alt=""
+          draggable={false}
+          className={`select-none ${
+            fit === "cover"
+              ? "h-full w-full object-cover"
+              : fit === "fill"
+                ? "h-full w-full"
+                : "h-auto w-auto max-h-full max-w-full object-contain"
+          } ${zoom ? "fg-zoom" : ""}`}
+          style={{
+            transformOrigin: `${ax}% ${ay}%`,
+            transform: zoom ? undefined : `scaleX(${flipScale})`,
+            height: fit === "cover" || fit === "fill" ? "100%" : undefined,
+            width: fit === "cover" || fit === "fill" ? "100%" : undefined,
+            ...(zoom
+              ? ({
+                  "--fg-base": String(flipScale),
+                  "--fg-zoom": String(zoom),
+                  "--fg-zoom-dur": `${zoomDur}s`,
+                } as React.CSSProperties)
+              : {}),
+          }}
+        />
+      )}
     </div>
   );
 }
 
+/** The CSS animation-name an extra's motion path is compiled under. */
+const motionName = (index: number) => `sr-motion-${index}`;
+
 /** The stack of additional foreground images for a cinematic. Renders in the
  * SAME parallax-fg wrapper as the primary foreground; each extra independently
- * shifts by its depth when parallax is on. */
+ * shifts by its depth when parallax is on.
+
+ * A sprite can also MOVE: `extra.motion` flies it along a polyline (sampled
+ * into @keyframes — no JS runs per frame) and `extra.anim` gives it looping
+ * idle motion (bob / sway / flicker / flutter…) from CSS alone. See
+ * src/game/animation.ts. */
 export function ForegroundExtras({
   cinematic,
   resolve,
+  skip,
+  only,
 }: {
   cinematic?: CinematicSettings;
   resolve?: (v?: string) => string | undefined;
+  /** Indices to omit from this pass (they are being drawn in front instead). */
+  skip?: Set<number>;
+  /** When set, draw ONLY these indices (the walk-behind pass). */
+  only?: Set<number>;
 }) {
   const extras = cinematic?.foregroundExtras ?? [];
-  if (!extras.length) return null;
+  // Motion paths compile to real @keyframes, one per animated extra, emitted
+  // once per scene. The animationName the sprite references is derived from
+  // its index, so the rule and the element can never drift apart.
+  const motionCss = extras
+    .map((e, i) => (motionAnimatable(e.motion) ? motionKeyframes(motionName(i), e.motion) : ""))
+    .filter(Boolean)
+    .join("\n");
+  const wanted = extras
+    .map((_e, i) => i)
+    .filter((i) => (only ? only.has(i) : true) && !(skip && !only ? skip.has(i) : false));
+  if (!extras.length || !wanted.length) return null;
   // When parallax is on, each extra wraps in a parallax-mid plane so it
   // shifts by its own depth; otherwise it renders as a plain layer.
   const parallaxOn = (cinematic?.parallaxDepth ?? 0) > 0;
   return (
     <>
-      {extras.map((e, i) => {
-        const el = <ForegroundExtraImage key={i} extra={e} resolve={resolve} />;
+      {motionCss ? <style>{motionCss}</style> : null}
+      {wanted.map((i) => {
+        const e = extras[i];
+        const el = (
+          <ForegroundExtraImage
+            key={i}
+            extra={e}
+            resolve={resolve}
+            {...(motionAnimatable(e.motion) ? { motionName: motionName(i) } : {})}
+          />
+        );
         if (!parallaxOn || (e.depth ?? 0) <= 0) return el;
         return (
           <div
@@ -2664,143 +2743,6 @@ function DeductionBoard({
 }
 
 /* ------------------------------------------------------------------ */
-/*  inventory dock                                                     */
-/* ------------------------------------------------------------------ */
-
-function InventoryDock({
-  state,
-  onInspect,
-  onCombine,
-  onExplainCrafting,
-  hasCrafting,
-}: {
-  state: GlobalState;
-  onInspect: (item: Item) => void;
-  onCombine: (a: Item, b: Item) => void;
-  onExplainCrafting: () => void;
-  hasCrafting: boolean;
-}) {
-  const [open, setOpen] = useState(true);
-  const [flash, setFlash] = useState<string | null>(null);
-  const [combineMode, setCombineMode] = useState(false);
-  const [combineSel, setCombineSel] = useState<string | null>(null);
-  useEffect(() => {
-    if (flash) {
-      const t = setTimeout(() => setFlash(null), 900);
-      return () => clearTimeout(t);
-    }
-  }, [flash]);
-
-  return (
-    <div className="absolute bottom-3 left-3 z-50">
-      <div className="mb-1.5 flex items-center gap-1.5">
-        <button
-          onClick={() => {
-            audio.click();
-            setOpen((o) => !o);
-          }}
-          className="hud-btn px-3 py-1.5"
-          data-active={open || undefined}
-          aria-expanded={open}
-        >
-          🧳 Satchel {state.inventory.length} {open ? "▾" : "▸"}
-        </button>
-        {hasCrafting && (
-          <>
-            <button
-              onClick={() => {
-                audio.click();
-                setCombineMode((m) => !m);
-                setCombineSel(null);
-              }}
-              data-color={!combineMode ? "neon" : undefined}
-              data-active={combineMode || undefined}
-              className="hud-btn px-2 py-1.5"
-              title="Tap one item, then another, to combine them — no dragging needed"
-            >
-              🔧 {combineMode ? "Tapping" : "Combine"}
-            </button>
-            <button
-              onClick={() => {
-                audio.click();
-                onExplainCrafting();
-              }}
-              data-color="cyan"
-              className="hud-btn px-2 py-1.5"
-              title="Show the recipe available in this story"
-            >
-              ? Recipes
-            </button>
-          </>
-        )}
-      </div>
-      {combineMode && open && state.inventory.length > 0 && (
-        <div className="mb-1.5 border border-gold/30 bg-gold/10 px-2 py-1 font-type text-[10px] text-gold">
-          Tap the first item, then tap the second to combine.
-        </div>
-      )}
-      {open && state.inventory.length > 0 && (
-        <div className="hud-frame slide-up flex max-w-md flex-wrap gap-2 p-2">
-          {state.inventory.map((item) => (
-            <button
-              key={item.id}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("text/item", item.id);
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const otherId = e.dataTransfer.getData("text/item");
-                const other = state.inventory.find((i) => i.id === otherId);
-                if (other && other.id !== item.id) {
-                  setFlash(item.id);
-                  setCombineSel(null);
-                  onCombine(other, item);
-                }
-              }}
-              onClick={() => {
-                if (combineMode) {
-                  audio.click();
-                  if (!combineSel) {
-                    setCombineSel(item.id);
-                  } else if (combineSel === item.id) {
-                    setCombineSel(null);
-                  } else {
-                    const first = state.inventory.find((i) => i.id === combineSel);
-                    setCombineSel(null);
-                    if (first) {
-                      setFlash(item.id);
-                      onCombine(first, item);
-                    }
-                  }
-                  return;
-                }
-                audio.click();
-                onInspect(item);
-              }}
-              title={`${item.name} — ${combineMode ? "combine mode: tap two items" : "click to inspect, drag onto another item to combine"}`}
-              className={`relative flex h-14 w-14 items-center justify-center border-2 text-2xl transition-transform hover:scale-110 ${
-                item.isClue ? "border-crimson/60 bg-crimson/10" : "border-paper/30 bg-noir-700"
-              } ${flash === item.id ? "combine-flash" : ""} ${
-                combineMode && combineSel === item.id ? "ring-2 ring-gold shadow-[0_0_14px_rgba(232,178,60,0.6)]" : ""
-              }`}
-            >
-              {item.iconUrl ? (
-                <img src={assetUrl(item.iconUrl)} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
-              ) : (
-                item.icon
-              )}
-              {item.isClue && <span className="absolute -right-1 -top-1 text-[9px]">📌</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ */
 /*  main player                                                        */
 /* ------------------------------------------------------------------ */
@@ -2811,7 +2753,7 @@ interface Toast {
   kind: "info" | "fail" | "success";
 }
 
-/** A Telltale-style "X will remember that" impact card, shown briefly after a
+/** An "X will remember that" impact card, shown briefly after a
  * consequential choice. Fades in, holds, then fades out. */
 interface RememberCard {
   line: string;
@@ -2919,6 +2861,8 @@ function CasePlayer({
   /* STAGE caption bar — the showText / fail / enterCaption line that plays
    * over a stage scene (subtitles, not the centre exam card). */
   const [stageCaption, setStageCaption] = useState<{ text: string; kind: "info" | "fail"; label?: string; key: number } | null>(null);
+  /** Rotates the "that doesn't work" lines so a repeated verb doesn't loop. */
+  const wrongVerbSeed = useRef(0);
   const stageCaptionTimer = useRef<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   /* Subtitles presentation — a player-menu option.
@@ -3206,8 +3150,71 @@ function CasePlayer({
   const rawScene = sceneById(story, sceneId);
   const scene: typeof rawScene =
     rawScene?.nodeType === "note" && !rawScene.prose ? { ...rawScene, prose: rawScene.title } : rawScene;
-  /** STAGE node — Telltale-style walkable exploration. */
+  /** STAGE node — free-roam walkable exploration. */
   const isStage = scene?.nodeType === "stage";
+  /** The walker's feet (scene %) in a STAGE room — drives walk-behind masks:
+   *  a foreground extra flagged `occludes` is drawn OVER the character while
+   *  they stand behind it, so they disappear behind the counter. */
+  const [walkerFeet, setWalkerFeet] = useState<{ x: number; y: number } | null>(null);
+  const occludersInFront = useMemo(() => {
+    const extras = scene?.cinematic?.foregroundExtras ?? [];
+    const front = new Set<number>();
+    if (!isStage) return front;
+    extras.forEach((e, i) => {
+      if (extraOccludes(e, walkerFeet?.y)) front.add(i);
+    });
+    return front;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStage, scene?.cinematic?.foregroundExtras, walkerFeet?.y]);
+  const hasOccluders = (scene?.cinematic?.foregroundExtras ?? []).some((e) => e.occludes);
+
+  /* ---- CURSOR ART: per-verb art (and the plain arrow) ---- */
+  const [hoverCursor, setHoverCursor] = useState<CursorKind | null>(null);
+  /** The verb the coin is holding, reported by the Stage — in a coin room that
+   *  is the cursor, because the verb IS the cursor. */
+  const [coinVerb, setCoinVerb] = useState<VerbId | null>(null);
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
+  const cursorSlot = (hoverCursor ?? coinVerb ?? "default") as import("../logic").CursorSlot;
+  const cursor = useMemo(() => resolveCursor(story, cursorSlot), [story, cursorSlot]);
+  useEffect(() => {
+    if (!cursor.animated) return;
+    const move = (e: PointerEvent) => setPointer({ x: e.clientX, y: e.clientY });
+    window.addEventListener("pointermove", move);
+    return () => window.removeEventListener("pointermove", move);
+  }, [cursor.animated]);
+  /** Static art = a real CSS cursor. Animated art = hide the system cursor and
+   *  draw a sprite that tracks the mouse. */
+  const cursorStyle: React.CSSProperties = cursor.animated
+    ? { cursor: "none" }
+    : cursor.css
+      ? { cursor: cursor.css }
+      : {};
+
+  // How THIS case shows what you're carrying (default: the classic chip rail,
+  // so no existing game changes). See InventorySettings in src/types.ts.
+  const invDisplay = useMemo(() => inventoryDisplay(story), [story]);
+  /** Dropping an item on a scene object: 🚶 rooms walk there first, then USE
+   *  it (so the splice happens at the bike, not across the street); every
+   *  other scene fires it where it was dropped. */
+  const [dropRequest, setDropRequest] = useState<{ hotspotId: string; itemId: string; key: number } | null>(null);
+  const dropKey = useRef(0);
+  const handleItemDrop = useCallback(
+    (item: Item, hotspotId: string) => {
+      const hs = (scene?.hotspots ?? []).find((h) => h.id === hotspotId);
+      if (!hs) return;
+      if (scene?.nodeType === "stage") {
+        dropKey.current += 1;
+        setDropRequest({ hotspotId, itemId: item.id, key: dropKey.current });
+        return;
+      }
+      activateRef.current?.(hs, { verb: "use", itemId: item.id });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scene]
+  );
+  /** activateHotspot is declared further down; the drop handler reaches it
+   *  through a ref so ordering doesn't matter. */
+  const activateRef = useRef<((hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => void) | null>(null);
   const playProse = useCallback((target: SceneNode) => {
     const primed = primedNarrationRef.current;
     primedNarrationRef.current = null;
@@ -3309,10 +3316,10 @@ function CasePlayer({
 
   const explainCrafting = useCallback(() => {
     // Context-aware crafting help. The previous version was useless because it
-    // fired the same static string regardless of what was in the satchel.
+    // fired the same static string regardless of what was in the inventory.
     const inv = stateRef.current.inventory;
     if (!inv.length) {
-      pushToast("Crafting hint: you need at least two items in your satchel. Search for hotspots first.", "info");
+      pushToast("Crafting hint: you need at least two items in your inventory. Search for hotspots first.", "info");
       return;
     }
     if (inv.length === 1) {
@@ -3323,7 +3330,7 @@ function CasePlayer({
     for (const a of inv) {
       const partner = inv.find((b) => b.id !== a.id && combineItems(story, a, b));
       if (partner) {
-        pushToast(`✨ Recipe ready: drag ${a.icon} ${a.name} onto ${partner.icon} ${partner.name} in your satchel.`, "success");
+        pushToast(`✨ Recipe ready: drag ${a.icon} ${a.name} onto ${partner.icon} ${partner.name} in your inventory.`, "success");
         return;
       }
     }
@@ -3757,13 +3764,42 @@ function CasePlayer({
     [story]
   );
 
+  /* -------- playtest coverage --------
+   * A running tally of what this case has actually exercised: every scene
+   * entered and every choice picked, accumulated across playthroughs and
+   * surfaced in Studio's ▶ Test tab (the static validator can only say what
+   * is reachable — this says what you have really played). Pure telemetry:
+   * nothing here is ever read back into the running game. */
+  const coverageRef = useRef<PlaytestCoverage | null>(null);
+  useEffect(() => {
+    coverageRef.current = readCoverage(story.id) ?? emptyCoverage(story.id);
+  }, [story.id]);
+  const markCoverage = useCallback(
+    (kind: "scene" | "choice", id: string) => {
+      if (!id) return;
+      const next = recordVisit(coverageRef.current ?? emptyCoverage(story.id), kind, id);
+      coverageRef.current = next;
+      writeCoverage(next);
+    },
+    [story.id]
+  );
+
   /* -------- automatic checkpoint --------
    * A snapshot is written to the invisible AUTO slot on every scene arrival,
    * after the entry state has settled. "▶ Resume" on the newsstand and the
    * Load screen's Auto row both read it, so closing the tab mid-case never
    * costs more than the current scene. Manual slots are never touched. */
   useEffect(() => {
-    if (!scene || scene.isEnding) return;
+    if (!scene) return;
+    // Coverage counts endings too — they are the most interesting scenes to
+    // know you have (or have not) reached.
+    markCoverage("scene", sceneId);
+    if (scene.isEnding) {
+      const next = recordRun(coverageRef.current ?? emptyCoverage(story.id));
+      coverageRef.current = next;
+      writeCoverage(next);
+    }
+    if (scene.isEnding) return;
     const t = window.setTimeout(() => {
       const snapshot = buildSave();
       writeSave(AUTO_SLOT, snapshot);
@@ -3772,7 +3808,7 @@ function CasePlayer({
     }, 400);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sceneId, entrySeq]);
+  }, [sceneId, entrySeq, markCoverage]);
 
   useEffect(() => {
     if (!checkpointFlash) return;
@@ -4421,7 +4457,7 @@ function CasePlayer({
   /* -------- stage conversation auto-close --------
    * A conversation that has played out — beats done, and either no closing
    * choices or every usable one spent/expired — hands the stage back to the
-   * player. Timed choices (the Telltale "decide now" pressure) that expire
+   * player. Timed choices (the "decide now" pressure) that expire
    * naturally close the conversation exactly the same way. */
   useEffect(() => {
     if (!isStage || stageConvo !== "open" || overlay || menuOpen) return;
@@ -4766,6 +4802,8 @@ function CasePlayer({
         pushToast(gatingHint(gate, story) ?? "Not yet, detective.", "fail");
         return;
       }
+      // Playtest coverage: this branch was actually taken (replies included).
+      markCoverage("choice", `${sceneId}:${choice.id}`);
       // Conversational replies answer in place: apply consequences, stay in the
       // scene, and let the newly-unlocked gated beat become the response.
       if (choice.reply) {
@@ -5095,32 +5133,59 @@ function CasePlayer({
 
   /* -------- hotspots -------- */
   const completeHotspot = useCallback(
-    (hs: Hotspot, baseState?: GlobalState) => {
+    (hs: Hotspot, baseState?: GlobalState, action?: HotspotAction, markUsed = true) => {
+      const act = action ?? hs.action;
       let s = baseState ?? stateRef.current;
-      if (hs.action.itemGranted) {
-        s = applyConsequences(story, { addItems: [hs.action.itemGranted] }, s);
-        const it = story.items.find((i) => i.id === hs.action.itemGranted);
+      if (act.itemGranted) {
+        s = applyConsequences(story, { addItems: [act.itemGranted] }, s);
+        const it = story.items.find((i) => i.id === act.itemGranted);
         audio.pickup();
-        pushToast(`Picked up: ${it?.icon ?? ""} ${it?.name ?? hs.action.itemGranted}`, "success");
+        pushToast(`Picked up: ${it?.icon ?? ""} ${it?.name ?? act.itemGranted}`, "success");
         if (it?.isClue && story.deduction && !boardHintShown.current) {
           boardHintShown.current = true;
           pushToast("📌 Clue collected — open the Corkboard (B) to pin it.", "info");
         }
       }
-      if (hs.action.flagSet) s = applyConsequences(story, { setFlags: [hs.action.flagSet] }, s);
-      if (hs.action.meterChange) s = applyConsequences(story, { meterChanges: [hs.action.meterChange] }, s);
+      if (act.flagSet) s = applyConsequences(story, { setFlags: [act.flagSet] }, s);
+      if (act.meterChange) s = applyConsequences(story, { meterChanges: [act.meterChange] }, s);
       setState(s);
-      setUsedHotspots((u) => new Set(u).add(`${sceneId}:${hs.id}`));
+      // VERB COIN: a verb action is flavour and stays on the object (you can
+      // look at the same bench twice). Only an action that TAKES something
+      // away or MOVES the player consumes its marker.
+      if (markUsed) setUsedHotspots((u) => new Set(u).add(`${sceneId}:${hs.id}`));
       // Any successful interaction means the player searched the scene.
       setInvestigatedThisVisit(true);
-      if (hs.action.targetSceneId && hs.action.type !== "showText") goToScene(hs.action.targetSceneId);
+      if (act.targetSceneId && act.type !== "showText") goToScene(act.targetSceneId);
     },
     [story, sceneId, goToScene, pushToast]
   );
 
   const activateHotspot = useCallback(
-    (hs: Hotspot) => {
+    (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
       const stageMode = sceneById(story, sceneId)?.nodeType === "stage";
+      // VERB COIN — "use the wrench on the bike" resolves to the action the
+      // object answers with for that verb (and item), or to a refusal line.
+      let act = hs.action;
+      let actText: string | undefined;
+      if (ctx?.verb) {
+        const res = resolveVerbAction(hs, ctx.verb, ctx.itemId);
+        if (!res.ok) {
+          audio.fail();
+          setInvestigatedThisVisit(true);
+          const itemName = ctx.itemId ? story.items.find((i) => i.id === ctx.itemId)?.name ?? ctx.itemId : "";
+          const line = wrongVerbLine(ctx.verb, story, hs.wrongVerbText, wrongVerbSeed.current++);
+          const label = itemName ? `${VERB_LABEL[ctx.verb]} ${itemName.toLowerCase()}` : VERB_LABEL[ctx.verb];
+          if (stageMode) showStageCaption(line, "fail", label);
+          else setExamCard({ label: hs.label, text: line, kind: "fail" });
+          if (soundOnRef.current && autoNarrate) audio.speak(line);
+          return;
+        }
+        act = res.action ?? hs.action;
+        actText = res.text;
+      }
+      // A verb action is flavour: it does not consume the marker unless it
+      // takes something or moves the player.
+      const markUsed = !ctx?.verb || act.type === "giveItem" || act.type === "goToScene";
       if (!meetsGating(hs.gating, stateRef.current)) {
         audio.fail();
         // Trying a locked zone still counts as searching the scene.
@@ -5131,14 +5196,14 @@ function CasePlayer({
         if (soundOnRef.current && autoNarrate) audio.speak(failText);
         return;
       }
-      switch (hs.action.type) {
+      switch (act.type) {
         case "showText":
           audio.click();
-          const examText = hs.action.text ?? "…";
+          const examText = actText ?? act.text ?? "…";
           if (stageMode) showStageCaption(examText, "info", hs.label);
           else setExamCard({ label: hs.label, text: examText, kind: "info" });
           if (soundOnRef.current && autoNarrate) audio.speak(examText);
-          if (hs.action.flagSet || hs.action.meterChange) completeHotspot(hs);
+          if (act.flagSet || act.meterChange) completeHotspot(hs, undefined, act, markUsed);
           break;
         case "startDialogue":
           // STAGE nodes: walk up to a character, talk — the scene's beats
@@ -5150,18 +5215,18 @@ function CasePlayer({
             setBeatDone(false);
             setChoiceFocus(0);
             setStageConvo("open");
-            completeHotspot(hs);
+            completeHotspot(hs, undefined, act, markUsed);
           }
           break;
         case "goToScene":
-          if (hs.action.targetSceneId) {
-            completeHotspot(hs);
+          if (act.targetSceneId) {
+            completeHotspot(hs, undefined, act, markUsed);
           }
           break;
         case "giveItem":
         case "setFlag":
         case "meterChange":
-          completeHotspot(hs);
+          completeHotspot(hs, undefined, act, markUsed);
           break;
         case "openBoard":
           setOverlay({ type: "board" });
@@ -5170,8 +5235,8 @@ function CasePlayer({
           if (mapAvailable(story)) setOverlay({ type: "map" });
           break;
         case "patternPuzzle":
-          if (hs.action.patternPuzzle) {
-            setPatternPuzzle({ config: hs.action.patternPuzzle, hotspot: hs });
+          if (act.patternPuzzle) {
+            setPatternPuzzle({ config: act.patternPuzzle, hotspot: hs });
             setInvestigatedThisVisit(true);
           }
           break;
@@ -5179,20 +5244,30 @@ function CasePlayer({
           // Derive the post-consumption state and hand it straight to
           // completeHotspot instead of mutating the ref behind React's back.
           let nextState = stateRef.current;
-          if (hs.action.itemConsumed) {
-            nextState = applyConsequences(story, { removeItems: [hs.action.itemConsumed] }, stateRef.current);
+          // The USE verb can name its own item: "use the coffee on this"
+          // consumes the coffee even if the object was authored for a wrench.
+          const consumed = ctx?.itemId ?? act.itemConsumed;
+          if (consumed) {
+            nextState = applyConsequences(story, { removeItems: [consumed] }, stateRef.current);
             if (nextState !== stateRef.current) {
               audio.pickup();
-              pushToast(`Used: ${story.items.find((i) => i.id === hs.action.itemConsumed)?.name ?? hs.action.itemConsumed}`, "success");
+              pushToast(`Used: ${story.items.find((i) => i.id === consumed)?.name ?? consumed}`, "success");
             }
           }
-          completeHotspot(hs, nextState);
+          if (actText) {
+            if (stageMode) showStageCaption(actText, "info", hs.label);
+            else setExamCard({ label: hs.label, text: actText, kind: "info" });
+            if (soundOnRef.current && autoNarrate) audio.speak(actText);
+          }
+          completeHotspot(hs, nextState, act, markUsed);
           break;
         }
       }
     },
     [story, sceneId, pushToast, completeHotspot, autoNarrate, showStageCaption]
   );
+
+  activateRef.current = activateHotspot;
 
   /* ---------- examine (hold to inspect) ---------- */
   const cancelExamineRaf = useCallback(() => {
@@ -5625,7 +5700,11 @@ function CasePlayer({
         >
           {/* Additional stacked foreground images (extras) — render BELOW the
               primary subject so the main foregroundImage stays on top. */}
-          <ForegroundExtras key={`fge-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
+          <ForegroundExtras
+            key={`fge-${sceneId}-${entrySeq}`}
+            cinematic={bgCinematic}
+            {...(occludersInFront.size ? { skip: occludersInFront } : {})}
+          />
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
               each time the player enters the scene (not only on first mount). */}
           <ForegroundLayer key={`fg-${sceneId}-${entrySeq}`} cinematic={bgCinematic} />
@@ -5746,7 +5825,7 @@ function CasePlayer({
         data-transitioning={fading ? "1" : "0"}
       />
 
-      {/* Telltale-style letterbox bars */}
+      {/* Cinematic letterbox bars */}
       {letterbox && (
         <div className="pointer-events-none absolute inset-0 z-[44]">
           <div className="letterbox-bar letterbox-top" style={{ "--letterbox-h": "9%" } as React.CSSProperties} />
@@ -5775,7 +5854,7 @@ function CasePlayer({
         return live === 1 && !resolved ? <div className="iq-critical-vignette pointer-events-none absolute inset-0 z-[43]" aria-hidden /> : null;
       })()}
 
-      {/* STAGE node — the Telltale walkable layer. The Stage component draws
+      {/* STAGE node — the walkable layer. The Stage component draws
           the floor, the walking character and the interaction markers, and
           fires hotspots through activateHotspot exactly as a click would.
           While a conversation is open (stageTalking) the stage sleeps. */}
@@ -5786,8 +5865,14 @@ function CasePlayer({
             settings={scene.stage}
             hotspots={visibleHotspots}
             unlocked={(hs) => meetsGating(hs.gating, state)}
-            onInteract={(hs) => activateHotspot(hs)}
+            onInteract={(hs, ctx) => activateHotspot(hs, ctx)}
             active={stageWalking}
+            cursorStyle={cursorStyle}
+            onVerbChange={setCoinVerb}
+            {...(hasOccluders ? { onPosChange: setWalkerFeet } : {})}
+            {...(dropRequest ? { dropRequest } : {})}
+            verbs={scene.stage.verbCoin ? verbsForScene(scene) : undefined}
+            inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
           />
         );
         // Graded wrapper so the walker sprite matches the plate's colour
@@ -5802,6 +5887,33 @@ function CasePlayer({
           stageEl
         );
       })()}
+
+      {/* WALK-BEHIND PASS — foreground extras flagged `occludes` are drawn
+          OVER the walker (z above the stage) while the walker stands behind
+          them, and under them (normal extras pass) when in front. No mask
+          asset: the cutout's own alpha does the hiding. */}
+      {isStage && hasOccluders && occludersInFront.size > 0 && !overlay && (
+        <div className="pointer-events-none absolute inset-0 z-[58]" aria-hidden>
+          <ForegroundExtras
+            key={`occl-${sceneId}-${entrySeq}`}
+            cinematic={bgCinematic}
+            only={occludersInFront}
+          />
+        </div>
+      )}
+
+      {/* ANIMATED CURSOR — a sprite that tracks the mouse when a verb's
+          cursor art is a sheet (a reaching hand, a turning key). Drawn above
+          everything, clicks pass straight through it. */}
+      {cursor.animated && cursor.art?.sheet && pointer && !overlay ? (
+        <div
+          className="pointer-events-none fixed z-[95] drop-shadow-[0_2px_6px_rgba(0,0,0,0.7)]"
+          style={{ left: pointer.x - cursor.hx, top: pointer.y - cursor.hy }}
+          aria-hidden
+        >
+          <SheetSprite sheet={cursor.art.sheet} anim="loop" fallbacks={["idle"]} height={cursor.size} />
+        </div>
+      ) : null}
 
       {/* STAGE caption bar — showText / locked / entry lines play as a
           subtitle over the floor instead of the centre exam card. */}
@@ -5832,7 +5944,7 @@ function CasePlayer({
           STAGE nodes skip this layer entirely — their hotspots are rendered as
           walkable markers by the Stage component above. */}
       {sceneReady && !scene.isEnding && !overlay && !isStage && (
-        <div className="absolute inset-0 z-[46] pointer-events-none">
+        <div className="absolute inset-0 z-[46] pointer-events-none" style={cursorStyle}>
           {visibleHotspots.map((hs) => {
             const unlocked = meetsGating(hs.gating, state);
             const perks = getPerks(state);
@@ -5848,6 +5960,7 @@ function CasePlayer({
             return (
               <button
                 key={hs.id}
+                data-hs-id={hs.id}
                 onClick={hs.examine ? undefined : () => activateHotspot(hs)}
                 onPointerDown={(e) => {
                   if (!hs.examine) return;
@@ -5871,7 +5984,9 @@ function CasePlayer({
                 }}
                 onMouseEnter={() => {
                   audio.hover();
+                  setHoverCursor(hs.cursor);
                 }}
+                onMouseLeave={() => setHoverCursor((c) => (c === hs.cursor ? null : c))}
                 className={`hotspot-box group absolute pointer-events-auto cursor-${hs.cursor} ${hs.examine ? "hotspot-examine" : ""} ${examining?.hs.id === hs.id ? "hotspot-examining" : ""} ${perks.sharpEye ? "ring-1 ring-cyan-neon/30 animate-pulse" : ""} ${nudgeable ? "hotspot-nudge" : ""} ${hintActive ? "hotspot-hint" : ""}`}
                 style={{
                   left: `${hs.bounds.x}%`,
@@ -6056,6 +6171,7 @@ function CasePlayer({
               return (
                 <button
                   key={`action-${hs.id}`}
+                  data-hs-id={hs.id}
                   onClick={() => activateHotspot(hs)}
                   disabled={!unlocked}
                   className="hud-action"
@@ -6395,7 +6511,7 @@ function CasePlayer({
         ))}
       </div>
 
-      {/* Telltale-style "X will remember that" impact card */}
+      {/* "X will remember that" impact card */}
       {remember && (
         <div key={remember.key} className="pointer-events-none absolute inset-0 z-[72] flex items-center justify-center">
           <div className="remember-card border-y-2 border-gold/60 bg-black/85 px-8 py-4 text-center shadow-[0_0_60px_rgba(0,0,0,0.8)]">
@@ -7169,10 +7285,12 @@ function CasePlayer({
       {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
         <InventoryDock
           state={state}
+          display={invDisplay}
           onInspect={(item) => setOverlay({ type: "inspect", item })}
           onCombine={handleCombine}
           onExplainCrafting={explainCrafting}
           hasCrafting={story.items.some((item) => item.combinableWith)}
+          onUseItem={handleItemDrop}
         />
       )}
 
@@ -7322,7 +7440,7 @@ function CasePlayer({
               <ol className="mt-3 space-y-3 font-type text-sm text-paper/80">
                 <li><b className="text-cyan-neon">1. Read the scene.</b> Press Continue when the setup is clear. Skip only fast-forwards text.</li>
                 <li><b className="text-cyan-neon">2. Investigate.</b> Use Scene Actions on the right or click glowing areas in the picture. Actions stay available during dialogue.</li>
-                <li><b className="text-cyan-neon">3. Collect evidence.</b> Items go into the Satchel. If two items form a recipe, drag one item onto the other.</li>
+                <li><b className="text-cyan-neon">3. Collect evidence.</b> Items go into the Inventory. If two items form a recipe, drag one item onto the other.</li>
                 <li><b className="text-cyan-neon">4. Solve mini-games.</b> Their controls appear inside each puzzle. Winning gives a clue, flag, or route to the next scene.</li>
                 <li><b className="text-cyan-neon">5. Build the case.</b> Open the Corkboard and drag from a clue's red pin onto the person it implicates. Correct links unlock deductions.</li>
                 <li><b className="text-cyan-neon">6. Accuse carefully.</b> Open the Case File to see the exact win and lose rules. Accusing without proof usually loses the case.</li>
@@ -7332,7 +7450,7 @@ function CasePlayer({
               <div className="border border-gold/35 bg-gold/5 p-3">
                 <h3 className="font-pulp text-sm uppercase text-gold">What Case Progress does</h3>
                 <p className="mt-1 font-type text-xs leading-relaxed text-paper/70">
-                  It is your detective notebook. It shows attitude meters, active perks, people you have met, clues in your satchel, and how many corkboard links you have solved. It does not require clicking to progress.
+                  It is your detective notebook. It shows attitude meters, active perks, people you have met, clues in your inventory, and how many corkboard links you have solved. It does not require clicking to progress.
                 </p>
               </div>
               <div className="border border-crimson/35 bg-crimson/5 p-3">
@@ -7508,7 +7626,7 @@ function CasePlayer({
             it costs you, and you only get a few tries before they shut down.
           </p>
           {state.inventory.length === 0 ? (
-            <p className="font-type text-sm text-gold">Your satchel is empty — go find evidence first.</p>
+            <p className="font-type text-sm text-gold">Your inventory is empty — go find evidence first.</p>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {state.inventory.map((item) => {

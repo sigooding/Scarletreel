@@ -43,15 +43,56 @@ only while set (the keyframe fields stay saved and come back the moment the
 sheet is cleared); an extra's `sheet` replaces its static `image` in play
 but keeps it as the fallback.
 
-## The Sheet slicer (Media tab)
+## Making a sheet from a generated plate (command line)
 
-Studio → Media tab → **🎞 Sheet slicer**: pick any uploaded image, set the
+The AI tab's flow is: generate the character N times on one row over flat
+magenta → key the backdrop out → find the frames by the transparent gaps →
+crop, scale and bottom-align them to one grid → write the sheet. That flow
+runs in the browser; `scripts/make-sprite-sheet.mjs` is the same pipeline on
+the command line, so sheets can be built (and rebuilt) headlessly:
+
+```bash
+node scripts/make-sprite-sheet.mjs \
+  --in plates/tintin-talk.png \
+  --out public/assets/sprites/tt-tintin-talk.png \
+  --key ff00ff --height 384 --frames 3
+# ✓ public/assets/sprites/tt-tintin-talk.png  3 frame(s)  frameWidth: 224, frameHeight: 384
+```
+
+It prints the `frameWidth × frameHeight` grid to paste straight into a story's
+`talkingSheet` / `sheet` config. `--auto` samples the backdrop from the
+corners instead of taking a `--key`; `--tolerance`, `--softness` and `--gap`
+tune the key and the minimum gap that separates two frames.
+
+## The Sheet slicer (Media Tools tab)
+
+Studio → Media Tools tab → **🎞 Sheet slicer**: pick any uploaded image, set the
 frame size, scrub the preview to find frame numbers, name the animations,
 then copy the JSON or re-enter the same settings where the sheet lives. The
 same editor (src/studio/SheetEditor.tsx) is embedded at all three call
 sites, each with its own naming preset.
 
 ## Demo assets in the catalogue
+
+**Tintin and the Meridian Light** ships a full cast of ligne-claire cutouts
+(`public/assets/sprites/tt-*.png`), all generated as magenta plates and sliced
+with the script above:
+
+| Asset | Frames | Grid | Used as |
+| --- | --- | --- | --- |
+| `tt-tintin-talk.png` | 3 (mouth closed / open / half) | 224×384 | `character.talkingSheet` — Tintin, stage left |
+| `tt-snowy-talk.png` | 3 | 183×384 | `character.talkingSheet` — Snowy, stage right, flipped |
+| `tt-haddock-talk.png` | 3 | 262×384 | `character.talkingSheet` — the Captain |
+| `tt-curator-talk.png` | 3 | 249×384 | `character.talkingSheet` — M. Alembert |
+| `tt-krespel-talk.png` | 3 | 273×384 | `character.talkingSheet` — Dr. Krespel, stage left |
+| `tt-snowy-walk.png` | 4 (trot cycle) | 197×128 | foreground extra (`SNOWY_WALK`) on the quay and at Berth 4 |
+| `tt-astrolabe.png` | 2 (plain / gleam) | 135×160 | foreground extra (`ASTROLABE`) in the lamp room and the silver ending |
+
+Talking sheets share a 384px-tall grid so heads stay level across the cast;
+every speaker is placed left or right and flipped to face their scene partner,
+so each conversation reads as a two-shot (see `src/data/tintinMeridian.ts`).
+
+
 
 - `public/assets/sprites/gumshoe-walk.png` — 4-frame noir detective walk
   cycle (114×192/frame), the walker in *Anatomy of a Lie*'s stage scene.

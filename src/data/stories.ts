@@ -6,6 +6,7 @@ import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
 import { TINTIN_MERIDIAN } from "./tintinMeridian";
+import { THROTTLE_ASH } from "./throttleAsh";
 import { KINGFISHER_JOB } from "./kingfisherJob";
 import { BUMPY_NIGHT } from "./allAboutEve";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
@@ -66,6 +67,7 @@ import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  THROTTLE_ASH,
   NOBODYS_WITNESS_TRUE,
   NOBODYS_WITNESS_FINAL,
   NOBODYS_WITNESS_NEW,

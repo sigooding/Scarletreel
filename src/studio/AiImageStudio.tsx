@@ -169,7 +169,7 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
   const saveToLibrary = async () => {
     if (!result) return;
     const r = await uploadDataUrlAsset(storyId, `ai-${Date.now()}.png`, "image", result);
-    if (r.success) setSaved("Saved to this story's media library — it's now available in every image dropdown (Background, Foreground, Keyframes) and the 📦 Media tab.");
+    if (r.success) setSaved("Saved to this story's media library — it's now available in every image dropdown (Background, Foreground, Keyframes) and the 🛠 Media Tools tab.");
     else setError(r.error ?? "Could not save the image.");
   };
 
@@ -511,7 +511,7 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
           <p className="font-type text-[9px] leading-snug text-paper/45">
             Use it now: Characters tab ▸ talking sheet, Scene ▸ 🎞 Sprite sheet editor, or 🚶 Walkable Stage — pick
             the saved sheet image and enter frame {forged.frameWidth} × {forged.frameHeight}. Or copy the settings
-            below and paste them into the Media tab's 🎞 Sheet slicer.
+            below and paste them into the Media Tools tab's 🎞 Sheet slicer.
           </p>
           <button
             onClick={() => {

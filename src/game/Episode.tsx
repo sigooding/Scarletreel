@@ -189,7 +189,7 @@ export function EpisodeRecap({
 }) {
   const lines = useMemo(() => resolveRecap(episode, state), [episode, state]);
   // Memory-driven beats: replay the player's own words back at them, which is
-  // the single most Telltale thing a recap can do.
+  // the single most gratifying thing a recap can do.
   const memoryLines = useMemo(() => {
     if (!episode.recapFromMemories) return [];
     return Object.entries(state.memories).map(([tag, said]) => ({
@@ -433,7 +433,7 @@ export function NextTimeCard({
 /*  episode ending card                                                */
 /* ------------------------------------------------------------------ */
 
-/** Telltale-style end-of-episode card: how this chapter closed, the standout
+/** End-of-episode card: how this chapter closed, the standout
  * choices the player made in it, and the handoff to the next episode. */
 export function EpisodeEndCard({
   story,

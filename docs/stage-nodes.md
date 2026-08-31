@@ -1,6 +1,6 @@
-# 🚶 STAGE NODES — the Telltale-style walkable scene
+# 🚶 STAGE NODES — the walkable scene
 
-A **Stage node** is a scene that plays like a Telltale game: no prose panel,
+A **Stage node** is a scene that plays as free-roam exploration: no prose panel,
 nothing to read before acting. The player walks a character around a floor,
 walks up to things to interact with them, talks to characters to open
 conversations, and walks to a door to leave.
@@ -18,7 +18,7 @@ character in **Scene tab → 🚶 Walkable Stage**.
 | Prose panel types out a paragraph | **No prose panel.** Narrative is a one-line caption (`enterCaption`) plus short 💬 show-text markers |
 | Click a hotspot zone → instant | **Walk to a marker** (gold reticle at the thing's feet) → it fires on arrival |
 | Beats play automatically after prose | Beats play only when the player **talks** (a 🗣 marker) — the conversation |
-| Choices wait at the bottom | Choices appear **only at the end of a conversation** — give them `timeLimitSeconds` for the Telltale "decide now" pressure |
+| Choices wait at the bottom | Choices appear **only at the end of a conversation** — give them `timeLimitSeconds` for the "decide now" pressure |
 | Exits are choices / hotspot zones | Exits are **door markers** (→ Go to scene hotspots) you walk to |
 
 Movement: click the floor to walk (clicks outside the band snap to its
@@ -86,10 +86,10 @@ surfaces problems as Check-tab warnings.
 
 > Sprite sheets also drive **talking portraits** (`character.talkingSheet`)
 > and **animated foreground extras** (`foregroundExtra.sheet`), and the
-> Media tab has a **Sheet slicer** for working out any sheet's grid — see
+> Media Tools tab has a **Sheet slicer** for working out any sheet's grid — see
 > `docs/sprite-sheets.md` for the full picture.
 
-## Authoring recipe (the Telltale loop)
+## Authoring recipe (the walkable loop)
 
 1. **Floor & spawn** — drag the neon band and 🕵️ dot in the Scene tab's
    mini-plate (or type the numbers). Markers can be dragged there too.

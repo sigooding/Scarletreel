@@ -1,5 +1,6 @@
 import type { Story } from "../types";
 import type { PatternPuzzleConfig } from "../game/PatternPuzzleTypes";
+import type { SpriteSheet } from "../game/spriteSheet";
 
 /**
  * TINTIN AND THE MERIDIAN LIGHT — a fan-homage adventure with entirely
@@ -23,10 +24,82 @@ import type { PatternPuzzleConfig } from "../game/PatternPuzzleTypes";
  *    the manifest page; the gold ending gates on catching him in it.
  *  · 📌 CORKBOARD — Krespel is pinnable against the brass tag and the signal
  *    card.
+ *  · 🗣 SPRITE CAST — all five speakers are animated ligne-claire cutouts on
+ *    talking sheets (public/assets/sprites/tt-*-talk.png), placed left and
+ *    right and flipped to face their scene partner, so every conversation
+ *    plays as a two-shot with the listener dimmed.
+ *  · 🎞 SPRITE PROPS — Snowy trots along the quay on his 4-frame walk sheet
+ *    and the Meridian Astrolabe gleams on the keeper's table (animated
+ *    foreground extras).
  *  · Reply choices, hidden gated choices, presentItem, memoryLog + recalls,
  *    rememberLine cards, heat limit with a bust scene, per-story In-Game
  *    Theme (midnight-teal HUD, poster headings), letterbox cutscene framing.
+ *
+ * The sprite sheets started as magenta plates (character repeated on one row,
+ * flat #FF00FF backdrop) and were sliced with scripts/make-sprite-sheet.mjs —
+ * see docs/sprite-sheets.md for the pipeline and the frame grids.
  */
+
+/* ------------------------------------------------------------------ */
+/*  SPRITE ASSETS — ligne-claire cutouts for the whole cast.            */
+/*                                                                     */
+/*  Every sheet here started as one AI plate: the character drawn      */
+/*  three (or four) times on a row over flat magenta, keyed and        */
+/*  sliced with `scripts/make-sprite-sheet.mjs`. Talk sheets share a   */
+/*  384px-tall grid: frame 0 is the resting pose, frames 1-2 open      */
+/*  the mouth, and `talk` cycles them like the other cases in the      */
+/*  catalogue. Cutouts (the astrolabe) sit on their own grids.         */
+/* ------------------------------------------------------------------ */
+
+/** A three-frame talking portrait: rest on frame 0, mouth open on 1-2. */
+const talkSheet = (image: string, frameWidth: number): SpriteSheet => ({
+  image,
+  frameWidth,
+  frameHeight: 384,
+  animations: {
+    rest: { frames: [0] },
+    talk: { frames: [1, 2, 0, 2], fps: 7 },
+  },
+  pixelated: true,
+});
+
+/** Snowy's trot — a four-frame walk cycle used as a walking extra. */
+const SNOWY_WALK: SpriteSheet = {
+  image: "/assets/sprites/tt-snowy-walk.png",
+  frameWidth: 197,
+  frameHeight: 128,
+  animations: { loop: { frames: [0, 1, 2, 3], fps: 8 } },
+  pixelated: true,
+};
+
+/** A gull that crosses the harbour sky. One static cutout, no flight frames:
+ *  the MOTION PATH carries it across the plate at a constant speed and the
+ *  flutter preset works its wings — see src/game/animation.ts. */
+const GULL_FLIGHT = {
+  image: "/assets/sprites/tt-gull.png",
+  x: 8,
+  y: 18,
+  scale: 0.07,
+  anchor: "50% 50%",
+  anim: { preset: "flutter" as const, speed: 0.85, intensity: 0.7 },
+  motion: {
+    points: [{ x: -14, y: 13 }, { x: 46, y: 21 }, { x: 112, y: 12 }],
+    duration: 16,
+    ease: "arc" as const,
+    loop: "loop" as const,
+    holdSeconds: 4,
+    faceTravel: true,
+  },
+};
+
+/** The Meridian Astrolabe, with a slow gleam across its rings. */
+const ASTROLABE: SpriteSheet = {
+  image: "/assets/sprites/tt-astrolabe.png",
+  frameWidth: 135,
+  frameHeight: 160,
+  animations: { loop: { frames: [0, 0, 0, 1, 0, 1], fps: 3 } },
+  pixelated: true,
+};
 
 /** The Peregrine's manifest: three crates consigned to "K. Antiquités" are
  *  logged as MACHINE PARTS yet weigh exactly 612 kg each — machine parts
@@ -145,6 +218,12 @@ export const TINTIN_MERIDIAN: Story = {
       avatarUrl: "/img/ch-tt-reporter.jpg",
       trustMeter: 0,
       voice: { pitch: 1.1, rate: 1.02 },
+      // Stage left, facing his scene partner: Tintin is the only unflipped
+      // talking sprite in the cast, so every conversation reads as a two-shot.
+      talkingSheet: talkSheet("/assets/sprites/tt-tintin-talk.png", 224),
+      talkingX: 28,
+      talkingScale: 1,
+      talkingDim: 0.68,
     },
     {
       id: "tt_snowy",
@@ -153,6 +232,12 @@ export const TINTIN_MERIDIAN: Story = {
       avatarUrl: "emoji:🐕",
       trustMeter: 2,
       voice: { pitch: 1.6, rate: 1.2 },
+      // Small and stage right, turned back toward whoever is talking.
+      talkingSheet: talkSheet("/assets/sprites/tt-snowy-talk.png", 183),
+      talkingX: 74,
+      talkingScale: 0.62,
+      talkingFlip: true,
+      talkingDim: 0.78,
     },
     {
       id: "tt_haddock",
@@ -161,6 +246,13 @@ export const TINTIN_MERIDIAN: Story = {
       avatarUrl: "/img/ch-tt-captain.jpg",
       trustMeter: 0,
       voice: { pitch: 0.7, rate: 0.95 },
+      // Stage right, flipped to face in — the broadest silhouette in the cast,
+      // so he sits slightly smaller than Tintin to keep their heads level.
+      talkingSheet: talkSheet("/assets/sprites/tt-haddock-talk.png", 262),
+      talkingX: 74,
+      talkingScale: 0.98,
+      talkingFlip: true,
+      talkingDim: 0.68,
     },
     {
       id: "tt_curator",
@@ -169,6 +261,12 @@ export const TINTIN_MERIDIAN: Story = {
       avatarUrl: "emoji:🧓",
       trustMeter: 0,
       voice: { pitch: 0.9, rate: 0.9 },
+      // Stage right, facing the reporter who has just been kind to him.
+      talkingSheet: talkSheet("/assets/sprites/tt-curator-talk.png", 249),
+      talkingX: 74,
+      talkingScale: 0.96,
+      talkingFlip: true,
+      talkingDim: 0.7,
     },
     {
       id: "tt_krespel",
@@ -177,6 +275,12 @@ export const TINTIN_MERIDIAN: Story = {
       avatarUrl: "/img/ch-tt-krespel.jpg",
       trustMeter: -1,
       voice: { pitch: 0.85, rate: 0.88 },
+      // The only other left-hand sprite: Krespel shares Tintin's side of the
+      // frame and faces right, so the two of them square up in the lamp room.
+      talkingSheet: talkSheet("/assets/sprites/tt-krespel-talk.png", 273),
+      talkingX: 28,
+      talkingScale: 1,
+      talkingDim: 0.66,
     },
   ],
   items: [
@@ -344,6 +448,14 @@ export const TINTIN_MERIDIAN: Story = {
       background: "/img/bg-tt-harbour.jpg",
       ambientAudio: "rain",
       particles: "storm",
+      cinematic: {
+        foregroundExtras: [
+          // Snowy trotting along the quay — the net is about to fall on him.
+          { image: "/assets/sprites/tt-snowy-walk.png", sheet: SNOWY_WALK, x: 22, y: 84, scale: 0.34 },
+          // A gull working the updraught off the containers (motion path).
+          { ...GULL_FLIGHT, scale: 0.06, anim: { ...GULL_FLIGHT.anim, delay: 1.2 } },
+        ],
+      },
       letterbox: true,
       prose:
         "The Peregrine looms black against the harbour lamps, rust bleeding down her plates. You are halfway along the quay when a crane chain shrieks overhead — and a loaded cargo net swings free of its hook, right above Snowy.",
@@ -401,6 +513,13 @@ export const TINTIN_MERIDIAN: Story = {
       background: "/img/bg-tt-harbour.jpg",
       ambientAudio: "rain",
       particles: "rain",
+      cinematic: {
+        foregroundExtras: [
+          { image: "/assets/sprites/tt-snowy-walk.png", sheet: SNOWY_WALK, x: 16, y: 80, scale: 0.4 },
+          // ...and a gull crossing the harbour sky, wings fluttering.
+          GULL_FLIGHT,
+        ],
+      },
       prose:
         "The Peregrine's gangway is chained and her watchman prowls the rail, but the shipping office at the foot of the crane still shows a lamp — and her cargo manifest will be on the spike inside. The bearded captain from the quayside watches the ship the way a man watches a house he was burgled from.",
       hotspots: [
@@ -523,6 +642,19 @@ export const TINTIN_MERIDIAN: Story = {
       background: "/img/bg-tt-light.jpg",
       ambientAudio: "tension",
       letterbox: true,
+      cinematic: {
+        foregroundExtras: [
+          // The Meridian Astrolabe on the keeper's table — the whole prize,
+          // sitting in plain sight while Krespel talks.
+          { image: "/assets/sprites/tt-astrolabe.png", sheet: ASTROLABE, x: 62, y: 58, scale: 0.52, anchor: "50% 100%" },
+          // A gull riding the thermal under the lamp room, in and out again.
+          {
+            ...GULL_FLIGHT,
+            scale: 0.05,
+            motion: { ...GULL_FLIGHT.motion, points: [{ x: 12, y: 24 }, { x: 84, y: 30 }], duration: 22, loop: "pingpong", holdSeconds: 6 },
+          },
+        ],
+      },
       prose:
         "Dawn climbs the lamp room glass. On the keeper's table sits the Meridian Astrolabe, brass rings burning in the first light — and behind it, unhurried as a man at his own auction, Dr. Krespel polishes his pince-nez. Far below, a launch idles against the rocks.",
       hotspots: [],
@@ -616,6 +748,11 @@ export const TINTIN_MERIDIAN: Story = {
       title: "The Astrolabe Comes Home",
       isEnding: true,
       background: "/img/bg-tt-museum.jpg",
+      cinematic: {
+        foregroundExtras: [
+          { image: "/assets/sprites/tt-astrolabe.png", sheet: ASTROLABE, x: 50, y: 72, scale: 0.6, anchor: "50% 100%" },
+        ],
+      },
       prose:
         "You are over the rail and rowing before Krespel finishes his sentence. The astrolabe is back in its case by opening time — but the Peregrine slips the harbour on the tide, and somewhere a collector's cheque is quietly torn up. Krespel will surface again. Men like him float.",
       endingData: {

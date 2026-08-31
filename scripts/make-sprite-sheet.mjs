@@ -1,0 +1,294 @@
+#!/usr/bin/env node
+/* ------------------------------------------------------------------ *
+ *  make-sprite-sheet.mjs — turn a generated "plate" into a sheet.     *
+ *                                                                     *
+ *  The AI tab's flow is: generate art on flat magenta → key the       *
+ *  backdrop out → find the frames by the transparent gaps between     *
+ *  them → crop, scale and bottom-align every frame to one uniform     *
+ *  grid → write the sheet PNG. That flow runs in the browser; this    *
+ *  is the same pipeline on the command line, so sheets can be built   *
+ *  (and rebuilt) from committed plates without opening Studio.        *
+ *                                                                     *
+ *  Usage:                                                             *
+ *    node scripts/make-sprite-sheet.mjs                               \
+ *      --in plates/tintin-talk.png                                    \
+ *      --out public/assets/sprites/tt-tintin-talk.png                 \
+ *      [--key ff00ff] [--auto] [--tolerance 90] [--softness 12]       \
+ *      [--height 384] [--gap 8] [--frames 3]                          *
+ *                                                                     *
+ *  Prints the frame grid (`frameWidth × frameHeight`) to paste into   *
+ *  a story's `talkingSheet` / `sheet` config.                         *
+ * ------------------------------------------------------------------ */
+
+import { readFileSync, writeFileSync } from "node:fs";
+import { inflateSync, deflateSync } from "node:zlib";
+
+/* ---------- args ---------- */
+const argv = process.argv.slice(2);
+const arg = (name, fallback) => {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : fallback;
+};
+const flag = (name) => argv.includes(`--${name}`);
+
+const inPath = arg("in");
+const outPath = arg("out");
+if (!inPath || !outPath) {
+  console.error("usage: node scripts/make-sprite-sheet.mjs --in <plate.png> --out <sheet.png> [--key ff00ff] [--auto] [--height 384] [--frames 3]");
+  process.exit(1);
+}
+const height = Number(arg("height", 384));
+const tolerance = Number(arg("tolerance", 90));
+const softness = Number(arg("softness", 12));
+const minGap = Number(arg("gap", 8));
+const wantFrames = Number(arg("frames", 0));
+
+/* ---------- minimal PNG codec (8-bit, non-interlaced) ---------- */
+function decodePng(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error("not a PNG file");
+  let off = 8;
+  let w = 0,
+    h = 0,
+    depth = 0,
+    colorType = 0;
+  const idat = [];
+  while (off < buf.length) {
+    const len = buf.readUInt32BE(off);
+    const type = buf.toString("ascii", off + 4, off + 8);
+    const data = buf.subarray(off + 8, off + 8 + len);
+    if (type === "IHDR") {
+      w = data.readUInt32BE(0);
+      h = data.readUInt32BE(4);
+      depth = data[8];
+      colorType = data[9];
+      if (depth !== 8) throw new Error(`unsupported bit depth ${depth} (only 8-bit is handled)`);
+      if (data[12] !== 0) throw new Error("interlaced PNGs are not supported");
+    } else if (type === "IDAT") idat.push(data);
+    else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[colorType];
+  if (!channels) throw new Error(`unsupported colour type ${colorType}`);
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = w * channels;
+  const px = Buffer.alloc(h * stride);
+  let pos = 0;
+  for (let y = 0; y < h; y++) {
+    const filter = raw[pos++];
+    const line = raw.subarray(pos, pos + stride);
+    pos += stride;
+    const cur = px.subarray(y * stride, (y + 1) * stride);
+    const prev = y > 0 ? px.subarray((y - 1) * stride, y * stride) : null;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? cur[x - channels] : 0;
+      const b = prev ? prev[x] : 0;
+      const c = prev && x >= channels ? prev[x - channels] : 0;
+      let v = line[x];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a),
+          pb = Math.abs(p - b),
+          pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      cur[x] = v & 0xff;
+    }
+  }
+  // Flatten to RGBA.
+  const rgba = new Uint8Array(w * h * 4);
+  for (let i = 0, p = 0; i < w * h; i++, p += channels) {
+    const o = i * 4;
+    if (channels >= 3) {
+      rgba[o] = px[p];
+      rgba[o + 1] = px[p + 1];
+      rgba[o + 2] = px[p + 2];
+      rgba[o + 3] = channels === 4 ? px[p + 3] : 255;
+    } else {
+      rgba[o] = rgba[o + 1] = rgba[o + 2] = px[p];
+      rgba[o + 3] = channels === 2 ? px[p + 1] : 255;
+    }
+  }
+  return { w, h, rgba };
+}
+
+function encodePng(w, h, rgba) {
+  const stride = w * 4;
+  const raw = Buffer.alloc(h * (stride + 1));
+  for (let y = 0; y < h; y++) {
+    raw[y * (stride + 1)] = 0; // filter: none
+    Buffer.from(rgba.buffer, rgba.byteOffset + y * stride, stride).copy(raw, y * (stride + 1) + 1);
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw, { level: 9 })),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+let CRC_TABLE = null;
+function crc32(buf) {
+  if (!CRC_TABLE) {
+    CRC_TABLE = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      CRC_TABLE[n] = c;
+    }
+  }
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return c ^ -1;
+}
+
+/* ---------- keying ---------- */
+const parseHex = (hex) => {
+  const h = hex.replace("#", "");
+  return { r: parseInt(h.slice(0, 2), 16) || 0, g: parseInt(h.slice(2, 4), 16) || 0, b: parseInt(h.slice(4, 6), 16) || 0 };
+};
+
+function sampleCorners(px, w, h) {
+  const at = (x, y) => {
+    const i = (y * w + x) * 4;
+    return { r: px[i], g: px[i + 1], b: px[i + 2] };
+  };
+  const spots = [at(0, 0), at(w - 1, 0), at(0, h - 1), at(w - 1, h - 1)];
+  return {
+    r: spots.reduce((s, c) => s + c.r, 0) / 4,
+    g: spots.reduce((s, c) => s + c.g, 0) / 4,
+    b: spots.reduce((s, c) => s + c.b, 0) / 4,
+  };
+}
+
+/** Chroma-key + feather. Everything within `tolerance` of the key goes
+ *  transparent; the `softness` band beyond it ramps the alpha. */
+function key(px, w, h, k, tol, soft) {
+  const out = new Uint8Array(px);
+  for (let i = 0; i < out.length; i += 4) {
+    const dr = out[i] - k.r,
+      dg = out[i + 1] - k.g,
+      db = out[i + 2] - k.b;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    if (dist <= tol) out[i + 3] = 0;
+    else if (dist <= tol + soft) out[i + 3] = Math.round(out[i + 3] * ((dist - tol) / soft));
+  }
+  return out;
+}
+
+/* ---------- frame finding ---------- */
+/** Columns that are (almost) entirely transparent separate the frames. */
+function frameColumns(px, w, h) {
+  const empty = [];
+  for (let x = 0; x < w; x++) {
+    let opaque = 0;
+    for (let y = 0; y < h; y++) if (px[(y * w + x) * 4 + 3] > 16) opaque++;
+    empty.push(opaque / h < 0.004);
+  }
+  const runs = [];
+  let start = -1;
+  for (let x = 0; x <= w; x++) {
+    if (x < w && empty[x]) {
+      if (start < 0) start = x;
+    } else if (start >= 0) {
+      if (x - start >= minGap) runs.push([start, x]);
+      start = -1;
+    }
+  }
+  // Frames sit between the gaps.
+  const frames = [];
+  let from = 0;
+  for (const [a, b] of runs) {
+    if (a - from > 4) frames.push([from, a]);
+    from = b;
+  }
+  if (w - from > 4) frames.push([from, w]);
+  return frames;
+}
+
+function contentBounds(px, w, h, x0, x1) {
+  let minY = h,
+    maxY = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = x0; x < x1; x++) {
+      if (px[(y * w + x) * 4 + 3] > 8) {
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        break;
+      }
+    }
+  }
+  return maxY < 0 ? null : { top: minY, bottom: maxY };
+}
+
+/* ---------- run ---------- */
+const plate = decodePng(readFileSync(inPath));
+const keyColor = flag("auto") ? sampleCorners(plate.rgba, plate.w, plate.h) : parseHex(arg("key", "ff00ff"));
+const keyed = key(plate.rgba, plate.w, plate.h, keyColor, tolerance, softness);
+
+let cols = frameColumns(keyed, plate.w, plate.h);
+if (!cols.length) cols = [[0, plate.w]];
+// Optional merge/split: keep the N widest frames when the count is given.
+if (wantFrames > 0 && cols.length !== wantFrames) {
+  cols = [...cols]
+    .sort((a, b) => b[1] - b[0] - (a[1] - a[0]))
+    .slice(0, wantFrames)
+    .sort((a, b) => a[0] - b[0]);
+}
+
+const frames = cols
+  .map(([x0, x1]) => {
+    const bounds = contentBounds(keyed, plate.w, plate.h, x0, x1);
+    if (!bounds) return null;
+    const srcH = bounds.bottom - bounds.top + 1;
+    const scale = height / srcH;
+    return { x0, x1, top: bounds.top, bottom: bounds.bottom, srcH, scale };
+  })
+  .filter(Boolean);
+
+if (!frames.length) {
+  console.error(`✖ no frames found in ${inPath} — try --auto, or a bigger --tolerance`);
+  process.exit(2);
+}
+
+const widest = Math.max(...frames.map((f) => Math.round((f.x1 - f.x0) * f.scale)));
+const cellW = widest;
+const sheetW = cellW * frames.length;
+const sheet = new Uint8Array(sheetW * height * 4);
+
+frames.forEach((f, fi) => {
+  const srcW = f.x1 - f.x0;
+  const outW = Math.round(srcW * f.scale);
+  const offX = fi * cellW + Math.floor((cellW - outW) / 2);
+  for (let y = 0; y < height; y++) {
+    // nearest-neighbour from the source, bottom-aligned
+    const sy = Math.min(f.bottom, f.top + Math.floor(y / f.scale));
+    for (let x = 0; x < outW; x++) {
+      const sx = Math.min(f.x1 - 1, f.x0 + Math.floor(x / f.scale));
+      const s = (sy * plate.w + sx) * 4;
+      const d = ((y * sheetW) + offX + x) * 4;
+      sheet[d] = keyed[s];
+      sheet[d + 1] = keyed[s + 1];
+      sheet[d + 2] = keyed[s + 2];
+      sheet[d + 3] = keyed[s + 3];
+    }
+  }
+});
+
+writeFileSync(outPath, encodePng(sheetW, height, sheet));
+console.log(`✓ ${outPath}  ${frames.length} frame(s)  frameWidth: ${cellW}, frameHeight: ${height}  (sheet ${sheetW}×${height})`);

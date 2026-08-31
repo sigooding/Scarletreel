@@ -262,7 +262,7 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               <li><b>Timer</b> — the choice expires at 0 (recorded as expired).</li>
               <li><b>⚡ Quick-time prompt</b> — a hard deadline: big banner, countdown ring, optional heartbeat + shaky cam below ~30% left. On expiry it routes to the <i>timed-out target</i> and applies <i>timed-out consequences</i> — a distinct “you hesitated” branch, not a silent loss.</li>
               <li><b>Memory tag</b> — records the player's exact line; a beat can <i>recall</i> it later with <code>{"{said}"}</code>.</li>
-              <li><b>“X will remember that” card</b> — Telltale-style full-screen impact line after the pick.</li>
+              <li><b>“X will remember that” card</b> — full-screen impact line after the pick.</li>
             </ul>
           </Section>
 
@@ -352,7 +352,7 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               Turn a dialogue line into a false claim the player must <b>prove</b>, not just read. On a beat, open{" "}
               <b>🎯 Press the Lie (contradiction)</b> and tick <b>“This line is a lie the player can catch.”</b> While that
               line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button: they open
-              their satchel and must present the clue that proves the statement false.
+              their inventory and must present the clue that proves the statement false.
             </p>
             <ul className="list-disc space-y-1 pl-5">
               <li><b>Breaking evidence</b> — tick only the item(s) that ACTUALLY disprove the claim. Every other held item is a bluff the speaker calls. Handing the player many clues is fine; they still have to pick the one that matters.</li>

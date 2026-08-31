@@ -5,6 +5,10 @@
 export type MeterKey = "Sultry" | "Aggressive" | "Clever" | "Suspicion";
 export type AttitudeTag = "Sultry" | "Aggressive" | "Clever" | "Neutral";
 export type CursorKind = "look" | "take" | "talk" | "use" | "go";
+/** A VERB COIN verb — the same five verbs the cursor can carry, because in a
+ *  point-and-click the verb IS the cursor. See Hotspot.verbs /
+ *  StageSettings.verbCoin and docs/adventure-mode.md. */
+export type VerbId = CursorKind;
 
 export interface MeterChange {
   meter: MeterKey;
@@ -95,6 +99,28 @@ export interface Hotspot {
    *  gone for good once a one-shot zone is used (a picked-up object leaves
    *  the scene). */
   image?: string;
+  /** Animate the object art with a sprite sheet — a barman polishing a glass,
+   *  a neon sign flickering. Plays the sheet's "loop" animation (or the first
+   *  one defined) on repeat; `image` stays as the static fallback. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Looping idle motion for the object art (bob / sway / flicker / flutter) —
+   *  CSS only, no extra frames. See src/game/animation.ts. */
+  anim?: import("./game/animation").ExtraAnimation;
+  /** VERB COIN — extra actions keyed by verb ("look at the bench" vs "take
+   *  the wrench"). The hotspot's own `action` stays the default and is what
+   *  plays with the coin OFF (and for the cursor it already carries). Verb
+   *  actions are repeatable flavour: LOOK never consumes the object.
+   *  See docs/adventure-mode.md. */
+  verbs?: Partial<Record<VerbId, HotspotAction>>;
+  /** Items that do something here when USEd on this object (verb coin or a
+   *  drag). Anything else gets the story's wrong-item line. */
+  acceptsItems?: string[];
+  /** Per-item reply when an accepted item is USEd here, keyed by item id.
+   *  Falls back to the useItem action's own text. */
+  itemResponses?: Record<string, string>;
+  /** Said when the player tries a verb this object doesn't answer to (or a
+   *  wrong item). Falls back to Story.verbResponses. */
+  wrongVerbText?: string;
   /** How the object image fits its zone: "contain" keeps the whole object
    *  visible (default); "cover" fills the zone, cropping the overflow. */
   imageFit?: "contain" | "cover";
@@ -162,7 +188,7 @@ export interface Choice {
    * character remembers what you said." */
   memoryLog?: string;
   /** Optional "X will remember that" impact line. After a navigating choice that
-   * carries this, the game shows a Telltale-style full-screen card that fades in
+   * carries this, the game shows a full-screen impact card that fades in
    * and out (e.g. "Lydia will remember that.") — immediate, explicit feedback
    * that the choice mattered. */
   rememberLine?: string;
@@ -174,7 +200,7 @@ export interface Choice {
    * item's name), so a later beat can recall it ({said} = the item name)
    * or a gate can "remember" it — see Choice.memoryLog for the tag form. */
   presentItem?: string;
-  /** Hand it over: the presented item leaves the satchel (they keep it).
+  /** Hand it over: the presented item leaves the inventory (they keep it).
    * Default false — you flash it, you keep it. The choice being one-shot
    * already prevents showing the same item twice for two reactions. */
   consumePresentedItem?: boolean;
@@ -214,7 +240,7 @@ export interface Contradiction {
    * composure (default 0 — the press stands on its own). 2+ is a
    * contradiction that cracks a suspect open. */
   composureDamage?: number;
-  /** Optional Telltale-style card when the lie lands (e.g. "Vera knows
+  /** Optional impact card when the lie lands (e.g. "Vera knows
    * you've got her."). */
   rememberLine?: string;
 }
@@ -308,7 +334,7 @@ export interface EndingData {
 }
 
 /* ------------------------------------------------------------------ */
-/*  episodes — a Story packed into a Telltale-style season             */
+/*  episodes — a Story packed into a TV-style season                   */
 /* ------------------------------------------------------------------ */
 
 /** One line of a "Previously on…" recap. Lines are gateable, so the recap
@@ -514,6 +540,25 @@ export interface ForegroundExtra {
   zoom?: number;
   /** seconds the foreground zoom takes (default 8) */
   zoomDuration?: number;
+  /** Fly/ crawl this sprite along a path across the plate — a gull crossing
+   *  the harbour, a car passing, a rat along the skirting. Sampled into CSS
+   *  keyframes: no JS runs per frame. See src/game/animation.ts. */
+  motion?: import("./game/animation").MotionPath;
+  /** Looping idle motion (bob, sway, flicker, flutter…) applied on top of
+   *  the position — no extra art, one CSS class. See src/game/animation.ts. */
+  anim?: import("./game/animation").ExtraAnimation;
+  /** WALK-BEHIND MASK — use this foreground image as an occluder in a stage
+   *  room: while the walker stands BEHIND it (their feet higher up the plate
+   *  than this object's base) the art is drawn OVER the character, so they
+   *  really are behind the counter / the truck / the pillar instead of being
+   *  pasted on top of it. Off by default. No separate mask asset is needed —
+   *  the cutout you already have IS the mask, alpha and all.
+   *  See docs/adventure-mode.md. */
+  occludes?: boolean;
+  /** Where the occluder's base sits, in % of plate HEIGHT (default: this
+   *  extra's own y). The walker is "behind" it while their feet are above
+   *  this line. Nudge it to move the invisible depth line. */
+  occludeBaseline?: number;
 }
 
 /** A mid-ground parallax depth plane (see CinematicSettings.parallaxLayers). */
@@ -827,23 +872,23 @@ export interface Interrogation {
 }
 
 /**
- * A STAGE node — the Telltale-style walkable exploration scene.
+ * A STAGE node — the free-roam walkable exploration scene.
  *
  * A stage node plays nothing like a standard node: there is no prose panel
  * and nothing to read before acting. The player walks a character around a
  * floor (click-to-walk and/or WASD/arrows), interactables render as
- * Telltale-style markers, and walking up to a marker fires it through the
+ * interaction markers, and walking up to a marker fires it through the
  * SAME action path a clicked hotspot uses (gating, give-item, show-text,
  * use-item, exits — all unchanged). A marker whose action is
  * `startDialogue` (a character, usually drawn with the hotspot's image)
  * starts the scene's conversation — its dialogueBeats play in the normal
  * cinematic dialogue panel, ending in the scene's choices (give them
- * timeLimitSeconds for genuine Telltale "decide NOW" pressure). Exit
+ * timeLimitSeconds for genuine "decide NOW" pressure). Exit
  * markers are ordinary goToScene hotspots: you walk to the door to leave.
  *
  * Prose on a stage node is intentionally NOT shown in play — narrative
  * lives in short caption lines (`showText` actions and `enterCaption`),
- * the way a Telltale scene speaks through what you do, not paragraphs.
+ * the way a walkable scene speaks through what you do, not paragraphs.
  */
 export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
@@ -854,6 +899,13 @@ export interface StageSettings {
    *  the other). Takes precedence over walkFrames/playerImage when set.
    *  See src/game/spriteSheet.ts. */
   playerSheet?: import("./game/spriteSheet").SpriteSheet;
+  /** VERB COIN — pick a verb, then click the object (LucasArts style).
+   *  Off by default: the classic flow (walk up, marker fires) is unchanged.
+   *  When on, hotspots answer per verb (Hotspot.verbs) and the USE verb arms
+   *  an inventory item. See docs/adventure-mode.md. */
+  verbCoin?: boolean;
+  /** Which verbs the coin offers. Defaults to every verb the room uses. */
+  verbs?: import("./types").VerbId[];
   /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
    *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
    *  procedurally instead. Frame 0 doubles as the idle pose. */
@@ -877,6 +929,12 @@ export interface StageSettings {
   /** Perspective: how much SMALLER the character is drawn at the top of the
    *  floor vs the bottom, 0–0.9 (default 0.35). 0 = flat, no depth scaling. */
   depthScale?: number;
+  /** Sprite scale at the FRONT of the floor band — how big the character is
+   *  up close (default 1). Raise it for a room with a strong foreground. */
+  playerNearScale?: number;
+  /** Sprite scale at the BACK of the floor band — how small they get walking
+   *  away (default 1 - depthScale). Set both ends for an explicit range. */
+  playerFarScale?: number;
   /** Base scale of the player sprite (default 1). */
   playerScale?: number;
   /** When interaction labels show on markers:
@@ -887,6 +945,12 @@ export interface StageSettings {
   /** A caption bar line shown once when the scene begins — the stage
    *  equivalent of an opening narration beat (auto-fades, never blocks). */
   enterCaption?: string;
+  /** Furniture the character walks AROUND instead of through — a bar, a
+   *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
+   *  routes around them (A* on a coarse grid, then string-pulled to the
+   *  corners a person would actually turn at); the keyboard slides along them
+   *  instead of stopping dead. See src/logic.ts `stageRoute`. */
+  obstacles?: { x: number; y: number; w: number; h: number }[];
 }
 
 export interface SceneNode {
@@ -896,7 +960,7 @@ export interface SceneNode {
    * scene's node card. Studio metadata only; the game never renders it. */
   note?: string;
   /** standard, credits (no HUD, big typography), cutscene (no HUD, full-screen video),
-   * stage (a Telltale-style WALKABLE exploration scene — no prose panel, the
+   * stage (a free-roam WALKABLE exploration scene — no prose panel, the
    * player walks a character around a floor and interacts by approaching
    * things; conversations play via startDialogue markers), or note — an
    * author placeholder ("Missing Scene Here"): wired into the graph
@@ -955,7 +1019,7 @@ export interface SceneNode {
   hideSceneTitle?: boolean;
   /** visual particle overlay; if undefined, falls back to legacy auto-matching based on ambient audio */
   particles?: "none" | "rain" | "smoke" | "storm";
-  /** STAGE NODES — the Telltale walkable-stage configuration. When the
+  /** STAGE NODES — the walkable-stage configuration. When the
    * scene's nodeType is "stage" this drives the whole scene: the player
    * walks a character around `stage.floor`, interactable markers fire
    * hotspots through the normal action path, `startDialogue` markers open
@@ -964,7 +1028,7 @@ export interface SceneNode {
   stage?: StageSettings;
   /** cinematic camera motion applied to the scene background image */
   cinematic?: CinematicSettings;
-  /** Show Telltale-style letterbox bars (top/bottom black bands) over the scene. */
+  /** Show cinematic letterbox bars (top/bottom black bands) over the scene. */
   letterbox?: boolean;
   /** How the scene enters over the previous one. "fade" = dissolve, "fade-black"
    * = dip to black then back, "cut" = instant. Defaults to "fade". */
@@ -1116,6 +1180,65 @@ export interface MapLocation {
 /** The story's travel map — a screen of flag-gated destinations. When
  * present (with at least one location) the player gets a 🗺 Travel Map entry
  * in the HUD menu and the T hotkey. When absent nothing map-related renders. */
+/* ---------------- cursor art ---------------- */
+
+/** Custom CURSOR art for one verb (and for the plain arrow, "default").
+ *  Supply a transparent cutout (`image`) and it becomes the real CSS cursor —
+ *  supply a sprite `sheet` and it plays as a little animated pointer that
+ *  follows the mouse (a reaching hand, a turning key, a blinking eye).
+ *  Cursors are authored per case on the 🎮 In-game theme tab. */
+export interface CursorArt {
+  /** Static art: a transparent PNG/WebP, ideally ≤64px (browsers cap cursor
+   *  images at 128px). */
+  image?: string;
+  /** Animated art: a sprite sheet whose "loop" animation plays. Wins over
+   *  `image` — an animated cursor is drawn as a sprite that tracks the mouse,
+   *  so it is not bound by the CSS cursor size limit. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Which point of the art is the HOTSPOT (the pixel that clicks):
+   *  "top-left" (default — a pointing finger) or "center" (a reticle). */
+  anchor?: "top-left" | "center";
+  /** Size in px (default 32; CSS cursors clamp to 128). */
+  size?: number;
+}
+
+/* ---------------- inventory presentation ---------------- */
+
+/** How a case shows what the player is carrying.
+ *  - "classic" (DEFAULT): the plain chip rail — today's dock, unchanged.
+ *  - "container": a POUCH / CASE / SADDLEBAG sprite that pops open with the
+ *    items laid out inside it. `image` is the art (anything transparent —
+ *    a bag, a briefcase, a tool roll, a freezer bag); without one you get a
+ *    stitched leather panel in the house style, so the mode never looks
+ *    broken. Authors supply their own art per game.
+ *  - "hidden": no on-screen dock at all (the case manages items off-screen). */
+export type InventoryDisplayMode = "classic" | "container" | "hidden";
+
+/** Where the dock sits on the plate. */
+export type InventoryAnchor = "bottom-left" | "bottom-right" | "top-left" | "top-right";
+
+export interface InventorySettings {
+  mode?: InventoryDisplayMode;
+  /** Dock heading — "Inventory", "Satchel", "Saddlebags", "Case File"… */
+  label?: string;
+  /** Container art: a transparent PNG/WebP (url / `asset:`). The items are
+   *  laid out inside its middle, so pick art with an open middle. */
+  image?: string;
+  /** Animated container (a lid that breathes) — a sprite sheet whose "loop"
+   *  animation plays. Optional; `image` is the static fallback. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
+  anchor?: InventoryAnchor;
+  /** Item columns inside the container (default 4). */
+  columns?: number;
+  /** Padding inside the container art where items sit, % of its box (default
+   *  14 — tune it so the icons land in the pouch, not on the strap). */
+  inset?: number;
+  /** Container height in px (default 260). */
+  height?: number;
+  /** Start collapsed, showing only the heading and the count (default false). */
+  startClosed?: boolean;
+}
+
 export interface StoryMap {
   /** Heading over the map screen (default "Travel Map"). */
   title?: string;
@@ -1132,10 +1255,32 @@ export interface StoryMap {
   locations: MapLocation[];
 }
 
+/** The KIND of game a case is — the axis the author picks before writing.
+ *
+ *  - "noir-rail" (default): the house style. Prose, beats, a choice rail —
+ *    reading-forward, one decision at a time.
+ *  - "adventure": a point-and-click room game — walkable rooms (STAGE nodes),
+ *    verb cursors (look / take / talk / use / go), inventory puzzles, NPCs
+ *    with idle animation. Prototype: src/data/throttleAsh.ts.
+ *  - "vn": a visual novel — full-screen portraits, minimal UI, dialogue-led.
+ *
+ *  Today this is a DECLARATION (Studio shows it, the validator reads it, and
+ *  Studio's tooling can be tailored per kind). The interaction models share
+ *  one engine, so a case can mix: an adventure case still plays prose beats
+ *  when a conversation starts. */
+export type GameKind = "noir-rail" | "adventure" | "vn";
+
 export interface Story {
   id: string;
   title: string;
   tagline: string;
+  /** How the INVENTORY is presented on screen. Opt-in per case, so a point-
+   *  and-click can carry a leather satchel with the loot inside it while
+   *  every other game keeps exactly the dock it has today.
+   *  See InventorySettings and docs/adventure-mode.md. */
+  inventoryDisplay?: InventorySettings;
+  /** What kind of game this case is (default "noir-rail"). See GameKind. */
+  gameKind?: GameKind;
   coverImage: string;
   startSceneId: string;
   scenes: SceneNode[];
@@ -1147,6 +1292,15 @@ export interface Story {
   map?: StoryMap;
   /** explicit win/lose rules surfaced to the player */
   briefing?: CaseBriefing;
+  /** Per-verb CURSOR art — a pointing hand for take, an eye for look, a
+   *  turning key for use, and a plain arrow under "default". Opt-in: with no
+   *  art the game keeps its system cursors. Authored on the 🎮 In-game theme
+   *  tab. See CursorArt. */
+  cursorArt?: Partial<Record<import("./types").CursorKind | "default", CursorArt>>;
+  /** Default "that doesn't work" lines for the verb coin, per verb. An
+   *  author-supplied Hotspot.wrongVerbText wins; otherwise one of these is
+   *  picked (varied, so repeating a failed verb doesn't read like a loop). */
+  verbResponses?: Partial<Record<import("./types").VerbId, string[]>>;
   /** Optional episodic structure. When present the story is presented as a
    * season: a season screen, per-episode title cards + recaps, per-episode
    * save slots, and per-episode endings. When absent the story plays as one
@@ -1381,7 +1535,7 @@ export interface GameSave {
   schema?: number;
   storyId: string;
   /** which episode this save belongs to — save slots are per-episode so each
-   * chapter keeps its own three slots, Telltale-style. */
+   * chapter keeps its own three slots. */
   episodeId?: string;
   sceneId: string;
   sceneTitle: string;

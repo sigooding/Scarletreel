@@ -137,7 +137,7 @@ export function AssetDropdown({
       </select>
       {selected && assetType === "audio" && <audio controls src={selected.dataUrl} className="h-8 w-full" />}
       {selected && assetType === "video" && <video controls src={selected.dataUrl} className="h-24 w-full object-cover" />}
-      {!assets.length && <p className="font-type text-[9px] text-paper/35">No {assetType} uploaded yet — use Upload above or the 📦 Media tab.</p>}
+      {!assets.length && <p className="font-type text-[9px] text-paper/35">No {assetType} uploaded yet — use Upload above or the 🛠 Media Tools tab.</p>}
     </div>
   );
 }
@@ -378,7 +378,7 @@ export function MediaLibrary({ storyId }: { storyId: string }) {
     <div className="space-y-4">
       <div className="border border-gold/40 bg-gold/5 p-3">
         <div className="mb-2 flex items-center justify-between">
-          <div className="font-pulp text-[11px] uppercase tracking-widest text-gold">📦 Media Library</div>
+          <div className="font-pulp text-[11px] uppercase tracking-widest text-gold">🛠 Media Tools — Library</div>
           <div className="font-type text-[10px] text-paper/60">{totalSizeMB}MB / {totalLimitMB}MB used</div>
         </div>
 

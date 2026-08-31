@@ -4,28 +4,35 @@ import { CURSOR_ICON } from "../logic";
 import {
   STAGE2D_DEFAULT_REACH,
   STAGE2D_DEFAULT_SPEED,
+  VERB_ICON,
+  VERB_LABEL,
   clampToFloor,
   hotspotAtPoint,
   posReachesMarker,
-  stageDepthScale,
+  stageBlocked,
   stageFloor,
   stageMarkerPoint,
+  stageRoute,
+  stageSpeedScale,
+  stageSpriteScale,
   stepStagePos,
 } from "../logic";
+import type { VerbId } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
 import { SheetSprite } from "./SheetSprite";
 import { sheetDrawable } from "./spriteSheet";
+import { presetStyle } from "./animation";
 
 /**
- * Stage — the walkable layer of a STAGE node (Telltale-style exploration).
+ * Stage — the walkable layer of a STAGE node (free-roam exploration).
  *
  * Pure presentation + movement. The reel (flags, items, choices, beats,
  * captions) is owned by Game.tsx; this component:
  *
  *  - draws the walkable floor and walks the player character across it
  *    (click-to-walk + arrow/WASD), with perspective depth scaling;
- *  - renders every hotspot as a Telltale interaction MARKER (a reticle at
+ *  - renders every hotspot as an interaction MARKER (a reticle at
  *    the thing's feet, an icon, a label chip that fades in on approach);
  *  - renders hotspot object images (NPCs, props) anchored at the marker;
  *  - walks the character to a marker and fires it through `onInteract` —
@@ -40,20 +47,49 @@ import { sheetDrawable } from "./spriteSheet";
 
 const HINT_RADIUS = 16; // scene-width % — labels fade in within this of a marker
 
+/** An inventory item the USE verb can arm. */
+export interface CoinItem {
+  id: string;
+  name: string;
+  icon?: string;
+}
+
 export function Stage({
   settings,
   hotspots,
   unlocked,
   onInteract,
   active,
+  verbs,
+  inventory,
+  onPosChange,
+  dropRequest,
+  cursorStyle,
+  onVerbChange,
 }: {
   settings: StageSettings;
   hotspots: Hotspot[];
   /** Whether a marker is currently usable (gate passes). */
   unlocked: (hs: Hotspot) => boolean;
-  onInteract: (hs: Hotspot) => void;
+  /** `ctx` carries the verb-coin selection: the verb (and, for USE, the
+   *  armed inventory item). Undefined = the classic click-to-activate. */
+  onInteract: (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => void;
   /** Movement + input only while the scene is in exploration mode. */
   active: boolean;
+  /** VERB COIN: the verbs this room offers. Undefined/empty = no coin, and
+   *  the room behaves exactly as it always has. */
+  verbs?: VerbId[];
+  /** Carried inventory, listed under the coin when USE is selected. */
+  inventory?: CoinItem[];
+  /** The walker's feet (scene %), reported whenever they move — Game uses it
+   *  to decide which foreground extras are drawn OVER the character. */
+  onPosChange?: (p: { x: number; y: number }) => void;
+  /** An item dropped on a scene object: walk there, then USE it. */
+  dropRequest?: { hotspotId: string; itemId: string; key: number } | null;
+  /** Custom cursor art for the plate (see Story.cursorArt). */
+  cursorStyle?: React.CSSProperties;
+  /** Reports the coin's selected verb upward — it drives the cursor art. */
+  onVerbChange?: (verb: VerbId) => void;
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
   const floor = stageFloor(settings);
@@ -62,13 +98,23 @@ export function Stage({
   const reach = settings.reach ?? STAGE2D_DEFAULT_REACH;
   const keyboard = settings.keyboard !== false;
   const hints = settings.hints ?? "proximity";
-  const depth = settings.depthScale ?? 0.35;
   const baseScale = settings.playerScale ?? 1;
 
+  const obstacles = settings.obstacles ?? [];
   const [pos, setPos] = useState(spawn);
   const targetRef = useRef<{ x: number; y: number; hotspotId?: string } | null>(null);
+  /** Remaining corners of the current route — click-to-walk follows the whole
+   *  polyline, not just its last point (see the arrival branch below). */
+  const routeRef = useRef<{ x: number; y: number }[]>([]);
   const posRef = useRef(pos);
   posRef.current = pos;
+  // Report the feet upward whenever they change — Game needs them to decide
+  // which foreground extras are in FRONT of the walker (walk-behind masks).
+  const posCbRef = useRef(onPosChange);
+  posCbRef.current = onPosChange;
+  useEffect(() => {
+    posCbRef.current?.({ x: pos.x, y: pos.y });
+  }, [pos.x, pos.y]);
   // The rAF loop persists across renders, so it reads hotspots through a
   // ref — a marker consumed mid-walk (a one-shot pickup) must vanish from
   // the loop the same frame it vanishes from the plate.
@@ -79,6 +125,28 @@ export function Stage({
   const [frameIdx, setFrameIdx] = useState(0);
   const [ripple, setRipple] = useState<{ x: number; y: number; key: number } | null>(null);
   const [nearId, setNearId] = useState<string | null>(null);
+  // VERB COIN — the selected verb and, for USE, the armed item. Both are
+  // mirrored into refs because the rAF loop fires interactions.
+  const coinOn = !!verbs && verbs.length > 0;
+  const [verb, setVerb] = useState<VerbId>(verbs?.[0] ?? "look");
+  const [heldItem, setHeldItem] = useState<string | null>(null);
+  const verbRef = useRef<VerbId>(verbs?.[0] ?? "look");
+  const heldRef = useRef<string | null>(null);
+  verbRef.current = verb;
+  heldRef.current = heldItem;
+  /** The marker the player explicitly clicked, with the verb it was clicked
+   *  with — so a coin room only fires what was aimed at, never a brushed
+   *  past marker. */
+  const pendingRef = useRef<{ hotspotId: string; verb: VerbId; itemId?: string } | null>(null);
+  const coinRef = useRef(coinOn);
+  coinRef.current = coinOn;
+  // The selected verb is the cursor in a coin room — hand it to the parent so
+  // its art can follow the mouse.
+  const verbCbRef = useRef(onVerbChange);
+  verbCbRef.current = onVerbChange;
+  useEffect(() => {
+    if (coinOn) verbCbRef.current?.(verb);
+  }, [verb, coinOn]);
   const firedRef = useRef<Set<string>>(new Set());
   const keysRef = useRef<Set<string>>(new Set());
   // Same story for onInteract: the loop outlives the parent's re-renders,
@@ -152,13 +220,26 @@ export function Stage({
       if (kb !== 0 || vf !== 0) {
         // Keyboard: walk directly, normalised so diagonals aren't faster.
         const len = Math.hypot(kb, vf) || 1;
-        const step = speed * dt;
-        next = clampToFloor(cur.x + (kb / len) * step, cur.y + (vf / len) * step / a, floor);
+        // Walking away from the camera covers less SCREEN per second — the
+        // sprite is smaller, so the step should be too.
+        const step = speed * stageSpeedScale(cur.y, floor, settings) * dt;
+        const want = { x: cur.x + (kb / len) * step, y: cur.y + (vf / len) * step / a };
+        // Wall sliding: if the diagonal is blocked, take whichever single
+        // axis still works, so brushing a counter skims along it instead of
+        // pinning the character in place.
+        if (obstacles.length && stageBlocked(want.x, want.y, obstacles, floor, a)) {
+          const slideX = { x: want.x, y: cur.y };
+          const slideY = { x: cur.x, y: want.y };
+          if (!stageBlocked(slideX.x, slideX.y, obstacles, floor, a)) next = slideX;
+          else if (!stageBlocked(slideY.x, slideY.y, obstacles, floor, a)) next = slideY;
+        } else {
+          next = clampToFloor(want.x, want.y, floor);
+        }
         if (kb !== 0) setFacing(kb > 0 ? 1 : -1);
-        moved = true;
+        moved = next.x !== cur.x || next.y !== cur.y;
       } else if (targetRef.current) {
         const t = targetRef.current;
-        const r = stepStagePos(cur, { x: t.x, y: t.y }, speed, dt, a);
+        const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings), dt, a);
         next = clampToFloor(r.x, r.y, floor);
         if (Math.abs(t.x - cur.x) > 0.5) setFacing(t.x > cur.x ? 1 : -1);
         moved = true;
@@ -182,13 +263,21 @@ export function Stage({
         for (const hs of hotspotsRef.current) {
           if (firedRef.current.has(hs.id)) continue;
           const m = stageMarkerPoint(hs, floor);
-          if (posReachesMarker(next, m, reach, a)) {
-            firedRef.current.add(hs.id);
-            targetRef.current = null;
-            arrived = true;
-            audio.hover();
-            interactRef.current(hs);
-          }
+          if (!posReachesMarker(next, m, reach, a)) continue;
+          // A coin room is verb-first: only the marker the player actually
+          // aimed at fires, and it fires with the verb they picked. Brushing
+          // past the bar on the way to the door does not talk to the bar.
+          const pending = pendingRef.current;
+          if (coinRef.current && (!pending || pending.hotspotId !== hs.id)) continue;
+          firedRef.current.add(hs.id);
+          pendingRef.current = null;
+          targetRef.current = null;
+          arrived = true;
+          audio.hover();
+          interactRef.current(
+            hs,
+            coinRef.current ? { verb: pending?.verb ?? verbRef.current, itemId: pending?.itemId ?? heldRef.current ?? undefined } : undefined,
+          );
         }
         // Which marker is "near" (for proximity labels)?
         let best: { id: string; d: number } | null = null;
@@ -202,9 +291,17 @@ export function Stage({
       }
 
       if (arrived) {
-        targetRef.current = null;
-        setWalking(false);
-        setFrameIdx(0);
+        const rest = routeRef.current;
+        if (rest.length) {
+          // Next corner of the route.
+          const nextWp = rest.shift()!;
+          targetRef.current = { x: nextWp.x, y: nextWp.y };
+          setWalking(true);
+        } else {
+          targetRef.current = null;
+          setWalking(false);
+          setFrameIdx(0);
+        }
       }
 
       raf = requestAnimationFrame(tick);
@@ -214,7 +311,7 @@ export function Stage({
     // hotspots/unlocked/onInteract are read via refs/closures that the
     // parent re-creates each render; the loop intentionally persists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, speed, reach]);
+  }, [active, speed, reach, floor.top, floor.bottom, obstacles.length, settings.depthScale, settings.playerNearScale, settings.playerFarScale]);
 
   // Reset position when a fresh scene mounts (component keyed by scene id).
   useEffect(() => {
@@ -224,9 +321,29 @@ export function Stage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Follow a route: the first waypoint becomes the live target, the rest wait
+   *  in `routeRef` and are picked up on arrival. */
+  const followRoute = (route: { x: number; y: number }[]) => {
+    if (!route.length) return false;
+    routeRef.current = route.slice(1);
+    targetRef.current = { x: route[0].x, y: route[0].y };
+    setWalking(true);
+    return true;
+  };
+
   /** Walk toward a marker, stopping just short of it (at ~reach) so the
-   *  character doesn't stand inside the thing they're interacting with. */
-  const walkToMarker = (hs: Hotspot) => {
+   *  character doesn't stand inside the thing they're interacting with.
+   *  Routed around the scene's obstacles, so the counter between you and the
+   *  barman is walked around rather than through. */
+  const walkToMarker = (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
+    if (coinRef.current || ctx) {
+      const v = ctx?.verb ?? verbRef.current;
+      pendingRef.current = {
+        hotspotId: hs.id,
+        verb: v,
+        itemId: v === "use" ? ctx?.itemId ?? heldRef.current ?? undefined : undefined,
+      };
+    }
     const m = stageMarkerPoint(hs, floor);
     const a = aspect();
     const cur = posRef.current;
@@ -244,13 +361,32 @@ export function Stage({
       ty = m.y + ((dy / dist) * stop) / a;
     }
     firedRef.current.clear();
+    const route = stageRoute(cur, { x: tx, y: ty }, obstacles, floor);
+    if (route.length) {
+      setFacing(hs.bounds.x + hs.bounds.w / 2 >= cur.x ? 1 : -1);
+      if (followRoute(route)) return;
+    }
+    // No route (walled off) — fall back to walking straight at it.
     targetRef.current = { x: tx, y: ty, hotspotId: hs.id };
     setFacing(hs.bounds.x + hs.bounds.w / 2 >= cur.x ? 1 : -1);
   };
 
+  // An item dropped on a scene object: walk over, then USE it there.
+  const dropKeyRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!dropRequest || dropRequest.key === dropKeyRef.current) return;
+    dropKeyRef.current = dropRequest.key;
+    const hs = hotspotsRef.current.find((h) => h.id === dropRequest.hotspotId);
+    if (!hs) return;
+    walkToMarker(hs, { verb: "use", itemId: dropRequest.itemId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropRequest?.key]);
+
   const isEmoji = (settings.playerImage ?? "").startsWith("emoji:");
   const emoji = isEmoji ? settings.playerImage!.slice("emoji:".length) : "🕵️";
-  const playerDepth = stageDepthScale(pos.y, floor, depth) * baseScale;
+  // Perspective: big up close, small in the distance (near/far ends are
+  // authorable; `depthScale` still works as "shrink by this much at the back").
+  const playerDepth = stageSpriteScale(pos.y, floor, settings) * baseScale;
 
   const markerIcon = (hs: Hotspot) => CURSOR_ICON[hs.cursor] ?? "◆";
 
@@ -258,7 +394,7 @@ export function Stage({
     <div
       ref={plateRef}
       className={`absolute inset-0 z-[45] ${active ? "cursor-pointer" : "pointer-events-none"}`}
-      style={{ pointerEvents: active ? "auto" : "none" }}
+      style={{ pointerEvents: active ? "auto" : "none", ...(cursorStyle ?? {}) }}
       onPointerDown={(e) => {
         if (!active) return;
         const p = platePoint(e);
@@ -272,9 +408,19 @@ export function Stage({
         if (hit) {
           walkToMarker(hit);
         } else {
-          // Empty floor: just walk. The fired set persists, so brushed-past
-          // markers don't re-rattle on every stroll.
-          targetRef.current = { x: floorPoint.x, y: floorPoint.y };
+          // Empty floor: just walk — routed around the furniture. The fired
+          // set persists, so brushed-past markers don't re-rattle on every
+          // stroll.
+          const route = stageRoute(posRef.current, floorPoint, obstacles, floor);
+          if (route.length) {
+            routeRef.current = route.slice(1);
+            targetRef.current = { x: route[0].x, y: route[0].y };
+            setWalking(true);
+          } else {
+            // Walled off (or a click outside the floor): slide as close as the
+            // furniture allows rather than refusing the click outright.
+            targetRef.current = { x: floorPoint.x, y: floorPoint.y };
+          }
         }
       }}
     >
@@ -313,18 +459,50 @@ export function Stage({
         return (
           <div key={hs.id} className="contents">
             {/* the object itself (NPC / prop art), feet planted on the marker */}
-            {hs.image && (
-              <img
-                src={assetUrl(hs.image)}
-                alt=""
-                draggable={false}
-                className={`pointer-events-none absolute select-none object-contain object-bottom drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)] ${ok ? "" : "opacity-80 saturate-[0.7]"}`}
+            {hs.image || sheetDrawable(hs.sheet) ? (
+              <div
+                className={`pointer-events-none absolute ${ok ? "" : "opacity-80 saturate-[0.7]"}`}
                 style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: z }}
-              />
-            )}
+              >
+                {(() => {
+                  const preset = presetStyle(hs.anim);
+                  const inner = (child: React.ReactNode) =>
+                    preset.className ? (
+                      <div className={preset.className} style={{ ...(preset.vars as React.CSSProperties), transformOrigin: "50% 100%" }} aria-hidden>
+                        {child}
+                      </div>
+                    ) : (
+                      child
+                    );
+                  if (sheetDrawable(hs.sheet))
+                    return inner(
+                      <div
+                        style={{ width: "100%", aspectRatio: `${Math.max(1, hs.sheet.frameWidth)} / ${Math.max(1, hs.sheet.frameHeight)}` }}
+                      >
+                        <SheetSprite
+                          sheet={hs.sheet}
+                          anim="loop"
+                          fallbacks={["idle", "walk"]}
+                          height="100%"
+                          className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]"
+                        />
+                      </div>
+                    );
+                  return inner(
+                    <img
+                      src={assetUrl(hs.image!)}
+                      alt=""
+                      draggable={false}
+                      className={`pointer-events-none w-full select-none object-contain object-bottom drop-shadow-[0_6px_10px_rgba(0,0,0,0.55)]`}
+                    />
+                  );
+                })()}
+              </div>
+            ) : null}
             <button
               tabIndex={active ? 0 : -1}
               aria-label={`${hs.label}${ok ? "" : " (locked)"}`}
+              data-hs-id={hs.id}
               disabled={!active}
               className={`stage-marker pointer-events-auto absolute ${ok ? "" : "stage-marker-locked"}`}
               style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: z + 1 }}
@@ -342,7 +520,8 @@ export function Stage({
               onMouseEnter={() => active && audio.hover()}
             >
               <span className={`stage-marker-label ${near ? "stage-marker-label-on" : ""}`}>
-                {markerIcon(hs)} {hs.label}
+                {coinOn ? VERB_ICON[verb] : markerIcon(hs)} {hs.label}
+                {verb === "use" && heldItem ? ` ← ${inventory?.find((i) => i.id === heldItem)?.name ?? ""}` : ""}
                 {!ok && " 🔒"}
               </span>
               <span className="stage-marker-reticle" aria-hidden />
@@ -350,6 +529,73 @@ export function Stage({
           </div>
         );
       })}
+
+      {/* VERB COIN — bottom-left, the way a LucasArts room puts it. Pick a
+          verb, then click the object; USE arms an inventory item first. */}
+      {coinOn && active ? (
+        <div className="pointer-events-auto absolute bottom-3 left-3 z-[76] flex flex-col items-start gap-1.5">
+          {verb === "use" && (inventory?.length ?? 0) > 0 ? (
+            <div className="flex max-w-[min(70vw,640px)] flex-wrap gap-1 rounded border border-noir-700 bg-noir-950/90 p-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+              <span className="self-center px-1 font-pulp text-[9px] uppercase tracking-[0.2em] text-gold/70">Use</span>
+              {inventory!.map((it) => {
+                const on = heldItem === it.id;
+                return (
+                  <button
+                    key={it.id}
+                    aria-label={`Use ${it.name}`}
+                    aria-pressed={on}
+                    className={`flex items-center gap-1 rounded border px-2 py-1 font-type text-[11px] transition-colors ${
+                      on
+                        ? "border-gold bg-gold/20 text-gold"
+                        : "border-noir-700 bg-noir-900/80 text-paper/80 hover:border-gold/60 hover:text-gold"
+                    }`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      audio.click();
+                      setHeldItem(on ? null : it.id);
+                    }}
+                  >
+                    <span aria-hidden>{it.icon ?? "📦"}</span> {it.name}
+                  </button>
+                );
+              })}
+              <span className="self-center px-1 font-type text-[10px] italic text-paper/45">
+                …then click what you want to use it on
+              </span>
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-1 rounded border border-noir-700 bg-noir-950/90 p-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+            {verbs!.map((v) => {
+              const on = verb === v;
+              return (
+                <button
+                  key={v}
+                  aria-label={VERB_LABEL[v]}
+                  aria-pressed={on}
+                  className={`flex min-w-[64px] flex-col items-center rounded border px-2 py-1 font-pulp text-[10px] uppercase tracking-[0.15em] transition-colors ${
+                    on
+                      ? "border-gold bg-gold/20 text-gold"
+                      : "border-noir-700 bg-noir-900/80 text-paper/70 hover:border-gold/60 hover:text-gold"
+                  }`}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    audio.click();
+                    setVerb(v);
+                    if (v !== "use") setHeldItem(null);
+                  }}
+                >
+                  <span className="text-base leading-none" aria-hidden>
+                    {VERB_ICON[v]}
+                  </span>
+                  {v}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {/* the player character — outer handles position + facing (scaleX) +
           depth scale, inner handles the idle/walk bob so the transforms

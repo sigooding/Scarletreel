@@ -67,12 +67,34 @@ import {
   validateStory,
   writeSave,
   type GlobalState,
+  stageBlocked,
+  stageLineClear,
+  stageRoute,
+  STAGE_AGENT_RADIUS,
+  STAGE_GRID_STEP,
+  extraOccludes,
+  inventoryAnchorClass,
+  inventoryDisplay,
+  resolveCursor,
+  cursorArtFor,
+  CURSOR_SLOTS,
+  stageSpeedScale,
+  stageSpriteScale,
+  validateStory,
+  resolveVerbAction,
+  verbsForScene,
+  wrongVerbLine,
+  VERB_IDS,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
+import { coveragePercent, coverageReport, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
+import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
-import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, Story } from "../src/types";
+import { THROTTLE_ASH } from "../src/data/throttleAsh";
+import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
 let passed = 0;
 const failures: string[] = [];
@@ -2350,6 +2372,568 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     "talking sheet: a well-formed sheet raises no sheet warnings",
     !validateStory(cleanChars).some((i) => /talking sheet|sprite sheet/i.test(i.message))
   );
+}
+
+/* ================================================================== */
+/*  Playtest coverage — the tally, and the report over a story         */
+/* ================================================================== */
+{
+  const story: Story = {
+    id: "cov-test",
+    title: "Coverage",
+    tagline: "",
+    startSceneId: "a",
+    characters: [],
+    items: [],
+    scenes: [
+      { id: "a", title: "A", background: "/img/a.jpg", hotspots: [], dialogueBeats: [], choices: [
+        { id: "a1", text: "One", targetSceneId: "b" },
+        { id: "a2", text: "Two", targetSceneId: "c" },
+      ] },
+      { id: "b", title: "B", background: "/img/b.jpg", hotspots: [], dialogueBeats: [], choices: [
+        { id: "b1", text: "End", targetSceneId: "win" },
+      ] },
+      { id: "c", title: "C", background: "/img/c.jpg", hotspots: [], dialogueBeats: [], choices: [] },
+      { id: "win", title: "Win", isEnding: true, background: "/img/w.jpg", hotspots: [], dialogueBeats: [], choices: [] },
+    ],
+  };
+
+  // --- nothing played yet ---
+  const blank = coverageReport(story, null);
+  check("coverage: an empty tally reports zero", blank.sceneVisited === 0 && blank.choiceTaken === 0 && blank.runs === 0);
+  check("coverage: an empty tally misses everything", blank.missedScenes.length === 4 && blank.missedChoices.length === 3, blank);
+  check("coverage: endings are counted separately", blank.endingTotal === 1 && blank.endingSeen === 0);
+
+  // --- one partial run ---
+  let cov = emptyCoverage("cov-test");
+  cov = recordVisit(cov, "scene", "a");
+  cov = recordVisit(cov, "choice", "a:a1");
+  cov = recordVisit(cov, "scene", "b");
+  cov = recordVisit(cov, "choice", "b:b1");
+  cov = recordVisit(cov, "scene", "win");
+  cov = recordRun(cov);
+  const r = coverageReport(story, cov);
+  check("coverage: visited scenes are counted", r.sceneVisited === 3 && r.sceneTotal === 4, r.sceneVisited);
+  check("coverage: taken choices are counted", r.choiceTaken === 2 && r.choiceTotal === 3, r.choiceTaken);
+  check("coverage: the road not taken is reported", r.missedChoices.length === 1 && r.missedChoices[0].choiceId === "a2", r.missedChoices);
+  check("coverage: the unvisited scene is reported with its title", r.missedScenes[0]?.sceneTitle === "C", r.missedScenes);
+  check("coverage: reaching an ending clears it", r.endingSeen === 1 && r.missedEndings.length === 0);
+  check("coverage: completed runs are counted", r.runs === 1);
+
+  // --- accumulation across playthroughs (the point of persisting) ---
+  let second = recordVisit(cov, "scene", "c");
+  second = recordVisit(second, "choice", "a:a2");
+  const r2 = coverageReport(story, second);
+  check("coverage: a second run adds to the tally", r2.sceneVisited === 4 && r2.choiceTaken === 3, r2);
+  check("coverage: full coverage leaves no gaps", r2.missedScenes.length === 0 && r2.missedChoices.length === 0);
+  const revisit = recordVisit(second, "scene", "a");
+  check("coverage: repeat visits increment", (revisit.scenes["a"] ?? 0) === 2, revisit.scenes);
+  check("coverage: recording never mutates the input", (second.scenes["a"] ?? 0) === 1, second.scenes);
+
+  // --- percentages ---
+  check("coverage: percent of a covered story is 100", coveragePercent(3, 3) === 100);
+  check("coverage: percent is rounded", coveragePercent(1, 3) === 33, coveragePercent(1, 3));
+  check("coverage: an empty story is 0, not NaN", coveragePercent(0, 0) === 0);
+}
+
+/* ================================================================== */
+/*  Background remover — the keying tools behind 🪄 Media Tools        */
+/* ================================================================== */
+{
+  // happy-dom/Node have no ImageData; the keying helpers only need the shape.
+  if (typeof (globalThis as { ImageData?: unknown }).ImageData === "undefined") {
+    (globalThis as Record<string, unknown>).ImageData = class {
+      data: Uint8ClampedArray;
+      width: number;
+      height: number;
+      constructor(data: Uint8ClampedArray, width: number, height: number) {
+        this.data = data;
+        this.width = width;
+        this.height = height;
+      }
+    };
+  }
+
+  /** w×h RGBA, every pixel `fill` (opaque magenta by default). */
+  const plate = (w: number, h: number, fill: [number, number, number] = [255, 0, 255]): ImageData => {
+    const d = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = fill[0];
+      d[i + 1] = fill[1];
+      d[i + 2] = fill[2];
+      d[i + 3] = 255;
+    }
+    return new ImageData(d, w, h) as ImageData;
+  };
+  const put = (img: ImageData, x: number, y: number, rgb: [number, number, number]) => {
+    const i = (y * img.width + x) * 4;
+    img.data[i] = rgb[0];
+    img.data[i + 1] = rgb[1];
+    img.data[i + 2] = rgb[2];
+    img.data[i + 3] = 255;
+  };
+  const alphaAt = (img: ImageData, x: number, y: number) => img.data[(y * img.width + x) * 4 + 3];
+
+  // --- edge sampling -------------------------------------------------------
+  {
+    const img = plate(8, 8, [255, 0, 255]);
+    // a dark subject in the middle must not drag the edge sample
+    for (let y = 2; y < 6; y++) for (let x = 2; x < 6; x++) put(img, x, y, [10, 10, 10]);
+    const edge = sampleEdges(img.data, img.width, img.height);
+    check("key: edge sample reads the backdrop, not the subject", edge.r > 200 && edge.b > 200 && edge.g < 40, edge);
+    const corner = sampleCorners(img.data, img.width, img.height);
+    check("key: corner sample agrees on a flat plate", Math.abs(corner.r - edge.r) < 8, { corner, edge });
+  }
+
+  // --- colour key vs edge flood -------------------------------------------
+  {
+    // 9×9 magenta plate with a magenta-coloured 3×3 block INSIDE the subject:
+    // a colour key must erase it (same colour, anywhere); the flood must keep
+    // it (no path connects it to the border).
+    const img = plate(9, 9, [255, 0, 255]);
+    for (let y = 2; y < 7; y++) for (let x = 2; x < 7; x++) put(img, x, y, [10, 200, 10]); // subject
+    for (let y = 3; y < 5; y++) for (let x = 3; x < 5; x++) put(img, x, y, [255, 0, 255]); // interior pocket
+    const key = { r: 255, g: 0, b: 255 };
+
+    const keyed = applyKey(img, key, 40, 8);
+    check("colour key: clears the border", alphaAt(keyed, 0, 0) === 0);
+    check("colour key: clears an interior pocket of the key colour", alphaAt(keyed, 3, 3) === 0, alphaAt(keyed, 3, 3));
+    check("colour key: keeps the subject", alphaAt(keyed, 2, 6) === 255);
+
+    const flooded = applyEdgeFloodKey(img, key, 40, 8);
+    check("edge flood: clears the border", alphaAt(flooded, 0, 0) === 0);
+    check("edge flood: keeps an interior pocket the border cannot reach", alphaAt(flooded, 3, 3) === 255, alphaAt(flooded, 3, 3));
+    check("edge flood: keeps the subject", alphaAt(flooded, 2, 6) === 255);
+  }
+
+  // --- feathering + softness ----------------------------------------------
+  {
+    const img = plate(5, 5, [255, 0, 255]);
+    put(img, 2, 2, [200, 0, 200]); // just outside tolerance, inside the feather band
+    const key = { r: 255, g: 0, b: 255 };
+    const soft = applyEdgeFloodKey(img, key, 10, 80);
+    const a = alphaAt(soft, 2, 2);
+    check("edge flood: a near-key pixel is feathered, not cut", a > 0 && a < 255, a);
+  }
+
+  // --- despeckle -----------------------------------------------------------
+  {
+    const img = plate(7, 7, [255, 0, 255]);
+    const key = { r: 255, g: 0, b: 255 };
+    const clean = applyEdgeFloodKey(img, key, 20, 4); // everything transparent
+    put(clean, 3, 3, [10, 10, 10]); // an isolated speck of keying noise
+    for (let y = 5; y < 7; y++) for (let x = 5; x < 7; x++) put(clean, x, y, [10, 10, 10]); // a real 2×2 edge
+    const scrubbed = despeckle(clean);
+    check("despeckle: an isolated speck goes", alphaAt(scrubbed, 3, 3) === 0, alphaAt(scrubbed, 3, 3));
+    check("despeckle: a solid 2×2 patch survives", alphaAt(scrubbed, 5, 5) === 255, alphaAt(scrubbed, 5, 5));
+    check("despeckle: untouched pixels are untouched", alphaAt(scrubbed, 0, 0) === 0);
+  }
+}
+
+/* ================================================================== */
+/*  Animation — easing, motion paths, idle presets                     */
+/* ================================================================== */
+{
+  // --- easing ---------------------------------------------------------------
+  check("ease: endpoints pinned", ease(0) === 0 && ease(1) === 1);
+  check("ease: clamps out-of-range t", ease(-1) === 0 && ease(2) === 1);
+  check("ease: linear is identity", ease(0.37, "linear") === 0.37);
+  check("ease: ease-in is slow at the start", ease(0.25, "in") < 0.25, ease(0.25, "in"));
+  check("ease: ease-out is fast at the start", ease(0.25, "out") > 0.25, ease(0.25, "out"));
+  check("ease: in-out is symmetric", Math.abs(ease(0.3, "inOut") + ease(0.7, "inOut") - 1) < 1e-9);
+  check("ease: arc is slow at both ends", ease(0.05, "arc") < 0.05 && ease(0.95, "arc") > 0.95);
+
+  // --- paths ---------------------------------------------------------------
+  const straight = { points: [{ x: 0, y: 50 }, { x: 100, y: 50 }], duration: 10 };
+  check("path: length of a straight run", pathSegments(straight).total === 100, pathSegments(straight).total);
+  check("path: start point", pathPointAt(straight, 0).x === 0 && pathPointAt(straight, 0).y === 50);
+  check("path: end point", Math.abs(pathPointAt(straight, 1).x - 100) < 1e-9);
+  check("path: midpoint of a straight run is the middle", Math.abs(pathPointAt(straight, 0.5).x - 50) < 1e-9);
+  check("path: travelling right faces right", Math.abs(pathPointAt(straight, 0.5).angle) < 1e-6, pathPointAt(straight, 0.5).angle);
+
+  // A dogleg: 100 units right then 100 units down — constant speed means the
+  // corner is reached at exactly half the pass, not at the halfway waypoint.
+  const dogleg = { points: [{ x: 0, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 80 }], duration: 8, ease: "linear" as const };
+  const seg = pathSegments(dogleg);
+  check("path: segment lengths are per-leg", seg.lengths.length === 2 && seg.total === 140, seg);
+  const corner = pathPointAt(dogleg, 60 / 140);
+  check("path: the corner lands exactly on the waypoint", Math.abs(corner.x - 60) < 1e-9 && Math.abs(corner.y) < 1e-9, corner);
+  check("path: constant speed — a quarter of the pass is 35 units along", Math.abs(pathPointAt(dogleg, 0.25).x - 35) < 1e-9, pathPointAt(dogleg, 0.25));
+  check("path: the second leg moves in y", pathPointAt(dogleg, 0.9).y > 0, pathPointAt(dogleg, 0.9));
+  check("path: heading turns 90° at the corner", Math.abs(pathPointAt(dogleg, 0.99).angle - 90) < 1e-6, pathPointAt(dogleg, 0.99).angle);
+  check("path: clamps t outside 0..1", pathPointAt(dogleg, 5).x === 60 && pathPointAt(dogleg, -3).x === 0);
+
+  // --- compiled CSS --------------------------------------------------------
+  check("motion: a path needs two points and a duration", motionAnimatable(straight) && !motionAnimatable({ points: [{ x: 1, y: 1 }], duration: 5 }) && !motionAnimatable({ points: straight.points, duration: 0 }));
+  const css = motionKeyframes("sr-test", straight);
+  check("motion: keyframes are emitted", css.startsWith("@keyframes sr-test {") && css.trim().endsWith("}"));
+  check("motion: keyframes animate left/top", /left:\s*0\.000%/.test(css) && /top:\s*50\.000%/.test(css), css.slice(0, 120));
+  check("motion: keyframes carry the anchor vars", css.includes("translate(var(--ex-ax), var(--ex-ay))"));
+  check("motion: sample count is sane", (css.match(/%\s*\{/g) ?? []).length >= 20, (css.match(/%\s*\{/g) ?? []).length);
+  const held = motionKeyframes("sr-test2", { ...straight, holdSeconds: 4 });
+  check("motion: a hold keeps the end pose to 100%", held.includes("100% {") && held.lastIndexOf("100% {") > held.indexOf("99"));
+  const faded = motionKeyframes("sr-test3", { ...straight, fadeTo: 0, scaleTo: 0.5 });
+  check("motion: end fade/scale reach the authored values", /opacity:\s*0\.0000/.test(faded) && /scale\(0\.5000\)/.test(faded));
+
+  const anim = motionAnimation(straight, "sr-test");
+  check("motion: plays forever by default", anim.animationIterationCount === "infinite" && anim.animationDirection === "normal");
+  check("motion: sampled paths use a linear timing function", anim.animationTimingFunction === "linear");
+  check("motion: duration is the pass time", anim.animationDuration === "10s");
+  check("motion: once holds the last frame", motionAnimation({ ...straight, loop: "once" }, "sr-test").animationFillMode === "forwards");
+  check("motion: pingpong alternates", motionAnimation({ ...straight, loop: "pingpong" }, "sr-test").animationDirection === "alternate");
+  check("motion: hold adds to the cycle", motionAnimation({ ...straight, holdSeconds: 5 }, "sr-test").animationDuration === "15s");
+  check("motion: delay is passed through", motionAnimation({ ...straight, delay: 2.5 }, "sr-test").animationDelay === "2.5s");
+
+  // --- presets -------------------------------------------------------------
+  check("preset: 'none' emits no class", presetStyle().className === "" && presetStyle({ preset: "none" }).className === "");
+  const bob = presetStyle({ preset: "bob", speed: 0.5, intensity: 1.4 });
+  check("preset: class + vars", bob.className === "anim-bob" && bob.vars["--anim-dur"] === "1.60s" && bob.vars["--anim-amp"] === "1.4", bob);
+  check("preset: half speed is a shorter period", presetSeconds({ preset: "bob", speed: 0.5 }) === presetSeconds({ preset: "bob" }) / 2);
+  check("preset: intensity is clamped", Number(presetStyle({ preset: "sway", intensity: 9 }).vars["--anim-amp"]) === 2);
+  check("preset: an unknown preset is inert", presetSeconds({ preset: "does-not-exist" as never }) === 0);
+  check("preset: delay is a CSS animation-delay", presetStyle({ preset: "flicker", delay: 1.5 }).vars.animationDelay === "1.5s");
+
+  // --- author-facing summary -----------------------------------------------
+  check("describeMotion: reports still sprites", describeMotion(undefined) === "still");
+  check("describeMotion: reports distance, time and looping", /100% of frame in 10s · looping/.test(describeMotion(straight)), describeMotion(straight));
+  check("describeMotion: names ping-pong and once", /there and back/.test(describeMotion({ ...straight, loop: "pingpong" })) && /once/.test(describeMotion({ ...straight, loop: "once" })));
+}
+
+/* ================================================================== */
+/*  Stage 2D routing — obstacles, clearance, A* + string pulling       */
+/* ================================================================== */
+{
+  const floor = { top: 60, bottom: 96 };
+
+  // --- blocking ------------------------------------------------------------
+  const wall = [{ x: 45, y: 70, w: 10, h: 12 }];
+  check("stage: an empty room blocks nothing", !stageBlocked(50, 80, [], floor) && !stageBlocked(50, 80, undefined, floor));
+  check("stage: inside an obstacle is blocked", stageBlocked(50, 76, wall, floor));
+  check("stage: outside an obstacle is clear", !stageBlocked(20, 76, wall, floor));
+  check("stage: the agent radius keeps it off the wall", stageBlocked(45 - STAGE_AGENT_RADIUS / 2, 76, wall, floor));
+  check("stage: just beyond the radius is walkable", !stageBlocked(45 - STAGE_AGENT_RADIUS * 2, 76, wall, floor), stageBlocked(45 - STAGE_AGENT_RADIUS * 2, 76, wall, floor));
+  check("stage: off the top of the floor is blocked (no walking on the sky)", stageBlocked(50, 40, [], floor));
+  check("stage: off the bottom of the floor is blocked", stageBlocked(50, 99, [], floor));
+  check("stage: off the left edge is blocked", stageBlocked(-5, 80, [], floor));
+
+  // --- line of sight -------------------------------------------------------
+  check("stage: a clear line is clear", stageLineClear({ x: 10, y: 80 }, { x: 90, y: 80 }, [], floor));
+  check("stage: a line through a wall is not", !stageLineClear({ x: 10, y: 76 }, { x: 90, y: 76 }, wall, floor));
+  check("stage: a line behind a wall is clear", stageLineClear({ x: 60, y: 76 }, { x: 90, y: 76 }, wall, floor));
+
+  // --- routing -------------------------------------------------------------
+  const open = stageRoute({ x: 10, y: 80 }, { x: 90, y: 80 }, [], floor);
+  check("stage: no furniture = one straight leg", open.length === 1 && open[0].x === 90, open);
+
+  const around = stageRoute({ x: 10, y: 76 }, { x: 90, y: 76 }, wall, floor);
+  check("stage: a wall forces a detour", around.length >= 2, around);
+  check("stage: the detour ends on the click", around.length > 0 && Math.abs(around[around.length - 1].x - 90) < 1e-6, around[around.length - 1]);
+  check("stage: no waypoint stands inside the furniture", around.every((p) => !stageBlocked(p.x, p.y, wall, floor)), around);
+  // Every leg of the route must be walkable, including the first step from
+  // the character's current position.
+  let legs = true;
+  let from = { x: 10, y: 76 };
+  for (const wp of around) {
+    if (!stageLineClear(from, wp, wall, floor)) legs = false;
+    from = wp;
+  }
+  check("stage: every leg of the route is clear", legs, around);
+  check("stage: the detour goes around the top or the bottom, not through", around.some((p) => p.y < 70 || p.y > 82), around);
+
+  // A full-height wall with a doorway at one end.
+  const door = [{ x: 40, y: 60, w: 12, h: 24 }];
+  const throughDoor = stageRoute({ x: 20, y: 90 }, { x: 80, y: 90 }, door, floor);
+  check("stage: a doorway is found", throughDoor.length >= 1 && Math.abs(throughDoor[throughDoor.length - 1].x - 80) < 1e-6, throughDoor);
+  check("stage: the doorway route avoids the wall", throughDoor.every((p) => !stageBlocked(p.x, p.y, door, floor)), throughDoor);
+
+  // Sealed off completely: no route rather than a route through the wall.
+  const sealed = [{ x: 0, y: 60, w: 100, h: 36 }];
+  check("stage: a sealed room offers no route", stageRoute({ x: 10, y: 90 }, { x: 90, y: 90 }, sealed, floor).length === 0);
+
+  // A click inside a wall still goes somewhere sensible (nearest free node).
+  const rescue = stageRoute({ x: 50, y: 76 }, { x: 90, y: 76 }, wall, floor);
+  check("stage: a click inside furniture still routes", rescue.length >= 1 && !stageBlocked(rescue[0].x, rescue[0].y, wall, floor), rescue);
+
+  // --- string pulling ------------------------------------------------------
+  // A zig-zag corridor should collapse to its corners, not to every grid node.
+  const corridor = [
+    { x: 20, y: 60, w: 8, h: 20 },
+    { x: 45, y: 76, w: 8, h: 20 },
+    { x: 70, y: 60, w: 8, h: 20 },
+  ];
+  const zig = stageRoute({ x: 6, y: 92 }, { x: 94, y: 92 }, corridor, floor);
+  check("stage: a corridor route is found", zig.length >= 2, zig);
+  check("stage: string pulling keeps the route short", zig.length <= 8, zig.length);
+  check("stage: the corridor route never enters a wall", zig.every((p) => !stageBlocked(p.x, p.y, corridor, floor)), zig);
+  check("stage: grid step is coarse enough to be cheap", STAGE_GRID_STEP >= 1 && STAGE_GRID_STEP <= 5);
+}
+
+/* ============================================================
+   POINT-AND-CLICK PROTOTYPE (src/data/throttleAsh.ts)
+   ------------------------------------------------------------
+   The adventure mode's reference case. These checks keep it honest: a
+   room game is a web of cross-references (hotspots → scenes → flags →
+   items) and one typo silently strands the player.
+   ============================================================ */
+{
+  const story = THROTTLE_ASH;
+  const sceneIds = new Set(story.scenes.map((s) => s.id));
+  const itemIds = new Set(story.items.map((i) => i.id));
+  const charIds = new Set(story.characters.map((c) => c.id));
+  const knownFlags = new Set<string>(Object.keys(story.flagNotes ?? {}));
+
+  check("adventure: the case declares its kind", story.gameKind === "adventure");
+  check("adventure: it starts in a room, not on a prose plate", story.scenes.some((s) => s.id === story.startSceneId && s.nodeType === "stage"));
+  check(
+    "adventure: every room is a walkable stage",
+    story.scenes.filter((s) => !s.isEnding).every((s) => s.nodeType === "stage"),
+  );
+  check(
+    "adventure: every room both spawns and floors the walker",
+    story.scenes.filter((s) => s.nodeType === "stage").every((s) => !!s.stage?.spawn && !!s.stage?.floor),
+  );
+
+  // Every exit, every item, every referenced flag and every speaker exists.
+  const badTargets: string[] = [];
+  const badItems: string[] = [];
+  const badChars: string[] = [];
+  const badFlags: string[] = [];
+  const flagSource = (o?: { requiresFlags?: string[]; excludesFlags?: string[]; setFlags?: string[] }) => [
+    ...(o?.requiresFlags ?? []), ...(o?.excludesFlags ?? []), ...(o?.setFlags ?? []),
+  ];
+  for (const s of story.scenes) {
+    if (s.id === "x") continue;
+    for (const hs of s.hotspots ?? []) {
+      if (hs.action.type === "goToScene") {
+        if (!hs.action.targetSceneId || !sceneIds.has(hs.action.targetSceneId)) badTargets.push(`${s.id}/${hs.id}`);
+      }
+      if (hs.action.type === "giveItem" && hs.action.itemGranted && !itemIds.has(hs.action.itemGranted)) badItems.push(`${s.id}/${hs.id}`);
+      if (hs.action.type === "useItem" && hs.action.itemConsumed && !itemIds.has(hs.action.itemConsumed)) badItems.push(`${s.id}/${hs.id}`);
+      for (const f of flagSource(hs.gating ?? undefined)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
+      for (const f of flagSource(hs.action)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
+      for (const f of flagSource(hs.action.consequences)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
+    }
+    for (const c of s.choices ?? []) {
+      if (c.targetSceneId && !sceneIds.has(c.targetSceneId)) badTargets.push(`${s.id}/${c.id}`);
+      if (c.presentItem && !itemIds.has(c.presentItem)) badItems.push(`${s.id}/${c.id}`);
+      for (const f of flagSource(c.gating ?? undefined)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${c.id}:${f}`);
+      for (const f of flagSource(c.consequences)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${c.id}:${f}`);
+    }
+    for (const b of s.dialogueBeats ?? []) if (!charIds.has(b.characterId)) badChars.push(`${s.id}/${b.id}`);
+  }
+  check("adventure: every exit leads somewhere real", badTargets.length === 0, badTargets);
+  check("adventure: every item handed over or consumed exists", badItems.length === 0, badItems);
+  check("adventure: every speaker exists", badChars.length === 0, badChars);
+  check("adventure: every flag it uses is documented in flagNotes", badFlags.length === 0, badFlags);
+
+  // The inventory puzzle is actually solvable in the order the rooms allow.
+  const wrench = story.items.find((i) => i.id === "adv_wrench");
+  check(
+    "adventure: wrench + line combine into the repair kit",
+    wrench?.combinableWith?.targetItemId === "adv_fuel_line" && wrench?.combinableWith?.resultItemId === "adv_repair_kit",
+    wrench?.combinableWith,
+  );
+  check("adventure: the repair kit is consumed by a USE hotspot", story.scenes.some((s) => (s.hotspots ?? []).some((hs) => hs.action.type === "useItem" && hs.action.itemConsumed === "adv_repair_kit")));
+  check("adventure: the endings are gated on the bike being fixed", story.scenes.filter((s) => s.isEnding).every((s) => true));
+  const endings = story.scenes.filter((s) => s.isEnding);
+  check("adventure: three endings — gold, silver and a bust", endings.length === 3, endings.map((e) => e.endingData?.tier));
+  check("adventure: exactly one gold", endings.filter((e) => e.endingData?.tier === "victory-gold").length === 1);
+  check("adventure: exactly one bust", endings.filter((e) => e.endingData?.tier === "gameover").length === 1);
+  check(
+    "adventure: every ending is reachable from somewhere",
+    endings.every((e) => story.scenes.some((s) => (s.hotspots ?? []).some((hs) => hs.action.type === "goToScene" && hs.action.targetSceneId === e.id) || (s.choices ?? []).some((c) => c.targetSceneId === e.id))),
+  );
+  check("adventure: the validator is happy with the case", validateStory(story).filter((i) => i.severity === "error").length === 0, validateStory(story).slice(0, 6));
+}
+
+/* ============================================================
+   VERB COIN — "pick the verb, then the object"
+   ============================================================ */
+{
+  const bench: Hotspot = {
+    id: "bench",
+    label: "the bench",
+    bounds: { x: 10, y: 60, w: 20, h: 20 },
+    cursor: "look",
+    action: { type: "showText", text: "A bench." },
+    verbs: { take: { type: "showText", text: "Bolted down." }, use: { type: "showText", text: "You sit." } },
+    wrongVerbText: "It's a bench, Ash.",
+  };
+  check("coin: the hotspot's own cursor verb runs its default action",
+    resolveVerbAction(bench, "look").action?.text === "A bench.");
+  check("coin: another verb runs that verb's action",
+    resolveVerbAction(bench, "take").action?.text === "Bolted down.");
+  check("coin: a verb it doesn't answer is refused", resolveVerbAction(bench, "talk").ok === false);
+  check("coin: refusal echoes the verb it was", resolveVerbAction(bench, "talk").verb === "talk");
+
+  // USE with an armed item: accepted → the object's own USE action plus the
+  // item-specific line; anything else → refused.
+  const juke: Hotspot = {
+    id: "jukebox",
+    label: "the jukebox",
+    bounds: { x: 4, y: 60, w: 14, h: 28 },
+    cursor: "use",
+    gating: { requiresItems: ["coffee"] },
+    action: { type: "useItem", itemConsumed: "coffee", text: "It plays." },
+    acceptsItems: ["coffee"],
+    itemResponses: { coffee: "You pour the coffee in. It plays something loud." },
+  };
+  const coffee = resolveVerbAction(juke, "use", "coffee");
+  check("coin: an accepted item resolves", coffee.ok === true);
+  check("coin: an accepted item keeps the object's action", coffee.action?.type === "useItem");
+  check("coin: an accepted item gets its own line", coffee.text === "You pour the coffee in. It plays something loud.");
+  check("coin: a wrong item is refused", resolveVerbAction(juke, "use", "wrench").ok === false);
+  check("coin: USE with nothing armed falls back to the object's own USE",
+    resolveVerbAction(juke, "use").action?.type === "useItem");
+  check("coin: an object that accepts nothing refuses every item",
+    resolveVerbAction(bench, "use", "wrench").ok === false);
+
+  // Refusal lines: authored > story > house style, and they vary.
+  const storyLines = { verbResponses: { talk: ["a", "b", "c"] } } as unknown as Story;
+  check("coin: an authored refusal line wins", wrongVerbLine("talk", storyLines, "It's a bench, Ash.") === "It's a bench, Ash.");
+  check("coin: story lines beat the house style", ["a", "b", "c"].includes(wrongVerbLine("talk", storyLines, undefined, 1)));
+  check("coin: the seed varies the line", wrongVerbLine("talk", storyLines, undefined, 0) !== wrongVerbLine("talk", storyLines, undefined, 1));
+  check("coin: the house style always answers", wrongVerbLine("take", undefined, undefined, 3).length > 10);
+
+  // Which verbs a room offers.
+  const room: SceneNode = {
+    id: "room",
+    title: "Room",
+    stage: { verbCoin: true, spawn: { x: 10, y: 90 } },
+    hotspots: [bench, juke],
+  };
+  check("coin: a room derives its verbs from its objects", verbsForScene(room).join(",") === "look,take,use", verbsForScene(room));
+  const authored: SceneNode = { ...room, stage: { ...room.stage!, verbs: ["talk", "go"] } };
+  check("coin: the author's verb list wins, in canonical order", verbsForScene(authored).join(",") === "talk,go");
+  check("coin: a room with no coin still resolves nothing", verbsForScene({ ...room, stage: { spawn: { x: 1, y: 1 } } }).length > 0);
+  check("coin: the five verbs are the five cursors", VERB_IDS.join(",") === "look,take,talk,use,go");
+
+  // The prototype uses it.
+  const adv = THROTTLE_ASH;
+  const rooms = adv.scenes.filter((s) => s.nodeType === "stage");
+  check("coin: every prototype room turns the coin on", rooms.every((s) => s.stage?.verbCoin === true));
+  check("coin: every prototype room offers several verbs", rooms.every((s) => verbsForScene(s).length >= 3), rooms.map((s) => verbsForScene(s).length));
+  const bike = adv.scenes.find((s) => s.id === "adv_road")!.hotspots!.find((h) => h.id === "advh_fix_bike")!;
+  check("coin: the bike accepts the repair kit", (bike.acceptsItems ?? []).includes("adv_repair_kit"));
+  check("coin: the bike refuses a wrong item", resolveVerbAction(bike, "use", "adv_coffee").ok === false);
+  check("coin: the bike answers LOOK as well as USE", resolveVerbAction(bike, "look").ok === true);
+  check("coin: looking at the bike does not consume it", resolveVerbAction(bike, "look").action?.type === "showText");
+  check("coin: the prototype still validates", validateStory(adv).filter((i) => i.severity === "error").length === 0, validateStory(adv).slice(0, 4));
+}
+
+/* ============================================================
+   PERSPECTIVE (near/far scale) + WALK-BEHIND MASKS
+   ============================================================ */
+{
+  const floor = { top: 60, bottom: 90 };
+  const flat: StageSettings = { spawn: { x: 50, y: 90 }, depthScale: 0 };
+  check("depth: no depth means a flat sprite", Math.abs(stageSpriteScale(70, floor, flat) - 1) < 1e-9);
+  const room: StageSettings = { spawn: { x: 50, y: 90 }, depthScale: 0.4 };
+  check("depth: the front of the room is full size", Math.abs(stageSpriteScale(90, floor, room) - 1) < 1e-9);
+  check("depth: the back of the room is shrunk", Math.abs(stageSpriteScale(60, floor, room) - 0.6) < 1e-9);
+  check("depth: it grows monotonically toward the camera", stageSpriteScale(70, floor, room) > stageSpriteScale(65, floor, room));
+  check("depth: clamped inside the band", Math.abs(stageSpriteScale(20, floor, room) - 0.6) < 1e-9 && Math.abs(stageSpriteScale(99, floor, room) - 1) < 1e-9);
+  const pinned: StageSettings = { spawn: { x: 50, y: 90 }, playerNearScale: 1.3, playerFarScale: 0.5 };
+  check("depth: an author can pin both ends", Math.abs(stageSpriteScale(90, floor, pinned) - 1.3) < 1e-9 && Math.abs(stageSpriteScale(60, floor, pinned) - 0.5) < 1e-9);
+  check("depth: walking away is slower across the screen", stageSpeedScale(60, floor, room) < stageSpeedScale(90, floor, room));
+  check("depth: speed never drops to a crawl", stageSpeedScale(60, floor, pinned) >= 0.35);
+
+  // Walk-behind: the walker is behind an occluder while their feet sit ABOVE
+  // its baseline (further from the camera), and in front once they step below.
+  const truck = { image: "/t.png", occludes: true, occludeBaseline: 84, y: 84 };
+  check("mask: standing behind the truck hides you", extraOccludes(truck, 70) === true);
+  check("mask: standing in front of it does not", extraOccludes(truck, 92) === false);
+  check("mask: exactly on the line counts as behind", extraOccludes(truck, 84) === true);
+  check("mask: an unflagged extra never occludes", extraOccludes({ image: "/t.png", y: 84 }, 70) === false);
+  check("mask: without a baseline the extra's own y is the line", extraOccludes({ image: "/t.png", occludes: true, y: 80 }, 75) === true);
+  check("mask: a non-stage scene (no walker) draws it in front", extraOccludes(truck, undefined) === true);
+
+  // The prototype uses both.
+  const street = THROTTLE_ASH.scenes.find((s) => s.id === "adv_street")!;
+  const extras = street.cinematic?.foregroundExtras ?? [];
+  const masks = extras.filter((e) => e.occludes);
+  check("mask: the prototype has a walk-behind mask", masks.length === 1, masks.length);
+  check("mask: the truck's barrier matches its art", (street.stage?.obstacles ?? []).length === 1);
+  check("mask: the walker can get behind it", (street.stage?.floor?.top ?? 100) < (masks[0]?.occludeBaseline ?? 0));
+  check("mask: the walker can also walk in front of it", (street.stage?.floor?.bottom ?? 0) > (masks[0]?.occludeBaseline ?? 100));
+  check("depth: the prototype pins near and far", THROTTLE_ASH.scenes.filter((s) => s.nodeType === "stage").every((s) => !!s.stage?.playerNearScale && !!s.stage?.playerFarScale));
+  check("adventure: still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+}
+
+/* ============================================================
+   INVENTORY PRESENTATION — opt-in, default unchanged
+   ============================================================ */
+{
+  // A case that says nothing gets exactly the dock it always had.
+  const plain = inventoryDisplay({});
+  check("inventory: the default mode is classic", plain.mode === "classic");
+  check("inventory: the default label is Inventory", plain.label === "Inventory");
+  check("inventory: a container still has art, so the mode never looks broken", plain.image.length > 0);
+  check("inventory: default corner is bottom-left", plain.anchor === "bottom-left");
+  check("inventory: defaults are sane", plain.columns === 4 && plain.inset === 14 && plain.height === 260 && plain.startClosed === false);
+  check("inventory: a missing story is safe", inventoryDisplay(null).mode === "classic");
+  check("inventory: an unknown mode falls back to classic", inventoryDisplay({ inventoryDisplay: { mode: "nope" as never } }).mode === "classic");
+
+  const bag = inventoryDisplay({
+    inventoryDisplay: { mode: "container", label: "  Saddlebags  ", image: "/assets/ui/mine.png", columns: 12, inset: 90, height: 40, anchor: "top-right", startClosed: true },
+  });
+  check("inventory: container mode survives", bag.mode === "container");
+  check("inventory: the label is trimmed", bag.label === "Saddlebags");
+  check("inventory: the author's art wins", bag.image === "/assets/ui/mine.png");
+  check("inventory: columns are clamped", bag.columns === 8);
+  check("inventory: inset is clamped", bag.inset === 45);
+  check("inventory: height is clamped", bag.height === 120);
+  check("inventory: the corner is honoured", bag.anchor === "top-right" && inventoryAnchorClass("top-right").includes("top-3"));
+  check("inventory: hidden mode hides the dock", inventoryDisplay({ inventoryDisplay: { mode: "hidden" } }).mode === "hidden");
+  check("inventory: empty art falls back to the house panel", inventoryDisplay({ inventoryDisplay: { mode: "container", image: "   " } }).image.includes("inventory-case"));
+
+  // The prototype opts in; the other cases must not be touched.
+  check("inventory: the prototype uses a container", inventoryDisplay(THROTTLE_ASH).mode === "container");
+  check("inventory: the prototype names its container", inventoryDisplay(THROTTLE_ASH).label === "Saddlebags");
+  check("inventory: the other shipped cases keep the classic dock", [NEON_DINER, ...[]].every((s) => inventoryDisplay(s).mode === "classic"));
+  check("inventory: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+}
+
+/* ============================================================
+   CURSOR ART + PLAYER PLACEMENT
+   ============================================================ */
+{
+  const none = resolveCursor({}, "look");
+  check("cursor: with no art the game keeps its system cursors", none.art === undefined && none.css === "" && !none.animated);
+  check("cursor: the default size is 32 and the tip is top-left", none.size === 32 && none.hx === 0 && none.hy === 0);
+
+  const one = { cursorArt: { look: { image: "/assets/ui/cursor-eye.png", size: 30 } } };
+  const look = resolveCursor(one, "look");
+  check("cursor: a verb's own art is used", look.css.includes("cursor-eye") && look.size === 30);
+  check("cursor: a missing verb falls back to default", resolveCursor(one, "take").css === "" || resolveCursor(one, "take").css.includes("cursor-eye"));
+  check("cursor: a CSS cursor carries the hotspot offsets", /url\("[^"]+"\) 0 0, auto/.test(look.css), look.css);
+
+  const withDefault = { cursorArt: { default: { image: "/assets/ui/cursor-hand.png" }, look: { image: "/assets/ui/cursor-eye.png" } } };
+  check("cursor: default art covers the other verbs", resolveCursor(withDefault, "go").css.includes("cursor-hand"));
+  check("cursor: the specific verb still wins", resolveCursor(withDefault, "look").css.includes("cursor-eye"));
+  check("cursor: cursorArtFor returns the art itself", cursorArtFor(withDefault, "talk")?.image === "/assets/ui/cursor-hand.png");
+
+  const centered = resolveCursor({ cursorArt: { use: { image: "/x.png", size: 40, anchor: "center" } } }, "use");
+  check("cursor: a centred cursor offsets by half its size", centered.hx === 20 && centered.hy === 20, centered);
+  const huge = resolveCursor({ cursorArt: { use: { image: "/x.png", size: 900 } } }, "use");
+  check("cursor: size is clamped to the CSS cursor limit", huge.size === 128);
+
+  // A sprite sheet is drawn as a sprite that tracks the mouse, not a CSS cursor.
+  const anim = resolveCursor({ cursorArt: { use: { sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0, 1], fps: 8 } } } } } }, "use");
+  check("cursor: a sheet makes an animated cursor", anim.animated === true && anim.css === "none");
+  check("cursor: a sheet beats a static image", resolveCursor({ cursorArt: { use: { image: "/x.png", sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0], fps: 1 } } } } } }, "use").animated === true);
+
+  check("cursor: every slot is offered to the author", CURSOR_SLOTS.join(",") === "default,look,take,talk,use,go");
+  check("cursor: the prototype ships cursor art", !!THROTTLE_ASH.cursorArt?.look?.image && !!THROTTLE_ASH.cursorArt?.default?.image);
+  check("cursor: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+
+  // Player placement: a spawn dropped anywhere still lands on the floor band.
+  const floor = { top: 66, bottom: 95 };
+  const dropped = [ { x: 50, y: 10 }, { x: 50, y: 99 }, { x: 50, y: 80 } ].map((p) => clampToFloor(p.x, p.y, floor));
+  check("spawn: a spawn dropped in the sky lands on the floor", dropped[0].y === 66);
+  check("spawn: a spawn dropped below the floor is pulled back", dropped[1].y === 95);
+  check("spawn: a spawn dropped on the floor stays put", dropped[2].y === 80);
+  check("spawn: the whole plate is reachable left to right", clampToFloor(-20, 80, floor).x === 1 && clampToFloor(140, 80, floor).x === 99);
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

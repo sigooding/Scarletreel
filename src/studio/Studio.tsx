@@ -61,6 +61,11 @@ import {
   seasonEpisodes,
   stageFloor as stageFloorOf,
   storyEdges,
+  CURSOR_ICON,
+  CURSOR_SLOTS,
+  VERB_ICON,
+  VERB_IDS,
+  VERB_LABEL,
   uid,
   validateStory,
   type ValidationIssue,
@@ -68,7 +73,12 @@ import {
 import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } from "./MediaLibrary";
 import { ImagePicker } from "./ImagePicker";
 import { EXTRA_PRESET, SheetLab, SpriteSheetControls, TALKING_PRESET, WALKER_PRESET } from "./SheetEditor";
+import { SheetSprite } from "../game/SheetSprite";
+import { sheetDrawable } from "../game/spriteSheet";
 import { SpriteCutoutLab } from "./SpriteCutout";
+import { BackgroundRemover } from "./BackgroundRemover";
+import { PlaytestCoveragePanel } from "./PlaytestCoverage";
+import { ANIM_PRESETS, EASES, describeMotion, type MotionPath } from "../game/animation";
 import { SpriteBoxEditor } from "./SpriteBoxEditor";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
@@ -120,9 +130,11 @@ import type {
   ForegroundAnimation,
   ForegroundAnimationMode,
   ForegroundExtra,
+  CursorArt,
   Gating,
   GlobalState,
   Hotspot,
+  InventorySettings,
   Item,
   LensFlareGhostTier,
   LensFlarePreset,
@@ -2034,7 +2046,7 @@ function CinematicControls({
             drawing, or a photo — then press <b>⚡ Upload art → auto-build</b> below. It removes the backdrop, slices
             the frames, sets the sizes and animations, and files the sheet under 📁 sprites in the media library.
             If removal eats into the art, set backdrop removal to <b>gentle</b>; if specks survive, <b>strong</b>;
-            for full manual control use Media ▸ ✂ Sprite Cutout Lab.
+            for full manual control use Media Tools ▸ ✂ Sprite Cutout Lab.
           </p>
           <p>
             <b className="text-paper/75">Doing it by hand instead:</b> one transparent PNG, every frame EXACTLY the
@@ -2130,6 +2142,33 @@ function CinematicControls({
               <input type="checkbox" checked={!!extra.flip} onChange={(e) => update({ flip: e.target.checked || undefined })} />
               ↔ Flip horizontally (face the other way)
             </label>
+            {/* ---- walk-behind mask: the cutout IS the mask ---- */}
+            <div className="space-y-1 border border-amber-400/30 bg-amber-400/5 p-2">
+              <div className="font-pulp text-[9px] uppercase tracking-widest text-amber-300">🚶 Walk-behind mask (🚶 stage rooms)</div>
+              <label className="flex items-center gap-2 font-type text-[10px] text-paper/70">
+                <input type="checkbox" checked={!!extra.occludes} onChange={(e) => update({ occludes: e.target.checked || undefined })} />
+                Draw this OVER the player when they walk behind it
+              </label>
+              <p className="font-type text-[9px] leading-snug text-paper/45">
+                Turn any foreground cutout into an occluder — no second asset. While the walker's feet are ABOVE the
+                depth line they are standing behind the object, so the art is drawn over them (they vanish behind the
+                counter, the truck, the pillar). Step below the line and they're in front of it again. Pair it with a
+                🚧 barrier so they can't walk through it either.
+              </p>
+              {extra.occludes ? (
+                <Field label={`Depth line (base of the object) — ${extra.occludeBaseline ?? extra.y ?? 80}% down the plate`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={extra.occludeBaseline ?? extra.y ?? 80}
+                    className="w-full accent-amber-400"
+                    onChange={(e) => update({ occludeBaseline: Number(e.target.value) })}
+                  />
+                </Field>
+              ) : null}
+            </div>
             {/* ---- animate with a sprite sheet (flickering neon, rain-lashed flags) ---- */}
             <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
               <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Animate with a sprite sheet</div>
@@ -2144,6 +2183,190 @@ function CinematicControls({
                 preset={EXTRA_PRESET}
                 onChange={(sheet) => update({ sheet })}
               />
+            </div>
+            {/* ---- motion path + idle preset (🎬 the gull flies across) ---- */}
+            <div className="space-y-1 border border-emerald-400/30 bg-emerald-400/5 p-2">
+              <div className="font-pulp text-[9px] uppercase tracking-widest text-emerald-300">🎬 Motion &amp; idle animation</div>
+              <p className="font-type text-[9px] leading-snug text-paper/45">
+                <b>Idle motion</b> loops a CSS preset — no extra art. A <b>motion path</b> flies the sprite along its
+                waypoints at a constant speed: a gull crossing the harbour, a car passing outside, a rat along the
+                skirting. Paths compile to real keyframes, so nothing runs in JavaScript while they play.
+              </p>
+              <Field label="Idle motion">
+                <select
+                  className={inputCls}
+                  value={extra.anim?.preset ?? "none"}
+                  onChange={(e) => update({ anim: { ...(extra.anim ?? {}), preset: e.target.value as never } })}
+                >
+                  {ANIM_PRESETS.map((pr) => (
+                    <option key={pr.id} value={pr.id}>
+                      {pr.label} — {pr.blurb}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {(extra.anim?.preset ?? "none") !== "none" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Speed ${(extra.anim?.speed ?? 1).toFixed(2)}×`}>
+                    <input
+                      type="range"
+                      min={0.25}
+                      max={3}
+                      step={0.05}
+                      value={extra.anim?.speed ?? 1}
+                      className="w-full accent-emerald-400"
+                      onChange={(e) => update({ anim: { ...(extra.anim ?? {}), speed: Number(e.target.value) } })}
+                    />
+                  </Field>
+                  <Field label={`Intensity ${(extra.anim?.intensity ?? 1).toFixed(2)}`}>
+                    <input
+                      type="range"
+                      min={0.2}
+                      max={2}
+                      step={0.05}
+                      value={extra.anim?.intensity ?? 1}
+                      className="w-full accent-emerald-400"
+                      onChange={(e) => update({ anim: { ...(extra.anim ?? {}), intensity: Number(e.target.value) } })}
+                    />
+                  </Field>
+                </div>
+              )}
+              <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                <input
+                  type="checkbox"
+                  checked={!!extra.motion}
+                  onChange={(e) =>
+                    update({
+                      motion: e.target.checked
+                        ? { points: [{ x: 8, y: 28 }, { x: 92, y: 20 }], duration: 11, ease: "arc", loop: "loop", holdSeconds: 2, faceTravel: true }
+                        : undefined,
+                    })
+                  }
+                />
+                Fly along a path
+              </label>
+              {extra.motion &&
+                (() => {
+                  const m = extra.motion;
+                  const setM = (patch: Partial<MotionPath>) => update({ motion: { ...m, ...patch } });
+                  const setPt = (i: number, patch: Partial<{ x: number; y: number }>) =>
+                    setM({ points: m.points.map((pt, j) => (j === i ? { ...pt, ...patch } : pt)) });
+                  const last = m.points[m.points.length - 1];
+                  return (
+                    <div className="space-y-1.5 border border-noir-600 bg-noir-950/60 p-2">
+                      <div className="font-type text-[9px] text-emerald-300/90">{describeMotion(m)}</div>
+                      {m.points.map((pt, i) => (
+                        <div key={i} className="flex items-center gap-1">
+                          <span className="w-5 shrink-0 font-pulp text-[8px] text-paper/40">{i + 1}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={Math.round(pt.x)}
+                            title="X — % across the frame"
+                            className={`${inputCls} w-14`}
+                            onChange={(e) => setPt(i, { x: Number(e.target.value) })}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={Math.round(pt.y)}
+                            title="Y — % down the frame"
+                            className={`${inputCls} w-14`}
+                            onChange={(e) => setPt(i, { y: Number(e.target.value) })}
+                          />
+                          <button
+                            type="button"
+                            className="shrink-0 px-1 font-pulp text-[9px] text-crimson disabled:opacity-30"
+                            title="Remove this waypoint"
+                            disabled={m.points.length <= 2}
+                            onClick={() => setM({ points: m.points.filter((_, j) => j !== i) })}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="w-full border border-emerald-400/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-emerald-300 hover:bg-emerald-400/10"
+                        onClick={() => setM({ points: [...m.points, { x: Math.min(100, Math.round(last.x + 12)), y: last.y }] })}
+                      >
+                        ＋ add waypoint
+                      </button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Field label={`Pass time ${m.duration}s`}>
+                          <input
+                            type="range"
+                            min={0.5}
+                            max={60}
+                            step={0.5}
+                            value={m.duration}
+                            className="w-full accent-emerald-400"
+                            onChange={(e) => setM({ duration: Number(e.target.value) })}
+                          />
+                        </Field>
+                        <Field label={`Pause at end ${(m.holdSeconds ?? 0).toFixed(1)}s`}>
+                          <input
+                            type="range"
+                            min={0}
+                            max={20}
+                            step={0.5}
+                            value={m.holdSeconds ?? 0}
+                            className="w-full accent-emerald-400"
+                            onChange={(e) => setM({ holdSeconds: Number(e.target.value) || undefined })}
+                          />
+                        </Field>
+                        <Field label="Repeat">
+                          <select className={inputCls} value={m.loop ?? "loop"} onChange={(e) => setM({ loop: e.target.value as never })}>
+                            <option value="loop">loop (restart)</option>
+                            <option value="pingpong">ping-pong (there &amp; back)</option>
+                            <option value="once">once (play and hold)</option>
+                          </select>
+                        </Field>
+                        <Field label="Easing">
+                          <select className={inputCls} value={m.ease ?? "linear"} onChange={(e) => setM({ ease: e.target.value as never })}>
+                            {EASES.map((ez) => (
+                              <option key={ez.id} value={ez.id}>
+                                {ez.label}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label={`End size ${(m.scaleTo ?? 1).toFixed(2)}×`}>
+                          <input
+                            type="range"
+                            min={0.2}
+                            max={2}
+                            step={0.05}
+                            value={m.scaleTo ?? 1}
+                            className="w-full accent-emerald-400"
+                            onChange={(e) => setM({ scaleTo: Number(e.target.value) })}
+                          />
+                        </Field>
+                        <Field label={`End fade ${(m.fadeTo ?? 1).toFixed(2)}`}>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={m.fadeTo ?? 1}
+                            className="w-full accent-emerald-400"
+                            onChange={(e) => setM({ fadeTo: Number(e.target.value) })}
+                          />
+                        </Field>
+                      </div>
+                      <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                        <input
+                          type="checkbox"
+                          checked={m.faceTravel !== false}
+                          onChange={(e) => setM({ faceTravel: e.target.checked })}
+                        />
+                        Turn to face the way it travels
+                      </label>
+                    </div>
+                  );
+                })()}
             </div>
           </div>
           );
@@ -2815,6 +3038,139 @@ function resizeImageFile(file: File, maxSize = 512): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+/* ---------- cursor art (in-game theme) ---------- */
+/** Per-verb cursor art. Lives on the 🎮 In-game theme tab and previews in the
+ *  case's own theme, at real size, over a scrap of the plate — because a cursor
+ *  is the one piece of UI the player touches literally everywhere. */
+function CursorArtEditor({
+  story,
+  onUpdate,
+  media,
+  themeVars,
+}: {
+  story: Story;
+  onUpdate: (next: Story) => void;
+  media: (v?: string) => string | undefined;
+  themeVars: React.CSSProperties;
+}) {
+  const [openSlot, setOpenSlot] = useState<string | null>(null);
+  const art = story.cursorArt ?? {};
+  const setSlot = (slot: string, patch: Partial<CursorArt>) => {
+    const next = deepClone(story);
+    next.cursorArt = { ...(next.cursorArt ?? {}) };
+    (next.cursorArt as Record<string, CursorArt>)[slot] = { ...((art as Record<string, CursorArt>)[slot] ?? {}), ...patch };
+    onUpdate(next);
+  };
+  const clearSlot = (slot: string) => {
+    const next = deepClone(story);
+    next.cursorArt = { ...(next.cursorArt ?? {}) };
+    delete (next.cursorArt as Record<string, CursorArt | undefined>)[slot];
+    if (!Object.keys(next.cursorArt).length) next.cursorArt = undefined;
+    onUpdate(next);
+  };
+  return (
+    <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2" style={themeVars}>
+      <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🖱 Cursor art (per verb)</div>
+      <p className="font-type text-[9px] leading-snug text-paper/45">
+        Replace the system cursors with art: a pointing hand for <b>take</b>, an eye for <b>look</b>, a turning key
+        for <b>use</b>. Give a verb a static <b>image</b> and it becomes the real mouse cursor; give it a <b>sprite
+        sheet</b> and it animates as it follows the mouse. <b>default</b> is the plain arrow everywhere else. Nothing
+        here is required — no art means the game keeps its system cursors.
+      </p>
+      {CURSOR_SLOTS.map((slot) => {
+        const a = (art as Record<string, CursorArt | undefined>)[slot];
+        const size = a?.size ?? 32;
+        const open = openSlot === slot;
+        const preview = (() => {
+          if (a && sheetDrawable(a.sheet)) return <SheetSprite sheet={a.sheet!} anim="loop" fallbacks={["idle"]} height={Math.min(48, size)} />;
+          if (a?.image) return <img src={assetUrl(media(a.image) ?? a.image)} alt="" className="w-auto object-contain" style={{ height: Math.min(48, size) }} />;
+          return <span className="font-type text-[9px] uppercase tracking-widest text-paper/35">system cursor</span>;
+        })();
+        return (
+          <div key={slot} className="border border-noir-700/70">
+            <button
+              className="flex w-full items-center gap-2 px-1.5 py-1 text-left hover:bg-noir-800/40"
+              onClick={() => setOpenSlot(open ? null : slot)}
+            >
+              {/* the preview is a scrap of the plate, in the case's own theme */}
+              <span className="relative flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden border border-gold/30 bg-noir-950">
+                <span className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(232,178,60,0.12),transparent_70%)]" aria-hidden />
+                {preview}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-pulp text-[9px] uppercase tracking-widest text-gold">
+                  {CURSOR_ICON[slot] ?? "➤"} {slot}
+                </span>
+                <span className="block truncate font-type text-[9px] text-paper/45">
+                  {a ? (sheetDrawable(a.sheet) ? "animated sprite sheet" : a.image ? "static image" : "empty") : "system cursor"}
+                  {a ? ` · ${size}px · ${a.anchor === "center" ? "centred" : "tip: top-left"}` : ""}
+                </span>
+              </span>
+              <span className="shrink-0 font-pulp text-[9px] text-paper/40">{open ? "▾" : "▸"}</span>
+            </button>
+            {open ? (
+              <div className="space-y-1.5 border-t border-noir-700/70 p-1.5">
+                <Field label="Static image (transparent PNG/WebP, ≤128px)">
+                  <AssetDropdown
+                    storyId={story.id}
+                    assetType="image"
+                    returnReference
+                    preferFolder="sprites"
+                    value={a?.image || undefined}
+                    placeholder="Pick cursor art…"
+                    onChange={(url) => setSlot(slot, { image: url ?? undefined, sheet: undefined })}
+                  />
+                </Field>
+                {a?.image ? (
+                  <div className="flex items-center gap-1">
+                    <img src={assetUrl(media(a.image) ?? a.image)} alt="" className="h-8 w-auto object-contain" />
+                    <button
+                      className="border border-crimson/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                      onClick={() => setSlot(slot, { image: undefined })}
+                    >
+                      ✕ remove
+                    </button>
+                  </div>
+                ) : null}
+                <div className="space-y-1 border border-cyan-neon/25 bg-cyan-neon/5 p-1.5">
+                  <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Animated cursor (sprite sheet)</div>
+                  <p className="font-type text-[9px] leading-snug text-paper/45">
+                    A looping sprite that follows the mouse — a reaching hand, a blinking eye. Beats the 128px CSS
+                    cursor limit and can be any size.
+                  </p>
+                  <SpriteSheetControls
+                    value={a?.sheet}
+                    storyId={story.id}
+                    preset={EXTRA_PRESET}
+                    onChange={(sheet) => setSlot(slot, { sheet, image: sheet ? undefined : a?.image })}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  <Field label="Hotspot point">
+                    <select className={inputCls} value={a?.anchor ?? "top-left"} onChange={(e) => setSlot(slot, { anchor: e.target.value as CursorArt["anchor"] })}>
+                      <option value="top-left">top-left (pointing)</option>
+                      <option value="center">centre (reticle)</option>
+                    </select>
+                  </Field>
+                  <Field label={`Size ${size}px`}>
+                    <input type="range" min={16} max={96} step={2} className="w-full accent-gold" value={size} onChange={(e) => setSlot(slot, { size: Number(e.target.value) })} />
+                  </Field>
+                </div>
+                <button
+                  className="w-full border border-paper/30 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/50 hover:text-crimson"
+                  onClick={() => clearSlot(slot)}
+                >
+                  ⟲ back to the system cursor
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /* ---------- character editor ---------- */
@@ -4056,6 +4412,15 @@ function HotspotCanvas({
   onSelect,
   onDraw,
   media,
+  barrierMode,
+  barriers = [],
+  selectedBarrier,
+  onBarrierSelect,
+  onBarrierDraw,
+  spawn,
+  spawnMode,
+  onSpawnMove,
+  player,
 }: {
   scene: SceneNode;
   items?: Item[];
@@ -4063,10 +4428,29 @@ function HotspotCanvas({
   onSelect: (id: string) => void;
   onDraw: (bounds: { x: number; y: number; w: number; h: number }) => void;
   media: (v?: string) => string | undefined;
+  /** Draw NO-GO BARRIERS instead of hotspots (🚶 stage rooms). */
+  barrierMode?: boolean;
+  /** The room's no-go rectangles, always shown faintly as context. */
+  barriers?: { x: number; y: number; w: number; h: number }[];
+  selectedBarrier?: number | null;
+  onBarrierSelect?: (i: number | null) => void;
+  onBarrierDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
+  /** 🚶 where the player character starts (scene %), drawn on the plate. */
+  spawn?: { x: number; y: number };
+  /** Dragging on the plate moves the player instead of drawing a box. */
+  spawnMode?: boolean;
+  onSpawnMove?: (p: { x: number; y: number }) => void;
+  /** The walker art, so the marker is the actual character. */
+  player?: { image?: string; sheet?: import("./../game/spriteSheet").SpriteSheet; scale?: number };
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const floorBand = scene.stage?.floor;
+  const onBarrierDrawRef = useRef(onBarrierDraw);
+  onBarrierDrawRef.current = onBarrierDraw;
+  const onSpawnMoveRef = useRef(onSpawnMove);
+  onSpawnMoveRef.current = onSpawnMove;
 
   const pct = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
@@ -4081,14 +4465,15 @@ function HotspotCanvas({
       ref={ref}
       className="relative aspect-video w-full cursor-crosshair overflow-hidden border border-noir-600"
       style={bgStyle(media(scene.background) ?? scene.background)}
-      onPointerDown={(e) => {
-        if ((e.target as HTMLElement).dataset.hs) return;
-        start.current = pct(e);
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-      }}
       onPointerMove={(e) => {
         if (!start.current) return;
         const p = pct(e);
+        // 🚶 player start: dragging moves the character (clamped to the floor
+        // band, because that's where they can actually stand).
+        if (spawnMode) {
+          onSpawnMoveRef.current?.({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 });
+          return;
+        }
         setDraft({
           x: Math.min(start.current.x, p.x),
           y: Math.min(start.current.y, p.y),
@@ -4096,14 +4481,33 @@ function HotspotCanvas({
           h: Math.abs(p.y - start.current.y),
         });
       }}
+      onPointerDown={(e) => {
+        // In spawn mode a plain click places the character too.
+        if (spawnMode && !(e.target as HTMLElement).dataset.bar && !(e.target as HTMLElement).dataset.hs) {
+          start.current = pct(e);
+          onSpawnMoveRef.current?.({ x: Math.round(start.current.x * 10) / 10, y: Math.round(start.current.y * 10) / 10 });
+          return;
+        }
+        if ((e.target as HTMLElement).dataset.hs) return;
+        if ((e.target as HTMLElement).dataset.bar) return;
+        start.current = pct(e);
+        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      }}
       onPointerUp={() => {
+        if (spawnMode) {
+          start.current = null;
+          setDraft(null);
+          return;
+        }
         if (draft && draft.w > 2 && draft.h > 2) {
-          onDraw({
+          const bounds = {
             x: Math.round(draft.x * 10) / 10,
             y: Math.round(draft.y * 10) / 10,
             w: Math.round(draft.w * 10) / 10,
             h: Math.round(draft.h * 10) / 10,
-          });
+          };
+          if (barrierMode) onBarrierDrawRef.current?.(bounds);
+          else onDraw(bounds);
         }
         start.current = null;
         setDraft(null);
@@ -4118,6 +4522,60 @@ function HotspotCanvas({
           autoPlay
         />
       )}
+      {/* the walkable floor band — where the character may stand, and so
+          where a barrier actually means something */}
+      {floorBand ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 border-y border-dashed border-cyan-neon/40 bg-cyan-neon/5"
+          style={{ top: `${floorBand.top}%`, height: `${Math.max(0, floorBand.bottom - floorBand.top)}%` }}
+        >
+          <span className="absolute left-1 top-0 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/70">walkable floor</span>
+        </div>
+      ) : null}
+      {/* 🚶 THE PLAYER — where they start. Bright and named in spawn mode,
+          a ghost in the other modes so you can place things around them. */}
+      {spawn ? (
+        <div
+          className={`pointer-events-none absolute flex flex-col items-center ${spawnMode ? "" : "opacity-40"}`}
+          style={{ left: `${spawn.x}%`, top: `${spawn.y}%`, transform: "translate(-50%,-100%)", height: "28%" }}
+          title="Player start"
+        >
+          {player && sheetDrawable(player.sheet) ? (
+            <SheetSprite sheet={player.sheet!} anim="idle" fallbacks={["walk", "loop"]} height="100%" freezeOnFallback />
+          ) : player?.image ? (
+            <img src={assetUrl(media(player.image) ?? player.image)} alt="" className="h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]" />
+          ) : (
+            <span className="text-2xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]">🚶</span>
+          )}
+          <span className={`mt-0.5 whitespace-nowrap font-pulp text-[7px] uppercase tracking-widest ${spawnMode ? "text-cyan-neon" : "text-paper/60"}`}>
+            {spawnMode ? "🚶 player start — drag to move" : "🚶 start"}
+          </span>
+        </div>
+      ) : null}
+      {/* NO-GO BARRIERS — hatched crimson. Click to select (then redraw to
+          reshape); visible in both modes because they place the hotspots. */}
+      {barriers.map((b, bi) => (
+        <button
+          key={`bar-${bi}`}
+          data-bar="1"
+          onClick={() => {
+            onBarrierSelect?.(selectedBarrier === bi ? null : bi);
+            onSelect("");
+          }}
+          className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} text-[8px] uppercase tracking-wider text-crimson`}
+          style={{
+            left: `${b.x}%`,
+            top: `${b.y}%`,
+            width: `${b.w}%`,
+            height: `${b.h}%`,
+            backgroundImage:
+              "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
+          }}
+          title={`No-go barrier ${bi + 1} — click to select, then drag a new box to reshape`}
+        >
+          <span className="absolute left-1 top-0.5 truncate">{barrierMode || selectedBarrier === bi ? "🚧 no-go" : ""}</span>
+        </button>
+      ))}
       {(scene.hotspots ?? []).map((h) => {
         const grantedItem = h.showItemImage && h.action.itemGranted ? items.find((i) => i.id === h.action.itemGranted) : undefined;
         return (
@@ -4127,7 +4585,7 @@ function HotspotCanvas({
             onClick={() => onSelect(h.id)}
             className={`absolute border-2 text-[8px] uppercase tracking-wider ${
               selectedId === h.id ? "border-neon bg-neon/20 text-neon" : "border-gold/70 bg-gold/10 text-gold"
-            }`}
+            } ${barrierMode ? "pointer-events-none opacity-40" : ""}`}
             style={{ left: `${h.bounds.x}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w}%`, height: `${h.bounds.h}%` }}
             title={h.label}
           >
@@ -4158,7 +4616,7 @@ function HotspotCanvas({
       })}
       {draft && (
         <div
-          className="absolute border-2 border-dashed border-cyan-neon bg-cyan-neon/10"
+          className={`absolute border-2 border-dashed ${barrierMode ? "border-crimson bg-crimson/10" : "border-cyan-neon bg-cyan-neon/10"}`}
           style={{ left: `${draft.x}%`, top: `${draft.y}%`, width: `${draft.w}%`, height: `${draft.h}%` }}
         />
       )}
@@ -4474,6 +4932,9 @@ function StudioInner({
     setElevenModel(id);
   };
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
+  /** Hotspots tab: drawing hotspots, or drawing 🚧 no-go barriers. */
+  const [zoneMode, setZoneMode] = useState<"hotspot" | "barrier" | "spawn">("hotspot");
+  const [selectedBarrier, setSelectedBarrier] = useState<number | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
   // Which single beat is maximised in the Beats tab. Beats default to
@@ -4755,15 +5216,34 @@ function StudioInner({
   const addScene = (fx: number, fy: number) => {
     const id = `scene_${uid()}`;
     const isFirstScene = story.scenes.length === 0;
+    // 🧭 Mode switch: in an ADVENTURE case a new room is a walkable stage
+    // (🚶 node) by default, not a prose plate — that IS the mode.
+    const adv = story.gameKind === "adventure";
     mutate((d) => {
       d.scenes.push({
         id,
-        title: isFirstScene ? "Opening Scene" : "New Scene",
+        title: isFirstScene ? "Opening Scene" : (adv ? "New Room" : "New Scene"),
         background: BACKGROUNDS[8],
         ambientAudio: "drone",
-        prose: isFirstScene
-          ? "Your story starts here. Set the mood, introduce the problem, and give the detective a reason to keep looking."
-          : "The scene opens on...",
+        prose: adv
+          ? ""
+          : isFirstScene
+            ? "Your story starts here. Set the mood, introduce the problem, and give the detective a reason to keep looking."
+            : "The scene opens on...",
+        ...(adv
+          ? {
+              nodeType: "stage" as const,
+              stage: {
+                keyboard: true,
+                speed: 15,
+                reach: 4,
+                depthScale: 0.3,
+                hints: "proximity" as const,
+                floor: { top: 66, bottom: 95 },
+                spawn: { x: 50, y: 90 },
+              },
+            }
+          : {}),
         choices: [],
         hotspots: [],
         dialogueBeats: [],
@@ -4773,7 +5253,8 @@ function StudioInner({
     });
     setSelectedId(id);
     setTab("scene");
-    if (isFirstScene) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
+    if (isFirstScene && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
+    if (adv) say("Room created as a 🚶 walkable stage. Put a plate on it, draw 🚧 obstacles, then hang 👁 look / ✋ take / 💬 talk / ➜ go hotspots on it.");
     audio.pickup();
   };
 
@@ -4888,7 +5369,7 @@ function StudioInner({
     });
     setSelectedId(id);
     setTab("scene");
-    say("Walkable Stage created — a Telltale-style exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
+    say("Walkable Stage created — a free-roam exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
     audio.pickup();
   };
 
@@ -5846,6 +6327,28 @@ function StudioInner({
           onChange={(e) => commit({ ...story, title: e.target.value })}
           aria-label="Story title"
         />
+        <select
+          className="tb-select"
+          value={story.gameKind ?? "noir-rail"}
+          onChange={(e) => {
+            const kind = e.target.value as "noir-rail" | "adventure" | "vn";
+            commit({ ...story, gameKind: kind });
+            say(
+              kind === "adventure"
+                ? "Adventure mode: new scenes come out as 🚶 walkable rooms, and the Scene tab opens on the Walkable Stage panel."
+                : kind === "vn"
+                  ? "Visual novel mode: build around portraits and dialogue beats."
+                  : "Noir rail mode: prose + choice rail, the house style.",
+            );
+            audio.pickup();
+          }}
+          aria-label="Kind of game"
+          title="What kind of game this case is — decides what a new scene looks like and which tooling Studio surfaces."
+        >
+          <option value="noir-rail">🕵 Noir Rail</option>
+          <option value="adventure">🚶 Adventure</option>
+          <option value="vn">🎭 Visual Novel</option>
+        </select>
         <span className="tb-sep" />
         <button onClick={undo} disabled={!past.current.length} className="btn-tool" title="Undo (Ctrl+Z)">
           ↶ Undo
@@ -5911,7 +6414,7 @@ function StudioInner({
         <button
           onClick={() => addStageScene(80 + Math.random() * 200, 80 + Math.random() * 200)}
           className="btn-tool"
-          title="Add a Telltale-style walkable stage — the player walks a character around the floor and interacts by approaching markers"
+          title="Add a walkable stage — the player walks a character around the floor and interacts by approaching markers"
         >
           🚶 Stage
         </button>
@@ -6531,7 +7034,7 @@ function StudioInner({
                   flags: "🏷 Flags",
                   acts: "🎭 Acts",
                   episodes: "🎞 Episodes",
-                  media: "📦 Media",
+                  media: "🛠 Media Tools",
                   ai: "🎨 AI Images",
                   map: "🗺 Map",
                   dialogueBox: "🎮 In-Game Theme",
@@ -6629,6 +7132,13 @@ function StudioInner({
                   ledger will display in-game.
                 </HelpNote>
                 <Playtester story={story} scene={scene} />
+                <PlaytestCoveragePanel
+                  story={story}
+                  onSelectScene={(sceneId) => {
+                    setSelectedId(sceneId);
+                    setTab("scene");
+                  }}
+                />
               </>
             )}
             {tab === "characters" && (
@@ -6646,10 +7156,106 @@ function StudioInner({
               <>
                 <HelpNote id="items-tab" title="Items">
                   Mark a clue with <b>📌 is clue</b> so it appears on the corkboard. Set a <b>recipe</b> (partner +
-                  result) to let players drag one item onto another in the satchel and combine them. Anything a gate
+                  result) to let players drag one item onto another in the inventory and combine them. Anything a gate
                   requires must be granted somewhere — by a hotspot, a choice's reward, or a recipe result — or the
                   validator flags it as an impossible gate.
                 </HelpNote>
+                {/* ---- how the inventory is PRESENTED (per case) ---- */}
+                {(() => {
+                  const inv = story.inventoryDisplay ?? {};
+                  const setInv = (patch: Partial<InventorySettings>) =>
+                    commit({ ...story, inventoryDisplay: { ...inv, ...patch } });
+                  const mode = inv.mode ?? "classic";
+                  return (
+                    <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
+                      <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎒 Inventory display</h3>
+                      <p className="font-type text-[9px] leading-snug text-paper/45">
+                        How the player's inventory LOOKS in this case. Every case defaults to <b>Classic</b> — the chip
+                        rail it already has — so nothing changes until you opt in. Pick <b>Container</b> for a pouch,
+                        case or saddlebag sprite with the items inside it, and drop in your own art; <b>Hidden</b> for
+                        no dock at all.
+                      </p>
+                      <Field label="Mode">
+                        <select className={inputCls} value={mode} onChange={(e) => setInv({ mode: e.target.value as InventorySettings["mode"] })}>
+                          <option value="classic">Classic — chip rail (default, unchanged)</option>
+                          <option value="container">Container — a bag/case sprite with items inside</option>
+                          <option value="hidden">Hidden — no on-screen inventory</option>
+                        </select>
+                      </Field>
+                      {mode !== "hidden" ? (
+                        <>
+                          <Field label="Heading (e.g. Satchel, Saddlebags, Case File)">
+                            <input
+                              className={inputCls}
+                              value={inv.label ?? ""}
+                              placeholder="Inventory"
+                              onChange={(e) => setInv({ label: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="Corner">
+                            <select className={inputCls} value={inv.anchor ?? "bottom-left"} onChange={(e) => setInv({ anchor: e.target.value as InventorySettings["anchor"] })}>
+                              <option value="bottom-left">bottom-left</option>
+                              <option value="bottom-right">bottom-right</option>
+                              <option value="top-left">top-left</option>
+                              <option value="top-right">top-right</option>
+                            </select>
+                          </Field>
+                          {mode === "container" ? (
+                            <>
+                              <Field label="Container art (transparent PNG — a bag, a case, a tool roll)">
+                                <AssetDropdown
+                                  storyId={story.id}
+                                  assetType="image"
+                                  returnReference
+                                  preferFolder="sprites"
+                                  value={inv.image || undefined}
+                                  placeholder="Default: the house leather case…"
+                                  onChange={(url) => setInv({ image: url ?? undefined })}
+                                />
+                              </Field>
+                              <div className="flex flex-wrap items-center gap-1">
+                                <button
+                                  className="border border-gold/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-gold hover:bg-gold/10"
+                                  onClick={() => setInv({ image: "/assets/ui/inventory-case.png" })}
+                                >
+                                  👜 use the leather case
+                                </button>
+                                {inv.image ? (
+                                  <button
+                                    className="border border-crimson/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                                    onClick={() => setInv({ image: undefined })}
+                                  >
+                                    ✕ clear art (house panel)
+                                  </button>
+                                ) : null}
+                              </div>
+                              {inv.image ? (
+                                <img src={assetUrl(media(inv.image) ?? inv.image)} alt="" className="h-24 w-auto object-contain" />
+                              ) : (
+                                <p className="font-type text-[9px] text-paper/40">No art set — the dock draws a stitched leather panel.</p>
+                              )}
+                              <div className="grid grid-cols-3 gap-1">
+                                <Field label={`Columns ${inv.columns ?? 4}`}>
+                                  <input type="range" min={1} max={8} step={1} className="w-full accent-gold" value={inv.columns ?? 4} onChange={(e) => setInv({ columns: Number(e.target.value) })} />
+                                </Field>
+                                <Field label={`Inset ${inv.inset ?? 14}%`}>
+                                  <input type="range" min={0} max={45} step={1} className="w-full accent-gold" value={inv.inset ?? 14} onChange={(e) => setInv({ inset: Number(e.target.value) })} />
+                                </Field>
+                                <Field label={`Height ${inv.height ?? 260}px`}>
+                                  <input type="range" min={140} max={460} step={10} className="w-full accent-gold" value={inv.height ?? 260} onChange={(e) => setInv({ height: Number(e.target.value) })} />
+                                </Field>
+                              </div>
+                              <label className="flex items-center gap-1 font-type text-[10px] text-paper/60">
+                                <input type="checkbox" checked={!!inv.startClosed} onChange={(e) => setInv({ startClosed: e.target.checked || undefined })} />
+                                Start collapsed (just the heading and the count)
+                              </label>
+                            </>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })()}
                 <ItemEditor story={story} onUpdate={commit} />
               </>
             )}
@@ -6704,6 +7310,34 @@ function StudioInner({
                     </div>
                   );
                 })}
+                {/* ---- verb coin: the story's "that doesn't work" lines ---- */}
+                <div className="mt-3 border border-gold/30 bg-gold/5 p-2">
+                  <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎛 Verb coin — refusal lines</h3>
+                  <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">
+                    What the player is told when they try a verb an object doesn't answer to (or use the wrong item
+                    on it) in a room with the 🎛 verb coin on. One line per row — the engine varies them, so a failed
+                    verb doesn't read like a stuck record. A hotspot's own “Refusal line” beats these.
+                  </p>
+                  {VERB_IDS.map((v) => (
+                    <div key={v} className="mt-1">
+                      <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">
+                        <span aria-hidden>{VERB_ICON[v]}</span> {VERB_LABEL[v]}
+                      </div>
+                      <textarea
+                        className={`${inputCls} h-14 font-type`}
+                        placeholder="One refusal line per row…"
+                        value={(story.verbResponses?.[v] ?? []).join("\n")}
+                        onChange={(e) => {
+                          const lines = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
+                          const next = { ...(story.verbResponses ?? {}) };
+                          if (lines.length) next[v] = lines;
+                          else delete next[v];
+                          commit({ ...story, verbResponses: Object.keys(next).length ? next : undefined });
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {tab === "acts" && (
@@ -6731,13 +7365,14 @@ function StudioInner({
             )}
             {tab === "media" && (
               <>
-                <HelpNote id="media-tab" title="Media library">
+                <HelpNote id="media-tab" title="Media tools">
                   Uploads are stored once per story and reused everywhere via the asset dropdowns (images in
                   background/foreground pickers, audio in music/narration/voice pickers, video in cutscenes). Drafts
                   keep compact <code>asset:</code> references so big files don't blow the local storage quota — the
                   indicator tells you whether uploads will survive a reload.
                 </HelpNote>
                 <MediaLibrary storyId={story.id} />
+                <BackgroundRemover storyId={story.id} />
                 <SheetLab storyId={story.id} />
                 <SpriteCutoutLab storyId={story.id} />
               </>
@@ -6803,6 +7438,9 @@ function StudioInner({
                       </span>
                     </label>
                   </div>
+
+                  {/* ---- CURSOR ART (per verb) ---- */}
+                  <CursorArtEditor story={story} onUpdate={commit} media={media} themeVars={inGameThemeVars(dbox)} />
 
                   {/* ---- investigation panels ---- */}
                   <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
@@ -7477,7 +8115,7 @@ function StudioInner({
                     <option value="standard">📁 Standard Game Scene (with HUD)</option>
                     <option value="credits">🎬 Opening Credits (Centered text, NO HUD)</option>
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
-                    <option value="stage">🚶 Walkable Stage (Telltale-style exploration)</option>
+                    <option value="stage">🚶 Walkable Stage (free-roam exploration)</option>
                   </select>
                 </Field>
                 </CollapsibleSection>
@@ -8150,8 +8788,8 @@ function StudioInner({
                   </select>
                 </Field>
 
-                {/* ---- Stage node — Telltale-style walkable exploration ---- */}
-                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (Telltale-style)">
+                {/* ---- Stage node — free-roam walkable exploration ---- */}
+                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (free-roam)">
                   <div className="space-y-2">
                     {scene.nodeType !== "stage" ? (
                       <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
@@ -8266,6 +8904,101 @@ function StudioInner({
                             onChange={(sheet) => updateScene(scene.id, { stage: { ...scene.stage!, playerSheet: sheet } })}
                           />
                         </div>
+                        {/* ---- obstacles: furniture the walker routes around ---- */}
+                        {(() => {
+                          const obs = scene.stage!.obstacles ?? [];
+                          const setObs = (list: { x: number; y: number; w: number; h: number }[]) =>
+                            updateScene(scene.id, { stage: { ...scene.stage!, obstacles: list.length ? list : undefined } });
+                          const setOb = (i: number, patch: Partial<{ x: number; y: number; w: number; h: number }>) =>
+                            setObs(obs.map((o, j) => (j === i ? { ...o, ...patch } : o)));
+                          return (
+                            <div className="space-y-1 border border-amber-400/30 bg-amber-400/5 p-2">
+                              <div className="font-pulp text-[9px] uppercase tracking-widest text-amber-300">🚧 Obstacles (walk around)</div>
+                              <p className="font-type text-[9px] leading-snug text-paper/45">
+                                Furniture the character walks <b>around</b> instead of through — a bar, a counter, a parked
+                                bike. Click-to-walk routes around them (A* on a coarse grid, then smoothed to the corners a
+                                person would turn at); the keyboard slides along them. All values are scene percentages.
+                              </p>
+                              {obs.map((o, oi) => (
+                                <div key={oi} className="flex items-center gap-1">
+                                  <input type="number" min={0} max={100} className={`${inputCls} w-12`} title="X %" value={Math.round(o.x)} onChange={(e) => setOb(oi, { x: Number(e.target.value) })} />
+                                  <input type="number" min={0} max={100} className={`${inputCls} w-12`} title="Y %" value={Math.round(o.y)} onChange={(e) => setOb(oi, { y: Number(e.target.value) })} />
+                                  <input type="number" min={1} max={100} className={`${inputCls} w-12`} title="Width %" value={Math.round(o.w)} onChange={(e) => setOb(oi, { w: Number(e.target.value) })} />
+                                  <input type="number" min={1} max={100} className={`${inputCls} w-12`} title="Height %" value={Math.round(o.h)} onChange={(e) => setOb(oi, { h: Number(e.target.value) })} />
+                                  <button
+                                    type="button"
+                                    className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                    title="Remove this obstacle"
+                                    onClick={() => setObs(obs.filter((_, j) => j !== oi))}
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                className="w-full border border-amber-400/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-amber-300 hover:bg-amber-400/10"
+                                onClick={() => setObs([...obs, { x: 42, y: 70, w: 16, h: 12 }])}
+                              >
+                                ＋ add obstacle
+                              </button>
+                            </div>
+                          );
+                        })()}
+                        {/* ---- verb coin: pick a verb, then the object ---- */}
+                        {(() => {
+                          const st = scene.stage!;
+                          const coinOn = !!st.verbCoin;
+                          const chosen = st.verbs ?? [];
+                          const setVerbs = (list: (typeof VERB_IDS)[number][]) =>
+                            updateScene(scene.id, { stage: { ...st, verbCoin: coinOn, verbs: list.length ? list : undefined } });
+                          return (
+                            <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
+                              <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎛 Verb coin (pick a verb, then click)</div>
+                              <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
+                                <input
+                                  type="checkbox"
+                                  checked={coinOn}
+                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, verbCoin: e.target.checked || undefined } })}
+                                />
+                                Show the verb coin in this room
+                              </label>
+                              {coinOn ? (
+                                <>
+                                  <div className="flex flex-wrap gap-1">
+                                    {VERB_IDS.map((v) => {
+                                      const on = chosen.includes(v) || (chosen.length === 0 && true);
+                                      const picked = chosen.length ? chosen.includes(v) : true;
+                                      return (
+                                        <button
+                                          key={v}
+                                          type="button"
+                                          className={`flex items-center gap-1 border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
+                                            picked ? "border-gold bg-gold/20 text-gold" : "border-noir-700 text-paper/50"
+                                          }`}
+                                          onMouseDown={(e) => e.preventDefault()}
+                                          onClick={() => {
+                                            const base = chosen.length ? chosen : [...VERB_IDS];
+                                            setVerbs(base.includes(v) ? base.filter((x) => x !== v) : [...base, v]);
+                                          }}
+                                          title={`${VERB_LABEL[v]} — ${on ? "on" : "off"}`}
+                                        >
+                                          <span aria-hidden>{VERB_ICON[v]}</span> {v}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <p className="font-type text-[9px] leading-snug text-paper/40">
+                                    The player picks a verb, then clicks an object — and USE arms an inventory item
+                                    first. Leave every verb on (default) to offer all five; untick the ones this room
+                                    can't answer. Objects reply per verb via each hotspot's <b>🎚 Verb coin</b> box,
+                                    and anything they don't answer gets the story's "that doesn't work" line.
+                                  </p>
+                                </>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input
@@ -8287,6 +9020,20 @@ function StudioInner({
                                   stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
                                 })
                               }
+                            />
+                          </Field>
+                          <Field label={`Close-up size ${(scene.stage.playerNearScale ?? 1).toFixed(2)}× (nearest)`}>
+                            <input
+                              type="range" min={0.5} max={2} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerNearScale ?? 1}
+                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerNearScale: Number(e.target.value) } })}
+                            />
+                          </Field>
+                          <Field label={`Distance size ${(scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)).toFixed(2)}× (furthest)`}>
+                            <input
+                              type="range" min={0.3} max={1.5} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)}
+                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerFarScale: Number(e.target.value) } })}
                             />
                           </Field>
                           <Field label="Walk speed (% width / sec)">
@@ -8384,7 +9131,7 @@ function StudioInner({
                           Arrow / WASD movement enabled
                         </label>
                         <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                          <b className="text-cyan-neon">The Telltale loop:</b> Hotspots tab lays the markers (💬
+                          <b className="text-cyan-neon">The walkable loop:</b> Hotspots tab lays the markers (💬
                           show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
                           for doors). The Beats tab is the conversation a 🗣 marker starts; give the scene's choices{" "}
                           <b>time limits</b> for real "decide now" pressure.
@@ -8394,7 +9141,7 @@ function StudioInner({
                   </div>
                 </CollapsibleSection>
 
-                {/* ---- Letterbox & entry transition (Telltale polish) ---- */}
+                {/* ---- Letterbox & entry transition (cinematic polish) ---- */}
                 <div className="border border-gold/40 bg-gold/5 p-2 space-y-2">
                   <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎞 Letterbox &amp; transition</div>
                   <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
@@ -9592,7 +10339,7 @@ function StudioInner({
                         <div className="space-y-2">
                           <p className="font-type text-[10px] leading-snug text-paper/60">
                             While this line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button.
-                            They open their satchel and must present the clue that proves it false. Right clue → the caught
+                            They open their inventory and must present the clue that proves it false. Right clue → the caught
                             line plays and the flag sets; wrong clue → heat/trust cost, and they get only a few tries.
                           </p>
                           <Field label="The claim (what the player challenges — defaults to the line above)">
@@ -9836,15 +10583,132 @@ function StudioInner({
                   <b>object image</b> (a transparent PNG of a cup, a watch, a key) and it's drawn inside the zone —
                   drag the zone to position and scale it, and it zooms with the scene under the examine camera.
                 </HelpNote>
+                {scene.nodeType === "stage" ? (
+                  <div className="flex items-center gap-1">
+                    <span className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">Draw</span>
+                    <button
+                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
+                        zoneMode === "spawn" ? "border-cyan-neon bg-cyan-neon/15 text-cyan-neon" : "border-noir-600 text-paper/50"
+                      }`}
+                      onClick={() => setZoneMode("spawn")}
+                      title="Where the player character starts — click or drag on the plate"
+                    >
+                      🚶 Player start
+                    </button>
+                    <button
+                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
+                        zoneMode === "hotspot" ? "border-neon bg-neon/15 text-neon" : "border-noir-600 text-paper/50"
+                      }`}
+                      onClick={() => setZoneMode("hotspot")}
+                    >
+                      ⌖ Hotspots
+                    </button>
+                    <button
+                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
+                        zoneMode === "barrier" ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-600 text-paper/50"
+                      }`}
+                      onClick={() => setZoneMode("barrier")}
+                      title="No-go areas: walls, counters, furniture the walker must route around"
+                    >
+                      🚧 Barriers (no-go)
+                    </button>
+                  </div>
+                ) : null}
                 <p className="font-type text-[11px] text-paper/60">
-                  Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one.
+                  {zoneMode === "spawn" && scene.nodeType === "stage"
+                    ? "Click or drag on the plate to place the PLAYER CHARACTER — they stand where you drop them, clamped to the walkable floor."
+                    : zoneMode === "barrier" && scene.nodeType === "stage"
+                      ? "Drag on the plate to fence off a NO-GO area — a wall, a counter, a parked truck. The walker routes around it; click one to select, then drag a new box to reshape it."
+                      : "Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one."}
                 </p>
+                {zoneMode === "barrier" && scene.nodeType === "stage"
+                  ? (() => {
+                      const obs = scene.stage?.obstacles ?? [];
+                      const setObs = (list: { x: number; y: number; w: number; h: number }[]) =>
+                        updateScene(scene.id, { stage: { ...(scene.stage ?? {}), obstacles: list.length ? list : undefined } });
+                      return (
+                        <div className="space-y-1 border border-crimson/30 bg-crimson/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-crimson">
+                            🚧 No-go areas ({obs.length})
+                          </div>
+                          {obs.length === 0 ? (
+                            <p className="font-type text-[9px] text-paper/45">
+                              None yet — drag a box on the plate to fence something off.
+                            </p>
+                          ) : null}
+                          {obs.map((o, oi) => (
+                            <div key={oi} className="flex items-center gap-1">
+                              <button
+                                className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
+                                  selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
+                                }`}
+                                onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
+                              >
+                                🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%
+                              </button>
+                              <button
+                                className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                title="Remove this barrier"
+                                onClick={() => {
+                                  setObs(obs.filter((_, j) => j !== oi));
+                                  setSelectedBarrier(null);
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            className="w-full border border-crimson/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                            onClick={() => {
+                              setObs([...obs, { x: 40, y: 68, w: 18, h: 12 }]);
+                              setSelectedBarrier(obs.length);
+                            }}
+                          >
+                            ＋ add barrier
+                          </button>
+                        </div>
+                      );
+                    })()
+                  : null}
                 <HotspotCanvas
                   scene={scene}
                   items={story.items}
                   selectedId={selectedHotspot}
                   media={media}
-                  onSelect={(id) => setSelectedHotspot(id)}
+                  barrierMode={zoneMode === "barrier" && scene.nodeType === "stage"}
+                  spawnMode={zoneMode === "spawn" && scene.nodeType === "stage"}
+                  spawn={scene.stage?.spawn ?? { x: 50, y: 88 }}
+                  player={{
+                    ...(scene.stage?.playerImage ? { image: scene.stage.playerImage } : {}),
+                    ...(scene.stage?.playerSheet ? { sheet: scene.stage.playerSheet } : {}),
+                    ...(scene.stage?.playerScale ? { scale: scene.stage.playerScale } : {}),
+                  }}
+                  onSpawnMove={(p) => {
+                    const floor = stageFloorOf(scene.stage);
+                    updateScene(scene.id, {
+                      stage: {
+                        ...(scene.stage ?? {}),
+                        spawn: { x: p.x, y: clamp(p.y, floor.top, floor.bottom) },
+                      },
+                    });
+                  }}
+                  barriers={scene.stage?.obstacles ?? []}
+                  selectedBarrier={selectedBarrier}
+                  onBarrierSelect={(i) => setSelectedBarrier(i)}
+                  onBarrierDraw={(bounds) => {
+                    const obs = scene.stage?.obstacles ?? [];
+                    const next =
+                      selectedBarrier !== null && obs[selectedBarrier]
+                        ? obs.map((o, j) => (j === selectedBarrier ? bounds : o))
+                        : [...obs, bounds];
+                    updateScene(scene.id, { stage: { ...(scene.stage ?? {}), obstacles: next } });
+                    if (selectedBarrier === null) setSelectedBarrier(next.length - 1);
+                  }}
+                  onSelect={(id) => {
+                    setSelectedHotspot(id);
+                    if (id) setSelectedBarrier(null);
+                  }}
                   onDraw={(bounds) => {
                     if (selectedHotspot && scene.hotspots?.some((h) => h.id === selectedHotspot)) {
                       mutate((d) => {
@@ -10067,6 +10931,161 @@ function StudioInner({
                         />
                       </Field>
                     </div>
+                    {/* ---- VERB COIN: what else this object answers to ---- */}
+                    {(() => {
+                      const hsSet = (patch: Partial<Hotspot>) =>
+                        mutate((d) => {
+                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                          Object.assign(s.hotspots!.find((x) => x.id === h.id)!, patch);
+                        });
+                      const verbs = h.verbs ?? {};
+                      const used = Object.keys(verbs) as (typeof VERB_IDS)[number][];
+                      const setVerbAction = (v: string, action: Hotspot["action"]) =>
+                        hsSet({ verbs: { ...verbs, [v]: { ...(verbs as Record<string, Hotspot["action"]>)[v], ...action } } });
+                      const dropVerb = (v: string) => {
+                        const next: Record<string, Hotspot["action"]> = { ...verbs };
+                        delete next[v];
+                        hsSet({ verbs: Object.keys(next).length ? (next as Hotspot["verbs"]) : undefined });
+                      };
+                      const accepts = h.acceptsItems ?? [];
+                      const toggleAccept = (id: string) =>
+                        hsSet({ acceptsItems: accepts.includes(id) ? accepts.filter((x) => x !== id) : [...accepts, id] });
+                      const setResponse = (id: string, text: string) =>
+                        hsSet({ itemResponses: { ...(h.itemResponses ?? {}), [id]: text } });
+                      const unsetVerbs = VERB_IDS.filter((v) => !used.includes(v));
+                      const actType = (v: string) => (verbs as Record<string, Hotspot["action"]>)[v]?.type ?? "showText";
+                      return (
+                        <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
+                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎚 Verb coin — other verbs</div>
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            What this object says when the player uses a DIFFERENT verb on it (the action above is the
+                            default, and is what plays with the coin off). Verb actions are repeatable — looking at a
+                            thing never uses it up. Anything not listed gets the story's "that doesn't work" line.
+                          </p>
+                          {used.map((v) => {
+                            const a = (verbs as Record<string, Hotspot["action"]>)[v];
+                            return (
+                              <div key={v} className="space-y-1 border border-noir-700/60 p-1">
+                                <div className="flex items-center gap-1">
+                                  <span className="w-14 shrink-0 font-pulp text-[9px] uppercase tracking-widest text-gold/80">
+                                    <span aria-hidden>{VERB_ICON[v]}</span> {v}
+                                  </span>
+                                  <select
+                                    className={inputCls}
+                                    value={actType(v)}
+                                    onChange={(e) => {
+                                      const ty = e.target.value as Hotspot["action"]["type"];
+                                      const base: Hotspot["action"] =
+                                        ty === "showText" ? { type: "showText", text: "" }
+                                        : ty === "giveItem" ? { type: "giveItem", itemGranted: undefined }
+                                        : ty === "goToScene" ? { type: "goToScene", targetSceneId: undefined }
+                                        : ty === "useItem" ? { type: "useItem", itemConsumed: undefined }
+                                        : { type: "showText", text: "" };
+                                      setVerbAction(v, base);
+                                    }}
+                                  >
+                                    <option value="showText">💬 Say a line</option>
+                                    <option value="giveItem">🎁 Give item</option>
+                                    <option value="goToScene">→ Go to scene</option>
+                                    <option value="useItem">🗝 Use item (consumes it)</option>
+                                  </select>
+                                  <button className="shrink-0 px-1 font-pulp text-[9px] text-crimson" title="Remove this verb" onClick={() => dropVerb(v)}>✕</button>
+                                </div>
+                                {a?.type === "showText" ? (
+                                  <textarea
+                                    className={`${inputCls} h-14 font-type`}
+                                    placeholder="What it says…"
+                                    value={a.text ?? ""}
+                                    onChange={(e) => setVerbAction(v, { ...a, text: e.target.value })}
+                                  />
+                                ) : null}
+                                {a?.type === "giveItem" ? (
+                                  <select className={inputCls} value={a.itemGranted ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemGranted: e.target.value || undefined })}>
+                                    <option value="">— pick an item —</option>
+                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
+                                  </select>
+                                ) : null}
+                                {a?.type === "goToScene" ? (
+                                  <select className={inputCls} value={a.targetSceneId ?? ""} onChange={(e) => setVerbAction(v, { ...a, targetSceneId: e.target.value || undefined })}>
+                                    <option value="">— pick a scene —</option>
+                                    {story.scenes.map((s) => (<option key={s.id} value={s.id}>{s.title}</option>))}
+                                  </select>
+                                ) : null}
+                                {a?.type === "useItem" ? (
+                                  <select className={inputCls} value={a.itemConsumed ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemConsumed: e.target.value || undefined })}>
+                                    <option value="">— which item does this consume? —</option>
+                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
+                                  </select>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                          {unsetVerbs.length ? (
+                            <select
+                              className={inputCls}
+                              value=""
+                              onChange={(e) => {
+                                if (!e.target.value) return;
+                                setVerbAction(e.target.value, { type: "showText", text: "" });
+                              }}
+                            >
+                              <option value="">＋ add a verb action…</option>
+                              {unsetVerbs.map((v) => (
+                                <option key={v} value={v}>{VERB_ICON[v]} {VERB_LABEL[v]}</option>
+                              ))}
+                            </select>
+                          ) : null}
+
+                          {/* ---- items this object accepts (the USE verb) ---- */}
+                          <div className="border-t border-gold/20 pt-1">
+                            <div className="font-pulp text-[9px] uppercase tracking-widest text-gold/80">🎒 Accepts these items (USE)</div>
+                            <p className="font-type text-[9px] leading-snug text-paper/45">
+                              Tick what WORKS here. The player arms it in the coin and clicks this object; anything
+                              else gets refused. Write the line it gets back — that's the joke, and the clue.
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {story.items.map((it) => {
+                                const on = accepts.includes(it.id);
+                                return (
+                                  <button
+                                    key={it.id}
+                                    type="button"
+                                    className={`border px-1.5 py-0.5 font-type text-[10px] ${on ? "border-gold bg-gold/20 text-gold" : "border-noir-700 text-paper/50"}`}
+                                    onClick={() => toggleAccept(it.id)}
+                                  >
+                                    {it.icon} {it.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {accepts.map((id) => {
+                              const it = story.items.find((x) => x.id === id);
+                              return (
+                                <div key={id} className="mt-1">
+                                  <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">
+                                    {it?.icon} {it?.name ?? id} — line
+                                  </div>
+                                  <textarea
+                                    className={`${inputCls} h-14 font-type`}
+                                    placeholder="What happens when they use it here…"
+                                    value={h.itemResponses?.[id] ?? ""}
+                                    onChange={(e) => setResponse(id, e.target.value)}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <Field label="Refusal line (wrong verb / wrong item)">
+                            <input
+                              className={inputCls}
+                              value={h.wrongVerbText ?? ""}
+                              placeholder="Leave blank for the story's default"
+                              onChange={(e) => hsSet({ wrongVerbText: e.target.value || undefined })}
+                            />
+                          </Field>
+                        </div>
+                      );
+                    })()}
                     {h.action.type === "patternPuzzle" && (
                       (() => {
                         const pp = h.action.patternPuzzle ?? { title: "Bank Statements", instruction: "Find the entries that don't belong", rows: [], targetCount: 3, payoffText: "" };
@@ -10625,7 +11644,7 @@ function StudioInner({
                         }
                       />
                     </Field>
-                    <Field label="&quot;X will remember that&quot; card (shown after picking this choice — Telltale style)">
+                    <Field label="&quot;X will remember that&quot; card (impact card shown after picking this choice)">
                       <input
                         className={inputCls}
                         placeholder="e.g. Lydia will remember that."
@@ -10728,7 +11747,7 @@ function StudioInner({
                         </select>
                         <label
                           className="flex shrink-0 items-center gap-1 text-[9px] text-paper/55"
-                          title="Hand it over: the item leaves your satchel (they keep it). Off = you flash it and keep it."
+                          title="Hand it over: the item leaves your inventory (they keep it). Off = you flash it and keep it."
                         >
                           <input
                             type="checkbox"

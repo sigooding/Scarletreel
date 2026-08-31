@@ -10,7 +10,11 @@ import type {
   GameSave,
   Gating,
   GlobalState,
+  CursorArt,
+  CursorKind,
   Hotspot,
+  HotspotAction,
+  InventorySettings,
   HotspotActionType,
   Interrogation,
   Item,
@@ -446,7 +450,7 @@ export const SAVE_SLOTS = 3;
 export const AUTO_SLOT = 0;
 
 /** Save slots are scoped per-episode so every chapter keeps its own three
- * slots (Telltale-style), while non-episodic stories keep their original,
+ * slots (one set per chapter), while non-episodic stories keep their original,
  * un-suffixed keys so existing saves keep loading. */
 const saveKey = (storyId: string, slot: number, episodeId?: string) =>
   episodeId
@@ -991,6 +995,121 @@ export function applyLieWrong(story: Story, lie: Contradiction, s: GlobalState):
 /** Icon shown for each hotspot cursor verb (markers, hotspot labels). */
 export const CURSOR_ICON: Record<string, string> = { look: "👁", take: "✋", talk: "💬", use: "⚙", go: "➜" };
 
+/* ============================================================
+   VERB COIN — "pick the verb, then the object"
+   ------------------------------------------------------------
+   The point-and-click interaction model: the player chooses a verb
+   (look / take / talk / use / go), optionally arms an inventory item for
+   USE, then clicks an object. One object can therefore answer several
+   verbs instead of needing one overlapping hotspot per verb.
+   ============================================================ */
+
+export type VerbId = "look" | "take" | "talk" | "use" | "go";
+
+/** The five verbs, in the order the coin shows them. */
+export const VERB_IDS: VerbId[] = ["look", "take", "talk", "use", "go"];
+export const VERB_LABEL: Record<VerbId, string> = {
+  look: "Look at",
+  take: "Pick up",
+  talk: "Talk to",
+  use: "Use",
+  go: "Go to",
+};
+export const VERB_ICON: Record<VerbId, string> = {
+  look: "👁",
+  take: "✋",
+  talk: "💬",
+  use: "⚙",
+  go: "➜",
+};
+
+/** House-style "that doesn't work" lines, per verb. */
+export const DEFAULT_VERB_RESPONSES: Record<VerbId, string[]> = {
+  look: ["Nothing there you haven't already seen.", "You look. It keeps its secrets.", "It's exactly what it looked like the first time."],
+  take: ["That's not coming loose — it's bolted to the county.", "You'd need a crowbar and a reason.", "Leave it. Somebody's counting on it being there."],
+  talk: ["Talking to furniture is how the last guy ended up in the county home.", "It doesn't answer. You feel better anyway.", "No conversation in it."],
+  use: ["That does nothing. Nothing at all.", "Tried it. Nothing. Not even a noise.", "Wrong tool, wrong thing, wrong hour."],
+  go: ["No way out that way but a long walk and a bad idea.", "That's not an exit. That's a wall someone painted.", "You could go that way. You'd come right back."],
+};
+
+/** A verb-coin response line. `seed` varies the pick so repeating a failed
+ *  verb doesn't read like a stuck record; an authored Hotspot.wrongVerbText
+ *  always wins, then the story's own lines, then the house style. */
+export function wrongVerbLine(
+  verb: VerbId,
+  story?: { verbResponses?: Partial<Record<VerbId, string[]>> },
+  hotspetText?: string,
+  seed = 0,
+): string {
+  if (hotspetText) return hotspetText;
+  const authored = story?.verbResponses?.[verb];
+  const pool = authored && authored.length ? authored : DEFAULT_VERB_RESPONSES[verb];
+  return pool[Math.abs(Math.floor(seed)) % pool.length] ?? DEFAULT_VERB_RESPONSES[verb][0];
+}
+
+/** Which verbs a room's coin offers: the author's list if set, otherwise
+ *  every verb the room actually uses (hotspot cursors, extra verb actions,
+ *  and USE whenever anything in the room accepts an item). */
+export function verbsForScene(scene: { stage?: StageSettings; hotspots?: Hotspot[] } | undefined | null): VerbId[] {
+  if (!scene) return [];
+  const authored = scene.stage?.verbs;
+  if (authored && authored.length) {
+    const clean = VERB_IDS.filter((v) => authored.includes(v));
+    if (clean.length) return clean;
+  }
+  const set = new Set<VerbId>();
+  for (const hs of scene.hotspots ?? []) {
+    if ((VERB_IDS as string[]).includes(hs.cursor)) set.add(hs.cursor as VerbId);
+    for (const v of Object.keys(hs.verbs ?? {}) as VerbId[]) set.add(v);
+    if (hs.acceptsItems?.length) set.add("use");
+  }
+  return VERB_IDS.filter((v) => set.has(v));
+}
+
+export interface VerbResolution {
+  /** True when this verb/item does something here. */
+  ok: boolean;
+  /** The action to run (undefined when ok is false). */
+  action?: HotspotAction;
+  /** Overrides the action's own text (an item-specific reply). */
+  text?: string;
+  /** The verb that was answered (echoed so the caller can caption it). */
+  verb: VerbId;
+}
+
+/** Resolve "player used VERB (with ITEM) on hotspot" to the action to run.
+ *
+ *  Order of precedence for the USE verb with an item:
+ *    1. hs.acceptsItems contains the item → hs.verbs.use ?? hs.action, with
+ *       hs.itemResponses[item] as the line if the author wrote one;
+ *    2. otherwise it's a wrong item → ok:false.
+ *  For the other verbs: hs.verbs[verb], else hs.action when the hotspot's
+ *  own cursor is that verb, else nothing. */
+export function resolveVerbAction(hs: Hotspot, verb: VerbId, itemId?: string): VerbResolution {
+  if (verb === "use" && itemId) {
+    const accepted = (hs.acceptsItems ?? []).includes(itemId);
+    if (!accepted) return { ok: false, verb };
+    const action = hs.verbs?.use ?? (hs.action.type === "useItem" ? hs.action : undefined);
+    if (!action) return { ok: false, verb };
+    return { ok: true, action, text: hs.itemResponses?.[itemId], verb };
+  }
+  if (verb === "use") {
+    // USE with nothing armed — fall back to whatever the object offers.
+    const action = hs.verbs?.use ?? (hs.cursor === "use" ? hs.action : undefined);
+    return action ? { ok: true, action, verb } : { ok: false, verb };
+  }
+  const extra = hs.verbs?.[verb];
+  if (extra) return { ok: true, action: extra, verb };
+  if (hs.cursor === verb) return { ok: true, action: hs.action, verb };
+  return { ok: false, verb };
+}
+
+/** Does this hotspot answer to this verb at all (so the UI can dim the
+ *  markers a verb can't touch without leaking what the puzzle is)? */
+export function hotspotAnswersVerb(hs: Hotspot, verb: VerbId): boolean {
+  return resolveVerbAction(hs, verb).ok;
+}
+
 /** Default walk speed: scene-width % per second. */
 export const STAGE2D_DEFAULT_SPEED = 18;
 /** Default reach distance: scene-width % within which a hotspot fires. */
@@ -1031,6 +1150,150 @@ export function stageDepthScale(
   return 1 - d * (1 - t);
 }
 
+/* ============================================================
+   CURSOR ART
+   ------------------------------------------------------------
+   Per-case cursor art, keyed by verb (plus "default" for the plain
+   arrow). Static art becomes a real CSS cursor; a sprite sheet is drawn
+   as a small animated sprite that tracks the mouse.
+   ============================================================ */
+
+export type CursorSlot = CursorKind | "default";
+export const CURSOR_SLOTS: CursorSlot[] = ["default", "look", "take", "talk", "use", "go"];
+
+export interface ResolvedCursor {
+  /** The art to draw (undefined = keep the game's system cursor). */
+  art: CursorArt | undefined;
+  /** Static → a CSS cursor; animated → a sprite that follows the mouse. */
+  animated: boolean;
+  /** The CSS `cursor` value for static art (empty when animated/none). */
+  css: string;
+  /** Hotspot offset in px (where the click lands inside the art). */
+  hx: number;
+  hy: number;
+  size: number;
+}
+
+/** The art for a verb, falling back to "default", falling back to nothing. */
+export function cursorArtFor(story: { cursorArt?: Partial<Record<CursorSlot, CursorArt>> } | undefined | null, kind: CursorSlot): CursorArt | undefined {
+  const table = story?.cursorArt;
+  if (!table) return undefined;
+  return table[kind] ?? table["default"];
+}
+
+/** Fill in the blanks and work out how to draw it. */
+export function resolveCursor(
+  story: { cursorArt?: Partial<Record<CursorSlot, CursorArt>> } | undefined | null,
+  kind: CursorSlot,
+  resolve?: (v?: string) => string | undefined
+): ResolvedCursor {
+  const art = cursorArtFor(story, kind);
+  if (!art) return { art: undefined, animated: false, css: "", hx: 0, hy: 0, size: 32 };
+  const size = clamp(Math.round(art.size ?? 32), 8, 128);
+  const center = art.anchor === "center";
+  const hx = center ? Math.round(size / 2) : 0;
+  const hy = center ? Math.round(size / 2) : 0;
+  const sheetOk = !!(art.sheet && art.sheet.frameWidth > 0);
+  if (sheetOk) return { art, animated: true, css: "none", hx, hy, size };
+  const src = art.image ? (resolve?.(art.image) ?? art.image) : "";
+  if (!src) return { art: undefined, animated: false, css: "", hx: 0, hy: 0, size };
+  // The trailing keyword is the fallback if the browser can't load the art.
+  return { art, animated: false, css: `url("${src}") ${hx} ${hy}, auto`, hx, hy, size };
+}
+
+/* ============================================================
+   INVENTORY PRESENTATION
+   ------------------------------------------------------------
+   One dock, three presentations — and the default is the dock every
+   existing case already has, so opting in is the only way to change how a
+   game looks. See InventorySettings in src/types.ts.
+   ============================================================ */
+
+/** Shipped container art (an open leather case) — the preset an author can
+ *  pick, and the fallback when "container" mode is chosen with no art. */
+export const DEFAULT_INVENTORY_IMAGE = "/assets/ui/inventory-case.png";
+export const DEFAULT_INVENTORY_LABEL = "Inventory";
+
+export interface ResolvedInventory {
+  mode: "classic" | "container" | "hidden";
+  label: string;
+  image: string;
+  sheet?: import("./game/spriteSheet").SpriteSheet;
+  anchor: "bottom-left" | "bottom-right" | "top-left" | "top-right";
+  columns: number;
+  inset: number;
+  height: number;
+  startClosed: boolean;
+}
+
+/** Fill in the blanks: every case gets a resolved, always-valid dock. */
+export function inventoryDisplay(story?: { inventoryDisplay?: InventorySettings } | null): ResolvedInventory {
+  const s = story?.inventoryDisplay ?? {};
+  const mode: ResolvedInventory["mode"] =
+    s.mode === "container" || s.mode === "hidden" ? s.mode : "classic";
+  return {
+    mode,
+    label: (s.label ?? "").trim() || DEFAULT_INVENTORY_LABEL,
+    // No art? The dock draws a stitched leather panel in house style, so the
+    // mode never looks half-built.
+    image: (s.image ?? "").trim() || DEFAULT_INVENTORY_IMAGE,
+    ...(s.sheet ? { sheet: s.sheet } : {}),
+    anchor: s.anchor ?? "bottom-left",
+    columns: clamp(Math.round(s.columns ?? 4), 1, 8),
+    inset: clamp(s.inset ?? 14, 0, 45),
+    height: clamp(Math.round(s.height ?? 260), 120, 520),
+    startClosed: !!s.startClosed,
+  };
+}
+
+/** CSS for the dock's corner. */
+export function inventoryAnchorClass(anchor: ResolvedInventory["anchor"]): string {
+  switch (anchor) {
+    case "bottom-right":
+      return "bottom-3 right-3 items-end";
+    case "top-left":
+      return "top-3 left-3";
+    case "top-right":
+      return "top-3 right-3 items-end";
+    default:
+      return "bottom-3 left-3";
+  }
+}
+
+/** The walker's sprite scale at a given y: NEAR (bottom of the floor band)
+ *  → FAR (top of the band). Authors can pin both ends explicitly
+ *  (`playerNearScale` / `playerFarScale`) or keep using `depthScale`, which
+ *  means "shrink to (1 - depthScale) at the back". Big up close, small in the
+ *  distance — the classic room perspective. */
+export function stageSpriteScale(y: number, floor: { top: number; bottom: number }, settings: StageSettings): number {
+  const near = clamp(settings.playerNearScale ?? 1, 0.15, 3);
+  const farDefault = 1 - clamp(settings.depthScale ?? STAGE_DEFAULT_DEPTH_SCALE, 0, 0.9);
+  const far = clamp(settings.playerFarScale ?? farDefault, 0.1, 3);
+  const span = floor.bottom - floor.top;
+  if (span <= 0) return near;
+  const t = clamp((y - floor.top) / span, 0, 1); // 0 back → 1 front
+  return far + (near - far) * t;
+}
+
+/** Walk speed at a given y, as a fraction of the room's speed. A smaller
+ *  (further away) character covers less screen per second — without this,
+ *  walking "into the distance" reads as skating. */
+export function stageSpeedScale(y: number, floor: { top: number; bottom: number }, settings: StageSettings): number {
+  const s = stageSpriteScale(y, floor, settings);
+  return clamp(0.55 + 0.45 * s, 0.35, 1.6);
+}
+
+/** WALK-BEHIND: should this foreground extra be drawn OVER the walker?
+ *  True when the extra is flagged `occludes` and the walker's feet are ABOVE
+ *  its baseline — i.e. standing further from the camera than the object, so
+ *  the object hides them. No walker (a non-stage scene) → yes, draw in front. */
+export function extraOccludes(extra: { occludes?: boolean; occludeBaseline?: number; y?: number }, walkerFeetY?: number): boolean {
+  if (!extra.occludes) return false;
+  if (walkerFeetY === undefined) return true;
+  const base = clamp(extra.occludeBaseline ?? extra.y ?? 50, 0, 100);
+  return walkerFeetY <= base;
+}
+
 /** Where a hotspot's stage MARKER stands: the bottom-centre of its zone
  *  (a thing sits ON the ground), clamped into the floor band so the
  *  character can always walk to it. */
@@ -1039,6 +1302,206 @@ export function stageMarkerPoint(
   floor: { top: number; bottom: number }
 ): { x: number; y: number } {
   return clampToFloor(h.bounds.x + h.bounds.w / 2, h.bounds.y + h.bounds.h, floor);
+}
+
+/* --------------------- stage 2d: obstacles + routing ---------------- */
+
+/** How close to an obstacle the character's centre may stand (scene-width %).
+ *  A sprite is not a point: without a radius it clips furniture corners. */
+export const STAGE_AGENT_RADIUS = 1.6;
+/** Grid resolution for the walk search, in scene %. Coarse on purpose — the
+ *  route is string-pulled smooth afterwards, and 2% keeps a click at ~2.5k
+ *  nodes, which is far below anything a player can perceive. */
+export const STAGE_GRID_STEP = 2;
+
+export interface StageObstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Is this point inside an obstacle (inflated by the character's radius)?
+ *
+ *  `aspect` (plate width ÷ height) converts the radius from the width-% the
+ *  author thinks in to the height-% the y axis is measured in — without it the
+ *  clearance is lopsided and the sprite clips the top and bottom of furniture
+ *  it neatly avoids at the sides. */
+export function stageBlocked(
+  x: number,
+  y: number,
+  obstacles: StageObstacle[] | undefined,
+  floor?: { top: number; bottom: number },
+  aspect = 16 / 9
+): boolean {
+  if (floor && (y < floor.top || y > floor.bottom)) return true;
+  if (x < 0 || x > 100) return true;
+  const padX = STAGE_AGENT_RADIUS;
+  const padY = STAGE_AGENT_RADIUS * (aspect > 0 ? aspect : 16 / 9);
+  for (const o of obstacles ?? []) {
+    if (x >= o.x - padX && x <= o.x + o.w + padX && y >= o.y - padY && y <= o.y + o.h + padY) return true;
+  }
+  return false;
+}
+
+/** Walk the segment in small steps and ask whether every one is clear. Used
+ *  for string-pulling and for keyboard wall-sliding. */
+export function stageLineClear(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  obstacles: StageObstacle[] | undefined,
+  floor?: { top: number; bottom: number },
+  aspect = 16 / 9
+): boolean {
+  const steps = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, (b.y - a.y) * aspect) / 0.75));
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    if (stageBlocked(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, obstacles, floor, aspect)) return false;
+  }
+  return true;
+}
+
+/** Nearest walkable grid node to a point (spiral search outward). A click
+ *  that lands inside a wall still has to go SOMEWHERE. */
+function nearestFree(
+  x: number,
+  y: number,
+  obstacles: StageObstacle[] | undefined,
+  floor: { top: number; bottom: number },
+  step: number
+): { x: number; y: number } | null {
+  if (!stageBlocked(x, y, obstacles, floor)) return { x, y };
+  for (let ring = 1; ring <= 24; ring++) {
+    for (let dy = -ring; dy <= ring; dy++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const nx = clamp(x + dx * step, 1, 99);
+        const ny = clamp(y + dy * step, floor.top, floor.bottom);
+        if (!stageBlocked(nx, ny, obstacles, floor)) return { x: nx, y: ny };
+      }
+    }
+  }
+  return null;
+}
+
+/** A* across a coarse grid, then string-pulled: any waypoint the character
+ *  can skip in a straight line is dropped, so a grid route becomes the two or
+ *  three corners a human would walk.
+ *
+ *  Returns the waypoints to walk (excluding the start) or an empty array when
+ *  no route exists (fully walled off) — the caller should then refuse the
+ *  click rather than walk through the furniture. */
+export function stageRoute(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  obstacles: StageObstacle[] | undefined,
+  floor: { top: number; bottom: number },
+  step = STAGE_GRID_STEP
+): { x: number; y: number }[] {
+  if (!obstacles?.length) {
+    // No furniture: the straight line is the route (and it is already optimal).
+    return stageLineClear(from, to, obstacles, floor) ? [{ x: to.x, y: to.y }] : [];
+  }
+  const start = nearestFree(from.x, from.y, obstacles, floor, step);
+  const goal = nearestFree(to.x, to.y, obstacles, floor, step);
+  if (!start || !goal) return [];
+  if (stageLineClear(start, goal, obstacles, floor)) return [{ x: goal.x, y: goal.y }];
+
+  const cols = Math.floor(100 / step) + 1;
+  const rows = Math.floor((floor.bottom - floor.top) / step) + 1;
+  const idx = (c: number, r: number) => r * cols + c;
+  const toXY = (c: number, r: number) => ({ x: c * step, y: floor.top + r * step });
+  const snap = (p: { x: number; y: number }) => ({
+    c: clamp(Math.round(p.x / step), 0, cols - 1),
+    r: clamp(Math.round((p.y - floor.top) / step), 0, rows - 1),
+  });
+
+  const blocked = new Uint8Array(cols * rows);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const p = toXY(c, r);
+      blocked[idx(c, r)] = stageBlocked(p.x, p.y, obstacles, floor) ? 1 : 0;
+    }
+  }
+
+  const s = snap(start);
+  const g = snap(goal);
+  // If the snapped nodes landed in a wall (a click inside a fat obstacle),
+  // fall back to the nearest free node found above.
+  const startIdx = blocked[idx(s.c, s.r)] ? 0 : idx(s.c, s.r);
+  const goalIdx = idx(g.c, g.r);
+  const h = (c: number, r: number) => Math.hypot(c - g.c, r - g.r);
+  const gScore = new Float64Array(cols * rows).fill(Infinity);
+  const cameFrom = new Int32Array(cols * rows).fill(-1);
+  const open: { i: number; f: number }[] = [];
+  gScore[startIdx] = h(s.c, s.r);
+  open.push({ i: startIdx, f: h(s.c, s.r) });
+
+  const closed = new Uint8Array(cols * rows);
+  while (open.length) {
+    // Small frontiers: a linear scan for the best node beats heap bookkeeping.
+    let bestAt = 0;
+    for (let i = 1; i < open.length; i++) if (open[i].f < open[bestAt].f) bestAt = i;
+    const current = open.splice(bestAt, 1)[0].i;
+    if (closed[current]) continue;
+    closed[current] = 1;
+    if (current === goalIdx) break;
+    const cc = current % cols;
+    const cr = (current - cc) / cols;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nc = cc + dx;
+        const nr = cr + dy;
+        if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+        const ni = idx(nc, nr);
+        if (blocked[ni] || closed[ni]) continue;
+        // No corner-cutting: a diagonal step needs both orthogonals clear.
+        if (dx && dy && (blocked[idx(cc + dx, cr)] || blocked[idx(cc, cr + dy)])) continue;
+        const stepCost = dx && dy ? Math.SQRT2 : 1;
+        const tentative = gScore[current] - h(cc, cr) + stepCost;
+        if (tentative < gScore[ni]) {
+          gScore[ni] = tentative + h(nc, nr);
+          cameFrom[ni] = current;
+          open.push({ i: ni, f: gScore[ni] });
+        }
+      }
+    }
+  }
+
+  if (cameFrom[goalIdx] === -1 && goalIdx !== startIdx) return [];
+  // Walk the chain backwards, then reverse it.
+  const chain: { x: number; y: number }[] = [];
+  let node = goalIdx;
+  let guard = 0;
+  while (node !== -1 && guard++ < cols * rows) {
+    const c = node % cols;
+    const r = (node - c) / cols;
+    chain.push(toXY(c, r));
+    if (node === startIdx) break;
+    node = cameFrom[node];
+  }
+  chain.reverse();
+  chain.shift(); // drop the start
+  if (chain.length) chain[chain.length - 1] = { x: goal.x, y: goal.y }; // land on the real click
+
+  // String-pull: keep only the corners.
+  const pulled: { x: number; y: number }[] = [];
+  let cur = { x: start.x, y: start.y };
+  let i = 0;
+  while (i < chain.length) {
+    let furthest = i;
+    for (let j = chain.length - 1; j > i; j--) {
+      if (stageLineClear(cur, chain[j], obstacles, floor)) {
+        furthest = j;
+        break;
+      }
+    }
+    pulled.push(chain[furthest]);
+    cur = chain[furthest];
+    i = furthest + 1;
+  }
+  return pulled;
 }
 
 /** Is a stage position within `reach` (scene-width %) of a marker point? */
@@ -1313,7 +1776,7 @@ export function validateStory(story: Story): ValidationIssue[] {
       issues.push({ severity: "error", sceneId: e.source, message: `Dangling link → missing scene "${e.target}" (${e.label}).` });
   });
 
-  // ---- STAGE nodes (Telltale-style walkable scenes) ----
+  // ---- STAGE nodes (free-roam walkable scenes) ----
   // (Runs for EVERY scene first: animated foreground extras live on any node.)
   for (const sc of story.scenes) {
     // Malformed sprite sheets on foreground extras (scene- or beat-level
@@ -1489,8 +1952,11 @@ export function validateStory(story: Story): ValidationIssue[] {
         issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" consumes unknown item "${h.action.itemConsumed}".` });
       // Only hotspots that actually move the player between scenes need a
       // target. In-place mini-games (lockpick, safe, cipher, memory) grant
-      // items/flags and keep the player put, so they must NOT be flagged.
-      const needsTargetScene: HotspotActionType[] = ["goToScene", "useItem"];
+      // items/flags and keep the player put, so they must NOT be flagged —
+      // and neither must the point-and-click USE verb (useItem): "use the
+      // wrench on the bike" happens where the player is standing. Any
+      // action MAY still carry a targetSceneId and will travel when it does.
+      const needsTargetScene: HotspotActionType[] = ["goToScene"];
       if (needsTargetScene.includes(h.action.type) && !h.action.targetSceneId)
         issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" needs a target scene.` });
       // A repeatable hotspot is only dangerous when it can REPLAY a reward:

@@ -66,6 +66,155 @@ export function applyKey(src: ImageData, key: Rgb, tolerance: number, softness: 
   return out;
 }
 
+/** Average of EVERY pixel along the four edges, not just the four corners.
+ *  A sturdier auto key for photographs and AI art, whose backdrops are rarely
+ *  perfectly flat — a gradient or a vignette drags a corner-only sample off
+ *  the true backdrop colour. */
+export function sampleEdges(data: Uint8ClampedArray, w: number, h: number): Rgb {
+  let r = 0,
+    g = 0,
+    b = 0,
+    n = 0;
+  const add = (x: number, y: number) => {
+    const i = (y * w + x) * 4;
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+    n++;
+  };
+  for (let x = 0; x < w; x++) {
+    add(x, 0);
+    add(x, h - 1);
+  }
+  for (let y = 1; y < h - 1; y++) {
+    add(0, y);
+    add(w - 1, y);
+  }
+  if (!n) return { r: 255, g: 255, b: 255 };
+  return { r: r / n, g: g / n, b: b / n };
+}
+
+/** Magic-wand key — the tool for "just remove the background of this photo".
+ *
+ *  `applyKey` keys EVERY pixel near the colour, so a white shirt vanishes with
+ *  a white studio backdrop. This floods inward from the image border instead:
+ *  only pixels *connected* to the edge survive as background, so anything the
+ *  subject encloses (eyes, lettering, a pale jacket against a pale wall) is
+ *  kept. Feathering works exactly like `applyKey`. */
+export function applyEdgeFloodKey(src: ImageData, key: Rgb, tolerance: number, softness: number): ImageData {
+  const out = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+  const { data: d, width: w, height: h } = out;
+  const soft = Math.max(1, softness);
+  const cut = tolerance + soft;
+  const hit = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let head = 0;
+  let tail = 0;
+
+  const near = (i: number): boolean => {
+    const p = i * 4;
+    const dr = d[p] - key.r;
+    const dg = d[p + 1] - key.g;
+    const db = d[p + 2] - key.b;
+    return dr * dr + dg * dg + db * db <= cut * cut;
+  };
+
+  // Seed the flood with every border pixel that matches the backdrop.
+  for (let x = 0; x < w; x++) {
+    for (const y of [0, h - 1]) {
+      const i = y * w + x;
+      if (!hit[i] && near(i)) {
+        hit[i] = 1;
+        queue[tail++] = i;
+      }
+    }
+  }
+  for (let y = 1; y < h - 1; y++) {
+    for (const x of [0, w - 1]) {
+      const i = y * w + x;
+      if (!hit[i] && near(i)) {
+        hit[i] = 1;
+        queue[tail++] = i;
+      }
+    }
+  }
+
+  // 4-way BFS — the classic flood fill, iterative so big images don't recurse.
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % w;
+    const y = (i - x) / w;
+    if (x > 0) {
+      const n = i - 1;
+      if (!hit[n] && near(n)) {
+        hit[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+    if (x < w - 1) {
+      const n = i + 1;
+      if (!hit[n] && near(n)) {
+        hit[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+    if (y > 0) {
+      const n = i - w;
+      if (!hit[n] && near(n)) {
+        hit[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+    if (y < h - 1) {
+      const n = i + w;
+      if (!hit[n] && near(n)) {
+        hit[n] = 1;
+        queue[tail++] = n;
+      }
+    }
+  }
+
+  // Feather only the pixels the flood actually claimed.
+  for (let i = 0; i < w * h; i++) {
+    if (!hit[i]) continue;
+    const p = i * 4;
+    const dr = d[p] - key.r;
+    const dg = d[p + 1] - key.g;
+    const db = d[p + 2] - key.b;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    if (dist <= tolerance) {
+      d[p + 3] = 0;
+    } else {
+      const a = Math.min(1, (dist - tolerance) / soft); // 0..1 across the band
+      d[p + 3] = Math.round(d[p + 3] * a);
+      d[p] = Math.round(d[p] + (d[p] - key.r) * 0.25 * (1 - a));
+      d[p + 1] = Math.round(d[p + 1] + (d[p + 1] - key.g) * 0.25 * (1 - a));
+      d[p + 2] = Math.round(d[p + 2] + (d[p + 2] - key.b) * 0.25 * (1 - a));
+    }
+  }
+  return out;
+}
+
+/** Drop isolated opaque specks — the salt-and-pepper a key leaves in a busy
+ *  backdrop. One pass: an opaque pixel with fewer than `minNeighbours` opaque
+ *  neighbours out of 8 is treated as noise. Cheap enough to run on every
+ *  preview render, unlike a full connected-component sweep. */
+export function despeckle(src: ImageData, minNeighbours = 3): ImageData {
+  const out = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+  const { data: d, width: w, height: h } = out;
+  const opaque = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : d[(y * w + x) * 4 + 3] > 32 ? 1 : 0);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = (y * w + x) * 4;
+      if (d[p + 3] <= 32) continue;
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) n += opaque(x + dx, y + dy);
+      if (n < minNeighbours) d[p + 3] = 0;
+    }
+  }
+  return out;
+}
+
 /** Bounding box of non-transparent pixels (with a small margin). */
 export function contentBounds(img: ImageData): { x: number; y: number; w: number; h: number } | null {
   const { width: w, height: h, data } = img;

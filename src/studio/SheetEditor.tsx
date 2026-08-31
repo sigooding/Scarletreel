@@ -269,7 +269,7 @@ export function SpriteSheetControls({
             ))}
           </select>
           — gentle if it eats into the art · strong if backdrop specks survive. For full manual control use
-          Media ▸ ✂ Sprite Cutout Lab.
+          Media Tools ▸ ✂ Sprite Cutout Lab.
         </label>
         {forgeMsg && <p className="font-type text-[9px] text-paper/60">{forgeMsg}</p>}
       </div>
