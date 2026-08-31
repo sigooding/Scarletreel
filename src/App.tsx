@@ -45,7 +45,7 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "36";
+const CONTENT_REVISION = "37";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -274,6 +274,12 @@ const REVISION_RESETS: Record<string, string[]> = {
   // sheet, sepia-pulp HUD, leftover-copy fixes. Retire any Studio snapshot
   // so the shipped graph and musicMode wiring win.
   "36": ["nobodys-witness-true"],
+  // r37: True Romance cut dialogue polish — Jack's card career math
+  // corrected (ten years a cop, not sixteen, against the 16-year P.I.
+  // career the story states four times), plus four line-level upgrades
+  // (bus-ticket canon, diner census disambiguation, rental V.O. trim,
+  // Rosa-duration fix). Retire any Studio snapshot so the new lines win.
+  "37": ["nobodys-witness-true"],
 };
 
 function migrateLegacyStoryStorage() {

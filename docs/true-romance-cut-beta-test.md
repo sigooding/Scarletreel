@@ -1,7 +1,7 @@
 # Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
 
 **Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
-**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (three sittings: §2c Act Three endings audit — all playthroughs end on Act Three, one clock fix; §5 Studio canvas completed to a 29-slot serpentine; final sitting — Doc Sato surname at first mention, §5c.2 closed, all gates re-run). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`.
+**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (three sittings: §2c Act Three endings audit — all playthroughs end on Act Three, one clock fix; §5 Studio canvas completed to a 29-slot serpentine; final sitting — Doc Sato surname at first mention, §5c.2 closed, all gates re-run). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`. **r37 (2026-08-31): dialogue polish pass — five line-level edits, one real plot flaw fixed (Jack's career math), anachronism note retired. See §6.**
 
 ---
 
@@ -122,7 +122,7 @@ The harness gained this as a permanent regression check (`She Walks In arrival �
 `node scripts/beta/beta-harness.mjs` → 72/72 · `npx tsc --noEmit` → clean · `npm test` → engine 544/544 + import/export round-trip end-to-end · `npm run build` → single-file build OK. `package.json` 1.0.0, `CONTENT_REVISION` 36, newsstand badge **★ Production — True Romance Cut**, Play button + `#play` hash → this cut.
 
 ## 3. Still open — your call, not defects
-1. **Anachronism note (do with as you please):** the self-checkout/barcode rants and "nineteen ninety-something" line sit ~1998-2005; the rest of the text (mill closed '09, 2011 furnace, father's watch 40 years old) dates the film ~2024. Nobody asked for this to change and the scene's the best comedy in the picture — flagging only.
+1. **Anachronism note — RETIRED in r37.** The old note claimed the self-checkout/barcode rants sit ~1998–2005 while the mill/furnace/watch math dates the film ~2024. Re-deriving the dates from the text's own anchors: the mill closed in '09 and Jack says it "closed when I was thirty-two" while he's "forty-four" — that pins the film to **2021** (born 1977), and every other anchor agrees (2011 furnace + "six years later" death + Vera "doing arithmetic since I was nineteen" → she's 29; the father's watch "forty years ago" → 1981). In 2021 the self-checkout rants and the "nineteen ninety-something" recording gag are a period joke, not an anachronism — the best comedy in the picture stays untouched.
 
 Both of the previous open items are now applied in §1: the swing-at-Moe branch costs Desh's gift, and Vera's sin level is the hung-up-phone version. If you want the colder Vera back (the eleven-hours-of-arithmetic version), that's a two-line revert — say the word.
 
@@ -169,6 +169,24 @@ Re-ran the full gate on the production cut: beta harness 12/12 (same 6,086 state
 The three misalignments this sitting set out to fix (office inheriting the pool-hall jukebox, the walks ending carrying the full motif past the door bell, and the Act 1 diner playing a buried draft-upload bed) were **already corrected by the production pass**: the diner plays `/Midnight in the Rain2.mp3` (track, level 0.45), the office and every dry scene carry explicit `musicMode: "none"`, the jukebox bed lives at `/nwt-bluecue-jukebox.mp3`, the gunshot at `/nwt-gunshot.wav`, and NOBODY'S WITNESS cuts at the door (fade 1.8s). Verified end-to-end against the cue sheet — wiring now matches it exactly, including A STOPPED WATCH going `none` (the engine can't drop a song mid-scene after Rosa leaves; silence is the correct authoring choice). Cue sheet: `docs/nwt-soundtrack.md`.
 
 ### 5c. Still open — your call, not defects
-1. **The anachronism note (§3.1) still stands** — self-checkout/barcode rants sit ~1998–2005 while the mill/furnace/watch math dates the film ~2024. Left alone; it's the best comedy in the picture.
+1. **The anachronism note (§3.1) is now RETIRED** — see §3.1 for the 2021 dating derivation. Nothing in the text is anachronistic; the comedy stays.
 2. **"Doc" surname — resolved.** The rental V.O. used to say "Doc came through on the motel" while every later mention is "Doc Sato" (mill confession, final diner, A STOPPED WATCH). First mention now reads **"Doc Sato came through on the motel"** — one clarifying surname that primes the load-bearing confession; no timeline change (the Tuesday canon is untouched). Closed in the final re-audit sitting.
 3. **A STOPPED WATCH** wants the licensed *"Two Hearts"* needle-drop once Rosa leaves; without clearance the scene runs silent (see the cue sheet's licensed-reference table).
+
+---
+
+## 6. Dialogue polish pass (r37, 2026-08-31)
+
+A line-level pass over all 29 scenes — full read-through of every beat (Vera 69, Jack 222, Rosa 43, Solomon 27, Moe 22, Desh 15, David 16, Ted 3, Gary 12, Denny 11, narrator 46). The cut was already in strong register, so the pass stayed surgical: five changes, each fixing a real defect rather than re-styling.
+
+1. **Jack's character card career math corrected — the one plot flaw found.** The card said "Sixteen years a cop", which cannot be true alongside the cut's own canon: Jack is 44; the story states four separate times that he has been a private investigator for sixteen years ("Sixteen years of knowing things for a living", "I put sixteen years on a desk in a room over a feed store", "Sixteen years of files", "Sixteen years I never gave a client up"); and Rosa watched the file stand when he was "twenty-six years old". The only timeline that makes all of those true at once: force 18→28 (ten years), P.I. 28→44 (sixteen), booth 34→44 (ten). Card now reads **"Ten years a cop, ten years a booth."** (David's card was already corrected in the production pass; this was the last card carrying draft-era math.)
+2. **Bus-ticket canon.** The three-a.m. show-and-tell read "Nervous is one big withdrawal and a **plane** ticket" while the office read (and the actual plot) is a **bus** ticket — the depot is load-bearing. Now "bus ticket" in both, and the doubled "nervous" tightened.
+3. **Diner census disambiguated.** "Four thousand people left, a clinic with a waiting list…" read as though 4,000 people had *departed*; canon (Blue Cue 2: "Blackwood's four thousand people") is that 4,000 *remain*. Now "**What came after:** four thousand people, a clinic with a waiting list…"
+4. **Rental V.O. redundancy trimmed.** The duffel V.O. restated what the spoken beat lands a minute later ("You've got Solomon's money in a bag by the door"). The V.O. now reads the bag instead: "I'd have known it blind. Fourteen years is a long time to count a man's money before you take it."
+5. **Rosa-duration fix.** "Six years she's been saying some version of it" was arbitrary against an 18-year friendship (she watched the file stand when Jack was 26; he's 44). Now "since before I had a booth" — anchored to canon (the booth is ten years).
+
+### Also closed this pass
+- **The §3.1 anachronism note is retired.** Deriving the date from the text's own anchors (mill '09 + "closed when I was thirty-two" + "I'm forty-four") pins the film to **2021**, and every other anchor agrees. The "nineteen ninety-something" recording gag is a period joke, not a mismatch. The best comedy in the picture is untouched.
+
+### Gates (re-run after every edit)
+`node scripts/beta/beta-harness.mjs` → **72/72** · `npx tsc --noEmit` → clean · `npm test` → **544/544** + import/export round trip · `npm run check` → 266/266 · `npm run preflight` → passed · `npm run build` → OK. `CONTENT_REVISION` bumped **36 → 37** (`"37": ["nobodys-witness-true"]`) so cached Studio snapshots retire to the new lines.
