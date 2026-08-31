@@ -423,6 +423,10 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     if (sc.stage?.playerImage && !sc.stage.playerImage.startsWith("emoji:")) visit(sc.stage.playerImage);
     sc.stage?.walkFrames?.forEach(visit);
     visit(sc.stage?.playerSheet?.image);
+    sc.stage?.npcs?.forEach((n) => {
+      if (n.image && !n.image.startsWith("emoji:")) visit(n.image);
+      visit(n.sheet?.image);
+    });
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
     sc.hotspots?.forEach((h) => visit(h.image));
@@ -536,6 +540,10 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     if (sc.stage?.playerImage) apply(sc.stage, "playerImage");
     if (sc.stage?.walkFrames?.length) sc.stage.walkFrames = sc.stage.walkFrames.map((f) => resolveMediaValue(f, map) ?? f);
     if (sc.stage?.playerSheet) apply(sc.stage.playerSheet, "image");
+    sc.stage?.npcs?.forEach((n) => {
+      if (n.image) apply(n, "image");
+      if (n.sheet) apply(n.sheet, "image");
+    });
     applyCinematic(sc.cinematic);
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
@@ -696,6 +704,16 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     if (sc.stage?.playerSheet?.image) {
       sc.stage.playerSheet.image =
         (await compact(sc.stage.playerSheet.image, "image", `${sc.title} walker sheet`)) ?? sc.stage.playerSheet.image;
+    }
+    if (sc.stage?.npcs?.length) {
+      for (const n of sc.stage.npcs) {
+        if (n.image && !n.image.startsWith("emoji:")) {
+          n.image = (await compact(n.image, "image", `${sc.title} NPC ${n.id}`)) ?? n.image;
+        }
+        if (n.sheet?.image) {
+          n.sheet.image = (await compact(n.sheet.image, "image", `${sc.title} NPC ${n.id} sheet`)) ?? n.sheet.image;
+        }
+      }
     }
     if (sc.stage?.walkFrames?.length) {
       sc.stage.walkFrames = await Promise.all(
@@ -993,6 +1011,10 @@ export async function bundleVoiceFileRefs(
     }
     if (sc.stage?.playerSheet?.image) {
       sc.stage.playerSheet.image = (await bundleValue(sc.stage.playerSheet.image)) ?? sc.stage.playerSheet.image;
+    }
+    for (const n of sc.stage?.npcs ?? []) {
+      if (n.image && !n.image.startsWith("emoji:")) n.image = (await bundleValue(n.image)) ?? n.image;
+      if (n.sheet?.image) n.sheet.image = (await bundleValue(n.sheet.image)) ?? n.sheet.image;
     }
     if (sc.stage?.walkFrames?.length) {
       sc.stage.walkFrames = await Promise.all(sc.stage.walkFrames.map(async (f) => (await bundleValue(f)) ?? f));

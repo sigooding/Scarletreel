@@ -97,6 +97,7 @@ import { SheetSprite } from "./SheetSprite";
 import { sheetDrawable, type SpriteSheet } from "./spriteSheet";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
+import { RideGame } from "./RideGame";
 import { RouteMap } from "./RouteMap";
 import { actOfScene } from "./routeGraph";
 import { emptyCoverage, readCoverage, recordRun, recordVisit, writeCoverage, type PlaytestCoverage } from "./playtestCoverage";
@@ -108,6 +109,7 @@ import type {
   CreditsSettings,
   DialogueBeat,
   DialogueBoxTheme,
+  DialogueTopic,
   Episode,
   EpisodeProgress,
   ForegroundAnimation,
@@ -2858,6 +2860,15 @@ function CasePlayer({
    *   done   — the conversation finished; back to walking
    * Choices on a stage node ONLY ever show during "open". */
   const [stageConvo, setStageConvo] = useState<"closed" | "open" | "done">("closed");
+  /* TOPIC-LIST DIALOGUE (opt-in). When a startDialogue marker carries
+   * `action.topics`, the conversation is a HUB of askable topics instead of
+   * the scene's linear beats. `topicConvo` holds the active hub (null = not in
+   * a topic conversation); `topicBeats` holds the topic currently playing its
+   * beats (null = sitting at the hub); `askedTopics` tracks which one-shot
+   * topics are already exhausted. Stories without topics never touch this. */
+  const [topicConvo, setTopicConvo] = useState<{ prompt: string; leaveLabel: string; topics: DialogueTopic[] } | null>(null);
+  const [topicBeats, setTopicBeats] = useState<DialogueBeat[] | null>(null);
+  const [askedTopics, setAskedTopics] = useState<Set<string>>(new Set());
   /* STAGE caption bar — the showText / fail / enterCaption line that plays
    * over a stage scene (subtitles, not the centre exam card). */
   const [stageCaption, setStageCaption] = useState<{ text: string; kind: "info" | "fail"; label?: string; key: number } | null>(null);
@@ -2949,6 +2960,7 @@ function CasePlayer({
    * the screen with the ledger puzzle. Solved → reward consequences + close;
    * wrong → wrongSubmissionConsequences + retry or consequence scene. */
   const [patternPuzzle, setPatternPuzzle] = useState<{ config: PatternPuzzleConfig; hotspot: Hotspot } | null>(null);
+  const [rideChoice, setRideChoice] = useState<Choice | null>(null);
   /* EXAMINE — hold-to-inspect. While active, the camera zooms onto the
    * hotspot bounds and a meter fills over examineSeconds; releasing early
    * aborts, completion fires the hotspot's normal action (pickup / the
@@ -3159,6 +3171,12 @@ function CasePlayer({
    *  a foreground extra flagged `occludes` is drawn OVER the character while
    *  they stand behind it, so they disappear behind the counter. */
   const [walkerFeet, setWalkerFeet] = useState<{ x: number; y: number } | null>(null);
+  /** The walker's current POSE (a named sheet animation, e.g. "bend") — set by
+   *  a `setPlayerPose` hotspot action, held until movement or another pose.
+   *  Transient presentation, so it lives here rather than in the save state. */
+  const [playerPose, setPlayerPose] = useState<string | null>(null);
+  /** Whether the current pose is a one-shot (play once, then revert). */
+  const [playerPoseOnce, setPlayerPoseOnce] = useState(false);
   const occludersInFront = useMemo(() => {
     const extras = scene?.cinematic?.foregroundExtras ?? [];
     const front = new Set<number>();
@@ -3436,6 +3454,14 @@ function CasePlayer({
     if (scene.nodeType === "stage") {
       setStageConvo(restoring && restoring.beatIdx > 0 ? "open" : "closed");
       setStageCaption(null);
+      setPlayerPose(null); // a fresh scene starts in its own default pose
+      setPlayerPoseOnce(false);
+      // Topic-list dialogue does not persist across a scene entry — a fresh
+      // room starts fresh (a restored save re-opens the plain beat queue, but
+      // a topic hub simply restarts clean the next time the marker fires).
+      setTopicConvo(null);
+      setTopicBeats(null);
+      setAskedTopics(new Set());
       if (!restoring && scene.stage?.enterCaption) {
         showStageCaption(scene.stage.enterCaption, "info");
       }
@@ -4060,6 +4086,10 @@ function CasePlayer({
     [state.activeFlags, state.inventory, state.meters, state.characterTrust, state.memories]
   );
   const visibleBeats = useMemo(() => {
+    // Topic-list dialogue: while a chosen topic is playing, ITS beats are the
+    // queue (gated the same way), not the scene's. The scene's own beats are
+    // untouched — a topic marker and a linear-beat marker never overlap.
+    if (topicBeats) return topicBeats.filter((b) => meetsGating(b.conditionRule, stateRef.current));
     if (!scene?.dialogueBeats && !scene?.interrogation) return [];
     const beats = [...(scene.dialogueBeats ?? [])];
     // The interrogation's broke / clamped beats join the queue the moment
@@ -4085,7 +4115,7 @@ function CasePlayer({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene, entrySeq, sceneId, beatsSignature]);
+  }, [scene, entrySeq, sceneId, beatsSignature, topicBeats]);
 
 
 
@@ -4293,6 +4323,16 @@ function CasePlayer({
       return;
     }
     if (inBeats) {
+      // Topic-list dialogue: "back" on a topic's FIRST line returns to the
+      // hub (a stage has no prose to rewind into — rewinding there would
+      // strand the player).
+      if (topicBeats) {
+        audio.stopSpeech();
+        setTopicBeats(null);
+        setBeatIdx(0);
+        setBeatDone(false);
+        return;
+      }
       audio.stopSpeech();
       setBeatDone(false);
       setProseAcknowledged(false);
@@ -4305,7 +4345,7 @@ function CasePlayer({
       audio.stopSpeech();
       setProseAcknowledged(false);
     }
-  }, [proseAcknowledged, inBeats, beatIdx, visibleBeats.length]);
+  }, [proseAcknowledged, inBeats, beatIdx, visibleBeats.length, topicBeats]);
 
   // Jump straight back to the start of the current scene (the opening prose),
   // resetting the dialogue so it replays from the first line on continue.
@@ -4322,6 +4362,48 @@ function CasePlayer({
   // acknowledged; while the prose itself is showing there is nothing further
   // back within this scene.
   const canRewind = proseAcknowledged;
+
+  /* -------- topic-list dialogue (opt-in) -------- */
+  // Pick a topic off the hub: mark it asked, record its flag, and play its
+  // beats through the normal beat queue (visibleBeats returns them while
+  // `topicBeats` is set).
+  const pickTopic = useCallback(
+    (topic: DialogueTopic) => {
+      audio.click();
+      if (topic.flagSet) {
+        setState((s) => ({ ...s, activeFlags: new Set(s.activeFlags).add(topic.flagSet!) }));
+      }
+      setAskedTopics((s) => new Set(s).add(topic.id));
+      setTopicBeats(topic.beats);
+      setBeatIdx(0);
+      setBeatDone(false);
+      setChoiceFocus(0);
+    },
+    []
+  );
+
+  // Leave the conversation: hand the stage back to the player.
+  const leaveTopic = useCallback(() => {
+    audio.click();
+    audio.stopSpeech();
+    setStageConvo("done");
+    setTopicConvo(null);
+    setTopicBeats(null);
+    setAskedTopics(new Set());
+    setBeatIdx(0);
+    setBeatDone(false);
+  }, []);
+
+  // When a topic's beats run out, return to the hub (the topic stays in the
+  // list, exhausted or re-askable as authored) rather than closing the whole
+  // conversation.
+  useEffect(() => {
+    if (topicBeats && !inBeats && stageConvo === "open") {
+      setTopicBeats(null);
+      setBeatIdx(0);
+      setBeatDone(false);
+    }
+  }, [topicBeats, inBeats, stageConvo]);
 
   const skipCurrentText = useCallback(() => {
     audio.click();
@@ -4465,11 +4547,14 @@ function CasePlayer({
    * naturally close the conversation exactly the same way. */
   useEffect(() => {
     if (!isStage || stageConvo !== "open" || overlay || menuOpen) return;
+    // A topic hub stays open until the player picks "leave" — sitting at the
+    // hub (no beats, no choices) must not auto-close the conversation.
+    if (topicConvo) return;
     if (!inBeats && !hasUsableChoice) {
       setStageConvo("done");
       audio.stopSpeech();
     }
-  }, [isStage, stageConvo, inBeats, hasUsableChoice, overlay, menuOpen]);
+  }, [isStage, stageConvo, inBeats, hasUsableChoice, overlay, menuOpen, topicConvo]);
 
   /* -------- quick-time prompt state (reactive) -------- */
   // A quick-time prompt is live while at least one QTE choice is still on the
@@ -4808,6 +4893,13 @@ function CasePlayer({
       }
       // Playtest coverage: this branch was actually taken (replies included).
       markCoverage("choice", `${sceneId}:${choice.id}`);
+      // A ride choice launches the steerable minigame instead of navigating at
+      // once — the win/crash routes happen in <RideGame> via finishRide.
+      if (choice.ride) {
+        audio.click();
+        setRideChoice(choice);
+        return;
+      }
       // Conversational replies answer in place: apply consequences, stay in the
       // scene, and let the newly-unlocked gated beat become the response.
       if (choice.reply) {
@@ -4989,6 +5081,77 @@ function CasePlayer({
     // copy dropped previously-spent replies, making one-shot replies
     // re-pickable (a trust farm inside an interrogation).
     [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure, usedChoices]
+  );
+
+  /** Route out of a finished ride minigame. `won` = you ran the target down
+   *  (apply the choice's consequences, head to targetSceneId); a crash applies
+   *  the timed-out consequences and heads to timedOutTargetSceneId, the same
+   *  "you hesitated" convention the QTE timeout uses. */
+  const finishRide = useCallback(
+    (choice: Choice, won: boolean) => {
+      const liveScene = story.scenes.find((s) => s.id === sceneId);
+      if (!choiceRepeats(choice)) {
+        setUsedChoices((old) => {
+          const next = new Set(old);
+          next.add(`${sceneId}:${choice.id}`);
+          return next;
+        });
+      }
+      const perks = getPerks(stateRef.current);
+      let cons = won ? presentationConsequences(choice) : choice.timedOutConsequences;
+      if (cons?.trustChanges && (perks.velvetTongue || perks.heat)) {
+        cons = {
+          ...cons,
+          trustChanges: cons.trustChanges.map((t) => {
+            let d = t.delta;
+            if (d > 0 && perks.velvetTongue) d += 1;
+            if (d > 0 && perks.heat) d = Math.max(1, Math.floor(d / 2));
+            return { ...t, delta: d };
+          }),
+        };
+      }
+      if (cons?.meterChanges && perks.ironNerve && choice.attitudeTag === "Aggressive") {
+        cons = {
+          ...cons,
+          meterChanges: cons.meterChanges.map((m) =>
+            m.meter === "Suspicion" && m.delta > 0 ? { ...m, delta: 0 } : m
+          ),
+        };
+      }
+      if (cons?.trustChanges?.length) {
+        cons.trustChanges.forEach((t) => {
+          const ch = story.characters.find((c) => c.id === t.characterId);
+          if (!ch) return;
+          if (t.delta > 0) pushToast(`♥ ${ch.name.split(" ")[0]} trusts you a little more (+${t.delta}).`, "success");
+          else if (t.delta < 0) pushToast(`✖ ${ch.name.split(" ")[0]} likes you less (${t.delta}).`, "fail");
+        });
+      }
+      if (cons?.addItems?.length) {
+        cons.addItems.forEach((id) => {
+          const it = story.items.find((i) => i.id === id);
+          if (it && !stateRef.current.inventory.some((x) => x.id === id)) {
+            pushToast(`🎁 Received: ${it.icon} ${it.name}`, "success");
+          }
+        });
+      }
+      if (cons?.meterChanges?.some((m) => m.meter === "Suspicion" && m.delta > 0)) {
+        const sus = cons.meterChanges.find((m) => m.meter === "Suspicion")!;
+        pushToast(`🔥 Heat rising (+${sus.delta}).`, "fail");
+      }
+      setState(
+        (s) => recordPresentation(choice, story, recordMemory(choice, applyConsequences(story, cons, s)))
+      );
+      if (choice.rememberLine) setRemember((r) => ({ line: choice.rememberLine!, key: (r?.key ?? 0) + 1 }));
+      if (choice.rememberLine || choice.memoryLog) {
+        setEpisodeHighlights((h) => (h.includes(choice.text) ? h : [...h, choice.text].slice(-6)));
+      }
+      recordJourney(choice, won ? undefined : { timedOut: true });
+      const dest = won ? choice.targetSceneId : choice.timedOutTargetSceneId ?? choice.targetSceneId;
+      setRideChoice(null);
+      if (dest && dest !== sceneId) leaveFor(dest, liveScene?.partBreak);
+      else if (dest) goToScene(dest);
+    },
+    [story, sceneId, goToScene, pushToast, recordJourney, leaveFor]
   );
 
   const previousPerks = useRef<Perks>(getPerks(state));
@@ -5214,7 +5377,22 @@ function CasePlayer({
           // play as the conversation. The action's own flagSet/meterChange
           // (a "talked to X" marker) still applies via completeHotspot.
           audio.click();
-          if ((sceneById(story, sceneId)?.dialogueBeats?.length ?? 0) > 0) {
+          if (act.topics && act.topics.length) {
+            // TOPIC-LIST conversation (opt-in): open a hub of askable topics
+            // instead of the scene's linear beats.
+            setTopicConvo({
+              prompt: act.topicPrompt ?? "What do you want to ask?",
+              leaveLabel: act.topicLeaveLabel ?? "Never mind",
+              topics: act.topics,
+            });
+            setTopicBeats(null);
+            setAskedTopics(new Set());
+            setBeatIdx(0);
+            setBeatDone(false);
+            setChoiceFocus(0);
+            setStageConvo("open");
+            completeHotspot(hs, undefined, act, markUsed);
+          } else if ((sceneById(story, sceneId)?.dialogueBeats?.length ?? 0) > 0) {
             setBeatIdx(0);
             setBeatDone(false);
             setChoiceFocus(0);
@@ -5230,6 +5408,14 @@ function CasePlayer({
         case "giveItem":
         case "setFlag":
         case "meterChange":
+          completeHotspot(hs, undefined, act, markUsed);
+          break;
+        case "setPlayerPose":
+          // Switch the walker to a named animation (a "bend down"), once or
+          // held. Empty pose = back to idle/scene default.
+          audio.click();
+          setPlayerPose(act.playerPose ?? null);
+          setPlayerPoseOnce(!!act.playerPoseOnce);
           completeHotspot(hs, undefined, act, markUsed);
           break;
         case "openBoard":
@@ -5521,7 +5707,7 @@ function CasePlayer({
           else goBack();
         }
       }
-      if (interactive && availableChoices.length) {
+      if (interactive && !topicConvo && availableChoices.length) {
         if (["ArrowDown", "s", "S"].includes(e.key)) {
           e.preventDefault();
           setChoiceFocus((f) => (f + 1) % availableChoices.length);
@@ -5886,16 +6072,25 @@ function CasePlayer({
               // icon); a scene can still override it with its own.
               objectMenuIcon: scene.stage.objectMenuIcon ?? story.verbMenuIcon,
               spawn: entrySpawn,
+              // Story-wide kill-switch: verbMenuEnabled:false disables the
+              // object-first pie everywhere, even on scenes that opted in.
+              ...(story.verbMenuEnabled === false ? { objectVerbMenu: false, objectMenuHold: false } : {}),
             }}
             hotspots={visibleHotspots}
             unlocked={(hs) => meetsGating(hs.gating, state)}
             onInteract={(hs, ctx) => activateHotspot(hs, ctx)}
             active={stageWalking}
+            pose={playerPose ?? scene.stage.playerPose}
+            poseOnce={playerPoseOnce}
+            onPoseEnd={() => {
+              setPlayerPose(null);
+              setPlayerPoseOnce(false);
+            }}
             cursorStyle={cursorStyle}
             onVerbChange={setCoinVerb}
             {...(hasOccluders ? { onPosChange: setWalkerFeet } : {})}
             {...(dropRequest ? { dropRequest } : {})}
-            verbs={scene.stage.verbCoin || scene.stage.objectVerbMenu ? verbsForScene(scene) : undefined}
+            verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene(scene) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}
             onEdgeExit={(edge) => {
@@ -6250,7 +6445,7 @@ function CasePlayer({
         </div>
       )}
       {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
-        <div className="absolute right-3 top-3 z-50">
+        <div className="absolute right-3 top-3 z-[60]">
           <button
             onClick={() => {
               audio.click();
@@ -7057,11 +7252,50 @@ function CasePlayer({
             )}
           </div>
 
+          {/* TOPIC-LIST HUB — a topic conversation replaces the scene's choices
+              with the askable questions; the leave option ends the talk. */}
+          {topicConvo && !topicBeats && stageConvo === "open" && (
+            <div className="mt-2 space-y-1.5" role="menu" aria-label="Conversation topics">
+              <div className="font-pulp text-[10px] uppercase tracking-[0.25em] text-gold">{topicConvo.prompt}</div>
+              {topicConvo.topics
+                .filter((t) => meetsGating(t.gating, state))
+                .map((t, i) => {
+                  const exhausted = !t.repeatable && askedTopics.has(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      role="menuitem"
+                      disabled={exhausted}
+                      onClick={() => pickTopic(t)}
+                      className={`pop-in flex w-full items-center gap-2 rounded-xl border border-cyan-neon/40 bg-cyan-neon/10 px-3 py-2.5 text-left font-pulp text-base leading-tight text-cyan-neon transition-all hover:-translate-y-0.5 hover:border-cyan-neon/80 hover:bg-cyan-neon/20 backdrop-blur-sm shadow-[0_4px_18px_rgba(0,0,0,0.45)] ${
+                        exhausted ? "opacity-40 cursor-not-allowed hover:translate-y-0" : ""
+                      }`}
+                      style={{ animationDelay: `${i * 70}ms` }}
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-noir-800/90 font-pulp text-[10px]">
+                        {exhausted ? "✓" : i + 1}
+                      </span>
+                      <span className="flex-1">{t.label}</span>
+                    </button>
+                  );
+                })}
+              <button
+                role="menuitem"
+                onClick={leaveTopic}
+                className="pop-in mt-1 flex w-full items-center gap-2 border-l-4 border-noir-600 bg-noir-950/90 px-3 py-2 text-left font-pulp text-base leading-tight text-paper/70 transition-all hover:-translate-y-0.5 hover:bg-noir-700/95 backdrop-blur-sm shadow-[0_4px_18px_rgba(0,0,0,0.45)]"
+                style={{ animationDelay: `${Math.min(6, topicConvo.topics.length + 1) * 70}ms` }}
+              >
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-noir-800/90 font-pulp text-[10px]">👋</span>
+                <span className="flex-1">{topicConvo.leaveLabel}</span>
+              </button>
+            </div>
+          )}
+
           {/* choices — credits/cutscene nodes auto-advance via the centered continue
               button when a choice is wired; if none is (or the author left the
               target blank), fall back to showing the choices so the player can
               never get trapped on a cinematic node. */}
-          {interactive && !scene.isEnding && availableChoices.length > 0 && (
+          {!topicConvo && interactive && !scene.isEnding && availableChoices.length > 0 && (
             <>
               {/* Big on-screen quick-time prompt banner. */}
               {qteActive && (
@@ -7647,6 +7881,15 @@ function CasePlayer({
             if (dest) window.setTimeout(() => goToScene(dest), 100);
           }}
           onClose={() => setPatternPuzzle(null)}
+        />
+      )}
+
+      {rideChoice && (
+        <RideGame
+          config={rideChoice.ride!}
+          onWin={() => finishRide(rideChoice, true)}
+          onCrash={() => finishRide(rideChoice, false)}
+          onClose={() => setRideChoice(null)}
         />
       )}
 

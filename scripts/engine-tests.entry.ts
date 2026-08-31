@@ -84,6 +84,13 @@ import {
   stagePlayerScale,
   stageSpeedScale,
   stageSpriteScale,
+  stageWalkPoly,
+  stageWalkDepth,
+  pointInWalkPoly,
+  clampToWalkPoly,
+  stageMarkerPointPoly,
+  stageBlockedPoly,
+  stageRoutePoly,
   validateStory,
   resolveVerbAction,
   verbsForScene,
@@ -99,6 +106,8 @@ import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframe
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
 import { FULL_THROTTLE } from "../src/data/fullThrottle";
+import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
+import { FULL_THROTTLE_ORIGINAL } from "../src/data/fullThrottleOriginal";
 import { THROTTLE_ASH } from "../src/data/throttleAsh";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
@@ -396,6 +405,19 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     // No exit at all (no door marker, no auto-advance, no choices) = soft-lock.
     const trapped = craftIssues([{ ...stageBase, hotspots: [] }]);
     check("stage: a stage node with no way out is an error", has(trapped, /has no way out/));
+
+    // setPlayerPose is a legal action: it needs no target scene and doesn't
+    // replay a reward, so it validates clean even when repeatable.
+    const pose = craftIssues([
+      {
+        ...stageBase,
+        hotspots: [
+          { id: "bend", label: "Look under", bounds: { x: 20, y: 60, w: 10, h: 20 }, cursor: "look", isRepeatable: true, action: { type: "setPlayerPose", playerPose: "bend", playerPoseOnce: true } },
+          ...stageBase.hotspots!,
+        ],
+      },
+    ]);
+    check("stage: setPlayerPose validates clean (no target scene, no reward warning)", !has(pose, /needs a target scene|replay rewards/), pose.filter((i) => /pose|target scene|replay/i.test(i.message)));
 
     // A talk marker with no beats to play does nothing.
     const muteTalk = craftIssues([
@@ -870,6 +892,46 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: marker y is the zone's base clamped into the floor", m.y === 60, m); // 30+30=60 = floor top
   const low: Hotspot = { ...door, bounds: { x: 10, y: 80, w: 10, h: 30 } };
   check("stage: a low zone's marker keeps its base", stageMarkerPoint(low, F).y === 92, stageMarkerPoint(low, F));
+
+  // WALK PATH — a polygon replaces the flat band as the walkable zone.
+  const poly = [
+    { x: 10, y: 80 },
+    { x: 90, y: 80 },
+    { x: 60, y: 40 },
+    { x: 30, y: 40 },
+  ];
+  check("walk-path: a band room still resolves to its rectangle", (() => {
+    const p = stageWalkPoly({ floor: F }, 100);
+    return p.length === 4 && p[0].x === 0 && p[1].x === 100 && p[1].y === 60 && p[2].y === 92;
+  })());
+  check("walk-path: floorPoints define the polygon", (() => {
+    const p = stageWalkPoly({ floorPoints: poly }, 100);
+    return p.length === 4 && p[2].x === 60 && p[2].y === 40;
+  })());
+  check("walk-path: depth band is the polygon's y-extent", (() => {
+    const d = stageWalkDepth(poly);
+    return d.top === 40 && d.bottom === 80;
+  })());
+  check("walk-path: a point inside the polygon is walkable", pointInWalkPoly(50, 60, poly));
+  check("walk-path: a point outside the polygon is not", !pointInWalkPoly(50, 95, poly));
+  check("walk-path: a point inside is kept, clamped to the world", (() => {
+    const c = clampToWalkPoly(50, 60, poly, 100);
+    return c.x === 50 && c.y === 60;
+  })());
+  check("walk-path: a point outside snaps to the nearest boundary", (() => {
+    const c = clampToWalkPoly(50, 95, poly, 100);
+    return c.y < 82 && c.y >= 79; // snaps up to the bottom edge (y≈80)
+  })());
+  check("walk-path: blocked treats outside-the-path as a wall", stageBlockedPoly(50, 95, [], poly, 16 / 9, 100));
+  check("walk-path: a route crosses the path, not outside it", (() => {
+    const r = stageRoutePoly({ x: 15, y: 79 }, { x: 85, y: 79 }, [], poly, stageWalkDepth(poly), STAGE_GRID_STEP, 100);
+    return r.length === 1 && Math.abs(r[0].x - 85) < 1e-9;
+  })());
+  check("walk-path: a marker clamps into the polygon", (() => {
+    const hm: Hotspot = { ...door, bounds: { x: 48, y: 20, w: 4, h: 80 } };
+    const mm = stageMarkerPointPoly(hm, poly, 100);
+    return mm.y >= 40 && mm.y <= 80;
+  })());
 
   // Reach check on the marker point.
   check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));
@@ -1703,24 +1765,28 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   apply(hs("ft_alley", "fth_door").action);
   check("ft: kicking the door sets ft_door_open", st.activeFlags.has("ft_door_open"));
   check("ft: the bike flags the missing keys", hs("ft_alley", "fth_bike").action.flagSet === "ft_noticed_keys");
-  // Inside the bar: the shakedown only opens after the CONVERSATION (the
-  // talk marker sets ft_quohog_talked; the grab marker is gated on it).
+  // Inside the bar: talking to Quohog is a TOPIC-LIST conversation, and the
+  // shakedown only opens after the player asks for the keys (the "My keys"
+  // topic sets ft_quohog_talked; the grab marker is gated on it).
   check("ft: grabbing Quohog is locked before the talk", !meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
-  apply(hs("ft_bar", "fth_quohog").action);
-  check("ft: talking to Quohog sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
-  check("ft: the shakedown unlocks after the talk", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
+  const quohogTopics = hs("ft_bar", "fth_quohog").action.topics;
+  check("ft: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  check("ft: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft_topic_keys" && t.flagSet === "ft_quohog_talked"));
+  apply(quohogTopics!.find((t) => t.id === "ft_topic_keys")!);
+  check("ft: asking for the keys sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
+  check("ft: the shakedown unlocks after asking", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
   apply(hs("ft_bar", "fth_quohog_grab").action);
   check("ft: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft_keys"));
   check("ft: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft_keys"] }, st));
   // The bar's walk-off-screen exit is a real scene edge.
   check("ft: the bar has a left-edge exit to the alley", S.scenes.find((s) => s.id === "ft_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft_alley");
   check("ft: storyEdges carries the walk-off edge", storyEdges(S).some((e) => e.id === "e-ft_bar-edge-left" && e.target === "ft_alley"));
-  // The Rottwheeler duel: two QTE choices, each routing hesitation to the
-  // game-over road instead of a graceful fail-forward.
+  // The Rottwheeler duel: two steerable ride minigames, each routing a crash
+  // to the game-over road instead of a graceful fail-forward.
   const ride = byId.get("ft_ride")!;
   const fight1 = ride.choices!.find((c) => c.id === "ftc_fight1")!;
-  check("ft: the duel is a real QTE", fight1.quickTime === true && (fight1.timeLimitSeconds ?? 0) > 0 && fight1.qtePrompt);
-  check("ft: QTE hesitation routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
+  check("ft: the duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2 && (fight1.ride.durationSeconds ?? 18) > 0);
+  check("ft: ride crash routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
   const dead = byId.get("ft_ride_dead")!;
   check("ft: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
   check("ft: beating the fight reaches Part One", byId.get("ft_ride3")!.choices!.some((c) => c.targetSceneId === "ft_tbc"));
@@ -1732,6 +1798,7 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   S.scenes.forEach((sc) => {
     (sc.hotspots ?? []).forEach((h) => {
       if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
       h.gating?.requiresFlags?.forEach((f) => flagsSet.add(f));
       Object.values(sc.stage?.exitEdges ?? {}).forEach((e) => e?.gating?.requiresFlags?.forEach((f) => flagsSet.add(f)));
     });
@@ -1742,6 +1809,161 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("ft: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
   check("ft: the skull pie wears the story's own sprite", S.verbMenuIcon === "/img/ft-skull.png");
   check("ft: no other story opts into the hold gesture", THROTTLE_ASH.scenes.every((sc) => !sc.stage?.objectMenuHold) && !THROTTLE_ASH.verbMenuIcon);
+}
+
+/* ================================================================== */
+/*  4c. Full Throttle — The Corville Run (new version) BETA TEST        */
+/* ================================================================== */
+// The reimagined FT exercises every engine feature at once: a NEW sprite
+// sheet with named POSE animations, a scene default pose (crouch), transient
+// setPlayerPose hotspots (bend/reach), the hold-to-open skull pie with a NEW
+// centrepiece, a 200%-wide world with entry spawns, walk-off edge exits, a
+// point-stretched walk path, A* obstacles, topic-list dialogue, and a QTE
+// duel with a game-over branch.
+{
+  const S = FULL_THROTTLE_CORVILLE;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+
+  // The story validates cleanly and is registered in the catalogue.
+  const ft2Issues = validateStory(S);
+  check("ft2: story validates (no errors)", ft2Issues.filter((i) => i.severity === "error").length === 0, ft2Issues.slice(0, 4));
+  check("ft2: starts on the credits", S.startSceneId === "ft2_credits" && byId.get("ft2_credits")!.nodeType === "credits");
+  // No false "every exit is gated" warnings: the dumpster's only exit (climb)
+  // is gated on ft2_free, which the lid-punch sets in the same room; the bar
+  // leaves through an UNGATED walk-off edge — both must read as open.
+  const gatedWarnings = ft2Issues.filter((i) => i.severity === "warning" && /Every exit from .* is gated/.test(i.message));
+  check("ft2: no false 'every exit is gated' warnings", gatedWarnings.length === 0, gatedWarnings.map((w) => w.sceneId));
+
+  // NEW SPRITE + POSES: the player sprite is a sheet with the pose animations
+  // the hotspots drive, and every transient pose is a known animation.
+  const sheet = S.playerSprite?.sheet;
+  check("ft2: the player is a sprite sheet (not an emoji)", !!sheet && !!sheet.image && sheet.frameWidth > 0 && sheet.frameHeight > 0);
+  check("ft2: the sheet has all five pose animations", sheet && ["idle", "walk", "bend", "crouch", "reach"].every((a) => !!(sheet.animations as Record<string, unknown>)[a]));
+
+  // SCENE DEFAULT POSE: the dumpster starts Ben in a crouch.
+  check("ft2: the dumpster defaults Ben to a crouch", byId.get("ft2_dump")!.stage!.playerPose === "crouch");
+
+  // TRANSIENT POSES: bend (alley) and reach (bar) are setPlayerPose actions.
+  check("ft2: looking under the dumpster is a transient bend", hs("ft2_alley", "ft2h_under").action.type === "setPlayerPose" && hs("ft2_alley", "ft2h_under").action.playerPose === "bend" && hs("ft2_alley", "ft2h_under").action.playerPoseOnce === true);
+  check("ft2: reaching over the bar is a transient reach", hs("ft2_bar", "ft2h_reach").action.type === "setPlayerPose" && hs("ft2_bar", "ft2h_reach").action.playerPose === "reach");
+
+  // SKULL PIE: hold-to-open everywhere object-first is on, with the NEW icon.
+  check("ft2: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
+  check("ft2: the skull pie wears the new sprite", S.verbMenuIcon === "/assets/sprites/ft2-skull.png");
+  check("ft2: extended verbs (kick/punch) are on in every stage", S.scenes.filter((s) => s.nodeType === "stage").every((s) => s.stage!.extendedVerbs === true));
+
+  // WIDE WORLD + CAMERA: the alley is a 200% strip with per-source spawns.
+  const alley = byId.get("ft2_alley")!;
+  check("ft2: the alley is a wide world", alley.stage!.worldWidth === 200);
+  check("ft2: entry spawns depend on where you came from", alley.stage!.entrySpawns!.ft2_dump?.x === 8 && alley.stage!.entrySpawns!.ft2_bar?.x === 168);
+
+  // WALK PATH + OBSTACLES: the bar uses a point-stretched path, the alley has
+  // obstacles to route around.
+  check("ft2: the bar uses a point-stretched walk path", (byId.get("ft2_bar")!.stage!.floorPoints?.length ?? 0) >= 4);
+  check("ft2: the alley has A* obstacles", (alley.stage!.obstacles?.length ?? 0) >= 1);
+
+  // WALK-OFF EDGE: the bar's left edge walks back to the alley.
+  check("ft2: the bar has a left-edge exit to the alley", byId.get("ft2_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft2_alley");
+
+  // AMBIENT NPC: the bar has a patrolling barfly with idle + walk animations.
+  const barfly = byId.get("ft2_bar")!.stage!.npcs?.find((n) => n.id === "ft2_barfly");
+  check("ft2: the bar has an ambient NPC", !!barfly);
+  check("ft2: the NPC carries a sprite sheet with idle + walk", !!barfly && !!barfly.sheet?.animations?.idle && !!barfly.sheet?.animations?.walk);
+  check("ft2: the NPC walks a patrol (≥2 waypoints)", !!barfly && (barfly.patrol?.length ?? 0) >= 2);
+  check("ft2: the NPC sheet validates clean", !!barfly && !!barfly.sheet && spriteSheetIssues(barfly.sheet, "npc", ["idle", "walk"]).length === 0);
+  check("ft2: no ambient NPC errors in the story check", ft2Issues.filter((i) => i.severity === "error").length === 0);
+
+  // PUZZLE CHAIN (flag reachability, end to end).
+  check("ft2: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft2_keys"] }, st));
+  check("ft2: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft2_free"] }, st));
+  apply(hs("ft2_dump", "ft2h_lid").action);
+  check("ft2: punching the lid sets ft2_free", st.activeFlags.has("ft2_free"));
+  check("ft2: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft2_free"] }, st));
+  apply(hs("ft2_alley", "ft2h_door").action);
+  check("ft2: kicking the door sets ft2_door", st.activeFlags.has("ft2_door"));
+  check("ft2: grabbing Quohog is locked before the talk", !meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
+  const quohogTopics = hs("ft2_bar", "ft2h_quohog").action.topics;
+  check("ft2: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  check("ft2: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft2_topic_keys" && t.flagSet === "ft2_quohog_talked"));
+  apply(quohogTopics!.find((t) => t.id === "ft2_topic_keys")!);
+  check("ft2: asking for the keys sets ft2_quohog_talked", st.activeFlags.has("ft2_quohog_talked"));
+  check("ft2: the shakedown unlocks after asking", meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
+  apply(hs("ft2_bar", "ft2h_grab").action);
+  check("ft2: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft2_keys"));
+  check("ft2: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft2_keys"] }, st));
+
+  // RIDE DUEL with a real game-over branch.
+  const ride = byId.get("ft2_ride")!;
+  const fight = ride.choices!.find((c) => c.id === "ft2c_fight")!;
+  check("ft2: the duel is a playable ride", !!fight.ride && (fight.ride.lanes ?? 3) >= 2 && (fight.ride.durationSeconds ?? 18) > 0);
+  check("ft2: ride crash routes to the game-over ending", fight.timedOutTargetSceneId === "ft2_ride_dead");
+  const dead = byId.get("ft2_ride_dead")!;
+  check("ft2: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
+  check("ft2: winning reaches Part One", byId.get("ft2_tbc")!.isEnding === true && byId.get("ft2_tbc")!.endingData?.tier === "victory-silver");
+
+  // Every gated flag is actually produced somewhere in the chain.
+  const flagsSet = new Set<string>();
+  S.scenes.forEach((sc) => {
+    (sc.hotspots ?? []).forEach((h) => {
+      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
+    });
+  });
+  check("ft2: every gated flag has an author in the chain", ["ft2_free", "ft2_door", "ft2_quohog_talked"].every((f) => flagsSet.has(f)));
+}
+
+/* ================================================================== */
+/*  4c. FULL THROTTLE — the original opening, faithfully (the NEW      */
+/*  story). Exercises the two "feel" features: the right-click skull   */
+/*  inventory and the steerable ride minigame.                         */
+/* ================================================================== */
+{
+  const S = FULL_THROTTLE_ORIGINAL;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+  const issues = validateStory(S);
+  check("fto: the story validates with no errors", issues.filter((i) => i.severity === "error").length === 0);
+
+  // THE RIGHT-CLICK SKULL: the inventory is a container skull, waiting
+  // closed until right-clicked open.
+  check("fto: inventory is a container skull", S.inventoryDisplay?.mode === "container" && !!S.inventoryDisplay.image);
+  check("fto: the skull starts closed (right-click to open)", S.inventoryDisplay?.startClosed === true);
+
+  // THE RIDE: both duel passes are steerable rides, not quick-times.
+  const fight1 = byId.get("fto_ride")!.choices!.find((c) => c.id === "ftoc_fight1")!;
+  const fight2 = byId.get("fto_ride2")!.choices!.find((c) => c.id === "ftoc_fight2")!;
+  check("fto: the first duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2);
+  check("fto: the second duel is harder (more lanes)", !!fight2.ride && (fight2.ride.lanes ?? 0) > (fight1.ride.lanes ?? 3));
+  check("fto: a crash routes to the game-over ending", fight1.timedOutTargetSceneId === "fto_ride_dead" && fight2.timedOutTargetSceneId === "fto_ride_dead");
+  check("fto: winning the duel still sets the Rottwheeler flag", fight2.consequences?.setFlags?.includes("fto_rott_beaten"));
+
+  // PUZZLE CHAIN, end to end (the faithful opening).
+  check("fto: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["fto_free"] }, st));
+  apply(hs("fto_dump", "ftoh_lid").action);
+  check("fto: punching the lid sets fto_free", st.activeFlags.has("fto_free"));
+  check("fto: ride-out is locked before the keys", !meetsGating({ requiresItems: ["fto_keys"] }, st));
+  const quohogTopics = hs("fto_bar", "ftoh_quohog").action.topics;
+  check("fto: Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  apply(quohogTopics!.find((t) => t.id === "fto_topic_keys")!);
+  check("fto: asking for the keys sets fto_quohog_talked", st.activeFlags.has("fto_quohog_talked"));
+  apply(hs("fto_bar", "ftoh_quohog_grab").action);
+  check("fto: the shakedown hands over the keys", st.inventory.some((i) => i.id === "fto_keys"));
+  check("fto: ride-out unlocks with the keys", meetsGating({ requiresItems: ["fto_keys"] }, st));
+
+  // Faithful characters: Ben is the Polecats' LEADER (not chasing them).
+  const ben = S.characters.find((c) => c.id === "ben");
+  check("fto: Ben is the leader of the Polecats", ben?.role === "Leader of the Polecats");
 }
 
 /* ================================================================== */

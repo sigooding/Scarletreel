@@ -5,6 +5,15 @@ a faithful point-and-click reconstruction of the opening act of LucasArts'
 *Full Throttle* (1995), authored in this engine's **adventure mode** and
 registered in the catalogue (`src/data/stories.ts`). It recreates, in order:
 
+> **Also see `src/data/fullThrottleOriginal.ts` — "Full Throttle"**, the
+> true-to-the-original opening rebuilt as its own story specifically to
+> showcase the two "feel" features: the **right-click flaming-skull inventory**
+> (`inventoryDisplay.startClosed` — opened with a right-click, right-click an
+> item for the verb menu) and the **steerable ride minigame** (`choice.ride`
+> — weave the lanes against the Rottwheelers). It is the same opening act,
+> not a reimagining: Ben is the Polecats' leader, the keys come off Quohog,
+> and the ride is a real road chase.
+
 1. **Opening credits** — Ben's flash-forward narration ("Whenever I smell
    asphalt, I think of Maureen…") over a night-ride still, as a `credits` node.
 2. **The limo scene** — the full "Ripburger, you're dumber than dirt!" exchange.
@@ -124,39 +133,86 @@ you. That's now in the engine:
   (`ft_dump` — punch the lid, then climb out), which is the true first
   playable screen of the original.
 
-### B. 🔶 PARTLY DONE — the Rottwheeler duel is now a QTE fight
+### B. ✅ DONE — the ride is now a steerable locomotion minigame
 
-The duel is no longer narrated as plain beats: `ft_ride` → `ft_ride2` are
-**quick-time choices** (⚡ HIT HIM! / ⚡ BOOT HIM! with heartbeat sting and
-shaky-cam). Hesitate on either and the clock routes to `ft_ride_dead` — a
-`gameover` ending ("KILLED ON HIGHWAY 9"), because the original really does
-kill you if you lose the fight. The crash, Miranda and the "asphalt" bookend
-still play as beats, and the whole golden path (punch → climb → kick → talk →
-shake down → ride → duel) is asserted in the engine tests.
+The ride is no longer a QTE cutscene: `ft_ride` → `ft_ride2` (and the Corville
+Run's `ft2_ride`) are now **playable road chases**. A choice carrying
+`choice.ride` (see `RideConfig` in `src/types.ts`, rendered by
+`src/game/RideGame.tsx`) launches a steerable arcade sequence — Ben's bike
+sits at the bottom of the frame in a lane, oncoming traffic scrolls toward
+him, and you weave with ←/→ (or A/D, or tap a lane on touch) to dodge it.
+Survive the ride's duration and you run the target down (the choice's
+`consequences` apply and you head to `targetSceneId`); let traffic reach you
+and you crash — routed to `timedOutTargetSceneId` exactly like the old QTE
+hesitation path, so losing is still the `gameover` "KILLED ON HIGHWAY 9"
+ending. The `ftc_fight2` win still sets `ft_rott_beaten`, so the milestone and
+flag note stay intact. Crash, Miranda and the "asphalt" bookend still play as
+beats; the whole golden path is asserted in the engine tests.
 
-What's still missing is a *locomotion* minigame — the engine has no vehicle
-physics, so the ride itself is a cutscene; the fight is timing, not steering.
+It's opt-in: a story that never sets `ride` is untouched, and the old
+`quickTime` QTE machinery still works for non-ride deadlines.
 
-### C. Topic-list dialogue
+### C. ✅ DONE — topic-list dialogue (`startDialogue.topics`)
 
-Quohog's scene is linear beats. The original lets you *ask* Quohog about
-things and repeat them; topic trees are how a LucasArts bartender works. The
-engine's dialogue is beats + reply choices (gated, `hidden`, `memoryLog`), so a
-`topics[]` model on `startDialogue` (per-topic gates, an "exhausted" state, a
-"leave" node) would be needed for real NPC conversations.
+Quohog's scene is now a **topic hub**, not linear beats: talking opens a list
+of askable questions, each topic plays its own beats, and the conversation
+returns to the hub (a "leave" option ends it). The opt-in model is
+`action.topics` on a `startDialogue` marker (see `src/types.ts` →
+`DialogueTopic`):
 
-### D. Static NPCs
+- `label` is the player-facing question; `beats` is the exchange that plays
+  (reusing the full `DialogueBeat` machinery — voice, expressions, recalls).
+- `gating` hides a topic until flags/items/trust are ready.
+- a non-`repeatable` topic is **exhausted** after one ask (stays in the hub
+  with a ✓); `repeatable` re-asks.
+- `flagSet` records the ask, so later topics/beats/hotspots gate on it — in
+  the recreation, the "My keys, Quohog." topic sets `ft_quohog_talked`, which
+  is what unlocks the grab (fist) marker.
 
-Only the player walks. Quohog stands behind the bar; in the original, scene
-NPCs idle (polish the glass) and react. The engine has sprite sheets and
-foreground extras but no NPC schedule/walk-cycle (documented gap #4).
+Stories that never set `topics` are 100% unchanged — the scene's linear
+`dialogueBeats` play exactly as before. Studio authors it on the Hotspots tab:
+a 🗣 Start-conversation marker gains a **💬 Topic-list conversation** editor
+(label, gate, "askable again", "sets flag", and per-topic lines).
 
-### E. Inventory as a right-click skull
+### D. ✅ DONE — ambient NPC idle/walk cycles (`stage.npcs`)
+
+Scene NPCs are no longer frozen props. A room can now list **ambient NPCs**
+(`stage.npcs`, opt-in): each is a living actor that **idles** (loops its
+`idle` animation) and — when it carries a `patrol` — **walks a route**
+between waypoints (switching to `walk`), pausing idle at each before looping
+back. They use the exact same `SpriteSheet` model as the walker (`idle` /
+`walk`, each falling back to the other), and are depth-scaled by their y and
+z-sorted by their feet, so they overlap the player the way people overlap in
+a room — and scroll with the camera on wide worlds. NPCs are pure
+set-dressing: interaction still lives on hotspots (Quohog is a hotspot, and
+a hotspot's own `sheet` already loops a "polish the glass" idle).
+
+- **`StageNpc`**: `id` · `sheet` (or static `image`/`emoji:`) · `x`/`y` spawn
+  · `facing` · `scale` · `speed` · `patrol: { x, y, pause? }[]`.
+- No `patrol` = stand and idle forever (the classic bartender).
+- Studio: the 🚶 Walkable Stage panel gained an **🚶 Ambient NPCs** editor
+  (add/remove, sheet via the same sprite-sheet controls, spawn/facing/scale/
+  speed, and a per-NPC waypoint list).
+- `Full Throttle — The Corville Run` ships a patrolling **barfly** in the
+  Kickstand (`ft2_barfly`, `/assets/sprites/ft2-barfly.png`): he paces the
+  floor, drinking at each end. Engine tests assert the sheet + patrol shape;
+  the DOM smoke test confirms he renders in the bar.
+
+### E. ✅ DONE — inventory as a right-click skull
 
 FT shows the inventory as a stretched skull with items in its mouth, opened
-with right-click. Here it's a bottom-left "Jacket" container. The container
-mode is a good match visually; what's missing is **right-click-to-open** and a
-**use-item-on-item at the cursor** beyond drag-to-combine.
+with right-click. The engine's `container` inventory mode already matched the
+visual; the two missing pieces are now in `src/game/InventoryDock.tsx`:
+
+- **Right-click-to-open**: right-clicking the dock toggles it open/closed —
+  the skull-pop gesture, no left-click required.
+- **Right-click verb menu on items**: right-clicking an item pops a small
+  context menu at the cursor with **🔍 Inspect**, **✋ Use on…**, and (when the
+  story has a recipe) **🔗 Combine…**. "Use on…" enters a targeting mode — the
+  next click on a scene object *uses* the item there, or on another item
+  *combines* the two at the cursor, with an on-screen hint and Esc to cancel.
+  This is the "use-item-on-item at the cursor" affordance beyond the existing
+  drag-to-combine.
 
 ---
 
@@ -180,10 +236,10 @@ mode is a good match visually; what's missing is **right-click-to-open** and a
 | 1 | ~~`kick` (and `punch`) verbs + per-object answers~~ **DONE (opt-in)** | — |
 | 2 | ~~Object-first verb menu (the "skull")~~ **DONE (opt-in; hold-to-open skull pie + theme sprite)** | — |
 | 3 | ~~Walk-off-screen edge exits + camera~~ **DONE (wide worlds, edge arrows, entry spawns — see §A)** | — |
-| 4 | ~~Bike/combat minigame~~ **🔶 PARTLY — QTE duel with a real game-over (see §B); no vehicle locomotion yet** | — |
-| 5 | Topic-list dialogue | medium |
-| 6 | NPC schedules / walk cycles | medium |
+| 4 | ~~Bike/combat minigame~~ **DONE — steerable ride minigame (`choice.ride`, see §B)** | — |
+| 5 | ~~Topic-list dialogue~~ **DONE (opt-in `topics[]` — see §C)** | — |
+| 6 | ~~NPC schedules / walk cycles~~ **DONE (ambient `stage.npcs` — see §D)** | — |
 
-The next highest-leverage change is **#5** — a `topics[]` model on
-`startDialogue` so Quohog can be *asked* about things (per-topic gates,
-exhausted states) instead of the current linear beat conversation.
+All six Full Throttle "feel" gaps are now closed: the wide-world scroll, the
+hold-to-open skull pie, walk-off edges, the steerable bike-riding minigame,
+topic-list dialogue, and the right-click skull inventory.

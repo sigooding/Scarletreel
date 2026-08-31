@@ -66,7 +66,8 @@ export type HotspotActionType =
   | "openMap"
   | "useItem"
   | "patternPuzzle"
-  | "startDialogue";
+  | "startDialogue"
+  | "setPlayerPose";
 
 export interface HotspotAction {
   type: HotspotActionType;
@@ -82,6 +83,26 @@ export interface HotspotAction {
   /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
    * a conversation. This action needs no payload of its own — the scene's
    * beats ARE the payload. Any flagSet / meterChange here still applies. */
+  /** OPT-IN topic-list dialogue. When a `startDialogue` marker carries this,
+   *  the conversation is a HUB of askable topics (see DialogueTopic) instead
+   *  of the scene's linear `dialogueBeats`: pick a topic, its beats play, then
+   *  it returns to the hub; a leave option ends the conversation. Stories
+   *  without it are unchanged. */
+  topics?: DialogueTopic[];
+  /** Hub heading shown above the topic list (default "What do you want to ask?"). */
+  topicPrompt?: string;
+  /** The leave option's label (default "Never mind"). */
+  topicLeaveLabel?: string;
+  /** setPlayerPose hotspots switch the WALKER's sprite animation to a named
+   *  pose — a "bend down" to look under the bar, a "crouch", a "reach". Not
+   *  a flag: the pose IS the animation name on the player's sheet. Flags are
+   *  for persistent state; here they're optional — `gating` decides WHEN the
+   *  pose fires, and `flagSet` can still record that it happened. */
+  playerPose?: string;
+  /** When true, the pose plays ONCE then the walker reverts to idle/scene
+   *  default (a transient "bend down and back up"). Default false = hold the
+   *  pose until movement or another pose clears it. */
+  playerPoseOnce?: boolean;
 }
 
 export interface Hotspot {
@@ -211,6 +232,36 @@ export interface Choice {
    * Default false — you flash it, you keep it. The choice being one-shot
    * already prevents showing the same item twice for two reactions. */
   consumePresentedItem?: boolean;
+  /** OPT-IN playable ride minigame (Full Throttle's road sequence). Picking
+   *  this choice launches a steering game instead of navigating at once: the
+   *  player weaves through oncoming traffic for the ride's duration — survive
+   *  to `targetSceneId` (the choice's `consequences` apply on the win), crash
+   *  to `timedOutTargetSceneId`. Mutually exclusive with `quickTime`. */
+  ride?: RideConfig;
+}
+
+/** A playable vehicle-ride minigame (Full Throttle's highway chase): steer
+ *  left/right across lanes, dodging oncoming traffic. Reaching the end wins
+ *  the ride; a crash routes to the choice's `timedOutTargetSceneId`. */
+export interface RideConfig {
+  /** number of lanes (default 3) */
+  lanes?: number;
+  /** seconds the ride lasts before you run the target down (default 18) */
+  durationSeconds?: number;
+  /** oncoming traffic sprites — image urls / `asset:` / `emoji:` (default 🚗) */
+  traffic?: string[];
+  /** the rider's vehicle (image url / `asset:` / `emoji:`) — default 🏍 */
+  vehicleImage?: string;
+  /** ms between traffic spawns (default 1200) */
+  spawnMs?: number;
+  /** traffic scroll speed, as a fraction of screen height per second (default 0.5) */
+  speed?: number;
+  /** the big prompt shown at the top while riding */
+  prompt?: string;
+  /** caption shown on a clean run (default "You catch him.") */
+  winText?: string;
+  /** caption shown on a crash (default "You went down.") */
+  crashText?: string;
 }
 
 /** A catch-them-in-a-lie beat. Authored on a DialogueBeat via `beat.lie`:
@@ -327,6 +378,41 @@ export interface DialogueBeat {
   /** Hold time (seconds) between the finished line and the auto-route
    * (default 1.6). Ignored in "continue" mode. */
   afterBeatDelaySeconds?: number;
+}
+
+/**
+ * TOPIC-LIST DIALOGUE (opt-in) — one askable question in an NPC conversation
+ * hub, the way a LucasArts bartender works: walk up, pick what to ask, hear
+ * the answer, and (unless it's exhausted) ask again or ask something else.
+ *
+ * Authored on a `startDialogue` hotspot's action (`topics`). When a
+ * `startDialogue` marker carries `topics`, the conversation opens as a HUB of
+ * these instead of playing the scene's linear `dialogueBeats`. Each topic:
+ *  - `label` is the player-facing question ("Where's my gang?").
+ *  - `beats` are the exchange that plays when it's chosen (reusing the full
+ *    DialogueBeat machinery — voice, expressions, backgrounds, recalls).
+ *  - `gating` hides the topic until flags/items/trust are ready.
+ *  - a non-`repeatable` topic is exhausted after one ask (it stays in the hub
+ *    with a ✓ so the player knows it's covered); `repeatable` lets it replay.
+ *  - `flagSet` records that the topic was asked, so later topics, beats, or
+ *    the wider story can gate on it.
+ *
+ * Stories that never set `topics` are 100% unchanged — the scene's
+ * `dialogueBeats` play exactly as before.
+ */
+export interface DialogueTopic {
+  /** stable id — tracks "already asked" state and is what other topics gate on */
+  id: string;
+  /** the player-facing question / line shown on the hub */
+  label: string;
+  /** optional gate: hidden from the hub until flags/items/trust are met */
+  gating?: Gating;
+  /** the exchange played when this topic is chosen */
+  beats: DialogueBeat[];
+  /** askable more than once (default false — asked once, then exhausted) */
+  repeatable?: boolean;
+  /** flag set the moment the topic is chosen (gate later topics / story) */
+  flagSet?: string;
 }
 
 export interface EndingData {
@@ -964,6 +1050,14 @@ export interface StageSettings {
    *  screen. Default { top: 62, bottom: 94 }. Clicks outside the band walk
    *  to the nearest edge of it. */
   floor?: { top: number; bottom: number };
+  /** WALK PATH — an arbitrary walkable polygon instead of the flat band.
+   *  When ≥3 points are set, the walkable zone IS this polygon (world-%:
+   *  x spans 0–worldWidth, y spans 0–100), so you can carve a winding path,
+   *  a corridor that turns a corner, an L-shaped boardwalk — anything the
+   *  plain band can't. Perspective depth still reads from the polygon's
+   *  y-extent (bottom = near, top = far). Overrides `floor` for movement;
+   *  `floor` (or the polygon's bounds) still drives the depth scale. */
+  floorPoints?: { x: number; y: number }[];
   /** Perspective: how much SMALLER the character is drawn at the top of the
    *  floor vs the bottom, 0–0.9 (default 0.35). 0 = flat, no depth scaling. */
   depthScale?: number;
@@ -975,6 +1069,12 @@ export interface StageSettings {
   playerFarScale?: number;
   /** Base scale of the player sprite (default 1). */
   playerScale?: number;
+  /** Named animation to force the walker into (from the player's sprite
+   *  sheet), e.g. "bend", "crouch", "reach" — held for the WHOLE scene as
+   *  the walker's default pose instead of idle. The sprite still flips
+   *  left/right with facing; movement plays this pose rather than the walk
+   *  cycle. A `setPlayerPose` hotspot action can override it mid-scene. */
+  playerPose?: string;
   /** When interaction labels show on markers:
    *  - "proximity" (default): labels fade in as the character approaches
    *  - "always": every marker wears its label (busy but explicit)
@@ -1012,6 +1112,36 @@ export interface StageSettings {
    *  Essential on a wide world with several doors — walk in from the bar
    *  and you stand at the bar's door, not back at the dumpster. */
   entrySpawns?: Record<string, { x: number; y: number }>;
+  /** AMBIENT NPCS — scene actors that idle and (optionally) walk a patrol:
+   *  the bartender polishing a glass, a barfly pacing, a street vendor
+   *  swaying on their stool. Pure stage life — depth-scaled and z-sorted
+   *  with the walker, scrolling with the camera on wide worlds. Interaction
+   *  stays on hotspots; an NPC's sheet is the same SpriteSheet the walker
+   *  uses (`idle` at rest, `walk` while patrolling, each falling back to
+   *  the other). */
+  npcs?: StageNpc[];
+}
+
+/** An ambient scene actor (see StageSettings.npcs). */
+export interface StageNpc {
+  id: string;
+  /** Static fallback art (image url / `asset:` / `emoji:`) when no sheet. */
+  image?: string;
+  /** Sprite sheet — `idle` at rest, `walk` while patrolling. */
+  sheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Spawn position, % of the WIDE world (x 0–worldWidth, y 0–100). */
+  x: number;
+  y: number;
+  /** Flat scale on top of the depth scaling (default 1). */
+  scale?: number;
+  /** Initial facing (default "right"). */
+  facing?: "left" | "right";
+  /** Patrol route: walk from the spawn to each waypoint in turn, PAUSE idle
+   *  `pause` seconds at each, then loop back to the start. Omit to stand and
+   *  idle forever (the classic bartender). */
+  patrol?: { x: number; y: number; pause?: number }[];
+  /** Walk speed in world-% / second (default: the room's walker speed). */
+  speed?: number;
 }
 
 /** One walk-off-screen exit of a stage room (see StageSettings.exitEdges). */
@@ -1386,6 +1516,14 @@ export interface Story {
    *  unset keeps the default skull emoji and every non-opt-in game is
    *  untouched. Authored on the 🎮 In-game theme tab, beside the cursors. */
   verbMenuIcon?: string;
+  /** OPT-IN master switch for the object-first verb menu (the skull pie).
+   *  The menu is already per-scene opt-in (StageSettings.objectVerbMenu);
+   *  this is the STORY-wide kill-switch. Default undefined = "on" (scenes
+   *  that opt in keep their menu, so existing stories like Full Throttle are
+   *  untouched). Set `false` to disable the pie everywhere — every scene's
+   *  objectVerbMenu / objectMenuHold is ignored — so a game that never uses
+   *  it never shows it. Authored on the 🎮 In-game theme tab. */
+  verbMenuEnabled?: boolean;
   /** Default "that doesn't work" lines for the verb coin, per verb. An
    *  author-supplied Hotspot.wrongVerbText wins; otherwise one of these is
    *  picked (varied, so repeating a failed verb doesn't read like a loop). */

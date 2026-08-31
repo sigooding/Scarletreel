@@ -75,12 +75,76 @@ export function InventoryDock({
   const [combineSel, setCombineSel] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragItem | null>(null);
   const dragRef = useRef<{ item: Item; startX: number; startY: number; active: boolean } | null>(null);
+  // Full Throttle's right-click skull: right-click an item to pop a small verb
+  // menu at the cursor (inspect / use-on / combine), and right-click the dock
+  // to open or close it. `useOn` is the "use this on…" targeting mode.
+  const [ctxMenu, setCtxMenu] = useState<{ item: Item; x: number; y: number } | null>(null);
+  const [useOn, setUseOn] = useState<Item | null>(null);
 
   useEffect(() => {
     if (!flash) return;
     const t = setTimeout(() => setFlash(null), 900);
     return () => clearTimeout(t);
   }, [flash]);
+
+  /* ---- close the right-click menu on outside clicks / blur / Escape ---- */
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
+  /* ---- "use on…" targeting: the NEXT click resolves the action ---- */
+  useEffect(() => {
+    if (!useOn) return;
+    const resolve = (e: PointerEvent) => {
+      const el = hitTest(e.clientX, e.clientY);
+      const hotspotId = el?.closest?.("[data-hs-id]")?.getAttribute("data-hs-id") ?? null;
+      if (hotspotId && onUseItem) {
+        audio.pickup();
+        onUseItem(useOn, hotspotId);
+        setUseOn(null);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const otherId = el?.closest?.("[data-item-id]")?.getAttribute("data-item-id") ?? null;
+      if (otherId && otherId !== useOn.id) {
+        const b = state.inventory.find((i) => i.id === otherId);
+        if (b) {
+          setFlash(b.id);
+          setCombineSel(null);
+          onCombine(useOn, b);
+          setUseOn(null);
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+      // Clicked nothing that accepts the item — drop out of targeting.
+      audio.fail();
+      setUseOn(null);
+    };
+    const cancel = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUseOn(null);
+    };
+    window.addEventListener("pointerdown", resolve, true);
+    window.addEventListener("keydown", cancel);
+    return () => {
+      window.removeEventListener("pointerdown", resolve, true);
+      window.removeEventListener("keydown", cancel);
+    };
+  }, [useOn, onCombine, onUseItem, state.inventory]);
 
   /* ---- pointer drag: onto an object (USE) or onto another item (combine) -- */
   const finishDrag = useCallback(
@@ -151,9 +215,16 @@ export function InventoryDock({
           audio.click();
           setOpen((o) => !o);
         }}
+        onContextMenu={(e) => {
+          // Full Throttle opens the skull with a right-click.
+          e.preventDefault();
+          audio.click();
+          setOpen((o) => !o);
+        }}
         className="hud-btn px-3 py-1.5"
         data-active={open || undefined}
         aria-expanded={open}
+        title="Right-click to open or close"
       >
         {isContainer ? "🎒" : "🧳"} {display.label} {state.inventory.length} {open ? "▾" : "▸"}
       </button>
@@ -209,6 +280,11 @@ export function InventoryDock({
         }
       }}
       onPointerDown={(e) => startDrag(item, e)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        audio.click();
+        setCtxMenu({ item, x: e.clientX, y: e.clientY });
+      }}
       onClick={() => {
         if (dragRef.current?.active) return; // that was a drag, not a click
         if (combineMode) {
@@ -228,7 +304,7 @@ export function InventoryDock({
         audio.click();
         onInspect(item);
       }}
-      title={`${item.name} — ${combineMode ? "combine mode: tap two items" : "click to inspect, drag onto an object to use it, or onto another item to combine"}`}
+      title={`${item.name} — ${combineMode ? "combine mode: tap two items" : "click to inspect · drag onto an object to use it, or onto another item to combine · right-click for the verb menu"}`}
       className={`relative flex items-center justify-center border-2 text-2xl transition-transform hover:scale-110 ${
         item.isClue ? "border-crimson/60 bg-crimson/10" : "border-paper/30 bg-noir-700"
       } ${flash === item.id ? "combine-flash" : ""} ${
@@ -306,6 +382,66 @@ export function InventoryDock({
           {drag.over ? <span className="absolute -bottom-5 whitespace-nowrap font-pulp text-[8px] uppercase tracking-widest text-gold">use on it</span> : null}
         </div>
       ) : null}
+
+      {/* Full Throttle's right-click verb menu — pops at the cursor. */}
+      {ctxMenu && (
+        <div
+          className="fixed z-[95] w-44 overflow-hidden rounded border border-gold/40 bg-noir-900/95 shadow-[0_10px_30px_rgba(0,0,0,0.7)] backdrop-blur"
+          style={{
+            left: Math.max(4, Math.min(ctxMenu.x, window.innerWidth - 190)),
+            top: Math.max(4, Math.min(ctxMenu.y, window.innerHeight - 150)),
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          role="menu"
+        >
+          <div className="truncate border-b border-paper/15 px-3 py-1.5 font-pulp text-[9px] uppercase tracking-widest text-paper/60">
+            {ctxMenu.item.icon} {ctxMenu.item.name}
+          </div>
+          <button
+            role="menuitem"
+            className="hud-menu-item flex w-full items-center gap-2 px-3 py-2 text-left"
+            onClick={() => {
+              audio.click();
+              onInspect(ctxMenu.item);
+              setCtxMenu(null);
+            }}
+          >
+            <span>🔍</span> Inspect
+          </button>
+          <button
+            role="menuitem"
+            className="hud-menu-item flex w-full items-center gap-2 px-3 py-2 text-left"
+            onClick={() => {
+              audio.click();
+              setUseOn(ctxMenu.item);
+              setCtxMenu(null);
+            }}
+          >
+            <span>✋</span> Use on…
+          </button>
+          {hasCrafting && (
+            <button
+              role="menuitem"
+              className="hud-menu-item flex w-full items-center gap-2 px-3 py-2 text-left"
+              onClick={() => {
+                audio.click();
+                setCombineMode(true);
+                setCombineSel(ctxMenu.item.id);
+                setCtxMenu(null);
+              }}
+            >
+              <span>🔗</span> Combine…
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* "Use on…" targeting hint — the next click resolves the action. */}
+      {useOn && (
+        <div className="fixed left-1/2 top-3 z-[95] -translate-x-1/2 whitespace-nowrap rounded border border-gold/50 bg-noir-900/95 px-4 py-2 font-pulp text-[10px] uppercase tracking-widest text-gold shadow-[0_8px_20px_rgba(0,0,0,0.6)]">
+          {useOn.icon} Use {useOn.name} on… <span className="text-paper/50">(Esc to cancel)</span>
+        </div>
+      )}
     </>
   );
 }

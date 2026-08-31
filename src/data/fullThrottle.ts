@@ -35,12 +35,15 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * untouched — see docs/adventure-mode.md and docs/full-throttle-assessment.md.
  *
  * REMAINING GAPS (ranked — see the assessment doc):
- *   1. The coin is verb-FIRST (pick a verb, then click); Full Throttle is
- *      object-first (hold an object, the skull pops, pick fist/eye/mouth/boot).
- *      The recreation uses the object-first menu everywhere it can.
- *   2. No bike-riding locomotion — the Rottwheeler duel is a QTE fight, the
+ *   1. No bike-riding locomotion — the Rottwheeler duel is a QTE fight, the
  *      crash is narrated (the assessment's planned minigame is partly in).
- *   3. Topic-list dialogue — Quohog's conversation is linear beats.
+ *   2. Inventory opens as a bottom-left "Jacket", not a right-click skull.
+ *
+ * Topic-list dialogue and ambient NPC idle/walk cycles are now IN:
+ *   • Quohog's conversation is a hub of askable questions (action.topics) —
+ *     the LucasArts bartender.
+ *   • Scene NPCs idle and patrol via stage.npcs (see the Corville Run's
+ *     barfly in fullThrottleCorville.ts).
  */
 
 /** Ben's walk cycle — four frames, sliced from a flat-magenta plate by
@@ -785,6 +788,9 @@ export const FULL_THROTTLE: Story = {
           label: "Quohog the bartender",
           bounds: { x: 14, y: 50, w: 16, h: 42 },
           cursor: "talk",
+          // Re-askable: the player can walk away mid-talk and come back — the
+          // shakedown only unlocks once they've actually ASKED for the keys.
+          isRepeatable: true,
           verbs: {
             look: {
               type: "showText",
@@ -799,10 +805,53 @@ export const FULL_THROTTLE: Story = {
               text: "You could boot the bar. It's not the bar that's lying to you.",
             },
           },
-          // Talking to Quohog is what unlocks the fist: the conversation
-          // itself sets ft_quohog_talked, so the grab marker (gated on it)
-          // opens up afterwards — a proper talk-then-shake-down chain.
-          action: { type: "startDialogue", flagSet: "ft_quohog_talked" },
+          // TOPIC-LIST DIALOGUE (opt-in): talking opens a hub of questions —
+          // the LucasArts bartender, not a linear cutscene. Asking "My keys"
+          // is what sets ft_quohog_talked and unlocks the grab marker.
+          action: {
+            type: "startDialogue",
+            topicPrompt: "Quohog wipes the same glass. What do you want to ask?",
+            topicLeaveLabel: "Walk away",
+            topics: [
+              {
+                id: "ft_topic_gang",
+                label: "Where's my gang?",
+                beats: [
+                  { id: "ftb_t1a", characterId: "ben", text: "I just want my keys. Where's my gang?" },
+                  {
+                    id: "ftb_t1b",
+                    characterId: "quohog",
+                    text: "They rode out with that Corley fella and the suit. 'Bout an hour ago. Said somethin' about the shareholders' meeting in Corville.",
+                  },
+                ],
+              },
+              {
+                id: "ft_topic_suit",
+                label: "What did the suit tell you?",
+                beats: [
+                  {
+                    id: "ftb_t2a",
+                    characterId: "quohog",
+                    text: "The suit — the one with the cane and the soft hands — he told me to hang onto these. In case you came sniffing around.",
+                  },
+                ],
+              },
+              {
+                id: "ft_topic_keys",
+                label: "My keys, Quohog.",
+                flagSet: "ft_quohog_talked",
+                beats: [
+                  { id: "ftb_t3a", characterId: "ben", text: "Give 'em here, Quohog." },
+                  {
+                    id: "ftb_t3b",
+                    characterId: "quohog",
+                    text: "Now hold on. There's been talk, Ben. Talk that you and the Polecats are in some kind of trouble. I ain't gettin' involved.",
+                  },
+                  { id: "ftb_t3c", characterId: "ben", text: "You're already involved. You're holding my keys." },
+                ],
+              },
+            ],
+          },
         },
         {
           id: "fth_quohog_grab",
@@ -856,48 +905,9 @@ export const FULL_THROTTLE: Story = {
           action: { type: "goToScene", targetSceneId: "ft_alley" },
         },
       ],
-      dialogueBeats: [
-        {
-          id: "ftb_q1",
-          characterId: "ben",
-          text: "I, uh, fixed your door. It was sticking.",
-        },
-        {
-          id: "ftb_q2",
-          characterId: "quohog",
-          text: "Look, I don't want no trouble. Just leave me out of this mess.",
-        },
-        {
-          id: "ftb_q3",
-          characterId: "ben",
-          text: "I just want my keys. Where's my gang?",
-        },
-        {
-          id: "ftb_q4",
-          characterId: "quohog",
-          text: "They rode out with that Corley fella and the suit. 'Bout an hour ago. Said somethin' about the shareholders' meeting in Corville.",
-        },
-        {
-          id: "ftb_q5",
-          characterId: "quohog",
-          text: "And the suit — the one with the cane and the soft hands — he told me to hang onto these. In case you came sniffing around.",
-        },
-        {
-          id: "ftb_q6",
-          characterId: "ben",
-          text: "Give 'em here, Quohog.",
-        },
-        {
-          id: "ftb_q7",
-          characterId: "quohog",
-          text: "Now hold on. There's been talk, Ben. Talk that you and the Polecats are in some kind of trouble. I ain't gettin' involved.",
-        },
-        {
-          id: "ftb_q8",
-          characterId: "ben",
-          text: "You're already involved. You're holding my keys.",
-        },
-      ],
+      // Quohog's conversation is a TOPIC LIST (see fth_quohog.action.topics),
+      // not linear beats — asking "My keys" is what unlocks the shakedown.
+      dialogueBeats: [],
       choices: [],
     },
 
@@ -937,15 +947,19 @@ export const FULL_THROTTLE: Story = {
       choices: [
         {
           id: "ftc_fight1",
-          text: "Swing your chain at his head!",
-          quickTime: true,
-          qtePrompt: "HIT HIM!",
-          timeLimitSeconds: 5,
-          qteHeartbeat: true,
-          qteShakyCam: true,
+          text: "Weave through the traffic — lose him!",
           targetSceneId: "ft_ride2",
           attitudeTag: "Aggressive",
           timedOutTargetSceneId: "ft_ride_dead",
+          ride: {
+            lanes: 3,
+            durationSeconds: 16,
+            prompt: "OUTRUN THE ROTTWHEELER",
+            traffic: ["emoji:🚚", "emoji:🚗", "emoji:🚙", "emoji:🚓", "emoji:🏍"],
+            vehicleImage: "emoji:🏍",
+            winText: "You leave him eating your dust.",
+            crashText: "The chain takes you down.",
+          },
         },
       ],
       hotspots: [],
@@ -980,14 +994,23 @@ export const FULL_THROTTLE: Story = {
         {
           id: "ftc_fight2",
           text: "Boot his front wheel — knock him off the road!",
-          quickTime: true,
-          qtePrompt: "BOOT HIM!",
-          timeLimitSeconds: 5,
-          qteHeartbeat: true,
-          qteShakyCam: true,
           targetSceneId: "ft_ride3",
           attitudeTag: "Aggressive",
           timedOutTargetSceneId: "ft_ride_dead",
+          // The Rottwheeler is off the road — record it, so the milestone
+          // shows up in the journey log (and the flag note stops being orphaned).
+          consequences: { setFlags: ["ft_rott_beaten"] },
+          ride: {
+            lanes: 4,
+            durationSeconds: 18,
+            spawnMs: 900,
+            speed: 0.65,
+            prompt: "BOOT HIM!",
+            traffic: ["emoji:🚚", "emoji:🚗", "emoji:🚙", "emoji:🚓", "emoji:🏍", "emoji:🛻"],
+            vehicleImage: "emoji:🏍",
+            winText: "Your boot finds his front wheel.",
+            crashText: "You went down at speed.",
+          },
         },
       ],
       hotspots: [],

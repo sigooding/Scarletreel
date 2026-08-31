@@ -23,11 +23,12 @@ Rendering is CSS `background-position` stepping (src/game/SheetSprite.tsx) —
 no canvas, zero work while an animation holds a single frame. The data model
 and frame maths live in src/game/spriteSheet.ts (pure, Node-testable).
 
-## The three places a sheet plugs in
+## The four places a sheet plugs in
 
 | Field | Animation names the engine looks up | Studio editor |
 | --- | --- | --- |
 | `scene.stage.playerSheet` — the stage walker | `walk` while moving, `idle` at rest | Scene tab → 🚶 Walkable Stage → 🎞 Sprite-sheet walker |
+| `scene.stage.npcs[].sheet` — an ambient NPC (idle / patrol) | `idle` at rest, `walk` while patrolling (each falls back to the other) | Scene tab → 🚶 Walkable Stage → 🚶 Ambient NPCs |
 | `character.talkingSheet` — talking portrait | `talk` while the active speaker, `rest` otherwise | Characters tab → 🗣 Talking animation → 🎞 Sprite-sheet portrait |
 | `foregroundExtra.sheet` — animated prop (flickering neon, a rain-lashed flag) | `loop`, played on repeat | 🎬 Cinematics → foreground extra → 🎞 Animate with a sprite sheet |
 

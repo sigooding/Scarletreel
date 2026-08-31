@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Hotspot, StageExitEdge, StageSettings } from "../types";
+import type { Hotspot, StageExitEdge, StageNpc, StageSettings } from "../types";
 import { CURSOR_ICON, hotspotAnswersVerb } from "../logic";
 import {
   STAGE2D_DEFAULT_REACH,
@@ -7,25 +7,26 @@ import {
   STAGE_GRID_STEP,
   VERB_ICON,
   VERB_LABEL,
-  clampToFloor,
+  clampToWalkPoly,
   hotspotAtPoint,
   posReachesMarker,
   stageAtWorldEdge,
-  stageBlocked,
+  stageBlockedPoly,
   stageCamX,
-  stageFloor,
-  stageMarkerPoint,
+  stageMarkerPointPoly,
   stagePlayerScale,
-  stageRoute,
+  stageRoutePoly,
   stageSpeedScale,
   stageSpriteScale,
+  stageWalkDepth,
+  stageWalkPoly,
   stepStagePos,
 } from "../logic";
 import type { VerbId } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
 import { SheetSprite } from "./SheetSprite";
-import { sheetDrawable } from "./spriteSheet";
+import { sheetAnim, sheetDrawable } from "./spriteSheet";
 import { presetStyle } from "./animation";
 
 /**
@@ -54,6 +55,13 @@ import { presetStyle } from "./animation";
  * plays or an overlay is open: movement stops and the markers hide.
  */
 
+/** An SVG path string for a walk polygon (world-%). Used for the subtle
+ *  walkable-path tint on path rooms. */
+function polyPathD(poly: { x: number; y: number }[]): string {
+  if (!poly.length) return "";
+  return `M ${poly.map((p) => `${p.x} ${p.y}`).join(" L ")} Z`;
+}
+
 const HINT_RADIUS = 16; // scene-width % — labels fade in within this of a marker
 
 /** HOLD-TO-OPEN skull pie (stage.objectMenuHold): press an object this long
@@ -72,6 +80,120 @@ export interface CoinItem {
   icon?: string;
 }
 
+/** An ambient scene actor — idles (loops its `idle` animation) and, when it
+ *  carries a `patrol`, walks between the waypoints (switching to `walk`) and
+ *  pauses idle at each before looping back to the start. Rendered exactly
+ *  like the walker: depth-scaled by its y, flipped by facing, and z-sorted by
+ *  its feet so it overlaps the player the way people overlap in a room. */
+function StageNpcActor({
+  npc,
+  floor,
+  settings,
+}: {
+  npc: StageNpc;
+  floor: { top: number; bottom: number };
+  settings: StageSettings;
+}) {
+  const [pos, setPos] = useState({ x: npc.x, y: npc.y });
+  const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
+  const [walking, setWalking] = useState(false);
+  const posRef = useRef(pos);
+  posRef.current = pos;
+
+  const hasSheet = sheetDrawable(npc.sheet);
+
+  // Patrol loop — a single rAF drives the walk cycle. Waypoints are authored
+  // on the floor, so movement is a straight line between them (no A*, no
+  // obstacle routing — ambient NPCs keep it simple); speed is depth-scaled so
+  // a distant NPC doesn't skate.
+  useEffect(() => {
+    const waypoints = npc.patrol && npc.patrol.length > 0 ? npc.patrol : null;
+    if (!waypoints) return; // no patrol — idle forever, nothing to drive
+    let raf = 0;
+    let last = performance.now();
+    let idx = 0;
+    let idleUntil = 0;
+    const speed = npc.speed ?? settings.speed ?? STAGE2D_DEFAULT_SPEED;
+    const step = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (now < idleUntil) {
+        setWalking(false);
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const wp = waypoints[idx];
+      const cur = posRef.current;
+      const dx = wp.x - cur.x;
+      const dy = wp.y - cur.y;
+      const dist = Math.hypot(dx, dy);
+      if (Math.abs(dx) > 0.05) setFacing(dx > 0 ? "right" : "left");
+      if (dist <= 0.5) {
+        setPos({ x: wp.x, y: wp.y });
+        setWalking(false);
+        const pause = (wp.pause ?? 2) * 1000;
+        idx = (idx + 1) % waypoints.length;
+        idleUntil = now + pause;
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const t = Math.min(1, (speed * dt) / dist);
+      setPos({ x: cur.x + dx * t, y: cur.y + dy * t });
+      setWalking(true);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [npc.id, npc.patrol, npc.speed, settings.speed]);
+
+  const depth = stageSpriteScale(pos.y, floor, settings) * (npc.scale ?? 1);
+  const flip = facing === "left" ? -1 : 1;
+  const isEmoji = (npc.image ?? "").startsWith("emoji:");
+  return (
+    <div
+      className="pointer-events-none absolute"
+      style={{
+        left: `${pos.x}%`,
+        top: `${pos.y}%`,
+        transform: `translate(-50%,-92%) scaleX(${flip}) scale(${depth})`,
+        zIndex: 50 + Math.round(pos.y),
+      }}
+    >
+      {hasSheet ? (
+        <SheetSprite
+          sheet={npc.sheet!}
+          anim={walking ? "walk" : "idle"}
+          fallbacks={walking ? ["idle"] : ["walk"]}
+          height={96}
+          freezeOnFallback={!walking}
+          className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]"
+        />
+      ) : npc.image ? (
+        isEmoji ? (
+          <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]">
+            {npc.image!.slice("emoji:".length)}
+          </span>
+        ) : (
+          <img
+            src={assetUrl(npc.image!)}
+            alt=""
+            draggable={false}
+            className="h-24 w-auto object-contain drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]"
+          />
+        )
+      ) : (
+        <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]">🚶</span>
+      )}
+      {/* ground shadow (not mirrored) */}
+      <span
+        className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]"
+        style={{ transform: `scaleX(${flip})` }}
+      />
+    </div>
+  );
+}
+
+
 export function Stage({
   settings,
   hotspots,
@@ -88,6 +210,9 @@ export function Stage({
   onEdgeExit,
   onEdgeLocked,
   edgeUnlocked,
+  pose,
+  poseOnce,
+  onPoseEnd,
 }: {
   settings: StageSettings;
   hotspots: Hotspot[];
@@ -124,13 +249,27 @@ export function Stage({
   /** Whether an edge exit's gate currently passes (red arrow = open,
    *  yellow = locked). Defaults to open. */
   edgeUnlocked?: (edge: "left" | "right") => boolean;
+  /** The walker's current POSE — a named animation on the player's sheet
+   *  overriding idle/walk (a "bend", "crouch"). Undefined = normal. */
+  pose?: string;
+  /** When true, play `pose` once then call onPoseEnd (transient). */
+  poseOnce?: boolean;
+  /** Fired when a one-shot pose's loop completes — Game clears the pose. */
+  onPoseEnd?: () => void;
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
-  const floor = stageFloor(settings);
   /** WIDE WORLD: room width in viewport-% (100 = single screen). */
   const worldW = Math.max(100, settings.worldWidth ?? 100);
   const wide = worldW > 100;
-  const spawn = clampToFloor(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, floor, worldW);
+  // The walkable region: a path polygon when the scene authors one, else the
+  // flat floor band as a rectangle. `floor` is its y-extent (depth band) —
+  // sprite scale / speed read it, so band rooms are pixel-identical to before.
+  const poly = stageWalkPoly(settings, worldW);
+  const floor = stageWalkDepth(poly);
+  // A scene with an authored path polygon walks THAT path instead of a flat
+  // band; band rooms keep the exact old rendering.
+  const usingPath = (settings.floorPoints?.length ?? 0) >= 3;
+  const spawn = clampToWalkPoly(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, poly, worldW);
   const speed = settings.speed ?? STAGE2D_DEFAULT_SPEED;
   const reach = settings.reach ?? STAGE2D_DEFAULT_REACH;
   const keyboard = settings.keyboard !== false;
@@ -351,20 +490,20 @@ export function Stage({
           // Wall sliding: if the diagonal is blocked, take whichever single
           // axis still works, so brushing a counter skims along it instead of
           // pinning the character in place.
-          if (obstacles.length && stageBlocked(want.x, want.y, obstacles, floor, a, worldW)) {
+          if (obstacles.length && stageBlockedPoly(want.x, want.y, obstacles, poly, a, worldW)) {
             const slideX = { x: want.x, y: cur.y };
             const slideY = { x: cur.x, y: want.y };
-            if (!stageBlocked(slideX.x, slideX.y, obstacles, floor, a, worldW)) next = slideX;
-            else if (!stageBlocked(slideY.x, slideY.y, obstacles, floor, a, worldW)) next = slideY;
+            if (!stageBlockedPoly(slideX.x, slideX.y, obstacles, poly, a, worldW)) next = slideX;
+            else if (!stageBlockedPoly(slideY.x, slideY.y, obstacles, poly, a, worldW)) next = slideY;
           } else {
-            next = clampToFloor(want.x, want.y, floor, worldW);
+            next = clampToWalkPoly(want.x, want.y, poly, worldW);
           }
           if (kb !== 0 || vf !== 0) setDir(dirOf(kb, vf));
           moved = next.x !== cur.x || next.y !== cur.y;
         } else if (targetRef.current) {
           const t = targetRef.current;
           const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings), dt, a);
-          next = clampToFloor(r.x, r.y, floor, worldW);
+          next = clampToWalkPoly(r.x, r.y, poly, worldW);
           if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
           moved = true;
           if (r.arrived) arrived = true;
@@ -402,7 +541,7 @@ export function Stage({
         // usually arrive because they clicked the marker.
         for (const hs of hotspotsRef.current) {
           if (firedRef.current.has(hs.id)) continue;
-          const m = stageMarkerPoint(hs, floor, worldW);
+          const m = stageMarkerPointPoly(hs, poly, worldW);
           if (!posReachesMarker(next, m, reach, a)) continue;
           // A coin room is verb-first: only the marker the player actually
           // aimed at fires, and it fires with the verb they picked. Brushing
@@ -422,7 +561,7 @@ export function Stage({
         // Which marker is "near" (for proximity labels)?
         let best: { id: string; d: number } | null = null;
         for (const hs of hotspotsRef.current) {
-          const m = stageMarkerPoint(hs, floor, worldW);
+          const m = stageMarkerPointPoly(hs, poly, worldW);
           const a2 = a;
           const d = Math.hypot(next.x - m.x, (next.y - m.y) * a2);
           if (!best || d < best.d) best = { id: hs.id, d };
@@ -502,7 +641,7 @@ export function Stage({
         itemId: v === "use" ? ctx?.itemId ?? heldRef.current ?? undefined : undefined,
       };
     }
-    const m = stageMarkerPoint(hs, floor, worldW);
+    const m = stageMarkerPointPoly(hs, poly, worldW);
     const a = aspect();
     const cur = posRef.current;
     const dx = cur.x - m.x;
@@ -519,7 +658,7 @@ export function Stage({
       ty = m.y + ((dy / dist) * stop) / a;
     }
     firedRef.current.clear();
-    const route = stageRoute(cur, { x: tx, y: ty }, obstacles, floor, STAGE_GRID_STEP, worldW);
+    const route = stageRoutePoly(cur, { x: tx, y: ty }, obstacles, poly, floor, STAGE_GRID_STEP, worldW);
     if (route.length) {
       setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur.x, m.y - cur.y));
       if (followRoute(route)) return;
@@ -679,6 +818,20 @@ export function Stage({
 
   const isEmoji = (settings.playerImage ?? "").startsWith("emoji:");
   const emoji = isEmoji ? settings.playerImage!.slice("emoji:".length) : "🕵️";
+  // POSE — a named animation overriding idle/walk (a "bend down"). One-shot
+  // poses play their loop once then revert via onPoseEnd.
+  const poseAnim = pose && hasSheet ? sheetAnim(settings.playerSheet!, pose, ["idle"]) : null;
+  useEffect(() => {
+    if (!pose || !poseOnce || !onPoseEnd || !hasSheet) return;
+    const a = sheetAnim(settings.playerSheet!, pose, ["idle"]);
+    if (!a || a.frames.length < 2) {
+      onPoseEnd();
+      return;
+    }
+    const fps = a.fps && a.fps > 0 ? a.fps : 8;
+    const t = window.setTimeout(onPoseEnd, Math.max(200, (a.frames.length / fps) * 1000));
+    return () => window.clearTimeout(t);
+  }, [pose, poseOnce, onPoseEnd, hasSheet, settings.playerSheet]);
   // Perspective: big up close, small in the distance (near/far ends are
   // authorable; `depthScale` still works as "shrink by this much at the back").
   const playerDepth = stageSpriteScale(pos.y, floor, settings) * baseScale;
@@ -725,7 +878,7 @@ export function Stage({
         setMenu(null);
         setMenuUse(null);
         const p = platePoint(e);
-        const floorPoint = clampToFloor(p.x, p.y, floor, worldW);
+        const floorPoint = clampToWalkPoly(p.x, p.y, poly, worldW);
         audio.click();
         setRipple({ x: floorPoint.x, y: floorPoint.y, key: Date.now() });
         // Clicking a zone walks to that zone's marker; empty floor walks
@@ -734,7 +887,7 @@ export function Stage({
         const hit = hotspotAtPoint(hotspotsRef.current, p);
         if (hit) {
           if (objectMenu && !coinOn) {
-            const m = stageMarkerPoint(hit, floor, worldW);
+            const m = stageMarkerPointPoly(hit, poly, worldW);
             setMenu({ hs: hit, x: m.x, y: m.y });
           } else {
             walkToMarker(hit);
@@ -743,7 +896,7 @@ export function Stage({
           // Empty floor: just walk — routed around the furniture. The fired
           // set persists, so brushed-past markers don't re-rattle on every
           // stroll.
-          const route = stageRoute(posRef.current, floorPoint, obstacles, floor, STAGE_GRID_STEP, worldW);
+          const route = stageRoutePoly(posRef.current, floorPoint, obstacles, poly, floor, STAGE_GRID_STEP, worldW);
           if (route.length) {
             routeRef.current = route.slice(1);
             targetRef.current = { x: route[0].x, y: route[0].y };
@@ -756,39 +909,60 @@ export function Stage({
         }
       }}
     >
-      {/* THE WORLD — one continuous strip on wide worlds; the camera pans it
-          via translateX(-cam%). Single-screen rooms render this at 100% with
-          no transform, which is exactly the old behaviour. */}
+      {/* THE WORLD — one continuous strip on wide worlds. The container is a
+          single VIEWPORT (100% wide) so child `left: ${x}%` values are in
+          screen-%, and the camera pans it via translateX(-cam%) in the same
+          units — the walker stays centred as it moves. The wide background
+          and the path overlay are worldW-wide children, so they pan through
+          the viewport. Single-screen rooms render this at 100% with no
+          transform, exactly the old behaviour. */}
       <div
         className="absolute inset-y-0 left-0"
         style={{
-          width: `${worldW}%`,
+          width: "100%",
           transform: `translateX(-${cam}%)`,
           willChange: wide ? "transform" : undefined,
         }}
       >
-        {/* the world's own background on wide worlds — the plate pans with
-            the camera instead of standing still behind it */}
+        {/* the world's own background on wide worlds — spans the whole strip
+            and pans with the camera instead of standing still behind it */}
         {wide && background ? (
           <div
-            className="absolute inset-0"
-            style={{ backgroundImage: `url(${background})`, backgroundSize: "cover", backgroundPosition: "center" }}
+            className="absolute inset-y-0 left-0"
+            style={{ width: `${worldW}%`, backgroundImage: `url(${background})`, backgroundSize: "cover", backgroundPosition: "center" }}
             aria-hidden
           />
         ) : null}
 
         {/* the floor — two soft edge-shades so the walkable band reads without
-            painting a obvious rectangle over the art */}
-        <div
-          className="pointer-events-none absolute inset-x-0"
-          style={{ top: 0, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute inset-x-0"
-          style={{ top: `${floor.bottom}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
-          aria-hidden
-        />
+            painting a obvious rectangle over the art. A path-polygon room
+            instead darkens everything OUTSIDE the path and tints the path
+            itself, so the winding walkable zone is what reads. */}
+        {usingPath ? (
+          <svg
+            className="pointer-events-none absolute inset-y-0 left-0 h-full"
+            style={{ width: `${worldW}%` }}
+            viewBox={`0 0 ${worldW} 100`}
+            preserveAspectRatio="none"
+            aria-hidden
+          >
+            <path d={polyPathD(poly)} fill="rgba(42,217,217,0.07)" stroke="rgba(42,217,217,0.30)" strokeWidth={0.6} strokeDasharray="2.5 2" />
+            <path d={`M 0 0 H ${worldW} V 100 H 0 Z ${polyPathD(poly)}`} fill="rgba(0,0,0,0.30)" fillRule="evenodd" />
+          </svg>
+        ) : (
+          <>
+            <div
+              className="pointer-events-none absolute left-0"
+              style={{ top: 0, width: `${worldW}%`, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
+              aria-hidden
+            />
+            <div
+              className="pointer-events-none absolute left-0"
+              style={{ top: `${floor.bottom}%`, width: `${worldW}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
+              aria-hidden
+            />
+          </>
+        )}
 
         {/* walk target ripple */}
         {ripple && active && (
@@ -805,7 +979,7 @@ export function Stage({
             SEPARATE plate-anchored elements so percent widths stay relative to
             the plate; both depth-sort by the marker's y. */}
         {hotspots.map((hs) => {
-          const m = stageMarkerPoint(hs, floor, worldW);
+          const m = stageMarkerPointPoly(hs, poly, worldW);
           const ok = unlocked(hs);
           const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, m, HINT_RADIUS, aspect())));
           const z = 50 + Math.round(m.y);
@@ -1023,7 +1197,12 @@ export function Stage({
             tracks the feet so the party overlaps like people standing in a
             room, not like stickers. */}
         {(() => {
-          const da = dirAnim(dir, walking);
+          // A POSE overrides the directional idle/walk: the named animation
+          // plays (still flipping with facing), and movement keeps the pose
+          // rather than switching to the walk cycle.
+          const da = poseAnim
+            ? { anim: poseAnim && pose ? pose : "idle", fallbacks: ["idle", "walk"], flip: dir === "left" }
+            : dirAnim(dir, walking);
           const flip = da.flip ? -1 : 1;
           return (
             <div
@@ -1042,7 +1221,7 @@ export function Stage({
                     anim={da.anim}
                     fallbacks={da.fallbacks}
                     height={96}
-                    freezeOnFallback={!walking}
+                    freezeOnFallback={!walking && !poseAnim}
                     className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]"
                   />
                 ) : walkFrames.length > 0 ? (
@@ -1068,6 +1247,14 @@ export function Stage({
             </div>
           );
         })()}
+
+        {/* AMBIENT NPCS — scene actors that idle and (optionally) patrol,
+            depth-scaled and z-sorted with the walker so everyone overlaps
+            like people standing in a room. Pure stage life: they don't take
+            input and don't gate anything. */}
+        {(settings.npcs ?? []).map((npc) => (
+          <StageNpcActor key={npc.id} npc={npc} floor={floor} settings={settings} />
+        ))}
       </div>
 
       {/* EDGE ARROWS — fixed to the VIEWPORT (not the world): the red/yellow
