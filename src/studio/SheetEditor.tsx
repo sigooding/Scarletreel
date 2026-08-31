@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { assetUrl } from "../assetPath";
-import { useResolvedMedia } from "../data/mediaLibrary";
+import { uploadDataUrlAsset, useResolvedMedia } from "../data/mediaLibrary";
 import { ImagePicker } from "./ImagePicker";
+import { forgeSpriteSheet, type ForgeKind } from "./spriteForge";
 import { sheetCols, sheetFramePos, spriteSheetIssues, type SpriteSheet, type SpriteSheetAnimation } from "../game/spriteSheet";
 
 /* ------------------------------------------------------------------ */
@@ -52,6 +53,14 @@ export const EXTRA_PRESET: SheetPreset = {
   animations: { loop: { frames: [0, 1], fps: 8 } },
   suggested: ["loop"],
 };
+
+/** Which auto-build pipeline a preset maps to: decides frame height and the
+ * animations the forge writes (talk+rest / walk+idle / loop). */
+function presetForgeKind(preset: SheetPreset): ForgeKind {
+  if (preset.suggested.includes("talk")) return "talking";
+  if (preset.suggested.includes("walk")) return "walk";
+  return "loop";
+}
 
 /* ------------------------------------------------------------------ */
 /*  Preview: pick an animation, play it, or pause and scrub frames.    */
@@ -185,8 +194,69 @@ export function SpriteSheetControls({
   const issues = useMemo(() => (value ? spriteSheetIssues(value, "sheet", preset.suggested) : []), [value, preset]);
   const missingSuggested = value ? preset.suggested.filter((n) => !value.animations[n]) : [];
 
+  // ⚡ Auto-build from an upload: key out the flat backdrop, slice frames by
+  // the transparent gaps, build the sheet, save it to the library, and fill
+  // this editor in — the whole job in one click.
+  const [forging, setForging] = useState(false);
+  const [forgeMsg, setForgeMsg] = useState<string | null>(null);
+  const autoBuild = async (file: File) => {
+    setForging(true);
+    setForgeMsg(null);
+    try {
+      const dataUrl = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result));
+        r.onerror = () => rej(new Error("could not read the file"));
+        r.readAsDataURL(file);
+      });
+      const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset));
+      const base = file.name.replace(/\.[a-z0-9]+$/i, "") || "sheet";
+      const up = await uploadDataUrlAsset(storyId, `sheet-${base}.png`, "image", sheet.dataUrl);
+      onChange({
+        image: up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl,
+        frameWidth: sheet.frameWidth,
+        frameHeight: sheet.frameHeight,
+        animations: sheet.animations,
+        pixelated: false,
+      });
+      setForgeMsg(
+        `✓ ${sheet.frameCount} frame${sheet.frameCount === 1 ? "" : "s"} · ${sheet.frameWidth} × ${sheet.frameHeight} each — sheet saved to the library and filled in below.`
+      );
+    } catch (err) {
+      setForgeMsg(`⚠ ${err instanceof Error ? err.message : "auto-build failed"}`);
+    } finally {
+      setForging(false);
+    }
+  };
+
   return (
     <div className="space-y-1">
+      {/* One-click path: upload art on a flat backdrop and everything below
+          fills itself in. A single figure works too (you get a clean 1-frame
+          cutout sheet). */}
+      <div className="space-y-1 border border-amber-400/25 bg-amber-400/5 p-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className={`cursor-pointer border border-amber-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-amber-300 hover:bg-amber-400/10 ${forging ? "opacity-50" : ""}`}>
+            {forging ? "⚙ building…" : "⚡ Upload art → auto-build sheet"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={forging}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void autoBuild(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <span className="font-type text-[8px] leading-snug text-paper/45">
+            Frames side by side on ONE flat backdrop colour (magenta, green — anything flat). It keys the backdrop
+            out, slices the frames by the gaps, and fills everything in. A single figure gives a 1-frame cutout.
+          </span>
+        </div>
+        {forgeMsg && <p className="font-type text-[9px] text-paper/60">{forgeMsg}</p>}
+      </div>
       <Field label={pickerLabel}>
         <ImagePicker
           value={value?.image}

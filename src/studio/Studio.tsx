@@ -2047,9 +2047,10 @@ function CinematicControls({
             An animation is just a list of frame numbers, e.g. loop = 0, 1, 2, 1.
           </p>
           <p>
-            <b className="text-paper/75">5 · Easy ways to get frames.</b> The 🤖 AI tab has one-click sprite-sheet
-            prompts (frames on a flat magenta backdrop) · Media ▸ ✂ Sprite Cutout Lab turns any art into a
-            transparent sprite · Media ▸ 🎞 Sheet slicer helps you find the frame grid of a finished sheet.
+            <b className="text-paper/75">5 · Or skip all of it.</b> Every sheet editor below has
+            <b> ⚡ Upload art → auto-build</b>: upload frames on one flat backdrop colour and it cuts out, slices and
+            fills the settings in for you. The 🤖 AI tab does the same from a prompt · Media ▸ ✂ Sprite Cutout Lab
+            for manual cutouts · Media ▸ 🎞 Sheet slicer to inspect a finished sheet.
           </p>
         </div>
         {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
