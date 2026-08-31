@@ -84,7 +84,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
     {
       id: "jack",
       name: "Jack Morrow",
-      role: "Private investigator. Sixteen years a cop, ten years a booth.",
+      role: "Private investigator. Ten years a cop, ten years a booth.",
       avatarUrl: "/img/nw2/ch-jack.jpg",
       trustMeter: 0,
       voice: { pitch: 0.72, rate: 0.9 },
@@ -331,7 +331,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_d_vo0b",
           characterId: "jack",
           expression: "V.O.",
-          text: "Blackwood. Mill closed in '09, took everything that fed it with it. Four thousand people left, a clinic with a waiting list, and Solomon Reyes, who employs more of this town than the county does. Nobody here's bad. They're hungry. Different thing.",
+          text: "Blackwood. Mill closed in '09, took everything that fed it with it. What came after: four thousand people, a clinic with a waiting list, and Solomon Reyes, who employs more of this town than the county does. Nobody here's bad. They're hungry. Different thing.",
         },
         {
           id: "nwt_d_vo0c",
@@ -1268,7 +1268,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_l_vo2",
           characterId: "jack",
           expression: "V.O. — the door chime, rain picking back up",
-          text: "She didn't finish the sentence. Didn't need to. Six years she's been saying some version of it and she has never once been wrong.",
+          text: "She didn't finish the sentence. Didn't need to. She's been saying some version of it since before I had a booth, and she has never once been wrong.",
         },
       ],
       hotspots: [
@@ -1371,7 +1371,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_t_j4",
           characterId: "jack",
           expression: "warming despite himself — the most alive he sounds anywhere",
-          text: "Three withdrawals. Three branches. Three days. Everybody sees that and thinks nervous. It's not nervous. Nervous is one big withdrawal and a plane ticket. This is homework. Careful people leave a different shape than scared people.",
+          text: "Three withdrawals. Three branches. Three days. Everybody sees that and thinks nervous. It's not. Nervous is one big withdrawal and a bus ticket. This is homework. Careful people leave a different shape than scared people.",
         },
         {
           id: "nwt_t_v6",
@@ -1756,7 +1756,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_vo2",
           characterId: "jack",
           expression: "V.O.",
-          text: "Two duffel bags by the door, unpacked. The heavy one sat on the floor like a thing nobody wanted to look at directly. His partner in it was Solomon Reyes for fourteen years, and the bag was why a man who counted a crime boss's money could never afford to be caught holding the count.",
+          text: "Two duffel bags by the door, unpacked. The heavy one sat on the floor like a thing nobody wanted to look at directly. I'd have known it blind. Fourteen years is a long time to count a man's money before you take it.",
         },
         {
           id: "nwt_r_j2",
