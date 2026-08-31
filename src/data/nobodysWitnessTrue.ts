@@ -1732,7 +1732,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_vo1",
           characterId: "jack",
           expression: "V.O.",
-          text: "Doc came through on the motel, and the paper on the utilities was four days fresher than the story I'd been sold. People think changing your name fixes everything. It doesn't fix the part that still pays its bills.",
+          text: "Doc Sato came through on the motel, and the paper on the utilities was four days fresher than the story I'd been sold. People think changing your name fixes everything. It doesn't fix the part that still pays its bills.",
         },
         {
           id: "nwt_r_dav1",

@@ -1,7 +1,7 @@
 # Nobody's Witness: True Romance Cut — Beta Test Report & Production Pass
 
 **Story id:** `nobodys-witness-true` (`src/data/nobodysWitnessTrue.ts`)
-**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (two sittings: §2c Act Three endings audit — all playthroughs end on Act Three, one clock fix; §5 Studio canvas completed to a 29-slot serpentine). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`.
+**Beta date:** 2026-08-30 · **Status:** production cut, re-audited same day (three sittings: §2c Act Three endings audit — all playthroughs end on Act Three, one clock fix; §5 Studio canvas completed to a 29-slot serpentine; final sitting — Doc Sato surname at first mention, §5c.2 closed, all gates re-run). Soundtrack, leftover copy, newsstand Play button, and content revision r36 shipped in this pass. Re-audit any time with `node scripts/beta/beta-harness.mjs` (72 checks). Cue sheet: `docs/nwt-soundtrack.md`.
 
 ---
 
@@ -170,5 +170,5 @@ The three misalignments this sitting set out to fix (office inheriting the pool-
 
 ### 5c. Still open — your call, not defects
 1. **The anachronism note (§3.1) still stands** — self-checkout/barcode rants sit ~1998–2005 while the mill/furnace/watch math dates the film ~2024. Left alone; it's the best comedy in the picture.
-2. **"Doc" has no surname at first mention.** The rental V.O. says "Doc came through on the motel"; every later mention is "Doc Sato" (mill confession, final diner, A STOPPED WATCH). If Doc is Sato, one surname at first mention would prime the load-bearing confession; if Doc is a *different* contact, the nickname is confusingly identical. Either way it wants one clarifying word — not changed because the canon timeline around Tuesday is load-bearing.
+2. **"Doc" surname — resolved.** The rental V.O. used to say "Doc came through on the motel" while every later mention is "Doc Sato" (mill confession, final diner, A STOPPED WATCH). First mention now reads **"Doc Sato came through on the motel"** — one clarifying surname that primes the load-bearing confession; no timeline change (the Tuesday canon is untouched). Closed in the final re-audit sitting.
 3. **A STOPPED WATCH** wants the licensed *"Two Hearts"* needle-drop once Rosa leaves; without clearance the scene runs silent (see the cue sheet's licensed-reference table).
