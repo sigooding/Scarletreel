@@ -5377,7 +5377,7 @@ function HotspotCanvas({
                   }`}
                 />
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-noir-950/75 px-1 py-0.5 text-[7px]">
-                  {h.label}
+                  {h.remote ? "🔭 " : ""}{h.label}
                 </span>
               </>
             ) : grantedItem ? (
@@ -5387,7 +5387,7 @@ function HotspotCanvas({
                 <span className="pointer-events-none text-xl">{grantedItem.icon}</span>
               )
             ) : (
-              h.label.slice(0, 12)
+              `${h.remote ? "🔭 " : ""}${h.label.slice(0, 12)}`
             )}
           </button>
         );
@@ -13014,6 +13014,28 @@ function StudioInner({
                       />
                       repeatable
                     </label>
+                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input
+                        type="checkbox"
+                        checked={!!h.remote}
+                        onChange={(e) =>
+                          mutate((d) => {
+                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                            s.hotspots!.find((x) => x.id === h.id)!.remote = e.target.checked || undefined;
+                          })
+                        }
+                      />
+                      🔭 out of reach — works from a distance (no walk-up)
+                    </label>
+                    {h.remote && (
+                      <p className="-mt-1 pl-6 font-type text-[9px] leading-snug text-paper/45">
+                        On a 🚶 walkable stage the character normally walks over before a zone fires. With this ON they
+                        interact from wherever they stand — the walker just turns to face it. Use it for things they can
+                        SEE but never REACH: a clock high on a tower, a sign across the water. 👁 Look reads naturally;
+                        any verb the zone answers works at range. The reticle stays on the object instead of dropping to
+                        the floor, and strolling underneath never triggers it.
+                      </p>
+                    )}
                     {h.action.itemGranted && (
                       <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
                         <input

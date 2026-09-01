@@ -277,6 +277,19 @@ export function Stage({
   const baseScale = stagePlayerScale(settings);
 
   const obstacles = settings.obstacles ?? [];
+
+  /** Where a hotspot's marker stands. Normal zones clamp to the walkable
+   *  region (a thing sits ON the ground, the walker goes to it). REMOTE
+   *  (out-of-reach) zones keep the reticle on the object itself — a clock
+   *  high on a tower shouldn't advertise itself from the pavement. */
+  const markerPoint = (hs: Hotspot): { x: number; y: number } =>
+    hs.remote
+      ? {
+          x: Math.min(Math.max(hs.bounds.x + hs.bounds.w / 2, 1), worldW - 1),
+          y: Math.min(Math.max(hs.bounds.y + hs.bounds.h, 2), 100),
+        }
+      : stageMarkerPointPoly(hs, poly, worldW);
+
   const [pos, setPos] = useState(spawn);
   const targetRef = useRef<{ x: number; y: number; hotspotId?: string } | null>(null);
   /** Remaining corners of the current route — click-to-walk follows the whole
@@ -541,7 +554,10 @@ export function Stage({
         // usually arrive because they clicked the marker.
         for (const hs of hotspotsRef.current) {
           if (firedRef.current.has(hs.id)) continue;
-          const m = stageMarkerPointPoly(hs, poly, worldW);
+          // OUT-OF-REACH zones only ever fire by clicking them — strolling
+          // underneath the clock tower shouldn't read it aloud.
+          if (hs.remote) continue;
+          const m = markerPoint(hs);
           if (!posReachesMarker(next, m, reach, a)) continue;
           // A coin room is verb-first: only the marker the player actually
           // aimed at fires, and it fires with the verb they picked. Brushing
@@ -561,7 +577,7 @@ export function Stage({
         // Which marker is "near" (for proximity labels)?
         let best: { id: string; d: number } | null = null;
         for (const hs of hotspotsRef.current) {
-          const m = stageMarkerPointPoly(hs, poly, worldW);
+          const m = markerPoint(hs);
           const a2 = a;
           const d = Math.hypot(next.x - m.x, (next.y - m.y) * a2);
           if (!best || d < best.d) best = { id: hs.id, d };
@@ -633,6 +649,25 @@ export function Stage({
    *  Routed around the scene's obstacles, so the counter between you and the
    *  barman is walked around rather than through. */
   const walkToMarker = (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
+    // OUT OF REACH — the object can't be walked to (a clock high on a wall,
+    // a window across the chasm). Fire its action from wherever the character
+    // stands: they just turn to face it, no walk-up.
+    if (hs.remote) {
+      const m0 = markerPoint(hs);
+      const cur0 = posRef.current;
+      pendingRef.current = null;
+      setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur0.x, m0.y - cur0.y));
+      audio.hover();
+      interactRef.current(
+        hs,
+        coinRef.current
+          ? { verb: ctx?.verb ?? verbRef.current, itemId: ctx?.itemId ?? heldRef.current ?? undefined }
+          : ctx?.verb
+            ? { verb: ctx.verb, itemId: ctx.itemId }
+            : undefined,
+      );
+      return;
+    }
     if (coinRef.current || ctx) {
       const v = ctx?.verb ?? verbRef.current;
       pendingRef.current = {
@@ -887,7 +922,7 @@ export function Stage({
         const hit = hotspotAtPoint(hotspotsRef.current, p);
         if (hit) {
           if (objectMenu && !coinOn) {
-            const m = stageMarkerPointPoly(hit, poly, worldW);
+            const m = markerPoint(hit);
             setMenu({ hs: hit, x: m.x, y: m.y });
           } else {
             walkToMarker(hit);
@@ -979,7 +1014,7 @@ export function Stage({
             SEPARATE plate-anchored elements so percent widths stay relative to
             the plate; both depth-sort by the marker's y. */}
         {hotspots.map((hs) => {
-          const m = stageMarkerPointPoly(hs, poly, worldW);
+          const m = markerPoint(hs);
           const ok = unlocked(hs);
           const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, m, HINT_RADIUS, aspect())));
           const z = 50 + Math.round(m.y);

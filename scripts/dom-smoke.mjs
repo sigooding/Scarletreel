@@ -579,6 +579,48 @@ if (clickByText(/Full Throttle — The Corville Run/i)) {
 } else console.log("!! could not find the Full Throttle — The Corville Run card");
 root.unmount();
 
+// Phase 8: INSPECTOR GADGET — beta case for the 🔭 OUT-OF-REACH hotspot
+// (Hotspot.remote). Boot the case, advance HQ to the plaza stage, then click
+// the tower clock — a look zone drawn far ABOVE the walkable floor. Remote
+// zones must fire their action IMMEDIATELY (no walk-up: 400ms is far less
+// than any walk from spawn), and the flag-gated service door must read
+// locked until the clues are in hand.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/Clockwork Caper/i)) {
+  await sleep(1500);
+  clickByText(/^▶?\\s*Play/i) || clickByText(/Play/i);
+  await sleep(2500);
+  let toPlaza = false;
+  for (let i = 0; i < 20 && !toPlaza; i++) {
+    const btns = [...container.querySelectorAll("button")].filter((b) => (b.textContent || "").trim().length > 0);
+    const go = btns.find((b) => /self-destruct/i.test(b.textContent || ""));
+    if (go) { go.click(); toPlaza = true; break; }
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = btns.find((b) => /continue/i.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(500);
+  }
+  await sleep(2200);
+  const markerLabels = [...container.querySelectorAll("button.stage-marker")].map((b) => b.getAttribute("aria-label") || "");
+  const clockBtn = [...container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "The tower clock");
+  const doorLocked = markerLabels.some((l) => /Tower service door \\(locked\\)/i.test(l));
+  let remoteFired = false;
+  if (clockBtn) {
+    clockBtn.click();
+    await sleep(400);
+    remoteFired = /STUCK at 3:12/i.test(container.textContent || "");
+  }
+  console.log("\\n=== INSPECTOR GADGET (out-of-reach hotspot) ===");
+  console.log("  reached plaza stage:", toPlaza, "| markers:", markerLabels.length, JSON.stringify(markerLabels));
+  console.log("  clock marker found:", !!clockBtn, "| remote look fired with NO walk-up:", remoteFired, "| gated door shows locked:", doorLocked);
+  if (!toPlaza || !clockBtn || !remoteFired || !doorLocked) failed = true;
+  for (let i = problems.length - 1; i >= 0; i--) {
+    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
+  }
+  failed |= report("INSPECTOR GADGET (plaza stage)").crashed;
+} else console.log("!! could not find the Inspector Gadget — Clockwork Caper card");
+root.unmount();
+
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
 process.exit(failed ? 1 : 0);
 `

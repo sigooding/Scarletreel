@@ -152,6 +152,16 @@ export interface Hotspot {
   /** How the object image fits its zone: "contain" keeps the whole object
    *  visible (default); "cover" fills the zone, cropping the overflow. */
   imageFit?: "contain" | "cover";
+  /** OUT OF REACH — the object can't be walked to (a clock high on a tower,
+   *  a window across the street, the moon). On a 🚶 stage node, clicking it
+   *  fires its action from wherever the character stands: no walk-up, the
+   *  walker just turns to face it. The marker reticle sits on the object
+   *  itself instead of being clamped down to the walkable floor, and walking
+   *  underneath it never triggers it by accident. Pairs naturally with a
+   *  👁 look cursor ("You squint up at the clock tower…"), but any verb the
+   *  zone answers works at range. Ignored on classic (non-stage) scenes,
+   *  where hotspots already fire on click. */
+  remote?: boolean;
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release

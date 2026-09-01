@@ -383,7 +383,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
       nodeType: "stage",
       note: "STAGE — walk Scooby up the drive. Markers: the gate sign (hold to EXAMINE), the glowing window, the mailbox (telegram), the front door (exit). The van is an obstacle to walk around.",
       background: "/img/bg-sd-manor.jpg",
-      ambientAudio: "storm",
+      ambientAudio: "rain",
       particles: "storm",
       prose: "",
       stage: {

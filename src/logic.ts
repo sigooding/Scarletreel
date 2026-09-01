@@ -2440,6 +2440,20 @@ export function validateStory(story: Story): ValidationIssue[] {
       issues.push({ severity: "error", sceneId: null, message: `Recipe for "${item.name}" creates missing item "${item.combinableWith.resultItemId}".` });
   });
 
+  // Ambient loop ids the synth engine doesn't know play as SILENCE — no
+  // error, no sound. (Beta-test find: a scene shipped with ambientAudio
+  // "storm", which is a PARTICLES preset, not an ambient loop — the room's
+  // storm was mute.) Keep in sync with audio.ts registry / Studio AMBIENTS.
+  const knownAmbients = new Set(["none", "rain", "jazz", "drone", "tension"]);
+  story.scenes.forEach((sc) => {
+    if (sc.ambientAudio && !knownAmbients.has(sc.ambientAudio))
+      issues.push({
+        severity: "warning",
+        sceneId: sc.id,
+        message: `Scene "${sc.title}" ambient loop "${sc.ambientAudio}" is not a known synth loop (${[...knownAmbients].join(" / ")}) — it will play as silence. Did you mean the Particle Effects preset?`,
+      });
+  });
+
   // items that can never be obtained but are required somewhere
   const grantable = new Set<string>();
   story.scenes.forEach((sc) => {
