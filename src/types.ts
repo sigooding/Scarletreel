@@ -67,7 +67,40 @@ export type HotspotActionType =
   | "useItem"
   | "patternPuzzle"
   | "startDialogue"
-  | "setPlayerPose";
+  | "setPlayerPose"
+  | "runScript";
+
+/**
+ * SCRIPTED SEQUENCE — one step of a stage cutscene (SCUMM-style room
+ * scripting). A script is an array of steps run IN ORDER on a 🚶 walkable
+ * stage: player input locks, letterbox bars drop in, the steps play, and
+ * control returns. Runs from a hotspot action (`type: "runScript"`) or on
+ * scene entry (StageSettings.enterScript). STAGE NODES ONLY — classic
+ * graphic-novel scenes (prose, beats, choices) are untouched by scripts,
+ * and a runScript hotspot on a classic scene is ignored with a warning.
+ *
+ * Steps that move actors reuse the room's own walkers: `walkTo` routes the
+ * player around obstacles exactly like a click; `npcWalkTo` drives an
+ * ambient NPC (straight line, like patrols). `say` floats a speech line
+ * over the player's head — or an NPC's when `npcId` is set — sized to the
+ * text and never touching the dialogue-beat system.
+ */
+export type StageScriptStep =
+  | { do: "walkTo"; x: number; y: number }
+  | { do: "face"; dir: "left" | "right" }
+  /** Switch the walker to a named pose animation ("" / omitted = back to idle). */
+  | { do: "pose"; pose?: string }
+  | { do: "wait"; seconds: number }
+  /** Speech line floated over the player's head, or over `npcId`'s. The step
+   *  holds the script for the line's reading time. */
+  | { do: "say"; text: string; npcId?: string }
+  | { do: "npcWalkTo"; npcId: string; x: number; y: number }
+  /** Fire a SET MOTION on an ambient NPC: named animation / say line / facing
+   *  (see StageNpcWaypoint). Does not hold the script — pair with `wait`. */
+  | { do: "npcMotion"; npcId: string; anim?: string; say?: string; facing?: "left" | "right" }
+  | { do: "setFlag"; flag: string }
+  /** Ends the script and navigates. Steps after it never run. */
+  | { do: "goToScene"; targetSceneId: string };
 
 export interface HotspotAction {
   type: HotspotActionType;
@@ -80,6 +113,10 @@ export interface HotspotAction {
   itemConsumed?: string;
   /** for patternPuzzle hotspots: the puzzle configuration */
   patternPuzzle?: import("./game/PatternPuzzleTypes").PatternPuzzleConfig;
+  /** runScript hotspots (STAGE nodes): the scripted sequence to play. The
+   *  action's flagSet still applies when the script starts, and gating/
+   *  isRepeatable behave exactly like any other hotspot. */
+  script?: StageScriptStep[];
   /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
    * a conversation. This action needs no payload of its own — the scene's
    * beats ARE the payload. Any flagSet / meterChange here still applies. */
@@ -1093,6 +1130,16 @@ export interface StageSettings {
   /** A caption bar line shown once when the scene begins — the stage
    *  equivalent of an opening narration beat (auto-fades, never blocks). */
   enterCaption?: string;
+  /** SCRIPTED SEQUENCE played when the scene begins — the SCUMM room-entry
+   *  script: walk the player in, walk an NPC up, trade a couple of floated
+   *  lines, set a flag, hand control back. Input locks and letterbox bars
+   *  show while it runs. See StageScriptStep. */
+  enterScript?: StageScriptStep[];
+  /** Run-once latch for enterScript: when set, the script is SKIPPED if this
+   *  flag is already active, and the flag is set the moment the script runs —
+   *  so the entrance plays once per story (save-proof), not on every visit.
+   *  Leave empty to replay on every entry. */
+  enterScriptFlag?: string;
   /** Furniture the character walks AROUND instead of through — a bar, a
    *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
    *  routes around them (A* on a coarse grid, then string-pulled to the

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { Hotspot, StageExitEdge, StageNpc, StageSettings } from "../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Hotspot, StageExitEdge, StageNpc, StageScriptStep, StageSettings } from "../types";
 import { CURSOR_ICON, hotspotAnswersVerb } from "../logic";
 import {
   STAGE2D_DEFAULT_REACH,
@@ -85,14 +85,26 @@ export interface CoinItem {
  *  pauses idle at each before looping back to the start. Rendered exactly
  *  like the walker: depth-scaled by its y, flipped by facing, and z-sorted by
  *  its feet so it overlaps the player the way people overlap in a room. */
+/** Imperative handle a running SCRIPTED SEQUENCE uses to drive an ambient
+ *  NPC: walk it somewhere (resolves on arrival), fire a set motion, and
+ *  release it back to its authored patrol when the script ends. */
+export interface StageNpcCtrl {
+  walkTo: (x: number, y: number) => Promise<void>;
+  motion: (m: { anim?: string; say?: string; facing?: "left" | "right" }) => void;
+  release: () => void;
+}
+
 function StageNpcActor({
   npc,
   floor,
   settings,
+  register,
 }: {
   npc: StageNpc;
   floor: { top: number; bottom: number };
   settings: StageSettings;
+  /** Script hook — registers this actor's control handle by npc id. */
+  register?: (id: string, ctrl: StageNpcCtrl | null) => void;
 }) {
   const [pos, setPos] = useState({ x: npc.x, y: npc.y });
   const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
@@ -103,28 +115,53 @@ function StageNpcActor({
   const [motion, setMotion] = useState<{ anim?: string; say?: string } | null>(null);
   const posRef = useRef(pos);
   posRef.current = pos;
+  /** SCRIPT OVERRIDE — while set, the patrol is suspended: `target` walks
+   *  the actor there (resolve fires on arrival), then it holds in place
+   *  until the script releases it. */
+  const overrideRef = useRef<{ target?: { x: number; y: number }; resolve?: () => void } | null>(null);
 
   const hasSheet = sheetDrawable(npc.sheet);
 
-  // Patrol loop — a single rAF drives the walk cycle. Waypoints are authored
-  // on the floor, so movement is a straight line between them (no A*, no
-  // obstacle routing — ambient NPCs keep it simple); speed is depth-scaled so
-  // a distant NPC doesn't skate.
+  // Register the script control handle (walk / motion / release).
+  useEffect(() => {
+    if (!register) return;
+    const ctrl: StageNpcCtrl = {
+      walkTo: (x, y) =>
+        new Promise<void>((resolve) => {
+          overrideRef.current = { target: { x, y }, resolve };
+        }),
+      motion: (m) => {
+        overrideRef.current = overrideRef.current ?? {};
+        if (m.facing) setFacing(m.facing);
+        setMotion(m.anim || m.say ? { anim: m.anim, say: m.say } : null);
+      },
+      release: () => {
+        overrideRef.current = null;
+      },
+    };
+    register(npc.id, ctrl);
+    return () => register(npc.id, null);
+  }, [npc.id, register]);
+
+  // Movement loop — a single rAF drives BOTH the authored patrol and any
+  // script override. Waypoints are authored on the floor, so movement is a
+  // straight line between them (no A*, no obstacle routing — ambient NPCs
+  // keep it simple); speed is depth-scaled so a distant NPC doesn't skate.
   useEffect(() => {
     const waypoints = npc.patrol && npc.patrol.length > 0 ? npc.patrol : null;
-    if (!waypoints) return; // no patrol — idle forever, nothing to drive
     let raf = 0;
     let last = performance.now();
     let idx = 0;
     /** pingpong direction: +1 out, -1 back. */
     let dir = 1;
-    let done = false;
+    let routeDone = false;
     let idleUntil = 0;
     const mode = npc.patrolMode ?? "loop";
     const speed = npc.speed ?? settings.speed ?? STAGE2D_DEFAULT_SPEED;
     /** Advance idx per patrolMode; returns false when the route is finished
      *  ("once" — hold the current waypoint's motion forever). */
     const advance = () => {
+      if (!waypoints) return false;
       if (mode === "once") {
         if (idx >= waypoints.length - 1) return false;
         idx += 1;
@@ -138,48 +175,68 @@ function StageNpcActor({
       idx = (idx + 1) % waypoints.length;
       return true;
     };
-    const step = (now: number) => {
-      if (done) return;
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      if (now < idleUntil) {
-        setWalking(false);
-        raf = requestAnimationFrame(step);
-        return;
-      }
-      const wp = waypoints[idx];
+    /** Walk straight at a point; true once arrived. */
+    const walkToward = (wp: { x: number; y: number }, dt: number) => {
       const cur = posRef.current;
       const dx = wp.x - cur.x;
       const dy = wp.y - cur.y;
       const dist = Math.hypot(dx, dy);
       if (Math.abs(dx) > 0.05) setFacing(dx > 0 ? "right" : "left");
       if (dist <= 0.5) {
-        // ARRIVED — plant the feet and play this stop's SET MOTION: optional
-        // facing override, named animation, ambient say line.
         setPos({ x: wp.x, y: wp.y });
         setWalking(false);
-        if (wp.facing) setFacing(wp.facing);
-        setMotion(wp.anim || wp.say ? { anim: wp.anim, say: wp.say } : null);
-        const pause = (wp.pause ?? 2) * 1000;
-        if (!advance()) {
-          done = true; // "once": hold this waypoint's motion forever
-          return;
-        }
-        idleUntil = now + pause;
-        raf = requestAnimationFrame(step);
-        return;
+        return true;
       }
       const t = Math.min(1, (speed * dt) / dist);
       setPos({ x: cur.x + dx * t, y: cur.y + dy * t });
       setWalking(true);
       setMotion(null);
+      return false;
+    };
+    const step = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      // SCRIPT OVERRIDE — walk to the ordered point (then hold), or just
+      // hold in place while the script performs around us.
+      const ov = overrideRef.current;
+      if (ov) {
+        if (ov.target) {
+          if (walkToward(ov.target, dt)) {
+            ov.target = undefined;
+            ov.resolve?.();
+            ov.resolve = undefined;
+          }
+        } else {
+          setWalking(false);
+        }
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      // AUTHORED PATROL — nothing to drive without one (or once finished).
+      if (!waypoints || routeDone) {
+        setWalking(false);
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      if (now < idleUntil) {
+        setWalking(false);
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const wp = waypoints[idx];
+      if (walkToward(wp, dt)) {
+        // ARRIVED — plant the feet and play this stop's SET MOTION: optional
+        // facing override, named animation, ambient say line.
+        if (wp.facing) setFacing(wp.facing);
+        setMotion(wp.anim || wp.say ? { anim: wp.anim, say: wp.say } : null);
+        const pause = (wp.pause ?? 2) * 1000;
+        if (!advance()) routeDone = true; // "once": hold this stop's motion forever
+        idleUntil = now + pause;
+      }
       raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
-    return () => {
-      done = true;
-      cancelAnimationFrame(raf);
-    };
+    return () => cancelAnimationFrame(raf);
   }, [npc.id, npc.patrol, npc.speed, npc.patrolMode, settings.speed]);
 
   const depth = stageSpriteScale(pos.y, floor, settings) * (npc.scale ?? 1);
@@ -263,6 +320,9 @@ export function Stage({
   pose,
   poseOnce,
   onPoseEnd,
+  scriptRequest,
+  enterScript,
+  onScriptEffect,
 }: {
   settings: StageSettings;
   hotspots: Hotspot[];
@@ -306,6 +366,20 @@ export function Stage({
   poseOnce?: boolean;
   /** Fired when a one-shot pose's loop completes — Game clears the pose. */
   onPoseEnd?: () => void;
+  /** SCRIPTED SEQUENCE ordered by a hotspot (`runScript` action): play these
+   *  steps now. `key` dedupes — same request object, run once. */
+  scriptRequest?: { steps: StageScriptStep[]; key: number } | null;
+  /** SCRIPTED SEQUENCE played once when the scene mounts (the SCUMM
+   *  room-entry script). Game handles the run-once flag latch. */
+  enterScript?: StageScriptStep[];
+  /** Story-level side effects a script step asks for — Game owns flags,
+   *  navigation and the walker's pose state. */
+  onScriptEffect?: (
+    eff:
+      | { type: "setFlag"; flag: string }
+      | { type: "goToScene"; targetSceneId: string }
+      | { type: "pose"; pose?: string },
+  ) => void;
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
   /** WIDE WORLD: room width in viewport-% (100 = single screen). */
@@ -487,6 +561,7 @@ export function Stage({
   useEffect(() => {
     if (!active || !keyboard) return;
     const down = (e: KeyboardEvent) => {
+      if (scriptOnRef.current) return; // cutscene: input locked
       const k = e.key.toLowerCase();
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(k)) {
         keysRef.current.add(k);
@@ -601,8 +676,9 @@ export function Stage({
         }
         // Fire any marker the character has walked into. Keyboard walkers
         // get interactions by stepping onto the marker; click walkers
-        // usually arrive because they clicked the marker.
-        for (const hs of hotspotsRef.current) {
+        // usually arrive because they clicked the marker. NEVER during a
+        // scripted sequence — a cutscene walk isn't the player searching.
+        for (const hs of scriptOnRef.current ? [] : hotspotsRef.current) {
           if (firedRef.current.has(hs.id)) continue;
           // OUT-OF-REACH zones only ever fire by clicking them — strolling
           // underneath the clock tower shouldn't read it aloud.
@@ -694,11 +770,169 @@ export function Stage({
     return true;
   };
 
+  /* ---------------- SCRIPTED SEQUENCES (SCUMM cutscenes) ----------------
+     A script is an ordered list of StageScriptSteps played with input locked
+     and letterbox bars down: walk the player, walk NPCs, float say lines,
+     wait beats, then hand control back. Steps that touch story state (flags,
+     navigation, poses) are forwarded to Game via onScriptEffect — the stage
+     itself stays presentation-only. STAGE NODES ONLY by construction: this
+     component never renders for a classic graphic-novel scene. */
+  const [scriptOn, setScriptOn] = useState(false);
+  const scriptOnRef = useRef(false);
+  /** The player's floating cutscene line (null = none). */
+  const [playerSay, setPlayerSay] = useState<string | null>(null);
+  /** Live NPC control handles, registered by each StageNpcActor. */
+  const npcCtrlRef = useRef<Map<string, StageNpcCtrl>>(new Map());
+  const registerNpc = useCallback((id: string, ctrl: StageNpcCtrl | null) => {
+    if (ctrl) npcCtrlRef.current.set(id, ctrl);
+    else npcCtrlRef.current.delete(id);
+  }, []);
+  const scriptEffectRef = useRef(onScriptEffect);
+  scriptEffectRef.current = onScriptEffect;
+  /** False once unmounted — a running script checks it between steps. */
+  const scriptAliveRef = useRef(true);
+  useEffect(() => {
+    scriptAliveRef.current = true;
+    return () => {
+      scriptAliveRef.current = false;
+    };
+  }, []);
+
+  const scriptSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  /** Reading time for a floated line: 1.6s floor, ~0.055s per character, 6s cap. */
+  const sayMs = (t: string) => Math.round(Math.min(6, Math.max(1.6, 0.055 * t.length)) * 1000);
+
+  /** Walk the player to a floor point exactly like a click would — routed
+   *  around obstacles, clamped into the walk area — and resolve on arrival
+   *  (polled: the rAF walk loop owns the actual movement). */
+  const scriptWalkPlayer = (x: number, y: number) =>
+    new Promise<void>((resolve) => {
+      const cur = posRef.current;
+      const dest = clampToWalkPoly(x, y, poly, worldW);
+      pendingRef.current = null;
+      const route = stageRoutePoly(cur, dest, obstacles, poly, floor, STAGE_GRID_STEP, worldW);
+      if (route.length) followRoute(route);
+      else {
+        targetRef.current = { x: dest.x, y: dest.y };
+        setWalking(true);
+      }
+      const t0 = performance.now();
+      const iv = window.setInterval(() => {
+        const done = !targetRef.current && routeRef.current.length === 0;
+        // 15s failsafe: a blocked route must never wedge the cutscene.
+        if (done || performance.now() - t0 > 15000 || !scriptAliveRef.current) {
+          window.clearInterval(iv);
+          if (!done) {
+            targetRef.current = null;
+            routeRef.current = [];
+          }
+          resolve();
+        }
+      }, 100);
+    });
+
+  /** Play a script. Locks input, drops the letterbox, runs steps in order,
+   *  then releases everything (even on a mid-script scene exit). */
+  const runScript = async (steps: StageScriptStep[]) => {
+    if (scriptOnRef.current || !steps.length) return;
+    scriptOnRef.current = true;
+    setScriptOn(true);
+    // Cut any in-flight player intent: keys, pending verb aims, open menus.
+    keysRef.current.clear();
+    pendingRef.current = null;
+    setMenu(null);
+    setMenuUse(null);
+    try {
+      for (const step of steps) {
+        if (!scriptAliveRef.current) return;
+        switch (step.do) {
+          case "walkTo":
+            await scriptWalkPlayer(step.x, step.y);
+            break;
+          case "face":
+            setDir(step.dir);
+            break;
+          case "pose":
+            scriptEffectRef.current?.({ type: "pose", pose: step.pose });
+            break;
+          case "wait":
+            await scriptSleep(Math.max(0, step.seconds) * 1000);
+            break;
+          case "say": {
+            if (step.npcId) {
+              const ctrl = npcCtrlRef.current.get(step.npcId);
+              ctrl?.motion({ say: step.text });
+              await scriptSleep(sayMs(step.text));
+              ctrl?.motion({});
+            } else {
+              setPlayerSay(step.text);
+              await scriptSleep(sayMs(step.text));
+              setPlayerSay(null);
+            }
+            break;
+          }
+          case "npcWalkTo": {
+            const ctrl = npcCtrlRef.current.get(step.npcId);
+            if (ctrl) await ctrl.walkTo(step.x, step.y);
+            break;
+          }
+          case "npcMotion": {
+            const ctrl = npcCtrlRef.current.get(step.npcId);
+            ctrl?.motion({ anim: step.anim, say: step.say, facing: step.facing });
+            break;
+          }
+          case "setFlag":
+            scriptEffectRef.current?.({ type: "setFlag", flag: step.flag });
+            break;
+          case "goToScene":
+            // Navigation ends the script — steps after it never run.
+            scriptEffectRef.current?.({ type: "goToScene", targetSceneId: step.targetSceneId });
+            return;
+        }
+      }
+    } finally {
+      // Hand the room back: NPCs resume their patrols, lines clear, input
+      // unlocks. Runs even when the script bailed via goToScene/unmount.
+      for (const ctrl of npcCtrlRef.current.values()) ctrl.release();
+      setPlayerSay(null);
+      scriptOnRef.current = false;
+      setScriptOn(false);
+    }
+  };
+
+  // Hotspot-ordered scripts (runScript actions) — keyed like dropRequest.
+  const scriptKeyRef = useRef(0);
+  useEffect(() => {
+    if (!scriptRequest || scriptRequest.key === scriptKeyRef.current) return;
+    scriptKeyRef.current = scriptRequest.key;
+    void runScript(scriptRequest.steps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptRequest?.key]);
+
+  // Room-entry script — latched once per mount (the component is keyed by
+  // scene id, so "per mount" IS "per entry"). A short beat first so the
+  // scene fade lands before the letterbox drops. The latch is set when the
+  // timer FIRES, not when it's scheduled — StrictMode's throwaway first
+  // mount cancels the timer in cleanup, and a schedule-time latch would
+  // leave the real mount thinking the script already played.
+  const enterRanRef = useRef(false);
+  useEffect(() => {
+    if (!enterScript || enterScript.length === 0) return;
+    const t = window.setTimeout(() => {
+      if (enterRanRef.current) return;
+      enterRanRef.current = true;
+      void runScript(enterScript);
+    }, 450);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Walk toward a marker, stopping just short of it (at ~reach) so the
    *  character doesn't stand inside the thing they're interacting with.
    *  Routed around the scene's obstacles, so the counter between you and the
    *  barman is walked around rather than through. */
   const walkToMarker = (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
+    if (scriptOnRef.current) return; // cutscene: input locked
     // OUT OF REACH — the object can't be walked to (a clock high on a wall,
     // a window across the chasm). Fire its action from wherever the character
     // stands: they just turn to face it, no walk-up.
@@ -770,6 +1004,7 @@ export function Stage({
    *  holding past PIE_HOLD_MS opens the big skull pie in the middle of the
    *  screen with the verbs this object answers. */
   const beginHold = (hs: Hotspot, e: React.PointerEvent) => {
+    if (scriptOnRef.current) return; // cutscene: input locked
     holdRef.current = { hs, startX: e.clientX, startY: e.clientY };
     pieRef.current.open = false;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -1329,6 +1564,19 @@ export function Stage({
                 {/* ground shadow (not mirrored or bobbed) */}
                 <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${flip})` }} />
               </div>
+              {/* CUTSCENE SAY LINE — the player's floating speech during a
+                  scripted sequence. Counter-flipped so the text never mirrors
+                  with the sprite (translateX(-50%) inverts under a
+                  scaleX(-1) parent, hence the 50% when flipped). */}
+              {playerSay ? (
+                <span
+                  data-stage-player-say
+                  className="pointer-events-none absolute -top-7 left-1/2 max-w-[240px] rounded border border-noir-700 bg-noir-950/85 px-2 py-1 text-center font-type text-[11px] leading-tight text-paper shadow-[0_4px_14px_rgba(0,0,0,0.5)]"
+                  style={{ transform: `translateX(${flip === -1 ? "50%" : "-50%"}) scaleX(${flip})`, width: "max-content" }}
+                >
+                  {playerSay}
+                </span>
+              ) : null}
             </div>
           );
         })()}
@@ -1336,9 +1584,11 @@ export function Stage({
         {/* AMBIENT NPCS — scene actors that idle and (optionally) patrol,
             depth-scaled and z-sorted with the walker so everyone overlaps
             like people standing in a room. Pure stage life: they don't take
-            input and don't gate anything. */}
+            input and don't gate anything — except during a SCRIPTED
+            SEQUENCE, which can walk them and put lines over their heads
+            through the registered control handles. */}
         {(settings.npcs ?? []).map((npc) => (
-          <StageNpcActor key={npc.id} npc={npc} floor={floor} settings={settings} />
+          <StageNpcActor key={npc.id} npc={npc} floor={floor} settings={settings} register={registerNpc} />
         ))}
       </div>
 
@@ -1387,7 +1637,7 @@ export function Stage({
 
       {/* VERB COIN — bottom-left, the way a LucasArts room puts it. Pick a
           verb, then click the object; USE arms an inventory item first. */}
-      {coinOn && active ? (
+      {coinOn && active && !scriptOn ? (
         <div className="pointer-events-auto absolute bottom-3 left-3 z-[76] flex flex-col items-start gap-1.5">
           {verb === "use" && (inventory?.length ?? 0) > 0 ? (
             <div className="flex max-w-[min(70vw,640px)] flex-wrap gap-1 rounded border border-noir-700 bg-noir-950/90 p-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm">
@@ -1449,6 +1699,17 @@ export function Stage({
               );
             })}
           </div>
+        </div>
+      ) : null}
+
+      {/* SCRIPTED SEQUENCE — cutscene dressing: letterbox bars slide in and
+          a full-plate shield swallows every click while the script runs.
+          The bars are the whole "input locked" UI — no spinner, no text;
+          the scene itself is the show. */}
+      {scriptOn ? (
+        <div className="pointer-events-auto absolute inset-0 z-[200] cursor-wait" data-stage-cutscene aria-hidden>
+          <div className="stage-letterbox absolute inset-x-0 top-0 h-[9%] bg-black/95" />
+          <div className="stage-letterbox absolute inset-x-0 bottom-0 h-[9%] bg-black/95" />
         </div>
       ) : null}
     </div>

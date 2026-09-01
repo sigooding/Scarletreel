@@ -23,6 +23,7 @@ import type {
   RecapLine,
   SceneNode,
   SeasonLog,
+  StageScriptStep,
   StageSettings,
   Story,
   UnlockedEnding,
@@ -650,6 +651,36 @@ export function storyEdges(story: Story): StoryEdge[] {
             attitude: "Hotspot",
           });
       }
+      // A scripted sequence can end on a goToScene step — a real navigation
+      // edge (the cutscene walks you out of the room). Lift each one so the
+      // validator sees the destination as reachable and the canvas draws it.
+      if (hs.action.type === "runScript") {
+        (hs.action.script ?? []).forEach((st, si) => {
+          if (st.do === "goToScene" && st.targetSceneId)
+            edges.push({
+              id: `e-${sc.id}-h-${hs.id}-script-${si}`,
+              source: sc.id,
+              target: st.targetSceneId,
+              kind: "hotspot",
+              ref: hs,
+              label: `🎬 ${hs.label.slice(0, 20)} (script)`,
+              attitude: "Hotspot",
+            });
+        });
+      }
+    });
+    // A room-entry script's goToScene is a navigation edge too.
+    (sc.stage?.enterScript ?? []).forEach((st, si) => {
+      if (st.do === "goToScene" && st.targetSceneId)
+        edges.push({
+          id: `e-${sc.id}-enterscript-${si}`,
+          source: sc.id,
+          target: st.targetSceneId,
+          kind: "auto",
+          ref: sc,
+          label: "🎬 entry script",
+          attitude: "Neutral",
+        });
     });
     // Walk-off-screen edge exits are real scene edges too: the player walks
     // into the plate edge and lands in the target scene, so the validator
@@ -722,6 +753,10 @@ export function collectFlags(story: Story): string[] {
         fromConsequences(pp.rewardConsequences);
         fromConsequences(pp.wrongSubmissionConsequences);
       }
+      // Scripted sequences set flags mid-cutscene.
+      h.action.script?.forEach((st) => {
+        if (st.do === "setFlag") flags.add(st.flag);
+      });
     });
     sc.dialogueBeats?.forEach((b) => {
       fromGate(b.conditionRule);
@@ -736,6 +771,11 @@ export function collectFlags(story: Story): string[] {
       }
     });
     sc.onEnterActions?.forEach((a) => fromConsequences(a.consequences));
+    // Room-entry scripts: their setFlag steps and the run-once latch flag.
+    sc.stage?.enterScript?.forEach((st) => {
+      if (st.do === "setFlag") flags.add(st.flag);
+    });
+    if (sc.stage?.enterScriptFlag) flags.add(sc.stage.enterScriptFlag);
     // Interrogation outcomes set flags the ENGINE applies at runtime (on the
     // crack / clamp), not any authored consequence — lift them so the Flags
     // tab lists them and gates/recalls can reference them.
@@ -2459,6 +2499,50 @@ export function validateStory(story: Story): ValidationIssue[] {
           });
       });
     });
+  });
+
+  // SCRIPTED SEQUENCES: stage-only cutscenes. Catch the three authoring
+  // mistakes that would otherwise fail silently at runtime — a runScript
+  // hotspot on a classic graphic-novel scene (ignored there by design),
+  // a step aimed at an NPC the scene doesn't have, and a goToScene step
+  // pointing at a missing scene.
+  story.scenes.forEach((sc) => {
+    const isStage = sc.nodeType === "stage";
+    const npcIds = new Set((sc.stage?.npcs ?? []).map((n) => n.id));
+    const checkSteps = (steps: StageScriptStep[], where: string) => {
+      if (!steps.length)
+        issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}" ${where} is empty — nothing will play.` });
+      steps.forEach((st, i) => {
+        const npcId = "npcId" in st ? st.npcId : undefined;
+        if (npcId && !npcIds.has(npcId))
+          issues.push({
+            severity: "warning",
+            sceneId: sc.id,
+            message: `Scene "${sc.title}" ${where} step ${i + 1} (${st.do}) targets NPC "${npcId}" which is not in this scene — the step will be skipped.`,
+          });
+        if (st.do === "goToScene" && !ids.has(st.targetSceneId))
+          issues.push({ severity: "error", sceneId: sc.id, message: `Scene "${sc.title}" ${where} step ${i + 1} goes to missing scene "${st.targetSceneId}".` });
+        if (st.do === "goToScene" && i < steps.length - 1)
+          issues.push({
+            severity: "warning",
+            sceneId: sc.id,
+            message: `Scene "${sc.title}" ${where}: steps after the goToScene step (step ${i + 1}) will never play.`,
+          });
+      });
+    };
+    sc.hotspots?.forEach((h) => {
+      if (h.action.type !== "runScript") return;
+      if (!isStage)
+        issues.push({
+          severity: "warning",
+          sceneId: sc.id,
+          message: `Scene "${sc.title}" hotspot "${h.label}" runs a scripted sequence, but this is not a 🚶 walkable stage — the action is ignored on classic scenes.`,
+        });
+      checkSteps(h.action.script ?? [], `hotspot "${h.label}" script`);
+    });
+    if (sc.stage?.enterScript) checkSteps(sc.stage.enterScript, "entry script");
+    if (sc.stage?.enterScriptFlag && !(sc.stage.enterScript ?? []).length)
+      issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}" has an entry-script run-once flag but no entry script.` });
   });
 
   // Ambient loop ids the synth engine doesn't know play as SILENCE — no

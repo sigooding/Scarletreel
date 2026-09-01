@@ -183,6 +183,15 @@ body,
   100% { opacity: 0; box-shadow: 0 0 0 22px rgba(42, 217, 217, 0); }
 }
 
+/* Cutscene letterbox bars (scripted sequences) — slide in from the edges. */
+.stage-letterbox { animation: stage-letterbox 0.45s ease-out both; }
+@keyframes stage-letterbox {
+  0% { transform: scaleY(0); }
+  100% { transform: scaleY(1); }
+}
+.stage-letterbox:first-child { transform-origin: 50% 0; }
+.stage-letterbox:last-child { transform-origin: 50% 100%; }
+
 /* ---------- Stage node — interaction markers ---------- */
 .stage-marker {
   /* anchored at the marker point (its bottom-centre sits on the ground) */

@@ -125,6 +125,7 @@ import type {
   JourneyStep,
   MeterKey,
   SceneNode,
+  StageScriptStep,
   Story,
 } from "../types";
 
@@ -3223,6 +3224,35 @@ function CasePlayer({
    *  it (so the splice happens at the bike, not across the street); every
    *  other scene fires it where it was dropped. */
   const [dropRequest, setDropRequest] = useState<{ hotspotId: string; itemId: string; key: number } | null>(null);
+  /** SCRIPTED SEQUENCE ordered by a `runScript` hotspot on a 🚶 stage —
+   *  handed to Stage keyed (same shape of contract as dropRequest). Classic
+   *  graphic-novel scenes never see this: the action is stage-only. */
+  const [scriptRequest, setScriptRequest] = useState<{ steps: StageScriptStep[]; key: number } | null>(null);
+  /** Room-entry script for the CURRENT stage scene, with its run-once flag
+   *  latch applied: undefined when there's no script or the flag says it
+   *  already played. Stage captures it at mount (scene-keyed remount). */
+  const stageEnterScript = useMemo(() => {
+    if (scene?.nodeType !== "stage") return undefined;
+    const steps = scene.stage?.enterScript;
+    if (!steps || steps.length === 0) return undefined;
+    const latch = scene.stage?.enterScriptFlag;
+    if (latch && state.activeFlags.has(latch)) return undefined;
+    return steps;
+    // Deliberately NOT keyed on state: the latch is checked on scene entry,
+    // and the effect below sets the flag right after — re-render must not
+    // yank the script out from under the Stage that just latched it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId, story]);
+  // Set the run-once flag the moment the entry script is served — save-proof:
+  // a save made during (or after) the cutscene never replays it.
+  useEffect(() => {
+    if (!stageEnterScript) return;
+    const latch = sceneById(story, sceneId)?.stage?.enterScriptFlag;
+    if (latch && !stateRef.current.activeFlags.has(latch)) {
+      setState((s) => applyConsequences(story, { setFlags: [latch] }, s));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageEnterScript, sceneId, story]);
   const dropKey = useRef(0);
   const handleItemDrop = useCallback(
     (item: Item, hotspotId: string) => {
@@ -5462,6 +5492,23 @@ function CasePlayer({
           setPlayerPoseOnce(!!act.playerPoseOnce);
           completeHotspot(hs, undefined, act, markUsed);
           break;
+        case "runScript":
+          // SCRIPTED SEQUENCE — stage-only cutscenes. A classic graphic-novel
+          // scene has no walkable floor to perform on: the action is ignored
+          // there (validateStory flags it at author time too), so the
+          // prose/choice flow can never be hijacked by a script.
+          if (!stageMode) {
+            pushToast("🎬 Scripted sequences only play on 🚶 walkable stages.", "info");
+            break;
+          }
+          if (act.script && act.script.length > 0) {
+            audio.click();
+            setScriptRequest({ steps: act.script, key: Date.now() });
+          }
+          // flagSet/meterChange on the action still apply (and the marker is
+          // consumed unless the hotspot is repeatable, like any other).
+          completeHotspot(hs, undefined, { ...act, targetSceneId: undefined }, markUsed);
+          break;
         case "openBoard":
           setOverlay({ type: "board" });
           break;
@@ -6134,6 +6181,20 @@ function CasePlayer({
             onVerbChange={setCoinVerb}
             {...(hasOccluders ? { onPosChange: setWalkerFeet } : {})}
             {...(dropRequest ? { dropRequest } : {})}
+            {...(scriptRequest ? { scriptRequest } : {})}
+            {...(stageEnterScript ? { enterScript: stageEnterScript } : {})}
+            onScriptEffect={(eff) => {
+              // Story-state side effects a cutscene step asks for — the
+              // stage performs, Game owns the consequences.
+              if (eff.type === "setFlag") {
+                setState((s) => applyConsequences(story, { setFlags: [eff.flag] }, s));
+              } else if (eff.type === "goToScene") {
+                goToScene(eff.targetSceneId);
+              } else {
+                setPlayerPose(eff.pose ?? null);
+                setPlayerPoseOnce(false);
+              }
+            }}
             verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene(scene) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}

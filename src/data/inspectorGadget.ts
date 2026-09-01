@@ -155,6 +155,20 @@ export const INSPECTOR_GADGET: Story = {
         depthScale: 0.35,
         obstacles: [{ x: 28, y: 64, w: 24, h: 13 }],
         enterCaption: "Clock Tower Plaza. The hands up there say 3:12. Your watch disagrees, loudly.",
+        // SCRIPTED SEQUENCE (SCUMM room-entry cutscene): plays ONCE — letterbox
+        // bars drop, input locks, Brain trots up with a warning, then the
+        // plaza is handed back to the player. `enterScriptFlag` is the
+        // save-proof run-once latch; the setFlag step is story-visible proof
+        // the cutscene ran (nothing gates on it, it's a demo breadcrumb).
+        enterScript: [
+          { do: "npcWalkTo", npcId: "npc_brain", x: 20, y: 88 },
+          { do: "npcMotion", npcId: "npc_brain", facing: "left" },
+          { do: "say", text: "Rrrf! Rrrrrf!", npcId: "npc_brain" },
+          { do: "say", text: "Easy, boy. One mystery at a time — first, that clock." },
+          { do: "npcWalkTo", npcId: "npc_brain", x: 34, y: 90 },
+          { do: "setFlag", flag: "ig_brain_warned_me" },
+        ],
+        enterScriptFlag: "ig_plaza_intro_played",
         npcs: [
           {
             // Brain in his postman disguise — a SET-MOTION patrol: he does a

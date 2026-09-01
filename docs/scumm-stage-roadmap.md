@@ -46,18 +46,25 @@ across the square).
 
 ## The gap list — what would move the needle most, in order
 
-### 1. Scripted sequences ("cutscene scripts") — the big one
+### 1. Scripted sequences ("cutscene scripts") — ✅ SHIPPED
 SCUMM is a scripting VM; rooms come alive because authors can *sequence*
 actions: walk Guybrush to the door, walk the shopkeeper in, two lines, a
-flag, hand control back. Today the engine can only do enterCaption + beats.
+flag, hand control back.
 
-A minimal, engine-fitting design: a `script` array runnable on scene enter or
-from a hotspot action (`type: "runScript"`), steps like
-`{ walkTo }`, `{ npcWalkTo }`, `{ npcMotion }`, `{ say }`, `{ face }`,
-`{ wait }`, `{ setFlag }`, `{ lockInput }` / `{ unlockInput }`, `{ goToScene }`.
-Reuse the existing walkers/routing; it's an orchestration layer, not new
-movement code. This unlocks: entrances, reveals, chase beats, "the power goes
-out", NPCs reacting to what you just did.
+**Now in the engine** (`StageScriptStep` in src/types.ts): a step array
+runnable on scene enter (`StageSettings.enterScript`, with a save-proof
+run-once latch `enterScriptFlag`) or from a hotspot action
+(`type: "runScript"`, stage nodes only — classic graphic-novel scenes ignore
+it by design). Steps: `walkTo` (player, obstacle-routed like a click),
+`npcWalkTo`, `npcMotion`, `say` (floating line over player or NPC, auto
+reading time), `face`, `pose`, `wait`, `setFlag`, `goToScene` (ends the
+script). Input locks under letterbox bars while it plays; NPCs suspend their
+patrols when scripted and resume after. Studio has a step-list editor on
+both the runScript action and the stage tab; the validator catches scripts
+on classic scenes, missing NPC targets, dead goToScene targets, unreachable
+trailing steps and empty scripts; script flags/edges feed collectFlags and
+the story graph. Demo: the Clockwork Caper plaza entrance (Brain runs up
+with a warning, once per story).
 
 ### 2. Interactable NPCs (hotspot pinned to an actor)
 Interaction currently lives on static hotspots, so you can't talk to someone
@@ -96,8 +103,7 @@ rooms feel persistent. Low urgency — most rooms are visited once.
 
 ## Suggested order of attack
 
-1. **Scripted sequences** (unlocks the most authored drama; ~the size of the
-   set-motions change ×3)
+1. ~~**Scripted sequences**~~ ✅ shipped (see §1)
 2. **Interactable/moving NPCs** (`Hotspot.npcId`)
 3. **onApproach reactions** (an afternoon)
 4. **Sentence line skin + footsteps** (polish pass)

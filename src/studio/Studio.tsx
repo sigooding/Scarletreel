@@ -148,6 +148,7 @@ import type {
   SceneNode,
   StageNpc,
   StageNpcWaypoint,
+  StageScriptStep,
   Story,
 } from "../types";
 
@@ -1439,6 +1440,164 @@ function mediaField(v?: string): string {
   if (!v) return "";
   if (v.startsWith("data:") || v.startsWith("asset:") || v.startsWith("video:asset:")) return "";
   return v;
+}
+
+/* ------------------------------------------------------------------ */
+/* SCRIPTED SEQUENCES — the compact step-list editor shared by the      */
+/* runScript hotspot action and the stage tab's room-entry script.      */
+/* One row per step: pick what it does, fill in the fields that kind    */
+/* needs. Stage-only by design — classic scenes never see scripts.      */
+
+const SCRIPT_STEP_KINDS: { v: StageScriptStep["do"]; label: string }[] = [
+  { v: "walkTo", label: "🚶 Player walks to" },
+  { v: "face", label: "↔ Player faces" },
+  { v: "pose", label: "🧍 Player pose" },
+  { v: "say", label: "💬 Say line" },
+  { v: "wait", label: "⏱ Wait" },
+  { v: "npcWalkTo", label: "🚶 NPC walks to" },
+  { v: "npcMotion", label: "🎭 NPC motion" },
+  { v: "setFlag", label: "🚩 Set flag" },
+  { v: "goToScene", label: "→ Go to scene (ends script)" },
+];
+
+/** A fresh step of the given kind with sensible defaults. */
+function defaultScriptStep(kind: StageScriptStep["do"], npcIds: string[], sceneId: string): StageScriptStep {
+  switch (kind) {
+    case "walkTo":
+      return { do: "walkTo", x: 50, y: 80 };
+    case "face":
+      return { do: "face", dir: "left" };
+    case "pose":
+      return { do: "pose" };
+    case "say":
+      return { do: "say", text: "" };
+    case "wait":
+      return { do: "wait", seconds: 1 };
+    case "npcWalkTo":
+      return { do: "npcWalkTo", npcId: npcIds[0] ?? "", x: 50, y: 80 };
+    case "npcMotion":
+      return { do: "npcMotion", npcId: npcIds[0] ?? "" };
+    case "setFlag":
+      return { do: "setFlag", flag: "" };
+    case "goToScene":
+      return { do: "goToScene", targetSceneId: sceneId };
+  }
+}
+
+function ScriptEditor({
+  steps,
+  onChange,
+  npcIds,
+  scenes,
+}: {
+  steps: StageScriptStep[];
+  onChange: (next: StageScriptStep[]) => void;
+  /** Ambient NPC ids in this scene (for the NPC step targets). */
+  npcIds: string[];
+  scenes: { id: string; title: string }[];
+}) {
+  const upd = (i: number, patch: Record<string, unknown>) =>
+    onChange(steps.map((s, si) => (si === i ? ({ ...s, ...patch } as StageScriptStep) : s)));
+  const swap = (i: number, j: number) => {
+    if (j < 0 || j >= steps.length) return;
+    const next = steps.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const num = (v: string, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return (
+    <div className="space-y-1">
+      {steps.map((st, i) => (
+        <div key={i} className="rounded border border-noir-700 bg-noir-950/60 p-1.5">
+          <div className="flex items-center gap-1">
+            <span className="w-4 text-right font-type text-[9px] text-paper/40">{i + 1}</span>
+            <select
+              className={`${inputCls} flex-1`}
+              value={st.do}
+              onChange={(e) => onChange(steps.map((s, si) => (si === i ? defaultScriptStep(e.target.value as StageScriptStep["do"], npcIds, scenes[0]?.id ?? "") : s)))}
+            >
+              {SCRIPT_STEP_KINDS.map((k) => (
+                <option key={k.v} value={k.v}>{k.label}</option>
+              ))}
+            </select>
+            <button className="px-1 text-[10px] text-paper/50 hover:text-paper" title="Move up" onClick={() => swap(i, i - 1)}>▲</button>
+            <button className="px-1 text-[10px] text-paper/50 hover:text-paper" title="Move down" onClick={() => swap(i, i + 1)}>▼</button>
+            <button className="px-1 text-[10px] text-red-300/70 hover:text-red-300" title="Remove step" onClick={() => onChange(steps.filter((_, si) => si !== i))}>✕</button>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1 pl-5">
+            {(st.do === "npcWalkTo" || st.do === "npcMotion" || (st.do === "say" && npcIds.length > 0)) && (
+              <select
+                className={`${inputCls} w-auto min-w-[90px] flex-none`}
+                value={("npcId" in st ? st.npcId : "") ?? ""}
+                onChange={(e) => upd(i, { npcId: e.target.value || undefined })}
+                title="Which actor"
+              >
+                {st.do === "say" ? <option value="">player</option> : null}
+                {npcIds.map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+            )}
+            {(st.do === "walkTo" || st.do === "npcWalkTo") && (
+              <>
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x %" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y %" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
+                <span className="text-[9px] text-paper/40">x / y (scene %)</span>
+              </>
+            )}
+            {st.do === "face" && (
+              <select className={`${inputCls} w-auto flex-none`} value={st.dir} onChange={(e) => upd(i, { dir: e.target.value })}>
+                <option value="left">left</option>
+                <option value="right">right</option>
+              </select>
+            )}
+            {st.do === "pose" && (
+              <input className={`${inputCls} flex-1`} value={st.pose ?? ""} placeholder="pose animation name (empty = back to idle)" onChange={(e) => upd(i, { pose: e.target.value || undefined })} />
+            )}
+            {st.do === "say" && (
+              <input className={`${inputCls} flex-1`} value={st.text} placeholder="the spoken line" onChange={(e) => upd(i, { text: e.target.value })} />
+            )}
+            {st.do === "wait" && (
+              <>
+                <input className={`${inputCls} w-16 flex-none`} type="number" step="0.1" min="0" value={st.seconds} onChange={(e) => upd(i, { seconds: Math.max(0, num(e.target.value, st.seconds)) })} />
+                <span className="text-[9px] text-paper/40">seconds</span>
+              </>
+            )}
+            {st.do === "npcMotion" && (
+              <>
+                <input className={`${inputCls} w-24 flex-none`} value={st.anim ?? ""} placeholder="motion" title="Named sheet animation" onChange={(e) => upd(i, { anim: e.target.value || undefined })} />
+                <input className={`${inputCls} flex-1`} value={st.say ?? ""} placeholder="say line" onChange={(e) => upd(i, { say: e.target.value || undefined })} />
+                <select className={`${inputCls} w-auto flex-none`} value={st.facing ?? ""} title="Face" onChange={(e) => upd(i, { facing: e.target.value || undefined })}>
+                  <option value="">face —</option>
+                  <option value="left">left</option>
+                  <option value="right">right</option>
+                </select>
+              </>
+            )}
+            {st.do === "setFlag" && (
+              <input className={`${inputCls} flex-1`} value={st.flag} placeholder="flag id" onChange={(e) => upd(i, { flag: e.target.value })} />
+            )}
+            {st.do === "goToScene" && (
+              <select className={`${inputCls} flex-1`} value={st.targetSceneId} onChange={(e) => upd(i, { targetSceneId: e.target.value })}>
+                {scenes.map((s) => (
+                  <option key={s.id} value={s.id}>{s.title}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+      ))}
+      <button
+        className="rounded border border-noir-600 px-2 py-0.5 text-[10px] text-paper/70 hover:border-neon hover:text-neon"
+        onClick={() => onChange([...steps, defaultScriptStep(steps.length ? "say" : "walkTo", npcIds, scenes[0]?.id ?? "")])}
+      >
+        ＋ add step
+      </button>
+    </div>
+  );
 }
 
 const sectionStateKey = (id: string) => `scarlet-studio-section-${id}`;
@@ -10457,6 +10616,30 @@ function StudioInner({
                             }
                           />
                         </Field>
+                        <Field label="🎬 Scripted sequence on scene entry (SCUMM room-entry cutscene)">
+                          <p className="mb-1 font-type text-[9px] leading-snug text-paper/45">
+                            Plays right after the scene fades in: input locks, letterbox bars drop, the steps run in
+                            order, then control returns. Give it a run-once flag so it plays once per story.
+                          </p>
+                          <ScriptEditor
+                            steps={scene.stage.enterScript ?? []}
+                            onChange={(next) =>
+                              updateScene(scene.id, { stage: { ...scene.stage!, enterScript: next.length ? next : undefined } })
+                            }
+                            npcIds={(scene.stage.npcs ?? []).map((n) => n.id)}
+                            scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
+                          />
+                          {(scene.stage.enterScript?.length ?? 0) > 0 ? (
+                            <input
+                              className={`${inputCls} mt-1`}
+                              value={scene.stage.enterScriptFlag ?? ""}
+                              placeholder="run-once flag (empty = replays on every entry)"
+                              onChange={(e) =>
+                                updateScene(scene.id, { stage: { ...scene.stage!, enterScriptFlag: e.target.value.trim() || undefined } })
+                              }
+                            />
+                          ) : null}
+                        </Field>
                         <Field label="Character sprite (emoji:… or an image url / asset)">
                           <input
                             className={inputCls}
@@ -12321,6 +12504,7 @@ function StudioInner({
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
                             { v: "startDialogue", label: "🗣 Start conversation (stage)" },
                             { v: "setPlayerPose", label: "🧍 Set player pose (stage)" },
+                            { v: "runScript", label: "🎬 Run scripted sequence (stage)" },
                           ].map((t) => (
                             <option key={t.v} value={t.v}>{t.label}</option>
                           ))}
@@ -12747,6 +12931,28 @@ function StudioInner({
                           />
                           ▶ Play once, then revert (a quick bend-and-straighten)
                         </label>
+                      </div>
+                    )}
+                    {h.action.type === "runScript" && (
+                      <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
+                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Scripted sequence (stage cutscene)</div>
+                        <p className="font-type text-[9px] leading-snug text-paper/45">
+                          Steps play IN ORDER with input locked and letterbox bars down: walk the player, walk an NPC,
+                          float say lines, wait a beat, set a flag, or cut to another scene. 🚶 Walkable stages only —
+                          classic scenes ignore this action.
+                          {scene.nodeType !== "stage" ? " ⚠ This scene is NOT a walkable stage." : ""}
+                        </p>
+                        <ScriptEditor
+                          steps={h.action.script ?? []}
+                          onChange={(next) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.action.script = next.length ? next : undefined;
+                            })
+                          }
+                          npcIds={(scene.stage?.npcs ?? []).map((n) => n.id)}
+                          scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
+                        />
                       </div>
                     )}
                     {h.action.type === "startDialogue" && (
