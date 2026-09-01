@@ -841,6 +841,20 @@
    "🎒 Accepts these items (USE)", and anything else is refused with a line
    (story-wide defaults: Flags tab → "🎛 Verb coin — refusal lines").
 
+   MULTI-STATE OBJECTS ("🔁 States", in each hotspot's inspector): ONE marker
+   that changes with the story — a lever up/down, a drawer full/empty, a door
+   locked/open — instead of stacking flag-gated duplicate hotspots. States are
+   checked top to bottom and the LAST one whose gate passes is the face the
+   player sees, so leave the unconditional one out (the object itself is the
+   default) or list it FIRST. A state overrides only what you fill in: label,
+   object image (or "no art in this state"), cursor, action (with its own voice
+   clip), and the lock (inherit the object's gate / always unlocked / its own
+   gate — the opened door needs no key). The zone, the verb answers and the
+   accepted items are shared, and the marker re-skins IN PLACE — it never
+   duplicates or resets the walk. The Check tab understands them: a state's
+   flag counts as produced, an unsatisfiable when-flag is an error, a state
+   route that leads to a scene is a real connection on the reel.
+
    PERSPECTIVE: "Close-up size" / "Distance size" on the Walkable Stage panel set
    how big the walker is at the front of the floor band vs the back (walking away
    also covers less screen per second, so it doesn't read as skating).

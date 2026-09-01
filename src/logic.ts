@@ -14,6 +14,7 @@ import type {
   CursorKind,
   Hotspot,
   HotspotAction,
+  HotspotState,
   InventorySettings,
   HotspotActionType,
   Interrogation,
@@ -613,16 +614,22 @@ export function storyEdges(story: Story): StoryEdge[] {
         });
     });
     sc.hotspots?.forEach((hs) => {
-      if (hs.action.targetSceneId)
+      // MULTI-STATE: every state's action is a route the object can take
+      // (the door's "open" state leads elsewhere than its "locked" state),
+      // so each one contributes its own edge. The base action keeps the
+      // plain edge id (canvas compatibility); states append their state id.
+      hotspotReachableActions(hs).forEach((act, ai) => {
+        if (!act.targetSceneId) return;
         edges.push({
-          id: `e-${sc.id}-h-${hs.id}`,
+          id: ai === 0 ? `e-${sc.id}-h-${hs.id}` : `e-${sc.id}-h-${hs.id}-s${ai}`,
           source: sc.id,
-          target: hs.action.targetSceneId,
+          target: act.targetSceneId,
           kind: "hotspot",
           ref: hs,
-          label: `⌖ ${hs.label.slice(0, 22)}`,
+          label: `⌖ ${hs.label.slice(0, 22)}${ai > 0 ? " (state)" : ""}`,
           attitude: "Hotspot",
         });
+      });
       // A pattern puzzle is a real branch: solving it (and, when retry is off,
       // failing it) routes the player to a scene. Those destinations are
       // authored on the puzzle config rather than the hotspot action, so they
@@ -1237,6 +1244,57 @@ export function resolveVerbAction(hs: Hotspot, verb: VerbId, itemId?: string): V
  *  markers a verb can't touch without leaking what the puzzle is)? */
 export function hotspotAnswersVerb(hs: Hotspot, verb: VerbId): boolean {
   return resolveVerbAction(hs, verb).ok;
+}
+
+/* --------------------- multi-state objects ----------------
+ * A hotspot may carry `states` — one object that changes with the story
+ * (a lever up/down, a drawer full/empty, a door locked/open) instead of
+ * the author faking it with flag-gated duplicate hotspots. States are
+ * evaluated in order and the LAST one whose gate passes is active, so
+ * the unconditional default is listed first and specific ones after.
+ * The active state only overrides label/image/cursor/action/gating —
+ * identity, bounds, verbs and items are inherited, so the marker
+ * re-skins in place and never duplicates. */
+
+/** The currently active state of a hotspot (null when it has no states or
+ *  none of its gates pass — the hotspot's own fields then stand). Pure; the
+ *  game re-runs it whenever world state changes. */
+export function activeHotspotState(
+  hs: { states?: HotspotState[] },
+  s: GlobalState
+): HotspotState | null {
+  const states = hs.states;
+  if (!states || states.length === 0) return null;
+  let active: HotspotState | null = null;
+  for (const st of states) {
+    if (!st.when || meetsGating(st.when, s)) active = st;
+  }
+  return active;
+}
+
+/** The hotspot the player currently SEES and interacts with: the base object
+ *  re-skinned by its active state. Returns the same object when there are no
+ *  states (or none pass), so callers can use it unconditionally. Resolving an
+ *  already-resolved hotspot is idempotent — the states array rides along
+ *  untouched and the same state wins again. */
+export function resolveHotspot(hs: Hotspot, s: GlobalState): Hotspot {
+  const st = activeHotspotState(hs, s);
+  if (!st) return hs;
+  const next: Hotspot = { ...hs };
+  if (st.label !== undefined) next.label = st.label;
+  // Empty string = "no object art in this state" (the drawer stood empty).
+  if (st.image !== undefined) next.image = st.image === "" ? undefined : st.image;
+  if (st.cursor !== undefined) next.cursor = st.cursor;
+  if (st.action !== undefined) next.action = st.action;
+  if (st.gating !== undefined) next.gating = st.gating ?? undefined;
+  return next;
+}
+
+/** Every action a hotspot could possibly fire — its base action plus every
+ *  state's action (used by the validator and the edge graph, which must see
+ *  routes that only exist in a later state of the object). */
+export function hotspotReachableActions(hs: Hotspot): HotspotAction[] {
+  return [hs.action, ...(hs.states ?? []).map((st) => st.action).filter((a): a is HotspotAction => !!a)];
 }
 
 /** Default walk speed: scene-width % per second. */
@@ -2160,18 +2218,23 @@ export function validateStory(story: Story): ValidationIssue[] {
     // A stage scene the player can never leave is a soft-lock: exits must be
     // walk-to markers (goToScene hotspots), walk-off-screen edge exits, or
     // an auto-advance — a choice only appears after a conversation, so it
-    // can't be the only way out.
+    // can't be the only way out. A state's action counts: the door's "open"
+    // state can be the only way out of the room.
     if (!sc.isEnding) {
-      const doorOut = (sc.hotspots ?? []).some((h) => h.action.type === "goToScene" && h.action.targetSceneId);
+      const doorOut = (sc.hotspots ?? []).some((h) =>
+        hotspotReachableActions(h).some((a) => a.type === "goToScene" && a.targetSceneId)
+      );
       const edgeOut = Object.values(sc.stage?.exitEdges ?? {}).some((e) => e?.targetSceneId);
       if (!doorOut && !edgeOut && !sc.autoAdvanceTargetSceneId && !(sc.choices ?? []).some((c) => c.targetSceneId))
         issues.push({ severity: "error", sceneId: sc.id, message: `${label} has no way out. Add a hotspot with action "→ Go to scene" (a door/exit marker the player walks to), a walk-off-screen edge exit, or an auto-advance target.` });
     }
-    const starters = (sc.hotspots ?? []).filter((h) => h.action.type === "startDialogue");
-    const topicStarter = starters.some((h) => (h.action.topics?.length ?? 0) > 0);
+    const starters = (sc.hotspots ?? []).filter((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue"));
+    const topicStarter = starters.some((h) =>
+      hotspotReachableActions(h).some((a) => a.type === "startDialogue" && (a.topics?.length ?? 0) > 0)
+    );
     if (starters.length > 0 && !topicStarter && (sc.dialogueBeats ?? []).length === 0)
       issues.push({ severity: "error", sceneId: sc.id, message: `${label} has a "Start conversation" marker but no dialogue beats — write the conversation in the Beats tab or the marker does nothing.` });
-    if ((sc.dialogueBeats ?? []).length > 0 && !(sc.hotspots ?? []).some((h) => h.action.type === "startDialogue"))
+    if ((sc.dialogueBeats ?? []).length > 0 && !(sc.hotspots ?? []).some((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue")))
       issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has dialogue beats but no "Start conversation" (🗣) hotspot — nobody can trigger the conversation. Add a talk marker (Hotspots tab → action type "🗣 Start conversation").` });
     if (sc.stage) {
       const f = stageFloor(sc.stage);
@@ -2221,8 +2284,32 @@ export function validateStory(story: Story): ValidationIssue[] {
     // choices and no after-beat route just closes — fine — but if the ONLY
     // exits are choices the player must talk to leave; surface that
     // deliberately-authored pattern as a heads-up, not an error.
-    if (!sc.isEnding && !(sc.hotspots ?? []).some((h) => h.action.type === "goToScene") && (sc.choices ?? []).some((c) => c.targetSceneId) && (sc.dialogueBeats ?? []).length > 0)
+    if (!sc.isEnding && !(sc.hotspots ?? []).some((h) => hotspotReachableActions(h).some((a) => a.type === "goToScene")) && (sc.choices ?? []).some((c) => c.targetSceneId) && (sc.dialogueBeats ?? []).length > 0)
       issues.push({ severity: "warning", sceneId: sc.id, message: `${label} exits only through choices, which appear after a conversation — the player must talk before they can leave. That can be exactly right; just make sure it's on purpose.` });
+  }
+
+  // ---- MULTI-STATE OBJECTS (any node type) ----
+  // Structural traps the Studio can't see locally: an unconditional state
+  // that isn't first silently freezes the object, duplicate state ids break
+  // keying, and a state that overrides nothing is dead weight.
+  for (const sc of story.scenes) {
+    for (const h of sc.hotspots ?? []) {
+      const states = h.states ?? [];
+      if (!states.length) continue;
+      const label = `Hotspot "${h.label}" (scene "${sc.title}")`;
+      const seen = new Set<string>();
+      states.forEach((st, i) => {
+        if (seen.has(st.id))
+          issues.push({ severity: "error", sceneId: sc.id, message: `${label}: states share the id "${st.id}" — give each state its own id.` });
+        seen.add(st.id);
+        if (!st.when && i > 0)
+          issues.push({ severity: "error", sceneId: sc.id, message: `${label}: state "${st.id}" has no gate but isn't first — it always wins, permanently hiding every state above it. List the unconditional default state first.` });
+        if (st.action?.type === "goToScene" && !st.action.targetSceneId)
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: state "${st.id}" goes to a scene but no target is picked — it does nothing.` });
+        if (st.label === undefined && st.image === undefined && st.cursor === undefined && st.action === undefined && st.gating === undefined)
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: state "${st.id}" overrides nothing (no label/image/cursor/action/gate) — fill it in or remove it.` });
+      });
+    }
   }
 
   // Reachability. In a season every episode is its own entry point — the
@@ -2655,6 +2742,15 @@ export function validateStory(story: Story): ValidationIssue[] {
       if (c.presentItem) required.add(c.presentItem);
     });
     sc.hotspots?.forEach((h) => h.gating?.requiresItems?.forEach((i) => required.add(i)));
+    // MULTI-STATE: a state's `when` gate and its own (non-inherited) gate are
+    // real reads; a state's action can also be what grants the item.
+    sc.hotspots?.forEach((h) =>
+      (h.states ?? []).forEach((st) => {
+        st.when?.requiresItems?.forEach((i) => required.add(i));
+        st.gating?.requiresItems?.forEach((i) => required.add(i));
+        st.action?.itemGranted && st.action.type === "giveItem" && grantable.add(st.action.itemGranted);
+      })
+    );
     sc.dialogueBeats?.forEach((b) => {
       b.conditionRule?.requiresItems?.forEach((i) => required.add(i));
       // The contradiction can only be won with a held clue — it's required.
@@ -2681,6 +2777,13 @@ export function validateStory(story: Story): ValidationIssue[] {
       puzzle?.rewardConsequences?.setFlags?.forEach((flag) => grantableFlags.add(flag));
       puzzle?.wrongSubmissionConsequences?.setFlags?.forEach((flag) => grantableFlags.add(flag));
       hotspot.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+      // MULTI-STATE: states produce (their actions' flagSet) and consume
+      // (their when/gate flags) exactly like the base object does.
+      (hotspot.states ?? []).forEach((st) => {
+        if (st.action?.flagSet) grantableFlags.add(st.action.flagSet);
+        st.when?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+        st.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+      });
     });
     sc.onEnterActions?.forEach((action) => action.consequences?.setFlags?.forEach((flag) => grantableFlags.add(flag)));
     sc.dialogueBeats?.forEach((beat) => {

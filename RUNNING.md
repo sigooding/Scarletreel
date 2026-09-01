@@ -86,12 +86,14 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    and play a synthetic story across the stage ↔ graphic-novel boundary in
    every direction: WASD/arrow walking, click-to-walk around furniture, the
    verb coin, remote looks, conversations that lock the floor, wide-world
-   camera pans and walk-off-screen edge exits. The non-interference half
+   camera pans, walk-off-screen edge exits, a live MULTI-STATE safe puzzle
+   (locked → opened → taken through `Hotspot.states`), and a real stage
+   round-trip through Demo Lab: Press the Lie. The non-interference half
    asserts the classic novel scenes between stages keep their prose panel,
    hotspots, exam card, choice keyboard shortcuts (W/S/arrows/digits) and
    default cursor — no walker, markers, captions or armed coin verb may leak
-   across the boundary — and finishes with a real stage round-trip through
-   Demo Lab: Press the Lie.
+   across the boundary. Part 5 mounts the real Studio and drives the 🔁
+   States editor (badge, add, remove).
 
 ### Building a sprite sheet from a generated plate
 

@@ -225,6 +225,36 @@ export interface Hotspot {
   examine?: boolean;
   /** Seconds the examine hold takes (default 2.5). */
   examineSeconds?: number;
+  /** MULTI-STATE OBJECT — one object that changes with the story instead of
+   *  being faked with flag-gated duplicate hotspots. States are evaluated in
+   *  order and the LAST one whose gate passes is active (so list the
+   *  unconditional default FIRST, then increasingly specific ones). The
+   *  active state overrides the hotspot's label / image / cursor / action /
+   *  gating; everything else (identity, bounds, verbs, accepted items,
+   *  repeatable…) is inherited unchanged — the marker never duplicates or
+   *  re-mounts, it just re-skins and re-answers in place. See
+   *  docs/adventure-mode.md § Multi-state objects. */
+  states?: HotspotState[];
+}
+
+/** One state of a multi-stage object (see Hotspot.states). Every field is an
+ *  OVERRIDE — undefined means "keep the hotspot's own value" (and an empty
+ *  string for `image` means 'draw no object art in this state'). */
+export interface HotspotState {
+  /** Stable id (validator references, Studio list keys). */
+  id: string;
+  /** When this state is active. Omitted = always active: list that state
+   *  FIRST as the default — an unconditional state listed later would
+   *  permanently shadow everything above it (the validator warns on it). */
+  when?: Gating;
+  label?: string;
+  image?: string;
+  cursor?: CursorKind;
+  action?: HotspotAction;
+  /** Replaces the hotspot's own gate while this state is active.
+   *  `undefined` = inherit the hotspot's gating; an EXPLICIT null = this
+   *  state is always unlocked (the "door now open" state of a locked door). */
+  gating?: Gating | null;
 }
 
 export interface Choice {

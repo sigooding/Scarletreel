@@ -376,6 +376,66 @@ the Roadhouse a *reply* choice carries `presentItem: "adv_receipt"` → sets
 after the coffee-in-the-jukebox distraction. Swing instead and you get the
 bust ending.
 
+### Multi-state objects (a lever up/down, a drawer full/empty)
+
+One marker that **changes with the story** instead of being faked with
+flag-gated duplicate hotspots. A hotspot may carry `states: […]`; states are
+checked in order and the **last one whose gate passes wins** — so list the
+unconditional default *first* (or rely on the base object as the default) and
+put the specific ones after it:
+
+```ts
+{
+  id: "bench",
+  label: "the workbench",
+  cursor: "look",
+  action: { type: "showText", text: "…there's a fresh coil on the pegboard…" },
+  states: [
+    {
+      id: "bare",
+      when: { requiresFlags: ["adv_has_line"] },   // once the coil is taken
+      label: "the bare pegboard hook",
+      action: { type: "showText", text: "…nothing but a bright clean ring…" },
+    },
+  ],
+}
+```
+
+A state only overrides what you fill in — `label`, `image` (an empty string
+means "no object art in this state"), `cursor`, `action`, and `gating`
+(`null` = always unlocked: the door's *open* state). Everything else —
+identity, zone bounds, verb answers, accepted items, `isRepeatable` — is
+shared, so **the marker re-skins in place**: it never duplicates, never
+re-mounts, and the walk animation never resets. That's the whole point: one
+object, one `used` history, many faces.
+
+The machinery reasons about states everywhere the base object goes:
+
+- **Play** — the marker, its lock and its fired action follow the active
+  state live (stage rooms *and* classic novel scenes; the scene-action list
+  re-labels too).
+- **Visibility** — a used marker hides only if what it would do *now* is a
+  real take/route: a picked-up safe disappears, but the same object's later
+  "empty drawer" look state can bring the marker back as a readable line.
+- **Validator** — a state's `flagSet` counts as a flag producer, its `when`
+  flags as consumers (an impossible state is an error), a
+  `goToScene`-without-target warns, duplicate state ids and an
+  unconditional-state-listed-after-a-gated-one are errors (the latter would
+  permanently shadow everything above it).
+- **The flowgraph** — a route that only exists in a later state (the door's
+  open state) is a real edge: its destination counts as reachable, and a
+  stage room may legally exit *only* through a state's action.
+- **Exports** — state images and every hotspot voice clip (base action,
+  verb actions, per-item replies, per-state actions) are bundled in
+  `.reel.json` exports and compacted to `asset:` refs like all other media.
+
+Studio: the hotspot's inspector has a **🔁 States** section — add states,
+reorder them (↑/↓; order = specificity), and edit each state's label, art,
+cursor, action, `when` gate and lock override. The hotspot's canvas card
+shows a `🔁n` badge. `throttleAsh.ts` (`adv_garage` → `advh_bench`) ships the
+reference case, and `npm run test:stage` plays a full locked → opened →
+emptied safe puzzle through the real UI.
+
 ## What the prototype is missing (ranked)
 
 Built on purpose: every gap below shows up as a compromise in
@@ -408,9 +468,13 @@ Built on purpose: every gap below shows up as a compromise in
 ## Testing it
 
 ```
-npm run test:engine     # 727 checks — includes a "point-and-click prototype"
+npm run test:engine     # 978 checks — includes a "point-and-click prototype"
                         # block that walks every exit, item, flag and ending
-                        # cross-reference in throttleAsh.ts
+                        # cross-reference in throttleAsh.ts, plus the
+                        # multi-state resolver/validator/graph checks
+npm run test:stage      # the walking stage's own beta harness — engine math,
+                        # a full stage↔novel play-through, and a live
+                        # multi-state safe puzzle in the real UI
 npm run build
 ```
 

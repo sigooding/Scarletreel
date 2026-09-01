@@ -137,6 +137,8 @@ import type {
   Gating,
   GlobalState,
   Hotspot,
+  HotspotAction,
+  HotspotState,
   InventorySettings,
   Item,
   LensFlareGhostTier,
@@ -12962,7 +12964,7 @@ function StudioInner({
                   <div key={h.id} onClick={() => setSelectedHotspot(h.id)}>
                     <CollapsibleSection
                       id={`hotspot-${h.id}`}
-                      title={<span>⌖ {h.label || "Hotspot"}</span>}
+                      title={<span>⌖ {h.label || "Hotspot"}{(h.states?.length ?? 0) > 0 ? ` 🔁${h.states!.length}` : ""}</span>}
                       titleClass="text-gold"
                       defaultOpen={selectedHotspot === h.id}
                       className={`border ${selectedHotspot === h.id ? "border-neon" : "border-noir-600"}`}
@@ -13386,6 +13388,246 @@ function StudioInner({
                             />
                           </Field>
                         </div>
+                      );
+                    })()}
+
+                    {/* ---- MULTI-STATE OBJECT: one marker that changes with the story ---- */}
+                    {(() => {
+                      const hsSetBase = (patch: Partial<Hotspot>) =>
+                        mutate((d) => {
+                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                          Object.assign(s.hotspots!.find((x) => x.id === h.id)!, patch);
+                        });
+                      const states = h.states ?? [];
+                      const setStates = (next: Hotspot["states"]) =>
+                        hsSetBase({ states: next?.length ? next : undefined });
+                      const patchState = (idx: number, patch: Partial<HotspotState>) =>
+                        setStates(states.map((st, i) => (i === idx ? { ...st, ...patch } : st)));
+                      const addState = () =>
+                        setStates([
+                          ...states,
+                          {
+                            id: `st_${uid()}`,
+                            when: { requiresFlags: [] },
+                            label: "",
+                          },
+                        ]);
+                      const moveState = (idx: number, dir: -1 | 1) => {
+                        const j = idx + dir;
+                        if (j < 0 || j >= states.length) return;
+                        const next = [...states];
+                        [next[idx], next[j]] = [next[j], next[idx]];
+                        setStates(next);
+                      };
+                      return (
+                        <CollapsibleSection
+                          id={`hotspot-states-${h.id}`}
+                          title={<span>🔁 States {states.length ? `· ${states.length}` : ""}</span>}
+                          hint={states.length ? `${states.length} state${states.length > 1 ? "s" : ""}` : "one object, many faces"}
+                          titleClass="text-cyan-neon"
+                          className="border border-cyan-neon/30 bg-cyan-neon/5"
+                        >
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            ONE marker that changes with the story — a lever up/down, a drawer full/empty, a door
+                            locked/open — instead of stacking gated duplicate hotspots. States are checked in order and
+                            the <b>last one whose gate passes wins</b>: list the unconditional default <b>first</b>,
+                            then the specific ones. A state only overrides what you fill in (label / art / cursor /
+                            action / gate); the object's zone, verbs and accepted items are shared. Typical pair: the
+                            base object takes the thing and sets a flag; the flag-gated state re-skins the same marker
+                            as the aftermath ("the empty bench hook").
+                          </p>
+                          {states.map((st, idx) => (
+                            <div key={st.id} className="space-y-1 border border-noir-700/60 bg-noir-950/40 p-1.5">
+                              <div className="flex items-center gap-1">
+                                <span className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon/80">
+                                  {idx + 1} · {st.when?.requiresFlags?.length || st.when?.requiresItems?.length || st.when?.requiresMemories?.length ? `after ${st.when?.requiresFlags?.[0] ?? st.when?.requiresItems?.[0] ?? "…"}` : "default (always)"}
+                                </span>
+                                <span className="flex-1" />
+                                <button className="px-1 text-paper/50 hover:text-paper" title="Move up (earlier = less specific)" onClick={() => moveState(idx, -1)}>↑</button>
+                                <button className="px-1 text-paper/50 hover:text-paper" title="Move down (later = wins over the ones above)" onClick={() => moveState(idx, 1)}>↓</button>
+                                <button className="px-1 font-pulp text-[9px] text-crimson hover:underline" title="Remove this state" onClick={() => setStates(states.filter((_, i) => i !== idx))}>✕</button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-1">
+                                <Field label="Label (blank = keep the object's)">
+                                  <input
+                                    className={inputCls}
+                                    value={st.label ?? ""}
+                                    placeholder={h.label}
+                                    onChange={(e) => patchState(idx, { label: e.target.value || undefined })}
+                                  />
+                                </Field>
+                                <Field label="Cursor (blank = keep)">
+                                  <select
+                                    className={inputCls}
+                                    value={st.cursor ?? ""}
+                                    onChange={(e) => patchState(idx, { cursor: (e.target.value || undefined) as HotspotState["cursor"] })}
+                                  >
+                                    <option value="">— keep the object's —</option>
+                                    {VERB_IDS.map((c) => (
+                                      <option key={c} value={c}>{VERB_ICON[c]} {VERB_LABEL[c]}</option>
+                                    ))}
+                                  </select>
+                                </Field>
+                              </div>
+                              <Field label="Object image in this state (blank = keep · 'none' = no art)">
+                                <ImagePicker
+                                  value={st.image ?? ""}
+                                  onChange={(v) => patchState(idx, { image: v === undefined ? undefined : v || "" })}
+                                  storyId={story.id}
+                                  includeGradients={false}
+                                  placeholder="Pick the state's art…"
+                                />
+                                <div className="mt-1 flex gap-1">
+                                  {st.image ? (
+                                    <>
+                                      {st.image !== "" && (
+                                        <button
+                                          className="border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                                          onClick={() => patchState(idx, { image: "" })}
+                                        >
+                                          ◻ No art in this state
+                                        </button>
+                                      )}
+                                      <button
+                                        className="border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                                        onClick={() => patchState(idx, { image: undefined })}
+                                      >
+                                        ✕ Keep the object's art
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </Field>
+                              <GatingEditor
+                                gating={st.when}
+                                onChange={(g) => patchState(idx, { when: g })}
+                                items={story.items}
+                                characters={story.characters}
+                                flags={allFlags}
+                                sectionId={`hsstate-when-${h.id}-${st.id}`}
+                              />
+                              {/* ---- the state's ACTION override ---- */}
+                              <div className="space-y-1 border border-gold/20 bg-gold/5 p-1.5">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-pulp text-[9px] uppercase tracking-widest text-gold/80">⚙ Action in this state</span>
+                                  <span className="flex-1" />
+                                  {st.action ? (
+                                    <button
+                                      className="px-1 font-pulp text-[9px] text-crimson hover:underline"
+                                      onClick={() => patchState(idx, { action: undefined })}
+                                    >
+                                      ✕ keep the object's action
+                                    </button>
+                                  ) : null}
+                                </div>
+                                <select
+                                  className={inputCls}
+                                  value={st.action?.type ?? ""}
+                                  onChange={(e) => {
+                                    if (!e.target.value) { patchState(idx, { action: undefined }); return; }
+                                    const ty = e.target.value as HotspotAction["type"];
+                                    patchState(idx, {
+                                      action:
+                                        ty === "showText" ? { type: "showText", text: "" }
+                                        : ty === "giveItem" ? { type: "giveItem", itemGranted: undefined }
+                                        : ty === "goToScene" ? { type: "goToScene", targetSceneId: undefined }
+                                        : ty === "useItem" ? { type: "useItem", itemConsumed: undefined }
+                                        : ty === "setFlag" ? { type: "setFlag", flagSet: "" }
+                                        : { type: "showText", text: "" },
+                                    });
+                                  }}
+                                >
+                                  <option value="">— keep the object's action —</option>
+                                  <option value="showText">💬 Say a line</option>
+                                  <option value="giveItem">🎁 Give item</option>
+                                  <option value="goToScene">→ Go to scene</option>
+                                  <option value="useItem">🗝 Use item (consumes it)</option>
+                                  <option value="setFlag">🚩 Set flag</option>
+                                  <option value="startDialogue">🗣 Start conversation (stage)</option>
+                                </select>
+                                {st.action?.type === "showText" || st.action?.type === "useItem" ? (
+                                  <textarea
+                                    className={`${inputCls} h-14 font-type`}
+                                    placeholder="What it says in this state…"
+                                    value={st.action.text ?? ""}
+                                    onChange={(e) => patchState(idx, { action: { ...st.action!, text: e.target.value } })}
+                                  />
+                                ) : null}
+                                {st.action?.type === "giveItem" ? (
+                                  <select
+                                    className={inputCls}
+                                    value={st.action.itemGranted ?? ""}
+                                    onChange={(e) => patchState(idx, { action: { ...st.action!, itemGranted: e.target.value || undefined } })}
+                                  >
+                                    <option value="">— pick an item —</option>
+                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
+                                  </select>
+                                ) : null}
+                                {st.action?.type === "goToScene" ? (
+                                  <select
+                                    className={inputCls}
+                                    value={st.action.targetSceneId ?? ""}
+                                    onChange={(e) => patchState(idx, { action: { ...st.action!, targetSceneId: e.target.value || undefined } })}
+                                  >
+                                    <option value="">— pick a scene —</option>
+                                    {story.scenes.map((s) => (<option key={s.id} value={s.id}>{s.title}</option>))}
+                                  </select>
+                                ) : null}
+                                <FlagInput
+                                  value={st.action?.flagSet}
+                                  suggestions={allFlags}
+                                  onChange={(v) => st.action && patchState(idx, { action: { ...st.action, flagSet: v } })}
+                                />
+                                {(st.action?.type === "showText" || st.action?.type === "useItem") && (
+                                  <HotspotVoiceControls
+                                    story={story}
+                                    sceneId={scene.id}
+                                    assetKey={`${h.id}-state-${st.id}`}
+                                    line={st.action.text ?? ""}
+                                    value={st.action.audioUrl}
+                                    onChange={(url) => st.action && patchState(idx, { action: { ...st.action, audioUrl: url } })}
+                                  />
+                                )}
+                              </div>
+                              {/* ---- the state's GATE override (locked door → open door) ---- */}
+                              <div className="flex flex-wrap items-center gap-1 border border-crimson/20 bg-crimson/5 p-1.5">
+                                <span className="font-pulp text-[9px] uppercase tracking-widest text-crimson/80">🔒 Lock while in this state</span>
+                                <select
+                                  className={inputCls}
+                                  value={st.gating === null ? "open" : st.gating ? "replace" : "inherit"}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "inherit") patchState(idx, { gating: undefined });
+                                    else if (v === "open") patchState(idx, { gating: null });
+                                    else patchState(idx, { gating: st.gating ?? { requiresFlags: [] } });
+                                  }}
+                                >
+                                  <option value="inherit">inherit the object's gate</option>
+                                  <option value="open">always unlocked (e.g. the opened door)</option>
+                                  <option value="replace">use its own gate…</option>
+                                </select>
+                                {st.gating ? (
+                                  <div className="w-full">
+                                    <GatingEditor
+                                      gating={st.gating === null ? undefined : st.gating}
+                                      onChange={(g) => patchState(idx, { gating: g ?? null })}
+                                      items={story.items}
+                                      characters={story.characters}
+                                      flags={allFlags}
+                                      sectionId={`hsstate-gate-${h.id}-${st.id}`}
+                                    />
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                          <button
+                            onClick={addState}
+                            className="w-full border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                          >
+                            ＋ Add a state (e.g. "after it's been taken")
+                          </button>
+                        </CollapsibleSection>
                       );
                     })()}
                     {h.action.type === "patternPuzzle" && (

@@ -192,6 +192,7 @@ const LOOK_PNG = "data:image/png;base64,LOOKART";
 const TAKE_PNG = "data:image/png;base64,TAKEART";
 const TALK_PNG = "data:image/png;base64,TALKART";
 const GO_PNG = "data:image/png;base64,GOART";
+const SAFE_OPEN_PNG = "/img/safe-open.png"; // a path, like real stage object art
 const GRAD = "gradient:linear-gradient(160deg,#101018 0%,#1c1424 60%,#050508 100%)";
 
 const STAGE_STORY: Story = {
@@ -219,6 +220,7 @@ const STAGE_STORY: Story = {
   ],
   items: [
     { id: "bs_wrench", name: "Bent wrench", icon: "🔧", description: "A wrench.", flavorText: "Turns bolts." },
+    { id: "bs_coin", name: "Lucky dollar", icon: "🪙", description: "The safe's last tenant.", flavorText: "Heads, anyway." },
   ],
   // NO "default" art on purpose: the default cursor on classic scenes must
   // stay the system arrow, which is exactly what a leaked coin verb breaks.
@@ -328,6 +330,41 @@ const STAGE_STORY: Story = {
           cursor: "talk",
           action: { type: "startDialogue" },
         },
+        // MULTI-STATE SAFE PUZZLE — one marker, three faces: locked (base,
+        // gate shut), opened (bell rang: gate cleared, new label + art),
+        // and gone (the take consumes it). The bell is the producer. Both
+        // stand LEFT of the spawn on the walkable floor, out of the kid's
+        // marker radius (the stuck-keys phase walks right through him).
+        {
+          id: "bswh_bell",
+          label: "the counter bell",
+          bounds: { x: 128, y: 58, w: 8, h: 28 },
+          cursor: "use",
+          action: {
+            type: "showText",
+            text: "BELL: the counter bell rings; somewhere behind the wall a bolt slams back.",
+            flagSet: "bs_safe_open",
+          },
+        },
+        {
+          id: "bswh_safe",
+          label: "the drop-safe",
+          bounds: { x: 138, y: 56, w: 12, h: 30 },
+          cursor: "take",
+          gating: { requiresFlags: ["bs_safe_open"] },
+          customFailMessage: "SAFE-LOCKED: bolted shut. The counter bell works the mechanism.",
+          action: { type: "showText", text: "SAFE-LOCKED: bolted shut. The counter bell works the mechanism." },
+          states: [
+            {
+              id: "st_safe_open",
+              when: { requiresFlags: ["bs_safe_open"] },
+              gating: null, // the opened safe is no longer locked
+              label: "the hanging-open safe",
+              image: SAFE_OPEN_PNG,
+              action: { type: "giveItem", itemGranted: "bs_coin" },
+            },
+          ],
+        },
         {
           id: "bswh_door",
           label: "the office door (far end)",
@@ -355,7 +392,17 @@ const STAGE_STORY: Story = {
           label: "the desk",
           bounds: { x: 20, y: 36, w: 22, h: 22 },
           cursor: "look",
-          action: { type: "showText", text: "DESK-TEXT: papers, a ticket spike, a cold cup of coffee." },
+          action: { type: "showText", text: "DESK-TEXT: papers, a ticket spike, a cold cup of coffee.", flagSet: "bs_desk_searched" },
+          // MULTI-STATE on a CLASSIC novel scene: reading it once re-skins
+          // the same zone — the label in the scene-action list follows.
+          states: [
+            {
+              id: "st_desk_searched",
+              when: { requiresFlags: ["bs_desk_searched"] },
+              label: "the searched desk",
+              action: { type: "showText", text: "DESK-SEARCHED: drawers out, blotter up — nothing else in it." },
+            },
+          ],
         },
       ],
       choices: [
@@ -707,6 +754,14 @@ async function parts2to4() {
     (card as HTMLElement | undefined)?.click();
     await until("the exam card clears", () => !qa(".hud-frame").some((n) => (n.textContent || "").includes("DESK-TEXT")), 6000);
 
+    // MULTI-STATE on a classic novel scene: reading the desk once re-skins
+    // the SAME zone — new label in the scene-action list, new line, no
+    // duplicate zones and no stage machinery involved.
+    await until("the searched desk re-skins the action list", () => /the searched desk/i.test(text()), 6000);
+    (qa(".hotspot-box").find((b) => b.getAttribute("data-hs-id") === "bsah_desk") as HTMLButtonElement)?.click();
+    await until("the searched desk answers with its new line", () => !!q(".hud-frame") && text().includes("DESK-SEARCHED"), 5000);
+    ok(qa(".hotspot-box").length === 1, "the state change never duplicated the zone");
+
     // THE CURSOR LEAK: a coin verb armed on the stage must not become the
     // cursor of every later classic scene.
     const novelLayer = q<HTMLElement>('div[class*="z-[46]"]');
@@ -751,6 +806,39 @@ async function parts2to4() {
     ok(Math.abs(camAt() - 100) < 6, "the camera starts centred on the walker (x150 of 200)", `cam=${camAt()}`);
     const arrow = qa("button").find((b) => (b.getAttribute("aria-label") || "").includes("Walk into the office"));
     ok(!!arrow, "the walk-off-screen edge arrow renders at the strip's end");
+
+    /* ---- MULTI-STATE OBJECT, live: the drop-safe puzzle ----
+     * One marker through three faces — locked, opened, taken — with the
+     * marker count never changing until the take genuinely consumes it. */
+    {
+      const safe = () => q<HTMLButtonElement>('.stage-marker[data-hs-id="bswh_safe"]');
+      const bell = () => q<HTMLButtonElement>('.stage-marker[data-hs-id="bswh_bell"]');
+      const markersBefore = qa(".stage-marker").length;
+      ok(!!safe() && !!bell(), "the safe and its bell render as markers");
+      ok(/the drop-safe/i.test(safe()!.getAttribute("aria-label") || "") && /locked/i.test(safe()!.getAttribute("aria-label") || ""), "the safe starts as its locked base face", safe()!.getAttribute("aria-label") ?? "");
+
+      // 1 — locked: the gate refuses with the fail caption, nothing changes.
+      safe()!.click();
+      await until("the locked safe refuses with its caption", () => text().includes("SAFE-LOCKED"), 6000);
+      ok(!!safe() && /the drop-safe/i.test(safe()!.getAttribute("aria-label") || ""), "the refused safe keeps its face");
+      ok(qa(".stage-marker").length === markersBefore, "a state object is ONE marker, not gated duplicates");
+
+      // 2 — the bell rings: same marker re-skins in place (label, art, no lock).
+      bell()!.click();
+      await until("the bell's line plays", () => text().includes("BELL:"), 6000);
+      await until("the safe's marker re-skins to its open state", () => {
+        const s = safe();
+        return !!s && /the hanging-open safe/i.test(s.getAttribute("aria-label") || "") && !/locked/i.test(s.getAttribute("aria-label") || "");
+      }, 6000);
+      ok(!!container.querySelector('img[src*="safe-open"]'), "the open state swaps the object art in place");
+      ok(qa(".stage-marker").length === markersBefore, "the state change never duplicates or remounts the marker");
+
+      // 3 — take what's inside: the open state's action grants the item and
+      //     only THEN does the marker go away (a real pickup, not a re-skin).
+      safe()!.click();
+      await until("the opened safe grants its item", () => !!q('[data-item-id="bs_coin"]'), 12000);
+      ok(!safe(), "the emptied safe is consumed by the take (base pickup rules)");
+    }
 
     // STUCK KEYS: hold right (keydown, no keyup), walk into the alley kid —
     // the conversation opens mid-hold; the floor lock must drop the key, or
@@ -812,6 +900,63 @@ async function parts2to4() {
       await sleep(450);
     }
     ok(played, "the real novel scene plays its dialogue");
+  }
+
+  /* ---------------- PART 5 · STUDIO authoring (the 🔁 States editor) ---------------- */
+  console.log("\n=== PART 5 · STUDIO (states authoring) ===");
+  {
+    const { Studio } = await import("../../src/studio/Studio");
+    root?.unmount();
+    root = createRoot(container);
+    root.render(
+      createElement(
+        StrictMode,
+        null,
+        createElement(ErrorBoundary, null, createElement(Studio, {
+          baseStories: [STAGE_STORY],
+          initialStoryId: STAGE_STORY.id,
+          initialSceneId: "bs_wide",
+          onExit: () => {},
+          onPlay: () => {},
+          onPublish: () => true,
+          onDeleteStory: () => true,
+          onCreateStory: () => true,
+          onUpdateTitleTheme: () => {},
+        }))
+      )
+    );
+    await sleep(1800);
+    ok(!crashed(), "Studio mounts straight onto the wide stage scene");
+
+    const tab = qa<HTMLButtonElement>("button").find((b) => (b.textContent || "").trim() === "Hotspots");
+    ok(!!tab, "the Hotspots tab is reachable");
+    tab?.click();
+    await sleep(500);
+
+    // The safe's hotspot card carries its states badge.
+    const card = () => qa<HTMLButtonElement>("button").find((b) => /⌖ the drop-safe/i.test(b.textContent || ""));
+    ok(!!card() && /🔁1/.test(card()!.textContent || ""), "the hotspot card shows its 🔁 states badge", card()?.textContent);
+    card()?.click(); // open the inspector
+    await sleep(400);
+
+    // The 🔁 States section, opened.
+    const statesToggle = () => qa<HTMLButtonElement>("button").find((b) => /🔁 States/.test(b.textContent || ""));
+    ok(!!statesToggle(), "the 🔁 States section renders in the inspector");
+    statesToggle()?.click();
+    await sleep(400);
+    ok(/after bs_safe_open/i.test(text()), "the existing state lists its gate flag");
+
+    // Add a state, then remove it — the mutate paths round-trip.
+    const addBtn = qa<HTMLButtonElement>("button").find((b) => /Add a state/i.test(b.textContent || ""));
+    ok(!!addBtn, "the add-state button renders");
+    addBtn?.click();
+    await sleep(400);
+    ok(/🔁2/.test(card()?.textContent || ""), "adding a state bumps the card badge", card()?.textContent);
+    const delBtn = qa<HTMLButtonElement>("button").filter((b) => b.title === "Remove this state").pop();
+    ok(!!delBtn, "the new state row offers its remove button");
+    delBtn?.click();
+    await sleep(400);
+    ok(/🔁1/.test(card()?.textContent || ""), "removing it restores the badge", card()?.textContent);
   }
 
   /* ---------------- final report ---------------- */
