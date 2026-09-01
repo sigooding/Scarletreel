@@ -300,6 +300,7 @@ function StageFloorEditor({
   onObstacleDraw,
   onObstacleSelect,
   onObstacleDelete,
+  onObstacleMove,
   floorPoints,
   onFloorPoints,
   onResizeProp,
@@ -348,12 +349,17 @@ function StageFloorEditor({
   /** 🚧 No-go obstacles (walk-around furniture), drawn as hatched crimson
    *  rectangles on the plate. When "Draw obstacle" is armed, dragging a box
    *  commits via onObstacleDraw; clicking one selects it (onObstacleSelect),
-   *  and the selected one shows a ✕ (onObstacleDelete). All world-%. */
+   *  and the selected one shows a ✕ (onObstacleDelete). DRAG an obstacle's
+   *  body to move it and pull the ↘ corner of the selected one to resize it
+   *  (both commit through onObstacleMove). All world-%. */
   obstacles?: { x: number; y: number; w: number; h: number }[];
   selectedObstacle?: number | null;
   onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
   onObstacleSelect?: (index: number | null) => void;
   onObstacleDelete?: (index: number) => void;
+  /** Commit a MOVE/RESIZE of an existing obstacle (drag body / pull the ↘
+   *  corner), so coordinates are placed by eye instead of typed. */
+  onObstacleMove?: (index: number, bounds: { x: number; y: number; w: number; h: number }) => void;
   /** 🧭 WALK PATH — the walkable polygon (world-%) when the scene is in path
    *  mode. With ≥3 points the plate shows the polygon with draggable corner
    *  points + midpoint ⊕ handles to add more, so you can carve a winding
@@ -383,6 +389,8 @@ function StageFloorEditor({
     | { kind: { entryId: string }; offX: number }
     | { kind: { pt: number }; offX: number; offY: number }
     | { kind: { propResize: string }; offX: number }
+    | { kind: { obMove: number }; offX: number; offY: number }
+    | { kind: { obSize: number }; offX: number; offY: number }
     | null
   >(null);
   /** 🧭 Path mode: the walkable zone is an editable polygon (floorPoints). */
@@ -478,6 +486,21 @@ function StageFloorEditor({
           const hs = hotspots.find((h) => h.id === kind.slice(9));
           if (!hs) return;
           drag.current = { kind: { propResize: hs.id }, offX: 0 };
+        } else if (kind.startsWith("obsize:")) {
+          // ↘ corner of the selected obstacle: resize w/h from its anchor.
+          const oi = Number(kind.slice(7));
+          if (!(obstacles ?? [])[oi]) return;
+          drag.current = { kind: { obSize: oi }, offX: 0, offY: 0 };
+          onObstacleSelect?.(oi);
+        } else if (kind.startsWith("ob:")) {
+          // Body drag = move the obstacle (grab offset keeps it from
+          // jumping under the cursor); pressing it also selects it.
+          const oi = Number(kind.slice(3));
+          const o = (obstacles ?? [])[oi];
+          if (!o) return;
+          const p = pct(e);
+          drag.current = { kind: { obMove: oi }, offX: o.x - p.x / scale, offY: o.y - p.y };
+          onObstacleSelect?.(oi);
         } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
@@ -534,6 +557,21 @@ function StageFloorEditor({
           const maxW = 2 * Math.min(m.x, worldW - m.x);
           const newW = clamp(Math.abs(nx - m.x) * 2, 1.5, Math.max(1.5, maxW));
           onResizeProp?.(hs.id, { x: round1(m.x - newW / 2), y: hs.bounds.y, w: round1(newW), h: hs.bounds.h });
+        } else if (typeof d.kind === "object" && "obMove" in d.kind) {
+          // Move the obstacle body by its grab offset, clamped on the plate.
+          const dd = d as { kind: { obMove: number }; offX: number; offY: number };
+          const o = (obstacles ?? [])[dd.kind.obMove];
+          if (!o) return;
+          const nx = clamp(round1(p.x / scale + dd.offX), 0, Math.max(0, worldW - o.w));
+          const ny = clamp(round1(p.y + dd.offY), 0, Math.max(0, 100 - o.h));
+          onObstacleMove?.(dd.kind.obMove, { ...o, x: nx, y: ny });
+        } else if (typeof d.kind === "object" && "obSize" in d.kind) {
+          // ↘ corner drag: w/h measured from the obstacle's own anchor.
+          const o = (obstacles ?? [])[d.kind.obSize];
+          if (!o) return;
+          const nw = clamp(round1(p.x / scale - o.x), 1, Math.max(1, worldW - o.x));
+          const nh = clamp(round1(p.y - o.y), 1, Math.max(1, 100 - o.y));
+          onObstacleMove?.(d.kind.obSize, { ...o, w: nw, h: nh });
         } else if (typeof d.kind === "object" && "hsId" in d.kind) {
           const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
           if (!hs) return;
@@ -678,13 +716,18 @@ function StageFloorEditor({
         </>
       )}
       {/* 🚧 NO-GO OBSTACLES — hatched crimson, walk-around furniture. Click to
-          select (ring + ✕ to delete); arm the Draw tool to fence a new one. */}
+          select (ring + ✕ to delete), DRAG the body to move it, pull the ↘
+          corner of the selected one to resize; arm the Draw tool to fence a
+          new one. */}
       {(obstacles ?? []).map((o, oi) => {
         const sel = selectedObstacle === oi;
         return (
           <div
             key={oi}
-            className={`absolute z-[14] border-2 ${sel ? "border-crimson bg-crimson/20" : "border-crimson/60 bg-crimson/10"} cursor-pointer`}
+            data-drag={`ob:${oi}`}
+            className={`absolute z-[14] touch-none border-2 ${
+              onObstacleMove ? "cursor-grab" : "cursor-pointer"
+            } ${sel ? "border-crimson bg-crimson/20" : "border-crimson/60 bg-crimson/10"}`}
             style={{
               left: `${o.x * scale}%`,
               top: `${o.y}%`,
@@ -693,7 +736,11 @@ function StageFloorEditor({
               backgroundImage:
                 "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
             }}
-            title={sel ? "Selected obstacle" : "Click to select, ✕ to delete"}
+            title={
+              sel
+                ? `Drag to move ↕↔ (${Math.round(o.x)}, ${Math.round(o.y)}) · pull ↘ to resize (${Math.round(o.w)}×${Math.round(o.h)})`
+                : `${Math.round(o.x)}, ${Math.round(o.y)} · ${Math.round(o.w)}×${Math.round(o.h)} — click to select · drag to move`
+            }
             onClick={(e) => {
               e.stopPropagation();
               onObstacleSelect?.(sel ? null : oi);
@@ -703,16 +750,29 @@ function StageFloorEditor({
               🚧 {Math.round(o.w)}×{Math.round(o.h)}
             </span>
             {sel ? (
-              <button
-                className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
-                title="Delete obstacle"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onObstacleDelete?.(oi);
-                }}
-              >
-                ✕
-              </button>
+              <>
+                <button
+                  className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
+                  title="Delete obstacle"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onObstacleDelete?.(oi);
+                  }}
+                >
+                  ✕
+                </button>
+                {onObstacleMove ? (
+                  <span
+                    data-drag={`obsize:${oi}`}
+                    title={`Pull to resize — ${Math.round(o.w)}×${Math.round(o.h)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute -bottom-2 -right-2 z-10 flex h-4 w-4 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
+                  >
+                    ↘
+                  </span>
+                ) : null}
+              </>
             ) : null}
           </div>
         );
@@ -2557,12 +2617,9 @@ function CinematicControls({
           {(c.parallaxLayers ?? []).map((layer, i) => (
             <div key={i} className="mb-2 space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
               <div className="flex items-center justify-between gap-2">
-                <AssetDropdown
-                  assetType="image"
+                <ImagePicker
                   value={layer.image}
-                  returnReference
-                  storyId={storyId}
-                  placeholder="Pick a transparent plane image…"
+                  placeholder="Pick a transparent plane image from the library…"
                   onChange={(v) => {
                     const layers = [...(c.parallaxLayers ?? [])];
                     layers[i] = { ...layer, image: v ?? "" };
@@ -2635,13 +2692,10 @@ function CinematicControls({
             />
           </div>
           <div className="mt-1">
-            <AssetDropdown
-              storyId={storyId}
-              assetType="image"
-              returnReference
+            <ImagePicker
               value={c.foregroundImage}
-              onChange={(url) => set({ foregroundImage: url ?? undefined })}
-              placeholder="Or pick an uploaded image..."
+              onChange={(v) => set({ foregroundImage: v || undefined })}
+              placeholder="🖼 browse the image library (uploads, cutouts, built-ins)…"
             />
           </div>
         </Field>
@@ -2835,19 +2889,16 @@ function CinematicControls({
                               ✕
                             </button>
                           </div>
-                          <AssetDropdown
-                            storyId={storyId}
-                            assetType="image"
-                            returnReference
-                            value={f.startsWith("asset:") || f.startsWith("data:") ? f : undefined}
-                            onChange={(url) => {
+                          <ImagePicker
+                            value={f}
+                            onChange={(v) => {
                               const next = [...frames];
-                              if (url) next[i] = url;
+                              if (v) next[i] = v;
                               else next.splice(i, 1);
                               if (next.length) setAnim({ frames: next });
                               else set({ foregroundAnimation: undefined });
                             }}
-                            placeholder="📁 Pick an uploaded keyframe…"
+                            placeholder="🖼 pick this keyframe from the library…"
                           />
                         </div>
                       ))}
@@ -3033,13 +3084,10 @@ function CinematicControls({
                 ✕
               </button>
             </div>
-            <AssetDropdown
-              storyId={storyId}
-              assetType="image"
-              returnReference
+            <ImagePicker
               preferFolder="sprites"
               value={extra.image || undefined}
-              placeholder="Pick a transparent image…"
+              placeholder="Pick a transparent image from the library…"
               onChange={(url) => update({ image: url ?? "" })}
             />
             {/* Live preview — drag the sprite onto the plate, corner-drag to resize. */}
@@ -4058,13 +4106,11 @@ function CursorArtEditor({
             {open ? (
               <div className="space-y-1.5 border-t border-noir-700/70 p-1.5">
                 <Field label="Static image (transparent PNG/WebP, ≤128px)">
-                  <AssetDropdown
-                    storyId={story.id}
-                    assetType="image"
-                    returnReference
+                  <ImagePicker
                     preferFolder="sprites"
                     value={a?.image || undefined}
-                    placeholder="Pick cursor art…"
+                    placeholder="Pick cursor art from the library…"
+                    includeGradients={false}
                     onChange={(url) => setSlot(slot, { image: url ?? undefined, sheet: undefined })}
                   />
                 </Field>
@@ -4564,17 +4610,16 @@ function CharacterEditor({
                 onUpdate(next);
               }}
             />
-            <AssetDropdown
-              storyId={story.id}
-              assetType="image"
-              value={c.avatarUrl.startsWith("data:") || c.avatarUrl.startsWith("asset:") ? c.avatarUrl : undefined}
-              returnReference
-              onChange={(url) => {
+            <ImagePicker
+              value={c.avatarUrl.startsWith("emoji:") ? undefined : c.avatarUrl}
+              onChange={(v) => {
                 const next = deepClone(story);
-                next.characters.find((x) => x.id === c.id)!.avatarUrl = url ?? "emoji:👤";
+                next.characters.find((x) => x.id === c.id)!.avatarUrl = v ?? "emoji:👤";
                 onUpdate(next);
               }}
-              placeholder="Or pick uploaded portrait..."
+              placeholder="🖼 pick a portrait from the image library…"
+              preferFolder="sprites"
+              includeGradients={false}
             />
             <input
               className={inputCls}
@@ -8346,13 +8391,11 @@ function StudioInner({
                           {mode === "container" ? (
                             <>
                               <Field label="Container art (transparent PNG — a bag, a case, a tool roll)">
-                                <AssetDropdown
-                                  storyId={story.id}
-                                  assetType="image"
-                                  returnReference
+                                <ImagePicker
                                   preferFolder="sprites"
                                   value={inv.image || undefined}
-                                  placeholder="Default: the house leather case…"
+                                  placeholder="Pick art from the library (default: the house leather case)…"
+                                  includeGradients={false}
                                   onChange={(url) => setInv({ image: url ?? undefined })}
                                 />
                               </Field>
@@ -8665,13 +8708,21 @@ function StudioInner({
                           <b> Walkable Stage</b> panel. Define the protagonist ONCE here. Leave empty to keep
                           the per-scene default.
                         </p>
-                        <Field label="Character image (emoji:… or image url / asset)">
+                        <Field label="Character image (pick from the library — or type an emoji)">
                           <input
                             className={inputCls}
                             value={ps.image ?? ""}
-                            placeholder="emoji:🏍 or /img/… or asset:…"
+                            placeholder="emoji:🏍 — or pick art below"
                             onChange={(e) => setPs({ image: e.target.value || undefined })}
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={ps.image && !ps.image.startsWith("emoji:") ? ps.image : undefined}
+                              onChange={(v) => setPs({ image: v || undefined })}
+                              placeholder="…or pick art from your image library"
+                              preferFolder="sprites"
+                            />
+                          </div>
                         </Field>
                         <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
                           <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
@@ -8790,18 +8841,15 @@ function StudioInner({
                   <Field label="Backdrop image (optional)">
                     <input
                       className={inputCls}
-                      placeholder="/img/panel-parchment.jpg  ·  or gradient:linear-gradient(...)"
+                      placeholder="paste a gradient:linear-gradient(…) — or pick art below"
                       value={dbox.backgroundImage ?? ""}
                       onChange={(e) => setBox({ backgroundImage: e.target.value || undefined })}
                     />
                     <div className="mt-1">
-                      <AssetDropdown
-                        storyId={story.id}
-                        assetType="image"
-                        returnReference
-                        value={dbox.backgroundImage?.startsWith("asset:") || dbox.backgroundImage?.startsWith("data:") ? dbox.backgroundImage : undefined}
-                        onChange={(url) => setBox({ backgroundImage: url ?? undefined })}
-                        placeholder="Or pick an uploaded image..."
+                      <ImagePicker
+                        value={dbox.backgroundImage}
+                        onChange={(v) => setBox({ backgroundImage: v || undefined })}
+                        placeholder="🖼 browse the image library (incl. gradient presets)…"
                       />
                     </div>
                   </Field>
@@ -9007,17 +9055,14 @@ function StudioInner({
                         }}
                       />
                     </div>
-                    <AssetDropdown
-                      storyId="__global__"
-                      assetType="image"
+                    <ImagePicker
                       value={globalTitleTheme.bgImageUrl}
-                      returnReference
                       onChange={(value) => {
-                        const next = { ...globalTitleTheme, bgImageUrl: value };
+                        const next = { ...globalTitleTheme, bgImageUrl: value || undefined };
                         setGlobalTitleThemeState(next);
                         onUpdateTitleTheme(next);
                       }}
-                      placeholder="Pick an uploaded title background..."
+                      placeholder="🖼 browse the image library (uploads & built-ins)…"
                     />
                     {globalTitleTheme.bgImageUrl && !globalTitleTheme.bgImageUrl.startsWith("asset:") && (
                       <div className="flex items-center gap-2">
@@ -10592,6 +10637,14 @@ function StudioInner({
                             updateScene(scene.id, { stage: { ...scene.stage!, obstacles: next.length ? next : undefined } });
                             setSelectedBarrier(null);
                           }}
+                          onObstacleMove={(i, bounds) =>
+                            updateScene(scene.id, {
+                              stage: {
+                                ...scene.stage!,
+                                obstacles: (scene.stage!.obstacles ?? []).map((o, j) => (j === i ? bounds : o)),
+                              },
+                            })
+                          }
                           onObstacleDraw={(bounds) => {
                             const obs = scene.stage!.obstacles ?? [];
                             updateScene(scene.id, { stage: { ...scene.stage!, obstacles: [...obs, bounds] } });
@@ -10888,23 +10941,43 @@ function StudioInner({
                           title="🕵️ Player character"
                           hint="sprite · walk frames · sheet · size & pose"
                         >
-                        <Field label="Character sprite (emoji:… or an image url / asset)">
+                        <Field label="Character sprite (pick from the library — or type an emoji/tag)">
                           <input
                             className={inputCls}
                             value={scene.stage.playerImage ?? ""}
-                            placeholder="emoji:🕵️ or /img/… or asset:…"
+                            placeholder="emoji:🕵️ or bare 🕵️ — or pick art below"
                             onChange={(e) =>
                               updateScene(scene.id, {
                                 stage: { ...scene.stage!, playerImage: e.target.value || undefined },
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={
+                                scene.stage.playerImage && !scene.stage.playerImage.startsWith("emoji:")
+                                  ? scene.stage.playerImage
+                                  : undefined
+                              }
+                              onChange={(v) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerImage: v || undefined },
+                                })
+                              }
+                              placeholder="…or pick art from your image library"
+                              preferFolder="sprites"
+                            />
+                            <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                              No typing needed: <b>＋ upload</b> your art (or a cutout) once, then pick it here. Leave blank for
+                              the default walker; the typed box is for emojis / <code>lights:…</code> tags.
+                            </p>
+                          </div>
                         </Field>
-                        <Field label="Walk-cycle frames (one image url / asset: per line, optional)">
+                        <Field label="Walk-cycle frames (optional — add them with the picker)">
                           <textarea
                             className={`${inputCls} h-16 font-type`}
                             value={(scene.stage.walkFrames ?? []).join("\n")}
-                            placeholder={"/img/walk1.png\n/img/walk2.png\n/img/walk3.png"}
+                            placeholder={"No typing needed — add frames below…\n(each line is a frame asset)"}
                             onChange={(e) =>
                               updateScene(scene.id, {
                                 stage: {
@@ -10914,9 +10987,23 @@ function StudioInner({
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={undefined}
+                              onChange={(v) => {
+                                if (!v) return;
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, walkFrames: [...(scene.stage!.walkFrames ?? []), v] },
+                                });
+                              }}
+                              placeholder="＋ add a frame from the image library…"
+                              preferFolder="sprites"
+                              allowClear={false}
+                            />
+                          </div>
                           <p className="mt-1 font-type text-[9px] text-paper/40">
-                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Leave empty for the
-                            procedural bob.
+                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Each pick appends a frame; edit
+                            the list above to reorder or delete. Leave empty for the procedural bob.
                           </p>
                         </Field>
                         {/* ---- sprite-sheet walker (one image, gridded frames) ---- */}
@@ -11038,7 +11125,10 @@ function StudioInner({
                               <p className="font-type text-[9px] leading-snug text-paper/45">
                                 Furniture the character walks <b>around</b> instead of through — a bar, a counter, a parked
                                 bike. Click-to-walk routes around them (A* on a coarse grid, then smoothed to the corners a
-                                person would turn at); the keyboard slides along them. All values are scene percentages.
+                                person would turn at); the keyboard slides along them. All values are scene percentages — but
+                                you never type them: <b>arm 🚧 Draw obstacle</b> on the plate above and drag a box, then{" "}
+                                <b>drag a box to move it, pull its ↘ corner to resize</b>. The numbers below update as you
+                                drag (fine-tune here if you must).
                               </p>
                               {obs.map((o, oi) => (
                                 <div key={oi} className="flex items-center gap-1">
@@ -11161,6 +11251,35 @@ function StudioInner({
                                     >
                                       ✕
                                     </button>
+                                  </div>
+                                  {/* 🖼 custom look: pick uploaded art from the library (no URL
+                                      typing) or type an emoji; a sprite sheet below beats both. */}
+                                  <div className="flex items-center gap-1">
+                                    <span className="shrink-0 font-type text-[9px] text-paper/50">art</span>
+                                    <input
+                                      type="text"
+                                      className={`${inputCls} w-20`}
+                                      title="A constant look without the library — type a bare emoji (🏍) or emoji:🏍. Clear (or pick art → ) to use an image instead."
+                                      value={n.image?.startsWith("emoji:") ? n.image.slice("emoji:".length) : ""}
+                                      placeholder="🏍"
+                                      onChange={(e) => {
+                                        const raw = e.target.value.trim();
+                                        // Bare glyph → emoji: tag; anything that looks like a path/url/tag passes through.
+                                        const norm =
+                                          raw && !raw.includes(":") && !raw.includes("/") && !raw.includes(".")
+                                            ? `emoji:${raw}`
+                                            : raw;
+                                        setNpc(i, { image: norm || undefined });
+                                      }}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <ImagePicker
+                                        value={n.image && !n.image.startsWith("emoji:") ? n.image : undefined}
+                                        onChange={(v) => setNpc(i, { image: v || undefined })}
+                                        placeholder="…or pick an image"
+                                        preferFolder="sprites"
+                                      />
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-1">
                                     <span className="font-type text-[9px] text-paper/50">spawn</span>
@@ -11935,6 +12054,8 @@ function StudioInner({
                         />
                         {b.background && (
                           <button
+                            type="button"
+                            title="Clear (use the scene default background)"
                             onClick={() =>
                               mutate((d) => {
                                 const s = d.scenes.find((x) => x.id === scene.id)!;
@@ -11948,18 +12069,15 @@ function StudioInner({
                         )}
                       </div>
                       <div className="mt-1">
-                        <AssetDropdown
-                          storyId={story.id}
-                          assetType="image"
-                          returnReference
-                          value={b.background?.startsWith("asset:") || b.background?.startsWith("data:") ? b.background : undefined}
-                          onChange={(url) =>
+                        <ImagePicker
+                          value={b.background}
+                          onChange={(v) =>
                             mutate((d) => {
                               const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.dialogueBeats!.find((x) => x.id === b.id)!.background = url;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.background = v || undefined;
                             })
                           }
-                          placeholder="Or pick an uploaded image..."
+                          placeholder="🖼 or browse the image library… (leave blank for scene default)"
                         />
                       </div>
                       {b.background && (
@@ -14006,10 +14124,10 @@ function StudioInner({
                             />
                           </Field>
                         </div>
-                        <Field label="Rider's vehicle (image url / emoji: tag / emoji glyph)">
+                        <Field label="Rider's vehicle (pick from the library — or type an emoji: tag / glyph)">
                           <input
                             className={inputCls}
-                            placeholder="emoji:🏍"
+                            placeholder="emoji:🏍 — or pick art below"
                             value={c.ride.vehicleImage ?? ""}
                             onChange={(e) =>
                               mutate((d) => {
@@ -14018,8 +14136,21 @@ function StudioInner({
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={c.ride.vehicleImage && !c.ride.vehicleImage.startsWith("emoji:") ? c.ride.vehicleImage : undefined}
+                              onChange={(v) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.vehicleImage = v || undefined;
+                                })
+                              }
+                              placeholder="…or pick art from the image library"
+                              preferFolder="sprites"
+                            />
+                          </div>
                         </Field>
-                        <Field label="Oncoming traffic (comma-separated — emoji: tags, urls, or glyphs)">
+                        <Field label="Oncoming traffic (comma-separated — emoji: tags, glyphs, or picked art)">
                           <input
                             className={inputCls}
                             placeholder="emoji:🚚, emoji:🚗, emoji:🚓"
@@ -14032,6 +14163,22 @@ function StudioInner({
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={undefined}
+                              onChange={(v) => {
+                                if (!v) return;
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  const list = [...(s.choices!.find((x) => x.id === c.id)!.ride!.traffic ?? []), v];
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.traffic = list;
+                                });
+                              }}
+                              placeholder="＋ add a vehicle from the image library…"
+                              preferFolder="sprites"
+                              allowClear={false}
+                            />
+                          </div>
                         </Field>
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Win caption (clean run)">

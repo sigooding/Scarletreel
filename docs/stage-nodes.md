@@ -124,6 +124,9 @@ surfaces problems as Check-tab warnings.
 
 1. **Floor & spawn** — drag the neon band and 🕵️ dot in the Scene tab's
    mini-plate (or type the numbers). Markers can be dragged there too.
+   **🚧 Obstacles** the same: arm *🚧 Draw obstacle* and drag a box, then
+   drag boxes to move them and pull the selected box's **↘ corner** to
+   resize — the x/y/w/h fields in the list below update as you drag.
 2. **A look pass** — 2–4 💬 show-text markers with one-liner captions.
    Keep lines SHORT; captions hold ~3–6 seconds.
 3. **One conversation** — a character sprite (hotspot image) + 🗣 marker +
@@ -147,7 +150,13 @@ drag actors and numbered stops on the plate preview, give each stop a motion
   The validator errors on duplicates.
 - **Coordinates are WORLD-%**, not viewport-%: on a 200%-wide room, x=90 is
   45% across the strip. Spawns/stops past the plate edge are invisible and
-  now warn in Validate (the same stop validates clean on a wide world).
+  now warn in Validate (the same stop validates clean on a wide world). You
+  never type those coordinates: drag the actor's spawn dot and the numbered
+  stop dots on the plate preview.
+- **Looks are picked, not typed.** The per-actor *art* row has the image
+  picker (uploads, cutouts and built-ins, with hover previews) next to the
+  emoji box — same as the player sprite, walk-cycle frames and scene
+  backgrounds. No field anywhere needs a hand-typed image URL.
 - **Blank speed = 12 %/s, the ambient default** — deliberately slower than
   the player's walk (default 18) and never inherited from it. A fast player
   must not make every bystander sprint their beat; set the field for
