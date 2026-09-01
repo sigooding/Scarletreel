@@ -13064,25 +13064,40 @@ function StudioInner({
                           ))}
                         </select>
                       </Field>
-                      <Field label="Target scene">
-                        <select
-                          className={inputCls}
-                          value={h.action.targetSceneId ?? ""}
-                          onChange={(e) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.targetSceneId = e.target.value || undefined;
-                            })
-                          }
-                        >
-                          <option value="">—</option>
-                          {story.scenes.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.title}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
+                    {(() => {
+                      // The destination control only exists where a scene jump
+                      // can actually happen: → goToScene always; 🗝 use-item
+                      // when it carries one (a locked door that swings open).
+                      const canTravel = h.action.type === "goToScene" || h.action.type === "useItem";
+                      const needsTarget = h.action.type === "goToScene" && !h.action.targetSceneId;
+                      if (!canTravel && !h.action.targetSceneId) return null;
+                      return (
+                        <Field label="🗺 Target scene — where this goes">
+                          <select
+                            className={`${inputCls} ${needsTarget ? "border-crimson/70 text-crimson" : ""}`}
+                            value={h.action.targetSceneId ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.targetSceneId = e.target.value || undefined;
+                              })
+                            }
+                          >
+                            <option value="">{needsTarget ? "⚠ pick a scene…" : "— nowhere —"}</option>
+                            {story.scenes.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.title}
+                              </option>
+                            ))}
+                          </select>
+                          {needsTarget && (
+                            <p className="mt-1 font-type text-[9px] leading-snug text-crimson/90">
+                              A → go-to-scene marker without a target does nothing (the validator errors on it too).
+                            </p>
+                          )}
+                        </Field>
+                      );
+                    })()}
                     </div>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Object image (transparent)">

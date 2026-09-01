@@ -129,7 +129,10 @@ Refusals read from `Hotspot.wrongVerbText` → `Story.verbResponses[verb]` → t
 house lines, varied so a repeated failure doesn't loop. Verb actions are
 **flavour and repeatable** — looking at a thing never uses it up; only an
 action that takes something (`giveItem`) or moves the player (`goToScene`)
-consumes its marker. In a coin room only the marker you actually clicked
+consumes its marker. And a 💬 say-line marker **stays on the scene even
+after its line plays** (its flag/meter extras fire exactly once, so they
+can't be re-farmed — reading a sign twice can't move a meter twice). In a
+coin room only the marker you actually clicked
 fires, so brushing past the bar on the way to the door doesn't talk to the bar.
 
 Authoring (Studio): 🎛 **Verb coin** + verb chips on the Walkable Stage
