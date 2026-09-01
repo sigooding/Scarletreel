@@ -188,6 +188,8 @@ export const INSPECTOR_GADGET: Story = {
           },
           {
             // A commuter crossing the square, pingpong — pure moving scenery.
+            // Her far stop carries a WALK-AWAY SIZE (scale 0.55): the leg out
+            // shrinks her into the distance, the leg back grows her again.
             id: "npc_commuter",
             image: "emoji:🚶‍♀️",
             x: 4,
@@ -195,7 +197,7 @@ export const INSPECTOR_GADGET: Story = {
             scale: 0.85,
             patrolMode: "pingpong",
             patrol: [
-              { x: 96, y: 70, pause: 6, say: "…late, late, LATE — that useless clock…" },
+              { x: 96, y: 70, pause: 6, scale: 0.55, say: "…late, late, LATE — that useless clock…" },
               { x: 4, y: 72, pause: 8 },
             ],
             speed: 7,

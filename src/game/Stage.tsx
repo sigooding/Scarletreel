@@ -109,6 +109,17 @@ function StageNpcActor({
   const [pos, setPos] = useState({ x: npc.x, y: npc.y });
   const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
   const [walking, setWalking] = useState(false);
+  /** WALK-AWAY / WALK-TOWARD SIZE — the live size multiplier. Starts at the
+   *  NPC's base scale and interpolates along each patrol leg toward the
+   *  destination waypoint's `scale` (see StageNpcWaypoint.scale). */
+  const [wScale, setWScale] = useState(npc.scale ?? 1);
+  const wScaleRef = useRef(npc.scale ?? 1);
+  // Re-baseline the live size when the authored base scale changes (Studio
+  // live-editing); the next walk leg interpolates from here.
+  useEffect(() => {
+    wScaleRef.current = npc.scale ?? 1;
+    setWScale(npc.scale ?? 1);
+  }, [npc.scale]);
   /** The SET MOTION currently held at a waypoint pause: which named sheet
    *  animation plays and which ambient line floats over their head. Null
    *  while walking (or for a patrol-less stander, which uses idleAnim). */
@@ -158,6 +169,21 @@ function StageNpcActor({
     let idleUntil = 0;
     const mode = npc.patrolMode ?? "loop";
     const speed = npc.speed ?? settings.speed ?? STAGE2D_DEFAULT_SPEED;
+    const baseScale = npc.scale ?? 1;
+    /** The current walk leg's size interpolation: captured once when a new
+     *  destination is aimed at (start size → the stop's authored size). */
+    let leg: { tx: number; ty: number; total: number; s0: number; s1: number } | null = null;
+    const aimLeg = (wp: { x: number; y: number }, s1: number) => {
+      if (leg && leg.tx === wp.x && leg.ty === wp.y) return;
+      const cur = posRef.current;
+      leg = { tx: wp.x, ty: wp.y, total: Math.hypot(wp.x - cur.x, wp.y - cur.y), s0: wScaleRef.current, s1: Math.max(0.05, s1) };
+    };
+    const setScale = (s: number) => {
+      if (Math.abs(s - wScaleRef.current) > 0.002) {
+        wScaleRef.current = s;
+        setWScale(s);
+      }
+    };
     /** Advance idx per patrolMode; returns false when the route is finished
      *  ("once" — hold the current waypoint's motion forever). */
     const advance = () => {
@@ -175,7 +201,8 @@ function StageNpcActor({
       idx = (idx + 1) % waypoints.length;
       return true;
     };
-    /** Walk straight at a point; true once arrived. */
+    /** Walk straight at a point; true once arrived. Interpolates the size
+     *  along the aimed leg — walking away shrinks, walking toward grows. */
     const walkToward = (wp: { x: number; y: number }, dt: number) => {
       const cur = posRef.current;
       const dx = wp.x - cur.x;
@@ -185,7 +212,15 @@ function StageNpcActor({
       if (dist <= 0.5) {
         setPos({ x: wp.x, y: wp.y });
         setWalking(false);
+        if (leg && leg.tx === wp.x && leg.ty === wp.y) {
+          setScale(leg.s1); // land exactly on the stop's authored size
+          leg = null;
+        }
         return true;
+      }
+      if (leg && leg.tx === wp.x && leg.ty === wp.y && leg.total > 0.01) {
+        const p = Math.min(1, Math.max(0, 1 - dist / leg.total));
+        setScale(leg.s0 + (leg.s1 - leg.s0) * p);
       }
       const t = Math.min(1, (speed * dt) / dist);
       setPos({ x: cur.x + dx * t, y: cur.y + dy * t });
@@ -201,6 +236,8 @@ function StageNpcActor({
       const ov = overrideRef.current;
       if (ov) {
         if (ov.target) {
+          // Scripts keep the current size — no authored stop to aim at.
+          aimLeg(ov.target, wScaleRef.current);
           if (walkToward(ov.target, dt)) {
             ov.target = undefined;
             ov.resolve?.();
@@ -224,6 +261,7 @@ function StageNpcActor({
         return;
       }
       const wp = waypoints[idx];
+      aimLeg(wp, wp.scale ?? baseScale);
       if (walkToward(wp, dt)) {
         // ARRIVED — plant the feet and play this stop's SET MOTION: optional
         // facing override, named animation, ambient say line.
@@ -239,7 +277,7 @@ function StageNpcActor({
     return () => cancelAnimationFrame(raf);
   }, [npc.id, npc.patrol, npc.speed, npc.patrolMode, settings.speed]);
 
-  const depth = stageSpriteScale(pos.y, floor, settings) * (npc.scale ?? 1);
+  const depth = stageSpriteScale(pos.y, floor, settings) * wScale;
   const flip = facing === "left" ? -1 : 1;
   const isEmoji = (npc.image ?? "").startsWith("emoji:");
   /** Which named animation plays at rest: the waypoint's SET MOTION beats the

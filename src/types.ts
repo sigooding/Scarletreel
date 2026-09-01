@@ -1229,6 +1229,12 @@ export interface StageNpcWaypoint {
   /** Ambient line said over their head while paused here — SCUMM background
    *  chatter. Shown as a floating speech line, not a dialogue beat. */
   say?: string;
+  /** WALK-AWAY / WALK-TOWARD SIZE — the NPC's size multiplier ON ARRIVAL at
+   *  this stop. The walk leg interpolates smoothly from the previous stop's
+   *  size to this one, so a route into the distance shrinks the actor and a
+   *  route toward the camera grows them (on top of the room's normal
+   *  floor-band depth scaling). Blank = the NPC's base `scale`. */
+  scale?: number;
 }
 
 /** One walk-off-screen exit of a stage room (see StageSettings.exitEdges). */

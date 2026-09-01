@@ -1600,6 +1600,165 @@ function ScriptEditor({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* NPC PLATE PREVIEW — the room plate with every ambient NPC's spawn    */
+/* and patrol route drawn on it. Drag the actor (spawn) or a numbered   */
+/* stop to place it; click an actor to highlight their route. Purely a  */
+/* placement aid — spawn/waypoint numbers in the panel stay the truth.  */
+
+function NpcPlatePreview({
+  bg,
+  worldWidth,
+  floor,
+  npcs,
+  onMoveSpawn,
+  onMoveWp,
+}: {
+  bg: React.CSSProperties;
+  worldWidth?: number;
+  floor: { top: number; bottom: number };
+  npcs: {
+    id: string;
+    x: number;
+    y: number;
+    art: { emoji?: string; url?: string };
+    patrol?: StageNpcWaypoint[];
+  }[];
+  onMoveSpawn: (i: number, x: number, y: number) => void;
+  onMoveWp: (i: number, wi: number, x: number, y: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const worldW = Math.max(100, worldWidth ?? 100);
+  /** world-% → plate-% (a wide strip is shrunk to fit the preview). */
+  const k = 100 / worldW;
+  const [sel, setSel] = useState(0);
+  /** Live drag: which marker (wp -1 = the spawn) and where it currently is.
+   *  The story is only written on release — one undo step per drag. */
+  const [drag, setDrag] = useState<{ n: number; wp: number; x: number; y: number } | null>(null);
+  const pct = (e: React.PointerEvent) => {
+    const r = ref.current!.getBoundingClientRect();
+    return {
+      x: Math.min(worldW, Math.max(0, (((e.clientX - r.left) / r.width) * 100) / k)),
+      y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
+    };
+  };
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const grab = (n: number, wp: number, x: number, y: number) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setSel(n);
+    setDrag({ n, wp, x, y });
+  };
+  const move = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const p = pct(e);
+    setDrag({ ...drag, x: p.x, y: p.y });
+  };
+  const drop = () => {
+    if (!drag) return;
+    if (drag.wp < 0) onMoveSpawn(drag.n, round1(drag.x), round1(drag.y));
+    else onMoveWp(drag.n, drag.wp, round1(drag.x), round1(drag.y));
+    setDrag(null);
+  };
+  const posOf = (n: number, wp: number, x: number, y: number) =>
+    drag && drag.n === n && drag.wp === wp ? { x: drag.x, y: drag.y } : { x, y };
+  return (
+    <div className="space-y-0.5">
+      <div
+        ref={ref}
+        className="relative aspect-video w-full select-none overflow-hidden rounded border border-teal-400/30"
+        style={{ ...bg, touchAction: "none" }}
+      >
+        {/* floor band, so routes get placed on the walkable ground */}
+        {[floor.top, floor.bottom].map((y, i) => (
+          <div key={i} className="pointer-events-none absolute inset-x-0 border-t border-dashed border-neon/30" style={{ top: `${y}%` }} />
+        ))}
+        {/* viewport seams of a wide world */}
+        {worldW > 100
+          ? Array.from({ length: Math.ceil(worldW / 100) - 1 }, (_, i) => (
+              <div key={i} className="pointer-events-none absolute inset-y-0 border-l border-dashed border-paper/25" style={{ left: `${(i + 1) * 100 * k}%` }} />
+            ))
+          : null}
+        {/* routes under the markers */}
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
+          {npcs.map((n, i) => {
+            const pts = [posOf(i, -1, n.x, n.y), ...(n.patrol ?? []).map((w, wi) => posOf(i, wi, w.x, w.y))];
+            if (pts.length < 2) return null;
+            return (
+              <polyline
+                key={n.id + i}
+                points={pts.map((p) => `${p.x * k},${p.y}`).join(" ")}
+                fill="none"
+                stroke={sel === i ? "#2dd4bf" : "#2dd4bf55"}
+                strokeWidth={sel === i ? 0.5 : 0.3}
+                strokeDasharray="1.4 1"
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+        </svg>
+        {/* numbered stops */}
+        {npcs.map((n, i) =>
+          (n.patrol ?? []).map((w, wi) => {
+            const p = posOf(i, wi, w.x, w.y);
+            return (
+              <div
+                key={`${i}-${wi}`}
+                className={`absolute z-10 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border font-pulp text-[8px] leading-none ${
+                  sel === i ? "border-teal-200 bg-teal-500/90 text-noir-950" : "border-teal-400/50 bg-noir-950/70 text-teal-300/70"
+                }`}
+                style={{ left: `${p.x * k}%`, top: `${p.y}%` }}
+                title={`${n.id} · stop ${wi + 1} — drag to move${w.scale ? ` · size ×${w.scale}` : ""}`}
+                onPointerDown={grab(i, wi, w.x, w.y)}
+                onPointerMove={move}
+                onPointerUp={drop}
+              >
+                {wi + 1}
+                {w.scale ? (
+                  <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap font-type text-[7px] text-teal-200/90 [text-shadow:0_1px_2px_#000]">×{w.scale}</span>
+                ) : null}
+              </div>
+            );
+          }),
+        )}
+        {/* the actors themselves at spawn */}
+        {npcs.map((n, i) => {
+          const p = posOf(i, -1, n.x, n.y);
+          return (
+            <div
+              key={n.id + i}
+              className="absolute z-20 -translate-x-1/2 -translate-y-full cursor-grab"
+              style={{ left: `${p.x * k}%`, top: `${p.y}%` }}
+              title={`${n.id} — drag to move the spawn`}
+              onPointerDown={grab(i, -1, n.x, n.y)}
+              onPointerMove={move}
+              onPointerUp={drop}
+            >
+              <div className={`flex flex-col items-center ${sel === i ? "" : "opacity-70"}`}>
+                {n.art.url ? (
+                  <img src={n.art.url} alt="" draggable={false} className="h-10 w-auto object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]" />
+                ) : (
+                  <span className="text-2xl leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{n.art.emoji ?? "🚶"}</span>
+                )}
+                <span className={`mt-0.5 h-1.5 w-1.5 rounded-full ${sel === i ? "bg-teal-300 ring-2 ring-teal-300/40" : "bg-teal-400/50"}`} />
+                {sel === i ? (
+                  <span className="mt-0.5 whitespace-nowrap font-pulp text-[8px] uppercase tracking-wider text-teal-200 [text-shadow:0_1px_2px_#000]">{n.id}</span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="font-type text-[8px] italic leading-snug text-paper/40">
+        Drag an actor to move their spawn, or a numbered stop to move that waypoint (positions commit on release —
+        one undo step per drag). Click an actor to highlight their route. Dashed lines: the floor band and, on wide
+        rooms, the screen seams.
+      </p>
+    </div>
+  );
+}
+
 const sectionStateKey = (id: string) => `scarlet-studio-section-${id}`;
 
 /** A collapsible inspector section. The open/closed state is persisted per-id in
@@ -10789,6 +10948,26 @@ function StudioInner({
                                 cycling a motion on a timer. Interaction stays on the <b>Hotspots</b> tab — NPCs are pure
                                 stage life.
                               </p>
+                              {npcs.length > 0 ? (
+                                <NpcPlatePreview
+                                  bg={bgStyle(media(scene.background) ?? scene.background)}
+                                  worldWidth={st.worldWidth}
+                                  floor={stageFloorOf(st)}
+                                  npcs={npcs.map((n) => ({
+                                    id: n.id,
+                                    x: n.x,
+                                    y: n.y,
+                                    patrol: n.patrol,
+                                    art: n.image?.startsWith("emoji:")
+                                      ? { emoji: n.image.slice(6) }
+                                      : n.image
+                                        ? { url: assetUrl(media(n.image) ?? n.image) }
+                                        : { emoji: "🚶" },
+                                  }))}
+                                  onMoveSpawn={(i, x, y) => setNpc(i, { x, y })}
+                                  onMoveWp={(i, wi, x, y) => setWp(i, wi, { x, y })}
+                                />
+                              ) : null}
                               {npcs.map((n, i) => (
                                 <div key={i} className="space-y-1 border border-teal-400/20 p-1.5">
                                   <div className="flex items-center gap-2">
@@ -10887,6 +11066,8 @@ function StudioInner({
                                           <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation during the pause (blank = idle motion)" value={wp.anim ?? ""} onChange={(e) => setWp(i, wi, { anim: e.target.value || undefined })} />
                                           <span className="font-type text-[8px] text-paper/50" title="Ambient line floated over their head during the pause — SCUMM background chatter">say</span>
                                           <input className={`${inputCls} flex-1`} placeholder="ambient line while paused…" value={wp.say ?? ""} onChange={(e) => setWp(i, wi, { say: e.target.value || undefined })} />
+                                          <span className="font-type text-[8px] text-paper/50" title="Size ON ARRIVAL at this stop — the walk leg shrinks/grows smoothly toward it, so a route into the distance walks away and one down the plate walks toward the camera. Blank = the NPC's base scale.">size</span>
+                                          <input type="number" min={0.05} max={4} step={0.05} className={`${inputCls} w-14`} placeholder="—" title="Arrival size ×(blank = base scale)" value={wp.scale ?? ""} onChange={(e) => setWp(i, wi, { scale: e.target.value === "" ? undefined : Math.max(0.05, Number(e.target.value)) })} />
                                         </div>
                                       </div>
                                     ))}
