@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Hotspot, StageExitEdge, StageNpc, StageScriptStep, StageSettings } from "../types";
 import { CURSOR_ICON, hotspotAnswersVerb } from "../logic";
 import {
+  STAGE2D_DEFAULT_NPC_SPEED,
   STAGE2D_DEFAULT_REACH,
   STAGE2D_DEFAULT_SPEED,
   STAGE_GRID_STEP,
@@ -37,12 +38,16 @@ import { presetStyle } from "./animation";
  *
  *  - draws the walkable floor and walks the player character across it
  *    (click-to-walk + arrow/WASD), with perspective depth scaling;
- *  - renders every hotspot as an interaction MARKER (a reticle at
- *    the thing's feet, an icon, a label chip that fades in on approach);
+ *  - renders every hotspot as an interaction MARKER (a reticle + label ON
+ *    the object, bottom-centre of the drawn zone — a wall poster keeps its
+ *    marker on the poster), fading in on approach;
  *  - renders hotspot object images (NPCs, props) anchored at the marker;
- *  - walks the character to a marker and fires it through `onInteract` —
- *    the exact same callback a clicked hotspot uses, so gating, items,
- *    showText, exits and conversations all behave.
+ *  - fires a marker through `onInteract` — the exact same callback a clicked
+ *    hotspot uses, so gating, items, showText, exits and conversations all
+ *    behave. LOOKS fire from where the character stands (an 👁 verb, an
+ *    object-menu Look, or a classic 💬 show-text zone — no walk-up);
+ *    use/talk/go and pickups walk the character to the floor point beneath
+ *    the object first.
  *  - WIDE WORLDS (`worldWidth > 100`): the room is one continuous strip
  *    wider than the viewport, the camera pans after the walker (a LucasArts
  *    scrolling alley), and the plate edge becomes a WALK-OFF-SCREEN EXIT
@@ -168,7 +173,10 @@ function StageNpcActor({
     let routeDone = false;
     let idleUntil = 0;
     const mode = npc.patrolMode ?? "loop";
-    const speed = npc.speed ?? settings.speed ?? STAGE2D_DEFAULT_SPEED;
+    // An NPC without an authored speed walks at the ambient default — never
+    // the PLAYER's room speed (a fast player must not make every bystander
+    // sprint their beat).
+    const speed = npc.speed ?? STAGE2D_DEFAULT_NPC_SPEED;
     const baseScale = npc.scale ?? 1;
     /** The current walk leg's size interpolation: captured once when a new
      *  destination is aimed at (start size → the stop's authored size). */
@@ -275,7 +283,10 @@ function StageNpcActor({
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [npc.id, npc.patrol, npc.speed, npc.patrolMode, settings.speed]);
+    // NPC speed is the ambient default unless authored — the PLAYER's room
+    // speed deliberately does NOT drive this loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [npc.id, npc.patrol, npc.speed, npc.patrolMode]);
 
   const depth = stageSpriteScale(pos.y, floor, settings) * wScale;
   const flip = facing === "left" ? -1 : 1;
@@ -440,17 +451,19 @@ export function Stage({
 
   const obstacles = settings.obstacles ?? [];
 
-  /** Where a hotspot's marker stands. Normal zones clamp to the walkable
-   *  region (a thing sits ON the ground, the walker goes to it). REMOTE
-   *  (out-of-reach) zones keep the reticle on the object itself — a clock
-   *  high on a tower shouldn't advertise itself from the pavement. */
-  const markerPoint = (hs: Hotspot): { x: number; y: number } =>
-    hs.remote
-      ? {
-          x: Math.min(Math.max(hs.bounds.x + hs.bounds.w / 2, 1), worldW - 1),
-          y: Math.min(Math.max(hs.bounds.y + hs.bounds.h, 2), 100),
-        }
-      : stageMarkerPointPoly(hs, poly, worldW);
+  /** Where the marker RENDERS: on the object itself, bottom-centre of the
+   *  drawn zone — a wall poster's reticle and label stay on the poster, not
+   *  dropped onto the pavement below ("jumping into the walkable area").
+   *  The top clamp leaves room for the label that stacks above the reticle. */
+  const markerPoint = (hs: Hotspot): { x: number; y: number } => ({
+    x: Math.min(Math.max(hs.bounds.x + hs.bounds.w / 2, 1), worldW - 1),
+    y: Math.min(Math.max(hs.bounds.y + hs.bounds.h, 12), 100),
+  });
+  /** Where the walker GOES to use a hotspot: the zone's base clamped into
+   *  the walkable region — the character approaches the spot on the floor
+   *  beneath the object. (Remote zones never walk, so this is unused for
+   *  them.) */
+  const walkPoint = (hs: Hotspot): { x: number; y: number } => stageMarkerPointPoly(hs, poly, worldW);
 
   const [pos, setPos] = useState(spawn);
   const targetRef = useRef<{ x: number; y: number; hotspotId?: string } | null>(null);
@@ -721,7 +734,7 @@ export function Stage({
           // OUT-OF-REACH zones only ever fire by clicking them — strolling
           // underneath the clock tower shouldn't read it aloud.
           if (hs.remote) continue;
-          const m = markerPoint(hs);
+          const m = walkPoint(hs);
           if (!posReachesMarker(next, m, reach, a)) continue;
           // A coin room is verb-first: only the marker the player actually
           // aimed at fires, and it fires with the verb they picked. Brushing
@@ -738,10 +751,12 @@ export function Stage({
             coinRef.current ? { verb: pending?.verb ?? verbRef.current, itemId: pending?.itemId ?? heldRef.current ?? undefined } : undefined,
           );
         }
-        // Which marker is "near" (for proximity labels)?
+        // Which marker is "near" (for proximity labels)? Nearness is measured
+        // to the WALK spot on the floor beneath the object, even though the
+        // label renders up on the object itself.
         let best: { id: string; d: number } | null = null;
         for (const hs of hotspotsRef.current) {
-          const m = markerPoint(hs);
+          const m = walkPoint(hs);
           const a2 = a;
           const d = Math.hypot(next.x - m.x, (next.y - m.y) * a2);
           if (!best || d < best.d) best = { id: hs.id, d };
@@ -969,25 +984,48 @@ export function Stage({
    *  character doesn't stand inside the thing they're interacting with.
    *  Routed around the scene's obstacles, so the counter between you and the
    *  barman is walked around rather than through. */
+  /** Fire a hotspot immediately, from wherever the character stands: they
+   *  just turn to face it, no walk-up. Used by OUT-OF-REACH zones and by
+   *  LOOKS (below) — the character doesn't cross the room to read a poster. */
+  const fireFromHere = (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
+    const m0 = markerPoint(hs);
+    const cur0 = posRef.current;
+    // A click is a new command: any walk already under way stops where the
+    // character stands (and the walk cycle must settle back to idle — the
+    // rAF only clears `walking` on arrival).
+    pendingRef.current = null;
+    targetRef.current = null;
+    routeRef.current = [];
+    setWalking(false);
+    setFrameIdx(0);
+    setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur0.x, m0.y - cur0.y));
+    audio.hover();
+    interactRef.current(
+      hs,
+      coinRef.current
+        ? { verb: ctx?.verb ?? verbRef.current, itemId: ctx?.itemId ?? heldRef.current ?? undefined }
+        : ctx?.verb
+          ? { verb: ctx.verb, itemId: ctx.itemId }
+          : undefined,
+    );
+  };
+
   const walkToMarker = (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
     if (scriptOnRef.current) return; // cutscene: input locked
     // OUT OF REACH — the object can't be walked to (a clock high on a wall,
     // a window across the chasm). Fire its action from wherever the character
     // stands: they just turn to face it, no walk-up.
     if (hs.remote) {
-      const m0 = markerPoint(hs);
-      const cur0 = posRef.current;
-      pendingRef.current = null;
-      setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur0.x, m0.y - cur0.y));
-      audio.hover();
-      interactRef.current(
-        hs,
-        coinRef.current
-          ? { verb: ctx?.verb ?? verbRef.current, itemId: ctx?.itemId ?? heldRef.current ?? undefined }
-          : ctx?.verb
-            ? { verb: ctx.verb, itemId: ctx.itemId }
-            : undefined,
-      );
+      fireFromHere(hs, ctx);
+      return;
+    }
+    // LOOK AT A DISTANCE — look-verbs and 💬 show-text zones never walk up:
+    // with 👁 armed (coin room), with Look picked off an object menu, or a
+    // plain click on a classic room's read/describe zone, the character
+    // answers from right where they're standing.
+    const clickVerb = ctx?.verb ?? (coinRef.current ? verbRef.current : null);
+    if (clickVerb === "look" || (!coinRef.current && !ctx?.verb && hs.action.type === "showText")) {
+      fireFromHere(hs, ctx);
       return;
     }
     if (coinRef.current || ctx) {
@@ -1292,10 +1330,11 @@ export function Stage({
           />
         ) : null}
 
-        {/* the floor — two soft edge-shades so the walkable band reads without
-            painting a obvious rectangle over the art. A path-polygon room
-            instead darkens everything OUTSIDE the path and tints the path
-            itself, so the winding walkable zone is what reads. */}
+        {/* the floor — NO darkening outside the walkable area: authors said
+            the off-band dim robbed the backdrop art. A path-polygon room
+            keeps only its thin dashed outline so the winding route still
+            reads; band rooms need nothing at all (proximity labels and the
+            marker reticles already say where the floor is). */}
         {usingPath ? (
           <svg
             className="pointer-events-none absolute inset-y-0 left-0 h-full"
@@ -1305,22 +1344,8 @@ export function Stage({
             aria-hidden
           >
             <path d={polyPathD(poly)} fill="rgba(42,217,217,0.07)" stroke="rgba(42,217,217,0.30)" strokeWidth={0.6} strokeDasharray="2.5 2" />
-            <path d={`M 0 0 H ${worldW} V 100 H 0 Z ${polyPathD(poly)}`} fill="rgba(0,0,0,0.30)" fillRule="evenodd" />
           </svg>
-        ) : (
-          <>
-            <div
-              className="pointer-events-none absolute left-0"
-              style={{ top: 0, width: `${worldW}%`, height: `${floor.top}%`, background: "linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0.28))" }}
-              aria-hidden
-            />
-            <div
-              className="pointer-events-none absolute left-0"
-              style={{ top: `${floor.bottom}%`, width: `${worldW}%`, height: `${100 - floor.bottom}%`, background: "linear-gradient(to top, rgba(0,0,0,0.34), rgba(0,0,0,0.16))" }}
-              aria-hidden
-            />
-          </>
-        )}
+        ) : null}
 
         {/* walk target ripple */}
         {ripple && active && (
@@ -1339,7 +1364,7 @@ export function Stage({
         {hotspots.map((hs) => {
           const m = markerPoint(hs);
           const ok = unlocked(hs);
-          const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, m, HINT_RADIUS, aspect())));
+          const near = hints === "always" || (hints === "proximity" && (nearId === hs.id || posReachesMarker(pos, walkPoint(hs), HINT_RADIUS, aspect())));
           const z = 50 + Math.round(m.y);
           return (
             <div key={hs.id} className="contents">
@@ -1564,6 +1589,7 @@ export function Stage({
           const flip = da.flip ? -1 : 1;
           return (
             <div
+              data-stage-player
               className="pointer-events-none absolute z-[52]"
               style={{
                 left: `${pos.x}%`,

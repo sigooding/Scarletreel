@@ -1266,6 +1266,14 @@ export interface SceneNode {
    * on both sides but bypassed in play (the game follows its single outgoing
    * route straight through). */
   nodeType?: "standard" | "credits" | "cutscene" | "stage" | "note";
+  /** NO-HUD layout: render this scene with zero in-game chrome — no menu,
+   * meters, current-lead panel, auto/skip chips, back/narration buttons,
+   * inventory dock or sound/help corner. Only meaningful on a 🚶 stage node
+   * (Studio's Node Layout Type lists it as "🚶 Walkable Stage — No HUD");
+   * the player still gets dialogue subtitles, stage markers and the verb
+   * coin, and Esc always opens the quit dialog (Save & exit), so nobody is
+   * ever trapped. */
+  hideHud?: boolean;
   /** Marks this scene as the END OF A PART. On leaving it, the game shows the
    * route flowchart for the part just played before continuing. The string is
    * the part's display name (e.g. "Part 3 — Two Hundred and Eleven Thousand").

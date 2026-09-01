@@ -1223,6 +1223,11 @@ export function hotspotAnswersVerb(hs: Hotspot, verb: VerbId): boolean {
 export const STAGE2D_DEFAULT_SPEED = 18;
 /** Default reach distance: scene-width % within which a hotspot fires. */
 export const STAGE2D_DEFAULT_REACH = 4;
+/** Default AMBIENT NPC pace (% world-width / sec). Deliberately slower than
+ *  the player's, and never inherited from the room's player speed — a fast
+ *  player must not turn every barman into a sprinter. Authors can always
+ *  set an NPC's own speed in the 🚏 Ambient NPCs section. */
+export const STAGE2D_DEFAULT_NPC_SPEED = 12;
 /** Default walkable floor band (y % of plate height). */
 export const STAGE_DEFAULT_FLOOR = { top: 62, bottom: 94 };
 /** Default depth shrink at the top of the floor (0–0.9). */
@@ -2123,6 +2128,8 @@ export function validateStory(story: Story): ValidationIssue[] {
     if (sc.nodeType !== "stage") {
       if (sc.stage)
         issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}" carries Stage settings but is not a Stage node — set Node Layout Type to "🚶 Walkable Stage" or the settings do nothing.` });
+      if (sc.hideHud)
+        issues.push({ severity: "warning", sceneId: sc.id, message: `Scene "${sc.title}" has NO-HUD switched on but is not a Stage node — only "🚶 Walkable Stage — NO HUD" layout scenes can hide the chrome, so this scene still shows its HUD.` });
       continue;
     }
     const label = `Stage "${sc.title}"`;
@@ -2164,6 +2171,30 @@ export function validateStory(story: Story): ValidationIssue[] {
         spriteSheetIssues(npc.sheet, `NPC "${npc.id}" sprite sheet`, ["idle", "walk"]).forEach((msg) =>
           issues.push({ severity: "warning", sceneId: sc.id, message: `${label} ${msg}` })
         );
+      });
+      // Duplicate NPC ids are silently broken in play: the script-control
+      // registry keys actors by id, so the last one mounted wins — a step
+      // aimed at the id drives only that actor (and releasing at the end of
+      // a script leaves the other one frozen mid-override). Hard error.
+      const npcCounts = new Map<string, number>();
+      (sc.stage.npcs ?? []).forEach((npc) => npcCounts.set(npc.id, (npcCounts.get(npc.id) ?? 0) + 1));
+      npcCounts.forEach((count, id) => {
+        if (count > 1)
+          issues.push({ severity: "error", sceneId: sc.id, message: `${label} has ${count} NPCs sharing the id "${id}" — scripted-sequence steps (walk / motion / say) key off the id, so they'd drive only one of the actors. Give each ambient NPC its own id.` });
+      });
+      // Off-plate spawn/waypoints: coordinates are world-% (0–100 on a normal
+      // room, 0–worldWidth on a wide one — the classic trap is reading a
+      // screenshot position as viewport-% on a 200% room). Anything past the
+      // plate edge renders where the camera can never reach: silent in play,
+      // so warn here.
+      const worldW = sc.stage.worldWidth ?? 100;
+      (sc.stage.npcs ?? []).forEach((npc) => {
+        if (npc.x < 0 || npc.x > worldW || npc.y < 0 || npc.y > 100)
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: NPC "${npc.id}" spawns off the plate at (${Math.round(npc.x)}, ${Math.round(npc.y)}) — on this ${worldW}%-wide room x runs 0–${worldW} and y 0–100, so the actor stands where nobody can see it.` });
+        (npc.patrol ?? []).forEach((wp, wi) => {
+          if (wp.x < 0 || wp.x > worldW || wp.y < 0 || wp.y > 100)
+            issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: NPC "${npc.id}" patrol stop ${wi + 1} sits at (${Math.round(wp.x)}, ${Math.round(wp.y)}) — off the plate for this ${worldW}%-wide room (x must be 0–${worldW}, y 0–100). The actor will walk out of view and hold there.` });
+        });
       });
     }
     // Conversations that end in nothing: a stage conversation with no

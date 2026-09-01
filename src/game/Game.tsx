@@ -3173,6 +3173,12 @@ function CasePlayer({
     rawScene?.nodeType === "note" && !rawScene.prose ? { ...rawScene, prose: rawScene.title } : rawScene;
   /** STAGE node — free-roam walkable exploration. */
   const isStage = scene?.nodeType === "stage";
+  /** NO-HUD layout (credits, cutscene, or a 🚶 stage with hideHud set):
+   *  zero in-game chrome — no menu, meters, leads panel, chips, dock or
+   *  sound/help corner. Subtitles, stage markers and the verb coin stay;
+   *  Esc still opens the quit dialog so the player is never trapped. */
+  const hudHidden =
+    scene?.nodeType === "credits" || scene?.nodeType === "cutscene" || !!scene?.hideHud;
   /** The walker's feet (scene %) in a STAGE room — drives walk-behind masks:
    *  a foreground extra flagged `occludes` is drawn OVER the character while
    *  they stand behind it, so they disappear behind the counter. */
@@ -3253,6 +3259,16 @@ function CasePlayer({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageEnterScript, sceneId, story]);
+  // Entering a NO-HUD scene while the menu / mixer / case file was open
+  // would strand floating chrome whose trigger buttons just disappeared —
+  // close it all on entry.
+  useEffect(() => {
+    if (!hudHidden) return;
+    setMenuOpen(false);
+    setMixerOpen(false);
+    setShowCaseFile(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hudHidden, sceneId]);
   const dropKey = useRef(0);
   const handleItemDrop = useCallback(
     (item: Item, hotspotId: string) => {
@@ -6386,7 +6402,7 @@ function CasePlayer({
       )}
 
       {/* HUD */}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <>
           {!story.dialogueBox?.hideCaseProgress && (
             <MetersHUD
@@ -6421,7 +6437,7 @@ function CasePlayer({
       )}
 
       {/* A visible action list keeps point-and-click interactions discoverable. */}
-      {proseAcknowledged && !scene.isEnding && scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {proseAcknowledged && !scene.isEnding && !hudHidden && (
         <aside
           className={`hud-frame absolute right-3 top-24 z-50 w-64 p-2.5 ${
             investigateNudge ? "hud-frame-gold animate-pulse" : ""
@@ -6498,7 +6514,7 @@ function CasePlayer({
             <p className="font-type text-[10px] leading-snug text-paper/45">
               {stageTalking
                 ? "Talking — the conversation is on screen."
-                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to a marker and it happens."}
+                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to touch things — 👁 looking works from right here."}
             </p>
           )}
           {!isStage && (
@@ -6532,7 +6548,7 @@ function CasePlayer({
           <span className="hud-chip pop-in px-3 py-1" data-kind="good">✓ Checkpoint</span>
         </div>
       )}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-col items-start gap-1">
           {(autoAdvance || skipMode || hintActive) && (
             <div className="hud-frame flex items-center gap-1.5 px-2 py-1">
@@ -6549,7 +6565,7 @@ function CasePlayer({
           )}
         </div>
       )}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <div className="absolute right-3 top-3 z-[60]">
           <button
             onClick={() => {
@@ -6727,7 +6743,7 @@ function CasePlayer({
       )}
 
       {/* auto-narrate / back / skip controls */}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <div className="hud-frame absolute right-[5.25rem] top-[52px] z-50 flex items-center gap-1.5 px-1.5 py-1">
           <button
             onClick={goBack}
@@ -7659,7 +7675,7 @@ function CasePlayer({
         </div>
       </div>
 
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <InventoryDock
           state={state}
           display={invDisplay}
@@ -7671,7 +7687,9 @@ function CasePlayer({
         />
       )}
 
-      {/* Floating sound + help — one mixer button and one help button */}
+      {/* Floating sound + help — one mixer button and one help button.
+          Suppressed in the NO-HUD layout (the M key still mutes). */}
+      {!hudHidden && (
       <div className="hud-frame absolute bottom-4 right-4 z-[55] flex items-center gap-1.5 px-1.5 py-1">
         <button
           onClick={() => {
@@ -7701,9 +7719,10 @@ function CasePlayer({
           ?
         </button>
       </div>
+      )}
 
       {/* Sound mixer popover */}
-      {mixerOpen && (
+      {mixerOpen && !hudHidden && (
         <div className="hud-frame hud-frame-gold pop-in absolute bottom-16 right-4 z-[56] w-72 p-3">
           <div className="mb-2 flex items-center justify-between border-b border-gold/20 pb-1.5">
             <span className="hud-kicker hud-kicker-left">🎚 Sound</span>

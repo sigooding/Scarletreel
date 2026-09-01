@@ -643,6 +643,150 @@ if (clickByText(/Clockwork Caper/i)) {
 } else console.log("!! could not find the Inspector Gadget — Clockwork Caper card");
 root.unmount();
 
+// Phase 9: NO-HUD walkable stage (SceneNode.hideHud). A stage scene with
+// the layout flipped must render ZERO chrome — no ☰ Menu button, no Case
+// Progress meter, no inventory dock, no sound/help corner — while the stage
+// itself (markers, walker floor) stays interactive, and Esc still raises
+// the quit dialog (Save & exit). The same scene with hideHud off keeps its
+// HUD, proving the flag (not the node type) drives it.
+const { INSPECTOR_GADGET: igStory } = await import("../../src/data/inspectorGadget.ts");
+const { GamePlayer } = await import("../../src/game/Game.tsx");
+async function bootIg(hideHud) {
+  try { win.localStorage.clear(); win.sessionStorage.clear(); } catch {}
+  container.innerHTML = "";
+  const story = {
+    ...igStory,
+    scenes: igStory.scenes.map((sc) =>
+      sc.nodeType === "stage" ? { ...sc, stage: sc.stage ? { ...sc.stage, enterScript: undefined } : sc.stage, hideHud } : sc
+    ),
+  };
+  const stageScene = story.scenes.find((sc) => sc.nodeType === "stage");
+  const r = createRoot(container);
+  r.render(createElement(StrictMode, null, createElement(GamePlayer, { story, playFromSceneId: stageScene.id, onExit: () => {} })));
+  for (let i = 0; i < 24; i++) {
+    await sleep(500);
+    if (container.querySelector("button.stage-marker")) break;
+  }
+  await sleep(1200);
+  return r;
+}
+
+root = await bootIg(true); problems.length = 0;
+const nhText = (container.textContent || "").replace(/\\s+/g, " ");
+const nhNoMenu = !/☰ ?Menu/i.test(nhText);
+const nhNoMeters = !/Case Progress/i.test(nhText);
+const nhNoSound = !/🔊 Sound|🔇 Sound/.test(nhText);
+const nhNoDock = !nhText.includes("🧳") && !nhText.includes("🎒");
+const nhFrames = container.querySelectorAll(".hud-frame").length;
+const nhStageAlive = !!container.querySelector("button.stage-marker");
+// Esc must still open the quit dialog even with zero chrome on screen.
+win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+await sleep(600);
+const nhEscQuits = /Leave the case\?/i.test(container.textContent || "");
+console.log("\\n=== STAGE — NO HUD LAYOUT (hideHud) ===");
+console.log("  menu hidden:", nhNoMenu, "| meters hidden:", nhNoMeters, "| sound/help hidden:", nhNoSound, "| dock hidden:", nhNoDock, "| .hud-frame count:", nhFrames);
+console.log("  stage still interactive:", nhStageAlive, "| Esc still opens quit (save & exit):", nhEscQuits);
+if (!nhNoMenu || !nhNoMeters || !nhNoSound || !nhNoDock || !nhStageAlive || !nhEscQuits) failed = true;
+win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+await sleep(400);
+root.unmount(); problems.length = 0;
+
+root = await bootIg(false);
+const hudText = (container.textContent || "").replace(/\\s+/g, " ");
+const hudMenu = /☰ ?Menu/i.test(hudText);
+const hudMeters = /Case Progress/i.test(hudText);
+const hudStageAlive = !!container.querySelector("button.stage-marker");
+console.log("\\n=== STAGE — NORMAL HUD UNCHANGED ===");
+console.log("  menu present:", hudMenu, "| meters present:", hudMeters, "| stage present:", hudStageAlive);
+if (!hudMenu || !hudMeters || !hudStageAlive) failed = true;
+failed |= report("STAGE HUD layouts").crashed;
+root.unmount();
+
+// Phase 10: STAGE interaction niceties —
+//   (a) markers render ON their object (bottom-centre of the drawn zone),
+//       never "jumping" down into the walkable band;
+//   (b) nothing darkens the art outside the walkable area any more;
+//   (c) LOOKS fire at a distance: clicking a show-text zone plays its caption
+//       without the character walking;
+//   (d) ✋ take (and friends) still walk up first.
+const wireZone = { id: "igh_wire", label: "Pigeon wire", bounds: { x: 44, y: 22, w: 10, h: 12 }, cursor: "look", isRepeatable: true, action: { type: "showText", text: "Tiny grey witnesses, and none of them talking." } };
+async function bootPlaza() {
+  try { win.localStorage.clear(); win.sessionStorage.clear(); } catch {}
+  container.innerHTML = "";
+  const story = {
+    ...igStory,
+    scenes: igStory.scenes.map((sc) =>
+      sc.id !== "ig_plaza"
+        ? sc
+        : {
+            ...sc,
+            stage: sc.stage ? { ...sc.stage, enterScript: undefined } : sc.stage,
+            hotspots: [...(sc.hotspots || []), wireZone],
+          }
+    ),
+  };
+  const r = createRoot(container);
+  r.render(createElement(StrictMode, null, createElement(GamePlayer, { story, playFromSceneId: "ig_plaza", onExit: () => {} })));
+  for (let i = 0; i < 24; i++) {
+    await sleep(500);
+    if (container.querySelector("button.stage-marker")) break;
+  }
+  await sleep(800);
+  return r;
+}
+const playerLeftPct = () => {
+  const el = container.querySelector("[data-stage-player]");
+  return el ? parseFloat(el.style.left) : null;
+};
+const markerBtn = (label) =>
+  [...container.querySelectorAll("button.stage-marker")].find((b) => (b.getAttribute("aria-label") || "").indexOf(label) === 0);
+
+root = await bootPlaza(); problems.length = 0;
+// (a) the wire zone ends at y=34 — well ABOVE the 66–94 floor band: pre-fix
+//     its marker clamped onto the pavement; now it stays on the wire.
+const wireBtn = markerBtn("Pigeon wire");
+const wireTop = wireBtn ? Math.round(parseFloat(wireBtn.style.top) * 10) / 10 : -999;
+const markerOnObject = Math.abs(wireTop - 34) < 1;
+// …and an in-band marker (the dropped glove, zone bottom y=89) still lands
+// on its zone's base, i.e. where the old clamp would put it too.
+const gloveBtn0 = markerBtn("Dropped glove");
+const gloveTop = gloveBtn0 ? Math.round(parseFloat(gloveBtn0.style.top) * 10) / 10 : -999;
+const floorMarkerOk = Math.abs(gloveTop - 89) < 1;
+// (b) no off-floor dim: the band gradients (0.18/0.28, 0.34/0.16) and the
+//     old path mask (0.30 black) are gone from the frame.
+const stageHtml = container.innerHTML;
+const noDim = !stageHtml.includes("rgba(0,0,0,0.28)") && !stageHtml.includes("rgba(0,0,0,0.34)") && !stageHtml.includes("rgba(0,0,0,0.30)");
+// (c) LOOK AT A DISTANCE: the poster is a show-text zone at x≈66 while the
+//     character spawns at x=12 — clicking it must read immediately and the
+//     walker's x must not budge.
+const x0 = playerLeftPct();
+const posterBtn = markerBtn("Newsstand poster");
+if (posterBtn) posterBtn.click();
+await sleep(1500);
+const lookFired = (container.textContent || "").indexOf("REWARD") !== -1;
+const xAfterLook = playerLeftPct();
+const lookNoWalk = x0 !== null && xAfterLook !== null && Math.abs(xAfterLook - x0) < 1;
+// (d) WALK-UP ACTIONS STILL WALK: click the glove (giveItem at x≈51): the
+//     character crosses the plaza, the one-shot marker is consumed.
+const gloveBtn = markerBtn("Dropped glove");
+if (gloveBtn) gloveBtn.click();
+let walkedToGlove = false;
+let gloveGone = false;
+for (let i = 0; i < 30; i++) {
+  await sleep(300);
+  const x = playerLeftPct();
+  if (x !== null && x > 35) walkedToGlove = true;
+  if (!markerBtn("Dropped glove")) { gloveGone = true; break; }
+}
+console.log("\\n=== STAGE — MARKER PLACEMENT, DIM REMOVAL, LOOK AT DISTANCE ===");
+console.log("  wire marker ON the object (top ≈34%):", markerOnObject, "(got " + wireTop + "%) | in-band glove marker intact:", floorMarkerOk, "(" + gloveTop + "%)");
+console.log("  no dim outside walkable area:", noDim);
+console.log("  look fired at distance:", lookFired, "| character did NOT walk (x " + x0 + " → " + xAfterLook + "):", lookNoWalk);
+console.log("  take still walks up (reached x>35):", walkedToGlove, "| glove consumed on arrival:", gloveGone);
+if (!markerOnObject || !floorMarkerOk || !noDim || !posterBtn || !lookFired || !lookNoWalk || !walkedToGlove || !gloveGone) failed = true;
+failed |= report("STAGE interaction niceties").crashed;
+root.unmount();
+
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
 process.exit(failed ? 1 : 0);
 `

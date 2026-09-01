@@ -7,7 +7,32 @@ conversations, and walks to a door to leave.
 
 Set it in **Studio → Scene tab → Node Layout Type → "🚶 Walkable Stage"**
 (or the "🚶 Stage" canvas button), then configure the floor / spawn /
-character in **Scene tab → 🚶 Walkable Stage**.
+character in the **🚶 Stage tab**. Stage settings are grouped into folded
+sections — **🗺 Room plate & layout** (the drag-everything visual editor),
+**➡ Entrances & exits**, **🎬 Scene opening** (caption + scripted entry
+sequence), **🕵️ Player character**, **🚧 Obstacles**, **🚏 Ambient NPCs**,
+**🎛 Interaction** (verb coin, marker labels) and **📐 Floor & movement
+numbers** — so a long setup stays scannable and each group re-opens where
+you left it.
+
+### The NO-HUD variant
+
+**Node Layout Type → "🚶 Walkable Stage — NO HUD"** is the same walkable
+stage with zero in-game chrome: no ☰ Menu, no Case Progress meter, no leads
+or action panel, no auto/skip chips, no ◂ Back / 🎙 Narration row, no
+inventory dock and no sound/help corner — just the plate, the walker, its
+markers and the conversation subtitles (credits/cutscene-style cleanliness
+for a *playable* room; it stores as `nodeType: "stage"` + `hideHud: true`,
+so every stage feature — patrols, entry scripts, edge exits — works
+identically). Great for cinematic strolls, title-adjacent vignettes, and
+screenshot-friendly rooms. The player is never trapped: **Esc** still opens
+Leave the case? with **💾 Save & exit**. The Stage tab shows a gold banner
+while a room is no-HUD, with a one-click switch back.
+
+> **Heads-up:** with the dock hidden, equip-and-USE item verbs and
+> crafting aren't reachable — keep no-HUD rooms item-free (or gate item
+> play behind 💬 talk / ✋ take markers). Ctrl-shift-armed authors: the same
+> room flips back to full HUD any time, nothing is duplicated.
 
 ---
 
@@ -16,7 +41,7 @@ character in **Scene tab → 🚶 Walkable Stage**.
 | Standard node | Stage node |
 | --- | --- |
 | Prose panel types out a paragraph | **No prose panel.** Narrative is a one-line caption (`enterCaption`) plus short 💬 show-text markers |
-| Click a hotspot zone → instant | **Walk to a marker** (gold reticle at the thing's feet) → it fires on arrival |
+| Click a hotspot zone → instant | **Walk to a marker** — the reticle sits ON THE OBJECT, right where you drew the zone (a wall poster keeps its marker on the poster) — and it fires when the character reaches the floor beneath it. **Looks are the exception:** 👁 verbs and 💬 show-text zones fire at a distance, no walk-up |
 | Beats play automatically after prose | Beats play only when the player **talks** (a 🗣 marker) — the conversation |
 | Choices wait at the bottom | Choices appear **only at the end of a conversation** — give them `timeLimitSeconds` for the "decide now" pressure |
 | Exits are choices / hotspot zones | Exits are **door markers** (→ Go to scene hotspots) you walk to |
@@ -30,11 +55,17 @@ again.
 ## The five marker verbs (Hotspots tab)
 
 A stage marker is an ordinary hotspot — same gating, same actions, same
-one-shot consumption. The stage just draws it standing on the floor at the
-zone's base and makes the player walk to it:
+one-shot consumption. The marker renders ON the object (bottom-centre of the
+zone you drew — nothing "drops" onto the floor any more) and the character
+walks to the floor point beneath it before acting — except **looks**, which
+read at a distance:
 
 - **💬 Show text** — look/describe. Plays as a bottom caption (auto-fades),
-  not the centre exam card.
+  not the centre exam card. **Fires from where the character stands** — no
+  walk-up (same for the 👁 Look verb in verb-coin / object-menu rooms).
+  For a thing they could see but never even walk under (a tower clock),
+  tick 🔭 out-of-reach instead — same distance fire, for EVERY verb, and
+  strolling underneath never triggers it.
 - **🎁 Give item / 🚩 Set flag / ⚙ Use item** — pickups and world-state,
   unchanged.
 - **🗣 Start conversation** — the heart of the node: walking to this marker
@@ -103,10 +134,47 @@ surfaces problems as Check-tab warnings.
 5. **Gating for reactivity** — a beat/choice gated on the flag the 🗣 marker
    sets is how the room "remembers" you talked to someone.
 
+## Ambient NPCs (🚏 section)
+
+Stage life that idles, patrols and performs set motions between pauses —
+drag actors and numbered stops on the plate preview, give each stop a motion
+/ facing / ambient say-line / arrival **size**, and pick the route mode
+(loop / pingpong / once). The things beta testers trip on:
+
+- **Ids must be unique.** Scripted sequences target actors BY ID and the
+  control registry keys on it — two actors sharing an id means steps drive
+  only the last-mounted one (and a script's cleanup leaves the other frozen).
+  The validator errors on duplicates.
+- **Coordinates are WORLD-%**, not viewport-%: on a 200%-wide room, x=90 is
+  45% across the strip. Spawns/stops past the plate edge are invisible and
+  now warn in Validate (the same stop validates clean on a wide world).
+- **Blank speed = 12 %/s, the ambient default** — deliberately slower than
+  the player's walk (default 18) and never inherited from it. A fast player
+  must not make every bystander sprint their beat; set the field for
+  anything brisker.
+- **Patrol legs are straight lines** — no obstacle avoidance for ambient
+  actors; route stops around furniture yourself (obstacles only constrain
+  the player).
+- **Scripted sequences don't freeze un-targeted NPCs** — while the letterbox
+  is down, actors the script never mentions keep patrolling. By design: the
+  room stays alive behind the cutscene.
+- **`once` holds the final stop's set motion forever** — including its
+  say-line, which stays floated permanently. Also by design (a tableau), but
+  keep the last stop's line empty if you don't want it hanging over heads.
+- A **`say` step aimed at a missing npcId** still paces out the line's
+  read-time (the cutscene can't know how long "nothing" takes) — Validate
+  flags the ghost reference, so fix it there.
+
 ## Validation rules (Check tab)
 
 - Stage nodes with **prose** → warning (prose never shows in play).
 - **No way out** (no door marker, no auto-advance, no choices) → error.
+- **Duplicate ambient-NPC ids** → error (script steps key off the id and
+  would drive only one of the actors).
+- **Off-plate NPC spawn or patrol stop** (x outside 0–worldWidth, y outside
+  0–100) → warning.
+- **NO-HUD on a non-stage scene** → warning (the flag only applies to the
+  walkable-stage layout).
 - **🗣 marker with no beats** → error; **beats with no 🗣 marker** → warning.
 - **Choices-only exits** on a stage with a conversation → deliberate-pattern
   heads-up (the player must talk before they can leave).
@@ -114,6 +182,9 @@ surfaces problems as Check-tab warnings.
   warnings.
 - **Sprite-sheet problems** (no image, non-positive frame size, empty/negative
   frame lists, missing `walk`/`idle` names) → warnings via `spriteSheetIssues`.
+- **Scripted-sequence steps** aimed at a missing NPC / scene, emptied
+  scripts, steps after a goToScene → warnings/errors (see the 🎬 sequence
+  editor's inline help).
 
 ## Legacy
 

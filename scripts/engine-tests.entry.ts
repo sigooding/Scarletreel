@@ -527,6 +527,39 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     const mismatch: any = { ...stageBase, nodeType: undefined };
     const mismatchIssues = craftIssues([mismatch]);
     check("stage: stage settings on a non-stage node warn", has(mismatchIssues, /carries Stage settings but is not a Stage node/));
+    // Same for the NO-HUD flag — a classic scene can't hide its chrome.
+    const hudMismatch = craftIssues([{ ...stageBase, nodeType: undefined, hideHud: true } as any]);
+    check("stage: NO-HUD on a non-stage node warns", has(hudMismatch, /NO-HUD switched on but is not a Stage node/));
+
+    /* ---- ambient NPC hygiene ------------------------------------------- */
+    {
+      const npcRow = { id: "npc_a", image: "emoji:🚶", x: 30, y: 88 };
+      // Duplicate ids silently broke scripts (the control registry keys by
+      // id — last-mounted actor wins), so this is a hard ERROR.
+      const dup = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, npcs: [{ ...npcRow }, { ...npcRow, x: 40 }] } },
+      ]);
+      check("npc: duplicate ids are an error", dup.some((i) => i.severity === "error" && /sharing the id "npc_a"/.test(i.message)), dup);
+
+      // Off-plate coordinates are world-% — x=140 on a 100%-wide plate is
+      // off the edge forever and must warn; the same coordinates are legal
+      // on a 200%-wide world and stay clean.
+      const offPlate = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, npcs: [{ ...npcRow, x: 140, patrol: [{ x: 150, y: 88 }] }] } },
+      ]);
+      check("npc: off-plate spawn warns (x beyond room width)", has(offPlate, /spawns off the plate/), offPlate);
+      check("npc: off-plate patrol stop warns", has(offPlate, /patrol stop 1 sits at \(150/), offPlate);
+      const wide = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, worldWidth: 200, npcs: [{ ...npcRow, x: 140, patrol: [{ x: 150, y: 88 }] }] } },
+      ]);
+      check("npc: the same spawn+stop validate clean on a 200% world", !wide.some((i) => /off the plate|patrol stop/.test(i.message)), wide.filter((i) => /plate|stop/.test(i.message)));
+
+      // Unique ids + on-plate coords stay clean.
+      const fine = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, npcs: [{ ...npcRow }, { ...npcRow, id: "npc_b", x: 45 }] } },
+      ]);
+      check("npc: unique on-plate NPCs raise no npc hygiene issues", !fine.some((i) => /NPC/.test(i.message)), fine.filter((i) => /NPC/.test(i.message)));
+    }
 
     // Spawn outside the floor band gets flagged (the engine snaps it).
     const offFloor = craftIssues([{ ...stageBase, stage: { ...stageBase.stage!, spawn: { x: 50, y: 20 } } }]);

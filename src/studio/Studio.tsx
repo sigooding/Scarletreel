@@ -1196,7 +1196,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           >
             {scene.nodeType === "credits" && "🎬 CREDITS · "}
             {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
-            {scene.nodeType === "stage" && "🚶 STAGE · "}
+            {scene.nodeType === "stage" && (scene.hideHud ? "🚶 STAGE · NO HUD · " : "🚶 STAGE · ")}
             {isStart && "★ START · "}
             {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
             {scene.title}
@@ -9365,14 +9365,46 @@ function StudioInner({
                 <Field label="Node Layout Type">
                   <select
                     className={inputCls}
-                    value={scene.nodeType ?? "standard"}
-                    onChange={(e) => updateScene(scene.id, { nodeType: e.target.value === "standard" ? undefined : e.target.value as any })}
+                    value={scene.nodeType === "stage" && scene.hideHud ? "stageNoHud" : scene.nodeType ?? "standard"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "standard") updateScene(scene.id, { nodeType: undefined, hideHud: undefined });
+                      else if (v === "stageNoHud")
+                        updateScene(scene.id, {
+                          nodeType: "stage",
+                          hideHud: true,
+                          // A no-HUD room must walk from frame one: seed the
+                          // stage settings if the scene doesn't have them yet.
+                          stage:
+                            scene.stage ??
+                            ({
+                              playerImage: "emoji:🕵️",
+                              spawn: { x: 50, y: 86 },
+                              speed: 18,
+                              reach: 4,
+                              keyboard: true,
+                              floor: { top: 62, bottom: 94 },
+                              depthScale: 0.35,
+                              hints: "proximity",
+                            } as const),
+                        });
+                      else if (v === "stage") updateScene(scene.id, { nodeType: "stage", hideHud: undefined });
+                      else updateScene(scene.id, { nodeType: v as any, hideHud: undefined });
+                    }}
                   >
                     <option value="standard">📁 Standard Game Scene (with HUD)</option>
                     <option value="credits">🎬 Opening Credits (Centered text, NO HUD)</option>
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
                     <option value="stage">🚶 Walkable Stage (free-roam exploration)</option>
+                    <option value="stageNoHud">🚶 Walkable Stage — NO HUD (cinematic free-roam)</option>
                   </select>
+                  {scene.nodeType === "stage" && scene.hideHud ? (
+                    <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">
+                      Same walkable stage, but <b className="text-gold">zero chrome</b>: no menu, meters, leads panel,
+                      chips, inventory dock or sound/help — just the art, the walker, markers and subtitles. The
+                      player can still press <b>Esc</b> for Save &amp; exit. Every 🚶 Stage setting below applies.
+                    </p>
+                  ) : null}
                 </Field>
                 </CollapsibleSection>
                 {(scene.nodeType === "credits" || scene.nodeType === "cutscene") && (
@@ -10442,12 +10474,26 @@ function StudioInner({
               <>
                 <HelpNote id="stage-tab" title="Walkable Stage">
                   Free-roam exploration — the player walks a character around the floor and walks up to
-                  interaction markers to use them. Lay the markers on the <b>Hotspots</b> tab, write the
-                  conversations a <b>🗣 Start conversation</b> marker starts on the <b>Beats</b> tab, and wire
-                  doors as <b>→ Go to scene</b> hotspots. Every number on this tab is a % of the whole strip.
+                  interaction markers to use them. Markers render <b>where you drew the zone</b> (a poster keeps
+                  its marker on the poster); the character walks to the floor <b>beneath</b> it. <b>👁 Looks never
+                  walk</b> — a 💬 show-text zone (or the Look verb) fires from a distance. Lay the markers on the{" "}
+                  <b>Hotspots</b> tab, write the conversations a <b>🗣 Start conversation</b> marker starts on the{" "}
+                  <b>Beats</b> tab, and wire doors as <b>→ Go to scene</b> hotspots. Every number on this tab is a
+                  % of the whole strip.
+                  <br /><br />
+                  Settings are grouped: <b>🗺 Room plate</b> (the drag-everything editor) · <b>➡ Entrances &amp;
+                  exits</b> · <b>🎬 Scene opening</b> (caption + scripted sequence) · <b>🕵️ Player character</b> ·{" "}
+                  <b>🚧 Obstacles</b> · <b>🚏 Ambient NPCs</b> · <b>🎛 Interaction</b> · <b>📐 Floor &amp; movement
+                  numbers</b>. Want a cinematic room with zero chrome? Set <b>Node Layout Type</b> (Scene tab) to{" "}
+                  <b>🚶 Walkable Stage — NO HUD</b>.
                 </HelpNote>
                 {/* ---- Stage node — free-roam walkable exploration ---- */}
-                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (free-roam)">
+                <CollapsibleSection
+                  id={`scene-stage-${scene.id}`}
+                  title="🚶 Walkable Stage (free-roam)"
+                  defaultOpen
+                  hint={scene.hideHud ? "NO-HUD layout" : `${scene.stage?.npcs?.length ?? 0} NPCs · ${(scene.stage?.obstacles ?? []).length} obstacles`}
+                >
                   <div className="space-y-2">
                     {scene.nodeType !== "stage" ? (
                       <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
@@ -10478,6 +10524,31 @@ function StudioInner({
                       </button>
                     ) : (
                       <>
+                        {scene.hideHud ? (
+                          <div className="flex items-start gap-2 border border-gold/40 bg-gold/10 p-2">
+                            <span className="text-base leading-none" aria-hidden>🎭</span>
+                            <p className="min-w-0 flex-1 font-type text-[10px] leading-snug text-paper/70">
+                              <b className="text-gold">No-HUD room.</b> In play this scene renders zero chrome — no
+                              menu, meters, leads panel, chips, inventory dock or sound/help corner; just the art, the
+                              walker, its markers and subtitles. The player can still press <b>Esc</b> for Save &amp;
+                              exit, so no one is trapped.
+                            </p>
+                            <button
+                              type="button"
+                              className="shrink-0 border border-gold/50 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-gold hover:bg-gold/10"
+                              title="Switch Node Layout Type back to 🚶 Walkable Stage (with HUD)"
+                              onClick={() => updateScene(scene.id, { hideHud: undefined })}
+                            >
+                              Show the HUD
+                            </button>
+                          </div>
+                        ) : null}
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-plate`}
+                          title="🗺 Room plate & layout"
+                          defaultOpen
+                          hint="the visual editor — drag everything"
+                        >
                         <p className="font-type text-[10px] leading-snug text-paper/55">
                           Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. The <b className="text-cyan-neon">↕</b>{" "}
                           handle on the character's head resizes it live; the <b className="text-neon">↔</b> on a prop/NPC's
@@ -10581,6 +10652,12 @@ function StudioInner({
                             Use a wide background image so the pan has art to show.
                           </p>
                         </Field>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-edges`}
+                          title="➡ Entrances & exits"
+                          hint="walk-off edge arrows · per-room entry spawns"
+                        >
                         {/* ---- edge exits: walk off the screen into the next scene ---- */}
                         <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
                           <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">
@@ -10765,6 +10842,12 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-opening`}
+                          title="🎬 Scene opening"
+                          hint="caption + scripted entry sequence (SCUMM room-entry cutscene)"
+                        >
                         <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
                           <textarea
                             className={`${inputCls} h-14 font-type`}
@@ -10799,6 +10882,12 @@ function StudioInner({
                             />
                           ) : null}
                         </Field>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-player`}
+                          title="🕵️ Player character"
+                          hint="sprite · walk frames · sheet · size & pose"
+                        >
                         <Field label="Character sprite (emoji:… or an image url / asset)">
                           <input
                             className={inputCls}
@@ -10881,6 +10970,61 @@ function StudioInner({
                             );
                           })()}
                         </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label={`Close-up size ${(scene.stage.playerNearScale ?? 1).toFixed(2)}× (nearest)`}>
+                            <input
+                              type="range" min={0.5} max={2} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerNearScale ?? 1}
+                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerNearScale: Number(e.target.value) } })}
+                            />
+                          </Field>
+                          <Field label={`Distance size ${(scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)).toFixed(2)}× (furthest)`}>
+                            <input
+                              type="range" min={0.3} max={1.5} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)}
+                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerFarScale: Number(e.target.value) } })}
+                            />
+                          </Field>
+                          <Field label={`Character size ${(scene.stage.playerScale ?? 1).toFixed(2)}× (whole scene)`}>
+                            <input
+                              type="range" min={0.3} max={3} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerScale ?? 1}
+                              onChange={(e) => {
+                                const s = Number(e.target.value);
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
+                                });
+                              }}
+                            />
+                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                              Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
+                              classic look; the near/far sliders above only control the walk-toward-camera perspective.
+                            </span>
+                          </Field>
+                          <Field label="Default pose (named animation)">
+                            <input
+                              className={inputCls}
+                              value={scene.stage.playerPose ?? ""}
+                              placeholder="e.g. bend · crouch · reach"
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerPose: e.target.value.trim() || undefined },
+                                })
+                              }
+                            />
+                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                              A named animation on the player's sprite sheet held for the WHOLE scene (a hunched
+                              lookout, a seated figure). Leave empty for the normal idle/walk. A{" "}
+                              <b className="text-gold">🧍 Set player pose</b> hotspot can override it mid-scene.
+                            </span>
+                          </Field>
+                        </div>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-obstacles`}
+                          title="🚧 Obstacles (walk around)"
+                          hint={`${(scene.stage.obstacles ?? []).length || "no"} boxes — or draw them on the plate`}
+                        >
                         {/* ---- obstacles: furniture the walker routes around ---- */}
                         {(() => {
                           const obs = scene.stage!.obstacles ?? [];
@@ -10922,6 +11066,12 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-npcs`}
+                          title="🚏 Ambient NPCs"
+                          hint={`${(scene.stage.npcs ?? []).length || "no"} actors — plate preview + patrols & set motions`}
+                        >
                         {/* ---- ambient NPCs (idle / walk cycles) ---- */}
                         {(() => {
                           const st = scene.stage!;
@@ -10946,7 +11096,10 @@ function StudioInner({
                                 <b> walk</b> (plus any named motion animations); each waypoint can pick a motion, a facing
                                 and an ambient say-line for its pause. A single waypoint on the spawn = a standing actor
                                 cycling a motion on a timer. Interaction stays on the <b>Hotspots</b> tab — NPCs are pure
-                                stage life.
+                                stage life. Every actor needs a <b>unique id</b> (scripts key off it — the validator
+                                errors on duplicates), patrol legs are <b>straight lines</b> (route around furniture
+                                yourself), and a blank speed walks at the slow <b>ambient default of 12</b> — never the
+                                player's pace.
                               </p>
                               {npcs.length > 0 ? (
                                 <NpcPlatePreview
@@ -11014,7 +11167,7 @@ function StudioInner({
                                     <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="X %" value={Math.round(n.x)} onChange={(e) => setNpc(i, { x: Number(e.target.value) })} />
                                     <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Y %" value={Math.round(n.y)} onChange={(e) => setNpc(i, { y: Number(e.target.value) })} />
                                     <span className="font-type text-[9px] text-paper/50">speed</span>
-                                    <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s)" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
+                                    <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s) — blank = 12, the ambient default; deliberately slower than and independent of the player's walk speed" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
                                     <span className="font-type text-[9px] text-paper/50" title="Named sheet animation played while standing (instead of plain idle) — the barman's 'polish'">idle motion</span>
                                     <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation at rest (blank = idle)" value={n.idleAnim ?? ""} onChange={(e) => setNpc(i, { idleAnim: e.target.value || undefined })} />
                                   </div>
@@ -11091,6 +11244,12 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-interaction`}
+                          title="🎛 Interaction"
+                          hint="verb coin · object-first menus · marker labels"
+                        >
                         {/* ---- verb coin: pick a verb, then the object ---- */}
                         {(() => {
                           const st = scene.stage!;
@@ -11206,6 +11365,27 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        <Field label="Interaction labels on markers">
+                          <select
+                            className={inputCls}
+                            value={scene.stage.hints ?? "proximity"}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
+                              })
+                            }
+                          >
+                            <option value="proximity">Proximity — labels fade in as you approach</option>
+                            <option value="always">Always — every marker wears its label</option>
+                            <option value="none">None — reticles only (hover to peek)</option>
+                          </select>
+                        </Field>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-numbers`}
+                          title="📐 Floor & movement numbers"
+                          hint="fine-tuning — the plate edits most of this visually"
+                        >
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input
@@ -11227,20 +11407,6 @@ function StudioInner({
                                   stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
                                 })
                               }
-                            />
-                          </Field>
-                          <Field label={`Close-up size ${(scene.stage.playerNearScale ?? 1).toFixed(2)}× (nearest)`}>
-                            <input
-                              type="range" min={0.5} max={2} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerNearScale ?? 1}
-                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerNearScale: Number(e.target.value) } })}
-                            />
-                          </Field>
-                          <Field label={`Distance size ${(scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)).toFixed(2)}× (furthest)`}>
-                            <input
-                              type="range" min={0.3} max={1.5} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)}
-                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerFarScale: Number(e.target.value) } })}
                             />
                           </Field>
                           <Field label="Walk speed (% width / sec)">
@@ -11298,55 +11464,7 @@ function StudioInner({
                               }
                             />
                           </Field>
-                          <Field label={`Character size ${(scene.stage.playerScale ?? 1).toFixed(2)}× (whole scene)`}>
-                            <input
-                              type="range" min={0.3} max={3} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerScale ?? 1}
-                              onChange={(e) => {
-                                const s = Number(e.target.value);
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
-                                });
-                              }}
-                            />
-                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                              Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
-                              classic look; the near/far sliders above only control the walk-toward-camera perspective.
-                            </span>
-                          </Field>
-                          <Field label="Default pose (named animation)">
-                            <input
-                              className={inputCls}
-                              value={scene.stage.playerPose ?? ""}
-                              placeholder="e.g. bend · crouch · reach"
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerPose: e.target.value.trim() || undefined },
-                                })
-                              }
-                            />
-                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                              A named animation on the player's sprite sheet held for the WHOLE scene (a hunched
-                              lookout, a seated figure). Leave empty for the normal idle/walk. A{" "}
-                              <b className="text-gold">🧍 Set player pose</b> hotspot can override it mid-scene.
-                            </span>
-                          </Field>
                         </div>
-                        <Field label="Interaction labels on markers">
-                          <select
-                            className={inputCls}
-                            value={scene.stage.hints ?? "proximity"}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
-                              })
-                            }
-                          >
-                            <option value="proximity">Proximity — labels fade in as you approach</option>
-                            <option value="always">Always — every marker wears its label</option>
-                            <option value="none">None — reticles only (hover to peek)</option>
-                          </select>
-                        </Field>
                         <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
                           <input
                             type="checkbox"
@@ -11359,6 +11477,7 @@ function StudioInner({
                           />
                           Arrow / WASD movement enabled
                         </label>
+                        </CollapsibleSection>
                         <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
                           <b className="text-cyan-neon">The walkable loop:</b> Hotspots tab lays the markers (💬
                           show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
@@ -13457,9 +13576,9 @@ function StudioInner({
                       <p className="-mt-1 pl-6 font-type text-[9px] leading-snug text-paper/45">
                         On a 🚶 walkable stage the character normally walks over before a zone fires. With this ON they
                         interact from wherever they stand — the walker just turns to face it. Use it for things they can
-                        SEE but never REACH: a clock high on a tower, a sign across the water. 👁 Look reads naturally;
-                        any verb the zone answers works at range. The reticle stays on the object instead of dropping to
-                        the floor, and strolling underneath never triggers it.
+                        SEE but never REACH: a clock high on a tower, a sign across the water — any verb the zone answers
+                        works at range, and strolling underneath never triggers it. (Plain <b>👁 looks</b> and 💬
+                        show-text zones already fire from a distance without this box.)
                       </p>
                     )}
                     {h.action.itemGranted && (
