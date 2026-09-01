@@ -3183,6 +3183,12 @@ function CasePlayer({
   /** The verb the coin is holding, reported by the Stage — in a coin room that
    *  is the cursor, because the verb IS the cursor. */
   const [coinVerb, setCoinVerb] = useState<VerbId | null>(null);
+  // The coin only exists on STAGE scenes; when the player walks off one into
+  // a classic scene the armed verb must NOT survive as that scene's cursor
+  // art (the leak showed the "Pick up" hand over every novel hotspot).
+  useEffect(() => {
+    if (!isStage) setCoinVerb(null);
+  }, [isStage, sceneId]);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const cursorSlot = (hoverCursor ?? coinVerb ?? "default") as import("../logic").CursorSlot;
   const cursor = useMemo(() => resolveCursor(story, cursorSlot), [story, cursorSlot]);

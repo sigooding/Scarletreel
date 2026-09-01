@@ -591,6 +591,11 @@ export function Stage({
    *  together. */
   const camRef = useRef(0);
   const [cam, setCam] = useState(0);
+  /** The last rounded camera value pushed to state — the rAF loop outlives
+   *  renders, so it can't read `cam` from its closure (that copy is stale);
+   *  comparing against this ref keeps idle rooms from re-running setState
+   *  every frame. */
+  const camShownRef = useRef(0);
 
   const aspect = () => {
     const el = plateRef.current;
@@ -626,6 +631,11 @@ export function Stage({
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      // The listener is gone while inactive (a conversation opens, an overlay
+      // drops), so a keyup fired then is never seen — drop every held key on
+      // deactivation or the walker sprints off on its own the moment the
+      // floor is handed back.
+      keysRef.current.clear();
     };
   }, [active, keyboard]);
 
@@ -634,6 +644,7 @@ export function Stage({
     if (!active) {
       setWalking(false);
       exitRef.current = null;
+      keysRef.current.clear(); // held keys can't outlive the floor lock
       return;
     }
     let raf = 0;
@@ -696,6 +707,13 @@ export function Stage({
           if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
           moved = true;
           if (r.arrived) arrived = true;
+        } else {
+          // No drive (keys released, no click target): settle the walk cycle
+          // back to idle the frame the player lets go — otherwise the sprite
+          // keeps "moonwalking" in place after a keyboard stroll. Same-value
+          // setStates bail out cheaply, so idling here costs nothing.
+          setWalking(false);
+          setFrameIdx(0);
         }
 
         // WALK-OFF-SCREEN trigger: the walker reached a world edge with an
@@ -786,7 +804,10 @@ export function Stage({
         const target = stageCamX(next.x, worldW);
         camRef.current += (target - camRef.current) * Math.min(1, dt * 8);
         const shown = Math.round(camRef.current * 10) / 10;
-        if (Math.abs(shown - cam) > 0.011) setCam(shown);
+        if (Math.abs(shown - camShownRef.current) > 0.011) {
+          camShownRef.current = shown;
+          setCam(shown);
+        }
       }
 
       if (stop) return;
@@ -808,6 +829,7 @@ export function Stage({
     if (wide) {
       const startCam = stageCamX(spawn.x, worldW);
       camRef.current = startCam;
+      camShownRef.current = startCam;
       setCam(startCam);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1291,7 +1313,10 @@ export function Stage({
         } else {
           // Empty floor: just walk — routed around the furniture. The fired
           // set persists, so brushed-past markers don't re-rattle on every
-          // stroll.
+          // stroll. A fresh walk is also a CANCELLED aim: any verb the player
+          // had queued on a marker must not fire later just because the path
+          // happens to brush past that marker.
+          pendingRef.current = null;
           const route = stageRoutePoly(posRef.current, floorPoint, obstacles, poly, floor, STAGE_GRID_STEP, worldW);
           if (route.length) {
             routeRef.current = route.slice(1);
