@@ -1146,12 +1146,42 @@ export interface StageNpc {
   scale?: number;
   /** Initial facing (default "right"). */
   facing?: "left" | "right";
-  /** Patrol route: walk from the spawn to each waypoint in turn, PAUSE idle
-   *  `pause` seconds at each, then loop back to the start. Omit to stand and
-   *  idle forever (the classic bartender). */
-  patrol?: { x: number; y: number; pause?: number }[];
+  /** SET MOTION at rest — a named sheet animation played while standing
+   *  around instead of plain "idle": the barman's "polish", the mechanic's
+   *  "hammer". Falls back to "idle"/"walk" when the sheet doesn't define it. */
+  idleAnim?: string;
+  /** Patrol route: walk from the spawn to each waypoint in turn, PAUSE
+   *  `pause` seconds at each (playing that waypoint's SET MOTION — see
+   *  StageNpcWaypoint), then repeat per `patrolMode`. Omit to stand and
+   *  idle forever (the classic bartender). TIP: a single waypoint at the
+   *  spawn position makes a STANDING actor that cycles a motion + ambient
+   *  line on a timer — SCUMM set-dressing with zero walking. */
+  patrol?: StageNpcWaypoint[];
   /** Walk speed in world-% / second (default: the room's walker speed). */
   speed?: number;
+  /** How the route repeats (default "loop" — jump back to waypoint 1):
+   *  "pingpong" walks the route backwards to the start and out again;
+   *  "once" walks it a single time and HOLDS the last waypoint's motion
+   *  forever (an actor that crosses the room and settles at the bar). */
+  patrolMode?: "loop" | "pingpong" | "once";
+}
+
+/** One stop on an ambient NPC's route — position plus the SET MOTION played
+ *  while paused there. This is the SCUMM "costume" beat: walk to the crate,
+ *  face left, play "hammer" for 4 seconds, mutter a line, move on. */
+export interface StageNpcWaypoint {
+  x: number;
+  y: number;
+  /** seconds idling here before moving on (default 2) */
+  pause?: number;
+  /** SET MOTION — named sheet animation played while paused here ("sweep",
+   *  "hammer", "drink"). Falls back to the NPC's idleAnim, then idle/walk. */
+  anim?: string;
+  /** Face this way during the pause (default: the direction of arrival). */
+  facing?: "left" | "right";
+  /** Ambient line said over their head while paused here — SCUMM background
+   *  chatter. Shown as a floating speech line, not a dialogue beat. */
+  say?: string;
 }
 
 /** One walk-off-screen exit of a stage room (see StageSettings.exitEdges). */

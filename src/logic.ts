@@ -2440,6 +2440,27 @@ export function validateStory(story: Story): ValidationIssue[] {
       issues.push({ severity: "error", sceneId: null, message: `Recipe for "${item.name}" creates missing item "${item.combinableWith.resultItemId}".` });
   });
 
+  // NPC SET MOTIONS: a waypoint (or idle) animation name that the NPC's own
+  // sprite sheet doesn't define silently falls back to idle — usually a typo.
+  story.scenes.forEach((sc) => {
+    sc.stage?.npcs?.forEach((npc) => {
+      const anims = npc.sheet?.animations ? Object.keys(npc.sheet.animations) : null;
+      if (!anims || !anims.length) return; // no sheet = nothing to check
+      const wanted = [
+        ...(npc.idleAnim ? [{ where: "idle motion", name: npc.idleAnim }] : []),
+        ...(npc.patrol ?? []).flatMap((wp, i) => (wp.anim ? [{ where: `waypoint ${i + 1}`, name: wp.anim }] : [])),
+      ];
+      wanted.forEach(({ where, name }) => {
+        if (!anims.includes(name))
+          issues.push({
+            severity: "warning",
+            sceneId: sc.id,
+            message: `Scene "${sc.title}" NPC "${npc.id}" ${where} motion "${name}" is not an animation on its sheet (${anims.join(", ")}) — it will fall back to idle.`,
+          });
+      });
+    });
+  });
+
   // Ambient loop ids the synth engine doesn't know play as SILENCE — no
   // error, no sound. (Beta-test find: a scene shipped with ambientAudio
   // "storm", which is a PARTICLES preset, not an ambient loop — the room's

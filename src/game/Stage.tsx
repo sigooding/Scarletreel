@@ -97,6 +97,10 @@ function StageNpcActor({
   const [pos, setPos] = useState({ x: npc.x, y: npc.y });
   const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
   const [walking, setWalking] = useState(false);
+  /** The SET MOTION currently held at a waypoint pause: which named sheet
+   *  animation plays and which ambient line floats over their head. Null
+   *  while walking (or for a patrol-less stander, which uses idleAnim). */
+  const [motion, setMotion] = useState<{ anim?: string; say?: string } | null>(null);
   const posRef = useRef(pos);
   posRef.current = pos;
 
@@ -112,9 +116,30 @@ function StageNpcActor({
     let raf = 0;
     let last = performance.now();
     let idx = 0;
+    /** pingpong direction: +1 out, -1 back. */
+    let dir = 1;
+    let done = false;
     let idleUntil = 0;
+    const mode = npc.patrolMode ?? "loop";
     const speed = npc.speed ?? settings.speed ?? STAGE2D_DEFAULT_SPEED;
+    /** Advance idx per patrolMode; returns false when the route is finished
+     *  ("once" — hold the current waypoint's motion forever). */
+    const advance = () => {
+      if (mode === "once") {
+        if (idx >= waypoints.length - 1) return false;
+        idx += 1;
+        return true;
+      }
+      if (mode === "pingpong" && waypoints.length > 1) {
+        if (idx + dir < 0 || idx + dir >= waypoints.length) dir = -dir;
+        idx += dir;
+        return true;
+      }
+      idx = (idx + 1) % waypoints.length;
+      return true;
+    };
     const step = (now: number) => {
+      if (done) return;
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       if (now < idleUntil) {
@@ -129,10 +154,17 @@ function StageNpcActor({
       const dist = Math.hypot(dx, dy);
       if (Math.abs(dx) > 0.05) setFacing(dx > 0 ? "right" : "left");
       if (dist <= 0.5) {
+        // ARRIVED — plant the feet and play this stop's SET MOTION: optional
+        // facing override, named animation, ambient say line.
         setPos({ x: wp.x, y: wp.y });
         setWalking(false);
+        if (wp.facing) setFacing(wp.facing);
+        setMotion(wp.anim || wp.say ? { anim: wp.anim, say: wp.say } : null);
         const pause = (wp.pause ?? 2) * 1000;
-        idx = (idx + 1) % waypoints.length;
+        if (!advance()) {
+          done = true; // "once": hold this waypoint's motion forever
+          return;
+        }
         idleUntil = now + pause;
         raf = requestAnimationFrame(step);
         return;
@@ -140,15 +172,22 @@ function StageNpcActor({
       const t = Math.min(1, (speed * dt) / dist);
       setPos({ x: cur.x + dx * t, y: cur.y + dy * t });
       setWalking(true);
+      setMotion(null);
       raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [npc.id, npc.patrol, npc.speed, settings.speed]);
+    return () => {
+      done = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [npc.id, npc.patrol, npc.speed, npc.patrolMode, settings.speed]);
 
   const depth = stageSpriteScale(pos.y, floor, settings) * (npc.scale ?? 1);
   const flip = facing === "left" ? -1 : 1;
   const isEmoji = (npc.image ?? "").startsWith("emoji:");
+  /** Which named animation plays at rest: the waypoint's SET MOTION beats the
+   *  NPC's idleAnim beats plain "idle" — with graceful sheet fallbacks. */
+  const restAnim = motion?.anim ?? npc.idleAnim ?? "idle";
   return (
     <div
       className="pointer-events-none absolute"
@@ -159,13 +198,24 @@ function StageNpcActor({
         zIndex: 50 + Math.round(pos.y),
       }}
     >
+      {/* ambient SAY line — SCUMM background chatter, floated over the head.
+          Counter-flipped so the text never mirrors with the sprite (and the
+          centering shift inverts with it, since the parent axis is mirrored). */}
+      {!walking && motion?.say ? (
+        <span
+          className="pointer-events-none absolute bottom-full left-1/2 mb-1 block max-w-[26ch] whitespace-normal text-center font-type text-[11px] leading-tight text-amber-200 drop-shadow-[0_2px_3px_rgba(0,0,0,0.9)]"
+          style={{ transform: `translateX(${flip === -1 ? "50%" : "-50%"}) scaleX(${flip})`, width: "max-content" }}
+        >
+          {motion.say}
+        </span>
+      ) : null}
       {hasSheet ? (
         <SheetSprite
           sheet={npc.sheet!}
-          anim={walking ? "walk" : "idle"}
-          fallbacks={walking ? ["idle"] : ["walk"]}
+          anim={walking ? "walk" : restAnim}
+          fallbacks={walking ? ["idle"] : restAnim !== "idle" ? ["idle", "walk"] : ["walk"]}
           height={96}
-          freezeOnFallback={!walking}
+          freezeOnFallback={!walking && !motion?.anim && !npc.idleAnim}
           className="drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]"
         />
       ) : npc.image ? (

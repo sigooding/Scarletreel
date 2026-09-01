@@ -155,6 +155,38 @@ export const INSPECTOR_GADGET: Story = {
         depthScale: 0.35,
         obstacles: [{ x: 28, y: 64, w: 24, h: 13 }],
         enterCaption: "Clock Tower Plaza. The hands up there say 3:12. Your watch disagrees, loudly.",
+        npcs: [
+          {
+            // Brain in his postman disguise — a SET-MOTION patrol: he does a
+            // round of the plaza, pausing to "inspect" and mutter at each
+            // stop. Ambient say-lines are SCUMM background chatter, not beats.
+            id: "npc_brain",
+            image: "emoji:🐕",
+            x: 34,
+            y: 90,
+            scale: 0.9,
+            patrol: [
+              { x: 55, y: 86, pause: 3, facing: "left", say: "(Brain sniffs the dropped glove, then points at it with his whole body.)" },
+              { x: 70, y: 78, pause: 2.5, say: "(He circles the newsstand like it owes him money.)" },
+              { x: 34, y: 90, pause: 4, facing: "right", say: "(Rrrf. Which, translated, means: LOOK UP, INSPECTOR.)" },
+            ],
+            speed: 9,
+          },
+          {
+            // A commuter crossing the square, pingpong — pure moving scenery.
+            id: "npc_commuter",
+            image: "emoji:🚶‍♀️",
+            x: 4,
+            y: 72,
+            scale: 0.85,
+            patrolMode: "pingpong",
+            patrol: [
+              { x: 96, y: 70, pause: 6, say: "…late, late, LATE — that useless clock…" },
+              { x: 4, y: 72, pause: 8 },
+            ],
+            speed: 7,
+          },
+        ],
       },
       dialogueBeats: [
         {

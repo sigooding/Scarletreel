@@ -147,6 +147,7 @@ import type {
   MeterKey,
   SceneNode,
   StageNpc,
+  StageNpcWaypoint,
   Story,
 } from "../types";
 
@@ -10587,18 +10588,23 @@ function StudioInner({
                             updateScene(scene.id, { stage: { ...st, npcs: list.length ? list : undefined } });
                           const setNpc = (i: number, patch: Partial<StageNpc>) =>
                             setNpcs(npcs.map((n, j) => (j === i ? { ...n, ...patch } : n)));
-                          const setPatrol = (i: number, patrol: { x: number; y: number; pause?: number }[]) =>
+                          const setPatrol = (i: number, patrol: StageNpcWaypoint[]) =>
                             setNpc(i, { patrol: patrol.length ? patrol : undefined });
+                          const setWp = (i: number, wi: number, patch: Partial<StageNpcWaypoint>) =>
+                            setPatrol(i, (npcs[i].patrol ?? []).map((w, k) => (k === wi ? { ...w, ...patch } : w)));
                           return (
                             <div className="space-y-2 border border-teal-400/30 bg-teal-400/5 p-2">
                               <div className="font-pulp text-[9px] uppercase tracking-widest text-teal-300">
-                                🚶 Ambient NPCs (idle / walk cycles)
+                                🚶 Ambient NPCs (idle / walk cycles / set motions)
                               </div>
                               <p className="font-type text-[9px] leading-snug text-paper/45">
-                                Living set-dressing that idles and can patrol — a bartender polishing a glass, a barfly
-                                pacing the floor. Give one a sprite sheet with <b>idle</b> + <b>walk</b> animations: it
-                                idles at each waypoint and walks between them; no patrol stands it still forever.
-                                Interaction stays on the <b>Hotspots</b> tab — NPCs are pure stage life.
+                                Living set-dressing that idles, patrols and performs <b>SET MOTIONS</b> — a bartender
+                                polishing a glass, a dockhand who walks to a crate, faces left, plays his <b>hammer</b>
+                                animation and mutters a line before moving on. Give one a sprite sheet with <b>idle</b> +
+                                <b> walk</b> (plus any named motion animations); each waypoint can pick a motion, a facing
+                                and an ambient say-line for its pause. A single waypoint on the spawn = a standing actor
+                                cycling a motion on a timer. Interaction stays on the <b>Hotspots</b> tab — NPCs are pure
+                                stage life.
                               </p>
                               {npcs.map((n, i) => (
                                 <div key={i} className="space-y-1 border border-teal-400/20 p-1.5">
@@ -10647,6 +10653,8 @@ function StudioInner({
                                     <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Y %" value={Math.round(n.y)} onChange={(e) => setNpc(i, { y: Number(e.target.value) })} />
                                     <span className="font-type text-[9px] text-paper/50">speed</span>
                                     <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s)" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
+                                    <span className="font-type text-[9px] text-paper/50" title="Named sheet animation played while standing (instead of plain idle) — the barman's 'polish'">idle motion</span>
+                                    <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation at rest (blank = idle)" value={n.idleAnim ?? ""} onChange={(e) => setNpc(i, { idleAnim: e.target.value || undefined })} />
                                   </div>
                                   <SpriteSheetControls
                                     value={n.sheet}
@@ -10655,17 +10663,48 @@ function StudioInner({
                                     onChange={(sheet) => setNpc(i, { sheet: sheet || undefined })}
                                   />
                                   <div className="space-y-1 border border-teal-400/15 p-1.5">
-                                    <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
-                                      🚏 Patrol (leave empty to idle forever)
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
+                                        🚏 Patrol & set motions (leave empty to idle forever)
+                                      </span>
+                                      <label className="ml-auto flex items-center gap-1 font-type text-[9px] text-paper/50">
+                                        route
+                                        <select
+                                          className={inputCls}
+                                          title="loop: back to stop 1 · pingpong: walk the route backwards · once: walk it once and hold the last stop's motion forever"
+                                          value={n.patrolMode ?? "loop"}
+                                          onChange={(e) => setNpc(i, { patrolMode: e.target.value === "loop" ? undefined : (e.target.value as "pingpong" | "once") })}
+                                        >
+                                          <option value="loop">🔁 loop</option>
+                                          <option value="pingpong">↔ pingpong</option>
+                                          <option value="once">→ once (hold last)</option>
+                                        </select>
+                                      </label>
                                     </div>
                                     {(n.patrol ?? []).map((wp, wi) => (
-                                      <div key={wi} className="flex items-center gap-1">
-                                        <span className="w-5 font-pulp text-[8px] text-paper/40">{wi + 1}</span>
-                                        <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="Waypoint X %" value={Math.round(wp.x)} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, x: Number(e.target.value) } : w)))} />
-                                        <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Waypoint Y %" value={Math.round(wp.y)} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, y: Number(e.target.value) } : w)))} />
-                                        <span className="font-type text-[8px] text-paper/50">pause</span>
-                                        <input type="number" min={0} max={60} step={0.5} className={`${inputCls} w-12`} title="Idle seconds here" value={wp.pause ?? 2} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, pause: Number(e.target.value) } : w)))} />
-                                        <button type="button" className="shrink-0 px-1 font-pulp text-[9px] text-crimson" onClick={() => setPatrol(i, (n.patrol ?? []).filter((_, k) => k !== wi))}>✕</button>
+                                      <div key={wi} className="space-y-0.5 border-l-2 border-teal-400/20 pl-1">
+                                        <div className="flex items-center gap-1">
+                                          <span className="w-5 font-pulp text-[8px] text-paper/40">{wi + 1}</span>
+                                          <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="Waypoint X %" value={Math.round(wp.x)} onChange={(e) => setWp(i, wi, { x: Number(e.target.value) })} />
+                                          <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Waypoint Y %" value={Math.round(wp.y)} onChange={(e) => setWp(i, wi, { y: Number(e.target.value) })} />
+                                          <span className="font-type text-[8px] text-paper/50">pause</span>
+                                          <input type="number" min={0} max={60} step={0.5} className={`${inputCls} w-12`} title="Idle seconds here" value={wp.pause ?? 2} onChange={(e) => setWp(i, wi, { pause: Number(e.target.value) })} />
+                                          <label className="flex items-center gap-1 font-type text-[8px] text-paper/50">
+                                            face
+                                            <select className={inputCls} title="Face this way during the pause (default: direction of arrival)" value={wp.facing ?? ""} onChange={(e) => setWp(i, wi, { facing: (e.target.value || undefined) as "left" | "right" | undefined })}>
+                                              <option value="">—</option>
+                                              <option value="left">left</option>
+                                              <option value="right">right</option>
+                                            </select>
+                                          </label>
+                                          <button type="button" className="ml-auto shrink-0 px-1 font-pulp text-[9px] text-crimson" title="Remove this waypoint" onClick={() => setPatrol(i, (n.patrol ?? []).filter((_, k) => k !== wi))}>✕</button>
+                                        </div>
+                                        <div className="flex items-center gap-1 pl-5">
+                                          <span className="font-type text-[8px] text-paper/50" title="Named sheet animation played during the pause — 'sweep', 'hammer', 'drink'">motion</span>
+                                          <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation during the pause (blank = idle motion)" value={wp.anim ?? ""} onChange={(e) => setWp(i, wi, { anim: e.target.value || undefined })} />
+                                          <span className="font-type text-[8px] text-paper/50" title="Ambient line floated over their head during the pause — SCUMM background chatter">say</span>
+                                          <input className={`${inputCls} flex-1`} placeholder="ambient line while paused…" value={wp.say ?? ""} onChange={(e) => setWp(i, wi, { say: e.target.value || undefined })} />
+                                        </div>
                                       </div>
                                     ))}
                                     <button
