@@ -8,15 +8,15 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * repo's other homage cases (see tintinMeridian.ts / pulpReel.ts).
  * Unofficial, non-commercial.
  *
- * Beta-test pass 1 (10 generated images). The art budget this pass:
- *   · 4 talking sprite sheets  — Scooby, Shaggy, Velma, the Phantom
- *     (magenta plates → scripts/make-sprite-sheet.mjs; the phantom plate
- *      bridged and was salvaged with scripts/split-bridged-plate.mjs)
- *   · 1 walk-cycle sheet       — Scooby trot (the walkable-stage walker)
- *   · 5 background plates      — grounds/foyer/library/corridor/cellar
- *     (the grounds plate doubles as the case cover)
- * Fred, Daphne and caretaker Grimsby are emoji-avatar speakers this pass —
- * sprite cutouts for them are a next-pass item.
+ * Beta-test pass 1 (10 images): Scooby/Shaggy/Velma/Phantom talk sheets,
+ * Scooby trot walker, grounds/foyer/library/corridor/cellar plates.
+ * Beta-test pass 2 (10 images): Fred/Daphne/Grimsby talk sheets, the
+ * unmasked-Grimsby "caught" variant, a 4-frame Phantom (rest/talk/lunge —
+ * its plate arrived fully bridged and was split by the NEW automatic
+ * recovery in make-sprite-sheet.mjs), dedicated cover art, and a distinct
+ * plate for every ending (corridor-after, boathouse, lawn, van).
+ * Art pipeline: magenta plates → scripts/make-sprite-sheet.mjs (automatic
+ * bridged-plate recovery) — see docs/sprite-sheets.md.
  *
  * Feature coverage exercised in this one case:
  *   · 🚶 STAGE 2D — the manor grounds are a walkable scene (Scooby is the
@@ -52,6 +52,29 @@ const talkSheet = (image: string, frameWidth: number): SpriteSheet => ({
   },
   pixelated: true,
 });
+
+/** The Phantom — FOUR frames this pass: rest 0, talk 1-2, and a lunging
+ *  fourth pose swapped in (as the "lunge" expression variant) on the two
+ *  big threat beats — the corridor chase and the trap. Built from a plate
+ *  that arrived fully bridged; make-sprite-sheet.mjs's recovery split it
+ *  into 4 frames at the bridge waists automatically. */
+const PHANTOM_TALK: SpriteSheet = {
+  image: "/assets/sprites/sd-phantom4-talk.png",
+  frameWidth: 247,
+  frameHeight: 384,
+  animations: {
+    rest: { frames: [0] },
+    talk: { frames: [1, 2, 0, 2], fps: 7 },
+  },
+  pixelated: true,
+};
+const PHANTOM_LUNGE: SpriteSheet = {
+  image: "/assets/sprites/sd-phantom4-talk.png",
+  frameWidth: 247,
+  frameHeight: 384,
+  animations: { lunge: { frames: [3] } },
+  pixelated: true,
+};
 
 /** Scooby's trot — the walker on the manor grounds (4-frame side cycle). */
 const SCOOBY_WALK: SpriteSheet = {
@@ -107,7 +130,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
   title: "Scooby-Doo and the Ravenswood Phantom",
   tagline: "A condemned manor, a glowing green ghost, and the only mailbox on the hill.",
   gameKind: "adventure",
-  coverImage: "/img/bg-sd-manor.jpg",
+  coverImage: "/img/cover-sd-ravenswood.jpg",
   startSceneId: "sd_gate",
   layout: {
     sd_gate: { x: 0, y: 320 },
@@ -176,10 +199,10 @@ export const SCOOBY_RAVENSWOOD: Story = {
       avatarUrl: "emoji:🐶",
       trustMeter: 3,
       voice: { pitch: 0.55, rate: 0.85 },
-      // Stage left, facing right — the biggest head in the cast.
+      // Far stage left, facing right — the biggest head in the cast.
       talkingSheet: talkSheet("/assets/sprites/sd-scooby-talk.png", 205),
-      talkingX: 26,
-      talkingScale: 1.05,
+      talkingX: 13,
+      talkingScale: 0.95,
       talkingDim: 0.72,
     },
     {
@@ -189,10 +212,10 @@ export const SCOOBY_RAVENSWOOD: Story = {
       avatarUrl: "emoji:🥪",
       trustMeter: 2,
       voice: { pitch: 0.8, rate: 0.95 },
-      // Stage right, flipped to face his scene partner.
+      // Far stage right, flipped to face the gang huddle.
       talkingSheet: talkSheet("/assets/sprites/sd-shaggy-talk.png", 174),
-      talkingX: 74,
-      talkingScale: 1,
+      talkingX: 92,
+      talkingScale: 0.75,
       talkingFlip: true,
       talkingDim: 0.7,
     },
@@ -203,23 +226,25 @@ export const SCOOBY_RAVENSWOOD: Story = {
       avatarUrl: "emoji:🔍",
       trustMeter: 2,
       voice: { pitch: 1.25, rate: 1.05 },
-      // Stage left, facing right — she squares up against Grimsby.
+      // Stage left-centre, facing right — she squares up against Grimsby.
       talkingSheet: talkSheet("/assets/sprites/sd-velma-talk.png", 164),
-      talkingX: 24,
-      talkingScale: 0.88,
+      talkingX: 30,
+      talkingScale: 0.74,
       talkingDim: 0.7,
     },
     {
       id: "sd_phantom",
       name: "The Phantom",
-      role: "Ghost of Ravenswood (Glows. Growls.)",
+      role: "Ghost of Ravenswood (Glows. Growls. Lunges.)",
       avatarUrl: "emoji:👻",
       trustMeter: -3,
       voice: { pitch: 0.35, rate: 0.75 },
-      // Stage right, flipped, and the tallest silhouette in the cast.
-      talkingSheet: talkSheet("/assets/sprites/sd-phantom-talk.png", 316),
-      talkingX: 74,
-      talkingScale: 1.1,
+      // Centre-right, flipped, the tallest silhouette in the cast. The
+      // "lunge" variant holds the fourth frame on the threat beats.
+      talkingSheet: PHANTOM_TALK,
+      talkingSheets: [{ name: "lunge", sheet: PHANTOM_LUNGE }],
+      talkingX: 70,
+      talkingScale: 1.05,
       talkingFlip: true,
       talkingDim: 0.66,
     },
@@ -230,6 +255,11 @@ export const SCOOBY_RAVENSWOOD: Story = {
       avatarUrl: "emoji:🧣",
       trustMeter: 2,
       voice: { pitch: 0.9, rate: 1 },
+      // Centre-left, facing right.
+      talkingSheet: talkSheet("/assets/sprites/sd-fred-talk.png", 200),
+      talkingX: 46,
+      talkingScale: 0.8,
+      talkingDim: 0.7,
     },
     {
       id: "sd_daphne",
@@ -238,6 +268,12 @@ export const SCOOBY_RAVENSWOOD: Story = {
       avatarUrl: "emoji:💜",
       trustMeter: 2,
       voice: { pitch: 1.4, rate: 1.05 },
+      // Stage right, flipped to face the huddle.
+      talkingSheet: talkSheet("/assets/sprites/sd-daphne-talk.png", 151),
+      talkingX: 81,
+      talkingScale: 0.7,
+      talkingFlip: true,
+      talkingDim: 0.7,
     },
     {
       id: "sd_grimsby",
@@ -246,6 +282,15 @@ export const SCOOBY_RAVENSWOOD: Story = {
       avatarUrl: "emoji:🧹",
       trustMeter: 0,
       voice: { pitch: 0.72, rate: 0.9 },
+      // Centre-right, flipped to face Velma. The "caught" variant is the
+      // unmasked man — hood down, hands up — and plays the moment the
+      // phantom's glow gutters in the trap scene.
+      talkingSheet: talkSheet("/assets/sprites/sd-grimsby-talk.png", 246),
+      talkingSheets: [{ name: "caught", sheet: talkSheet("/assets/sprites/sd-grimsby-caught.png", 223) }],
+      talkingX: 64,
+      talkingScale: 0.85,
+      talkingFlip: true,
+      talkingDim: 0.68,
     },
   ],
   items: [
@@ -888,7 +933,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
         {
           id: "sdb_c3",
           characterId: "sd_phantom",
-          expression: "rising",
+          expression: "lunge",
           conditionRule: { excludesFlags: ["sd_chase_done"] },
           text: "LEAVE... THIS... HOUSE. THE HOUSE KEEPS WHAT IT IS OWED — AND TONIGHT IT IS OWED... YOU.",
         },
@@ -1069,7 +1114,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
         {
           id: "sdb_t1",
           characterId: "sd_phantom",
-          expression: "filling the arch",
+          expression: "lunge",
           text: "CHILDREN. YOU BRING LAMPS INTO A DARK HOUSE AND CALL YOURSELVES BRAVE. THE HOUSE KEEPS WHAT IT IS OWED — AND IT HAS BEEN OWED A VERY LONG TIME.",
         },
         {
@@ -1084,7 +1129,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
         {
           id: "sdb_t3",
           characterId: "sd_grimsby",
-          expression: "the hunch gives",
+          expression: "caught",
           conditionRule: { requiresFlags: ["sd_grimsby_broke"] },
           text: "The glow gutters. Under it, small and tired: \"...Mind the line, would you. I just strung it level.\"",
         },
@@ -1162,7 +1207,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
       id: "sd_end_escape",
       title: "The Phantom Keeps the House",
       isEnding: true,
-      background: "/img/bg-sd-corridor.jpg",
+      background: "/img/bg-sd-boathouse.jpg",
       ambientAudio: "drone",
       prose:
         "The net takes him at the shoulder — and the robe tears clean away from whatever is inside it, a grey flood going up the stair and out along the tunnel toward the boathouse. By the time the gang fights through to the water, the rowboat is a dot and the drum of paint is swinging from a hook, still dripping. The reel and the manifest go into an envelope addressed to the sheriff. But Ravenswood's demolition order is signed, and legends don't extradite.",
@@ -1181,7 +1226,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
       id: "sd_end_caught",
       title: "Caught by the Phantom",
       isEnding: true,
-      background: "/img/bg-sd-corridor.jpg",
+      background: "/img/bg-sd-corridor-after.jpg",
       ambientAudio: "tension",
       particles: "storm",
       prose:
@@ -1201,9 +1246,9 @@ export const SCOOBY_RAVENSWOOD: Story = {
       id: "sd_end_busted",
       title: "The Sheriff's Radishes",
       isEnding: true,
-      background: "/img/bg-sd-manor.jpg",
+      background: "/img/bg-sd-lawn.jpg",
       ambientAudio: "rain",
-      particles: "storm",
+      particles: "none",
       prose:
         "Headlights at the gate: Sheriff Stone, two deputies, and a county warrant with the gang's make and model already filled in. Rummaging a condemned landmark, frightening its caretaker, and — per the sheriff — 'communicating with a known spectral entity.' The night ends in a cell that smells of radishes and reports. By morning the Phantom has the manor to itself, and the demolition crew has a schedule.",
       hotspots: [],
@@ -1221,7 +1266,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
       id: "sd_end_quit",
       title: "Another Mystery, Some Other Night",
       isEnding: true,
-      background: "/img/bg-sd-manor.jpg",
+      background: "/img/bg-sd-van.jpg",
       ambientAudio: "rain",
       prose:
         "There is a special kind of courage in knowing when a house is simply not your business. The van doors slam; the gate's white paint grins in the rear lights; and somewhere behind the boards a green glow pulses, slow and even, like breathing — patient now, because a house that has kept itself for nineteen years can certainly outlast five trespassers and a dog. The case goes in the drawer marked UNSOLVED, and stays there.",

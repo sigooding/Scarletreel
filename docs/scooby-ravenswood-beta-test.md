@@ -2,7 +2,7 @@
 
 **Story id:** `scooby-ravenswood` (`src/data/scoobyRavenswood.ts`)
 **Beta date:** 2026-09-01 · **Status:** playable, validator-clean, all gates green.
-**Re-audit any time:** `node scripts/beta/scooby-harness.mjs` (54 checks: gold run, cold run, heat run, sheets, bookkeeping).
+**Re-audit any time:** `node scripts/beta/scooby-harness.mjs` (now 75+ checks: gold run, cold run, heat run, sheets & variants, bookkeeping, and a slicer-recovery regression — see §7 for pass 2).
 
 The case was built end-to-end through the repo's headless authoring pipeline (art plates → key/slice → story data → validator → engine tests → build) as a broad feature-shake of Studio, in the spirit of the Tintin homage case. It is a fan homage with original dialogue and plot; unofficial, non-commercial.
 
@@ -55,7 +55,8 @@ The authoring model held up under a from-zero case: every feature I reached for 
 ### 3.1 `npm run preflight` FAILS on four shipped stories (pre-existing, not this case)
 `ft2_bar`, `ft_alley`, `fto_alley` (+1 more) each report **"no ending reachable"** even though the validator is clean and the DOM smoke plays those scenes. The preflight deep-walker appears unable to progress through those stories' ride/QTE/gated branch structure — it walks 4–6 scenes then gives up. Same walker under-walks this case (7/12 scenes, ending only on the quit route) while the same scenes pass through the real engine in the dedicated harness. **Fix suggestion:** teach the preflight walker to (a) pick timed choices before expiry, (b) treat `ride` choices as winnable, or (c) fall back to the engine-test deep-walker used elsewhere. Right now `preflight` exit code 1 can't be used as a ship gate on this repo at all.
 
-### 3.2 Sprite plates that bridge: `make-sprite-sheet.mjs` cannot recover (tooling gap — fixed locally)
+### 3.2 Sprite plates that bridge: `make-sprite-sheet.mjs` cannot recover (tooling gap — **FIXED in pass 2**, see §7)
+> **Fixed 2026-09-01 (pass 2):** recovery now lives in `make-sprite-sheet.mjs` itself — merged runs are split at the bridge's narrowest column and the fringe despeckled automatically whenever `--frames N` can't find N gaps. The pass-1 phantom plate recovers unattended (pinned by a permanent regression check in the beta harness), and pass 2's four-frame phantom plate — which arrived as ONE fully-merged run — was sliced by the same path. The original finding is kept below for the record.
 The Phantom plate drew its green glow across the gap between poses, so after keying there was **no fully-transparent column gap** — the slicer found 2 "frames", one of them 610 px wide, and `--tolerance/--gap` tuning changed nothing (the bridge is opaque, not near-key). `--frames` then just keeps the N widest runs, i.e. garbage.
 **What I added:** `scripts/split-bridged-plate.mjs` — `--probe` prints every merged run and its lowest-occupancy "waist" column; `--cols` takes explicit split columns and also **despeckles** (drops 4-connected components under `--minpx`), which is what actually detaches the bridge slivers. The Phantom sheet was salvaged this way with zero re-generation (image budget intact). **Suggestion:** fold a waist-split fallback (split merged runs at the argmin-occupancy column) into `make-sprite-sheet.mjs`, or at least mention the companion script in `docs/sprite-sheets.md`'s troubleshooting list. Headless authors have no eyes on the plate; the tool needs to be the eyes.
 
@@ -78,6 +79,61 @@ Answering beats gated `requiresFlags: [sd_asked_phantom]` with only `memoryLog: 
 
 ---
 
+## 7. Pass 2 (2026-09-01) — the rest of the cast, every ending gets a plate, and the slicer fix
+
+### 7.1 The §3.2 fix — bridged-plate recovery is now built into `make-sprite-sheet.mjs`
+When `--frames N` is given and the gap-finder returns **fewer** than N runs, the script now:
+1. computes per-column occupancy of the keyed plate,
+2. splits the widest merged run at its **lowest-occupancy interior column** (the bridge's "waist", 10%-margin guards, minimum-segment width `15%` of an expected frame),
+3. repeats until the count is right or nothing can split,
+4. **despeckles** each recovered region (4-connected components under `--despeckle` px, default 2000 — the largest component per region is always kept), so cut fringe and stray specks disappear,
+5. narrates the whole thing to stderr (`♻ bridged plate: split run 49–1392 at column 1019 (waist occupancy 47px)`).
+
+Proof it works, both directions:
+- **The pass-1 repro** (`plates/sd-phantom-talk.png`, one bridge) now slices unattended into 3 frames — and the beta harness grew a permanent regression check (§7.4) that spawns the slicer against that committed plate and asserts the recovery path fires.
+- **Pass 2's four-frame phantom plate** arrived from the art model as a *single fully-merged run* (49–1392, no gaps at all) and was rescued by three automatic waist splits + despeckle → exactly 4 frames, 247×384. The fix earned its keep on its first day.
+
+`scripts/split-bridged-plate.mjs` stays as the manual override (`--probe` / `--cols`); docs updated (`docs/sprite-sheets.md`, `RUNNING.md`). The stale pass-1 `sd-phantom-talk.png` sheet was removed from `public/assets/sprites/` (superseded by the 4-frame sheet; the *plate* stays — it's the regression fixture).
+
+### 7.2 Art budget — 10 more images (pass-2 cap)
+| Asset | Notes |
+|---|---|
+| `sd-fred-talk.png` | 3 frames, 200×384 — Fred joins the sprite cast (centre-left, facing right) |
+| `sd-daphne-talk.png` | 3 frames, 151×384 — stage right, flipped |
+| `sd-grimsby-talk.png` | 3 frames, 246×384 — centre-right, flipped, faces Velma |
+| `sd-grimsby-caught.png` | 3 frames, 223×384 — the **unmasked variant**, wired as the `"caught"` expression sheet |
+| `sd-phantom4-talk.png` | **4 frames**, 247×384 — rest / talk ×2 / **lunge**; sliced via the new recovery (see §7.1) |
+| `cover-sd-ravenswood.jpg` | dedicated poster-style cover (manor + looming phantom + the van) |
+| `bg-sd-corridor-after.jpg` | post-struggle corridor — the **caught** ending's plate |
+| `bg-sd-boathouse.jpg` | the tunnel's far end — the **silver escape** ending's plate |
+| `bg-sd-lawn.jpg` | dawn, cruisers, net on the lawn — the **sheriff-bust** ending's plate |
+| `bg-sd-van.jpg` | snacks and a distant green window — the **quit** ending's plate |
+
+All five endings now have **distinct plates** (asserted by the harness), and the whole cast of seven speaks as animated cutouts.
+
+### 7.3 Integration details worth remembering
+- **Expression variants** (`talkingSheets`) key off `beat.expression.trim().toLowerCase()` **while that character is the active speaker**. The two big threat beats (`sdb_c3` corridor, `sdb_t1` trap) now carry `expression: "lunge"` → the phantom holds the fourth frame; the trap's "glow gutters" beat (`sdb_t3`) carries `expression: "caught"` → Grimsby's hood-down sheet shows *inside* the phantom's glow — the disguise slipping a beat before the net drops.
+- **Endings never render stage sprites** (`showStage` is gated on `!scene.isEnding`) — so the unmask *ending* is prose over its plate by design; the unmasked ART lands in the trap scene instead. Good to know when authoring reveal beats.
+- **`talkingX` is the sprite's centre line** (`left: x%` + `translateX(-50%)`), bottom-anchored, height = 72%×scale of scene height. The cast was re-staged so the six-speaker foyer crowd reads as a line-up: Scooby 13 · Velma 30 · Fred 46 · Grimsby 64 (flip) · Daphne 81 (flip) · Shaggy 92 (flip) · Phantom 70 (flip, scale 1.05). This also fixes a pass-1 staging bug nobody had played yet: Shaggy and the Phantom both sat at x 74 and would have rendered inside each other in the corridor.
+
+### 7.4 Harness upgrades (`scripts/beta/scooby-probe.ts`)
+New checks: 10 sheet configs validated (7 talk + 2 variants + walker) · variant wiring (names, beat expressions, lunge = frame 3) · every referenced image exists under `public/` · all five ending plates distinct · **slicer-recovery regression** (spawns `make-sprite-sheet.mjs` on the committed pass-1 phantom plate; asserts exit 0, "3 frame(s)", and that the recovery log fired).
+
+### 7.5 Gates re-run this pass
+`npx tsc --noEmit` clean · `node scripts/beta/scooby-harness.mjs` green · `npm test` (engine + round-trip + DOM smoke) · `npm run build` · `node scripts/preflight.mjs` clean for this story. Still open from pass 1, unchanged: the preflight walker's failures on the four shipped Full Throttle stories (§3.1), the revisit beat-skip quirk (§3.5), and there is still no cartoon-appropriate music loop in the asset library (audio generation wasn't in either image budget).
+
+### 7.6 Files touched in pass 2
+
+- `scripts/make-sprite-sheet.mjs` — **the §3.2 fix**: waist-split recovery + region despeckle (`--despeckle`).
+- `src/data/scoobyRavenswood.ts` — full sprite cast, phantom lunge + grimsby caught variants, dedicated cover, distinct ending plates, cast re-staging (§7.3).
+- `plates/sd-{fred,daphne,grimsby,grimsby-caught,phantom4}-talk.png` — 5 new plates.
+- `public/assets/sprites/sd-{fred,daphne,grimsby,grimsby-caught,phantom4}-talk.png` — 5 new sheets; stale `sd-phantom-talk.png` sheet removed.
+- `public/img/cover-sd-ravenswood.jpg` + `bg-sd-{corridor-after,boathouse,lawn,van}.jpg` — cover + 4 ending plates.
+- `scripts/beta/scooby-probe.ts` — §7.4 checks (incl. the slicer regression).
+- `docs/sprite-sheets.md`, `RUNNING.md` — recovery documented.
+
+---
+
 ## 4. Playtest script (5 minutes, in `npm run dev`)
 
 1. **Grounds (walkable):** walk Scooby up the drive; hold the gate sign; check the glowing window; **examine the mailbox** (telegram — keep it!). Walk to the door.
@@ -90,17 +146,17 @@ Answering beats gated `requiresFlags: [sd_asked_phantom]` with only `memoryLog: 
 
 ---
 
-## 5. Queued for pass 2 (next image budget)
+## 5. Queued for a future pass
 
-1. Talk sprites for **Fred, Daphne, and Grimsby** (the unmasked Grimsby reveal deserves a face).
-2. A **Grimsby unmasked variant sheet** for the gold ending's two-shot.
-3. Dedicated **cover art** (the manor plate doubles as the cover today).
-4. Optional: a **Phantom "lunge" 4th frame**, a second corridor plate for the post-chase look, and a spooky-sweet music loop if audio generation is in scope.
-5. Studio polish: hotspot-zone drag pass over the five new plates (§3.6).
+1. ~~Talk sprites for Fred, Daphne, Grimsby~~ — **done in pass 2 (§7)**.
+2. ~~Unmasked-Grimsby variant, dedicated cover, phantom lunge frame, post-chase corridor plate~~ — **done in pass 2 (§7)**.
+3. A spooky-sweet **music loop** (foyer/cellar bed) — needs audio, not image, generation.
+4. Hotspot-zone drag pass over the plates in Studio's Scene tab (§3.6) — zones were authored blind but compositions were re-checked against the prompts.
+5. Studio engine suggestions from §3.1 / §3.4 / §3.5 (preflight walker, memory-gate hint, revisit beat-skip).
 
 ---
 
-## 6. Files touched this pass
+## 6. Files touched in pass 1
 
 - `src/data/scoobyRavenswood.ts` — the case (new).
 - `src/data/stories.ts` — catalogue entry (first position).

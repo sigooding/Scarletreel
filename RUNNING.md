@@ -92,8 +92,9 @@ node scripts/make-sprite-sheet.mjs \
 ```
 
 It prints the `frameWidth × frameHeight` grid to paste into a story's sheet
-config. See **docs/sprite-sheets.md** for the pipeline and the shipped
-catalogue (the whole *Tintin* cast was built this way).
+config. If a plate's figures bridge (a glow or a crossing arm spans the gap),
+the script recovers automatically — it splits merged runs at the bridge's
+narrowest column and despeckles the cut fringe; see **docs/sprite-sheets.md**.
 
 ### Blank/white screen, or art missing but text showing
 

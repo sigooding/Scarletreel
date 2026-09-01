@@ -1,4 +1,7 @@
 /* Beta probe for SCOOBY_RAVENSWOOD — engine-level playthrough audit. */
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { SCOOBY_RAVENSWOOD as story } from "../../src/data/scoobyRavenswood";
 import {
   validateStory,
@@ -111,11 +114,27 @@ const sheetChecks: [string, ReturnType<typeof spriteSheetIssues>][] = [];
 for (const ch of S.characters) {
   if (ch.talkingSheet)
     sheetChecks.push([`${ch.name} talking`, spriteSheetIssues(ch.talkingSheet, ch.name, ["talk", "rest"])]);
+  for (const v of ch.talkingSheets ?? [])
+    sheetChecks.push([`${ch.name} variant "${v.name}"`, spriteSheetIssues(v.sheet, `${ch.name}/${v.name}`)]);
 }
 const walker = S.scenes.find((s) => s.stage?.playerSheet)?.stage?.playerSheet;
 if (walker) sheetChecks.push(["stage walker", spriteSheetIssues(walker, "walker", ["walk", "idle"])]);
 for (const [label, iss] of sheetChecks) ok(iss.length === 0, `${label} sheet clean${iss.length ? ": " + iss.join("; ") : ""}`);
-ok(sheetChecks.length === 5, `5 sheets in the case (found ${sheetChecks.length})`);
+ok(sheetChecks.length === 10, `10 sheet configs in the case (found ${sheetChecks.length})`);
+
+/* variant wiring: an expression-variant only fires when a beat's expression
+ * matches the variant name — check the threat/unmask beats are wired. */
+const phantom = S.characters.find((c) => c.id === "sd_phantom")!;
+const grimsby = S.characters.find((c) => c.id === "sd_grimsby")!;
+ok(phantom.talkingSheets?.some((v) => v.name === "lunge") ?? false, "phantom carries the \"lunge\" variant");
+ok(grimsby.talkingSheets?.some((v) => v.name === "caught") ?? false, "grimsby carries the \"caught\" (unmasked) variant");
+const lungeBeats = S.scenes.flatMap((s) => (s.dialogueBeats ?? []).filter((b) => b.expression === "lunge" && b.characterId === "sd_phantom"));
+ok(lungeBeats.length >= 2, `"lunge" beats wired to the phantom (found ${lungeBeats.length})`);
+ok(lungeBeats.every((b) => (b.id === "sdb_c3" || b.id === "sdb_t1")), "lunge beats are the corridor chase + the trap");
+const caughtTrapBeat = S.scenes.flatMap((s) => (s.dialogueBeats ?? []).filter((b) => b.expression === "caught" && b.characterId === "sd_grimsby"));
+ok(caughtTrapBeat.length >= 1, "\"caught\" (unmasked) beat wired to grimsby — the glow-gutter moment");
+ok((phantom.talkingSheet!.animations.talk!.frames ?? []).every((f) => f >= 0 && f <= 3), "phantom talk frames sit in the 4-frame grid");
+ok(JSON.stringify(phantom.talkingSheets![0].sheet.animations.lunge!.frames) === "[3]", "lunge variant holds frame 3");
 
 /* ══ 3. GOLD RUN ════════════════════════════════════════════ */
 section("3. GOLD RUN — full case, both lies, crack, three pins, trap");
@@ -255,6 +274,39 @@ for (const it of S.items) {
     S.scenes.some((s) => (s.choices ?? []).some((cc) => cc.consequences?.addItems?.includes(it.id))) ||
     S.scenes.some((s) => (s.hotspots ?? []).some((hh) => hh.action.patternPuzzle?.rewardConsequences?.addItems?.includes(it.id)));
   ok(granted, `item ${it.name} (${it.id}) is granted somewhere`);
+}
+
+/* every referenced image exists under public/ */
+const referenced = new Set<string>([S.coverImage]);
+for (const s of S.scenes) {
+  referenced.add(s.background);
+  for (const b of s.dialogueBeats ?? []) if (b.background) referenced.add(b.background);
+}
+const missing = [...referenced].filter((u) => !u.startsWith("gradient:") && !existsSync(`public${u}`));
+ok(missing.length === 0, `all ${referenced.size} referenced images on disk${missing.length ? " — missing: " + missing.join(", ") : ""}`);
+/* every ending has its own plate (no two endings share a background) */
+const endingBgs = endings.map((s) => s.background);
+ok(new Set(endingBgs).size === endingBgs.length, "all five endings have distinct plates");
+
+/* ══ 7. Slicer recovery regression (pass-2 fix) ══════════════ */
+section("7. Slicer — bridged-plate recovery (pass-2 fix)");
+{
+  const tmp = mkdtempSync(`${tmpdir()}/slicer-regression-`);
+  try {
+    const out = `${tmp}/recovered.png`;
+    const r = spawnSync(process.execPath, [
+      "scripts/make-sprite-sheet.mjs",
+      "--in", "plates/sd-phantom-talk.png", // the pass-1 bridged plate, committed as a fixture
+      "--out", out,
+      "--key", "ff00ff", "--height", "384", "--frames", "3",
+    ], { encoding: "utf8" });
+    ok(r.status === 0, "slicer exits 0 on the bridged plate");
+    ok((r.stdout ?? "").includes("3 frame(s)"), `slicer finds 3 frames ("${(r.stdout ?? "").trim()}")`);
+    ok((r.stderr ?? "").includes("bridged plate: split"), "recovery logged a waist split");
+    ok(existsSync(out), "recovered sheet written");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n══ ${pass} passed, ${fail} failed ══`);
