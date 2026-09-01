@@ -1145,6 +1145,110 @@ async function parts2to4() {
     ok(kbAfter < kbBefore - 0.5, "WASD/arrows drive the test walker live", `${kbBefore} → ${kbAfter}`);
   }
 
+  /* ---------------- PART 6 · REAL DATA 2: RAIN SECTOR (creator pass) ---------------- */
+  console.log("\n=== PART 6 · RAIN SECTOR (creator pass) ===");
+  {
+    const { RAIN_SECTOR } = await import("../../src/data/rainSector");
+    // The briefing is a classic novel: beats, then the three tone choices.
+    await mountStory(RAIN_SECTOR, "rs_brief");
+    await until("the briefing prose shows", () => /ninety floors over the rain/i.test(text()), 8000);
+    for (let i = 0; i < 14 && !qa("button").some((b) => /by the book/i.test(b.textContent || "")); i++) {
+      key(" ", "Space");
+      await sleep(420);
+    }
+    qa<HTMLButtonElement>("button").find((b) => /by the book/i.test(b.textContent || ""))?.click();
+    await until("the choice carries you onto the street", () => !!q("[data-stage-player]"), 12000);
+
+    // The walker is the SLICED SHEET (not the emoji fallback) and the room
+    // runs the full coin + sentence line + extended verbs.
+    await sleep(600);
+    // happy-dom cannot decode images, so the sheet renders its emoji
+    // fallback here; the sliced sheet itself is pinned by the engine tests
+    // (frameWidth 109) and by the browser preview.
+    ok(!!q("[data-stage-player]"), "the street walker stands (sheet art pinned by engine tests)");
+    ok(!!q(".stage-sentence"), "the sentence line renders");
+    ok(!!q('[data-npc-id="rs_npc_ping"] .stage-npc-chip'), "Old Ping carries his talk chip (interactable NPC)");
+    ok(!q('.stage-marker[data-hs-id="rsh_ping"]'), "Ping's static diamond hides");
+    ok(!!q('[data-npc-id="rs_npc_umbrella"]'), "the umbrella woman paces as ambient dressing");
+
+    // The noir lock-and-key: KICK the vending machine, then take the card.
+    ok(await coinVerb("Kick"), "arming the Kick verb (extended verbs on)");
+    marker("rsh_vend")!.click();
+    await until("the kick shakes the card loose", () => text().includes("BOOT-CLANG"), 8000);
+    ok(await coinVerb("Pick up"), "arming the Pick up verb");
+    marker("rsh_vend")!.click();
+    await until("the machine gives up the key card", () => !!q('[data-item-id="rs_keycard"]'), 10000);
+
+    // The gate is a useItem exit gated on the card: walk up, through.
+    ok(await coinVerb("Go to"), "arming the Go to verb");
+    marker("rsh_gate")!.click();
+    await until("the mag-locked gate swings into the alley", () => !!q('.stage-marker[data-hs-id="rsh_stairs"]'), 15000);
+
+    // The stair gate is bolted until Ping says otherwise.
+    ok(await coinVerb("Go to"), "arming the Go to verb");
+    marker("rsh_stairs")!.click();
+    await until("the bolted stairs refuse", () => /STAIRS: chained/i.test(text()), 8000);
+    ok(text().includes("Ping keeps the bolt"), "the refusal names the holder (Ping)");
+    // ENGINE REGRESSION (click-walk wall respect): a marker walled off behind
+    // a closed gate refuses from where the player stands — the walker must
+    // never ghost through the barrier toward it.
+    await sleep(1200);
+    const boltedX = playerPos()!.x;
+    ok(boltedX < 72, `the walker stays west of the barrier (x=${boltedX.toFixed(1)})`);
+
+    // Back to the street via the walk-off-screen LEFT edge.
+    key("ArrowLeft");
+    await until("the left edge walks back to Kowloon Lane", () => !!q('[data-npc-id="rs_npc_ping"]'), 15000);
+    keyUp("ArrowLeft");
+
+    // N: talk to the nearest linked character, no mouse. The reply sets
+    // rs_ping_told, which unboltts both the barrier and the marker.
+    key("n");
+    await until("N opens Ping's conversation", () => qa(".stage-marker[disabled]").length > 0, 12000);
+    for (let i = 0; i < 12 && !qa("button").some((b) => /bolted the gate/i.test(b.textContent || "")); i++) {
+      key(" ", "Space");
+      await sleep(420);
+    }
+    // Choice buttons stay disabled until their beat's text has finished
+    // typing — clicking early is swallowed. Wait for the enabled button.
+    const clickChoice = async (re: RegExp, label: string) => {
+      for (let i = 0; i < 20; i++) {
+        const btn = qa<HTMLButtonElement>("button").find((b) => re.test(b.textContent || ""));
+        if (btn && !btn.disabled) {
+          btn.click();
+          await sleep(600);
+          return;
+        }
+        key(" ", "Space");
+        await sleep(420);
+      }
+      ok(false, `${label} — choice button never enabled`);
+    };
+    await clickChoice(/bolted the gate/i, "the tip lands");
+    // A linear stage conversation lingers until every usable reply is spent
+    // (no leave button) — spend the goodbye too, then the auto-close fires.
+    await clickChoice(/appreciate the noodles/i, "the goodbye lands");
+    await until("Ping's conversation closes", () => qa(".stage-marker[disabled]").length === 0, 8000);
+
+    // Through the gate again, up the now-unbolted stairs, into the test.
+    ok(await coinVerb("Go to"), "arming the Go to verb");
+    marker("rsh_gate")!.click();
+    await until("back in the alley", () => !!q('.stage-marker[data-hs-id="rsh_stairs"]'), 15000);
+    // The Stage remounts per scene, and the coin's armed verb resets with it
+    // (default 👁) — re-arm GO or the stairs click examines instead of climbing.
+    ok(await coinVerb("Go to"), "re-arming the Go to verb after the remount");
+    marker("rsh_stairs")!.click();
+    await until("the stairs lead to the K-Wesson room", () => !q("[data-stage-player]"), 15000);
+    ok(!q("[data-stage-player]"), "the classic room takes over (no walker left behind)");
+    let claimPlayed = false;
+    for (let i = 0; i < 16 && !claimPlayed; i++) {
+      claimPlayed = /logs don't blink/i.test(text());
+      key(" ", "Space");
+      await sleep(420);
+    }
+    ok(claimPlayed, "the K-Wesson claim beat plays (the lie is armed)");
+  }
+
   /* ---------------- final report ---------------- */
   const realProblems = problems.filter(([k, m]) => !(k === "console.error" && /Maximum update depth/.test(m)));
   ok(realProblems.length === 0, "no console errors/warnings during the whole run",

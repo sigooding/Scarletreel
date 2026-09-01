@@ -878,6 +878,17 @@
    walker can go through. Lock-and-key made spatial; the Check tab errors on a
    door whose flag nothing can ever set.
 
+   Barriers are honest for EVERY kind of walk — clicks, floor taps, and the
+   straight-line fallback all slide along blocked faces instead of ghosting
+   through. Two details worth knowing as an author:
+   • A marker that sits BEHIND a shut gate (no route to it at all) refuses
+     from wherever the player stands — its gate caption plays immediately,
+     which is usually the clearest "come back later" signal you can give.
+   • Don't drop a spawn or entry-spawn point inside a barrier. The engine
+     now rescues that (the walker steps out toward whichever side can reach
+     the destination, and never snaps into a sealed sliver), but the rescue
+     walk looks like a bug to a player. Spawn NEXT to the furniture.
+
    PLAYER QoL KEYS (walkable rooms, automatic): H pulses every marker so the
    player can see what's interactive; DOUBLE-CLICKING a floor spot or marker
    jogs the walker there at 5x speed; 1-9 pick the verb coin's verbs in

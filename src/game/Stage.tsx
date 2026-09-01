@@ -653,6 +653,10 @@ export function Stage({
    *  with — so a coin room only fires what was aimed at, never a brushed
    *  past marker. */
   const pendingRef = useRef<{ hotspotId: string; verb: VerbId; itemId?: string } | null>(null);
+  /** CLICK-WALK STUCK TIMER — seconds a click-target walk has spent fully
+   *  blocked (no slide axis open). Past STUCK_GIVEUP the walk is abandoned
+   *  so a click beyond a wall can't pin the walker against it forever. */
+  const stuckRef = useRef(0);
   /** PURSUIT — an aimed NPC-linked marker: the actor MOVES, so the plotted
    *  route goes stale and the loop must keep re-routing until they're caught
    *  (cleared the moment the interaction fires, like pendingRef). */
@@ -808,6 +812,13 @@ export function Stage({
           exitCbRef.current?.(exiting);
         }
       } else {
+        // STANDING IN A SOLID — a spawn inside the furniture (the Corville
+        // alley drops Ben inside the dumpster he climbed out of), or an
+        // obstacle that appeared on top of the walker when a state changed.
+        // Walls bind from the OUTSIDE: while inside, every step would test
+        // blocked and the walker could never leave. Let them move freely;
+        // the checks re-engage the frame they're clear.
+        const inSolid = obstacles.length > 0 && stageBlockedPoly(cur.x, cur.y, obstacles, poly, a, worldW);
         const ks = keysRef.current;
         const kb =
           ks.has("arrowleft") || ks.has("a") ? -1 : ks.has("arrowright") || ks.has("d") ? 1 : 0;
@@ -824,7 +835,7 @@ export function Stage({
           // Wall sliding: if the diagonal is blocked, take whichever single
           // axis still works, so brushing a counter skims along it instead of
           // pinning the character in place.
-          if (obstacles.length && stageBlockedPoly(want.x, want.y, obstacles, poly, a, worldW)) {
+          if (obstacles.length && !inSolid && stageBlockedPoly(want.x, want.y, obstacles, poly, a, worldW)) {
             const slideX = { x: want.x, y: cur.y };
             const slideY = { x: cur.x, y: want.y };
             if (!stageBlockedPoly(slideX.x, slideX.y, obstacles, poly, a, worldW)) next = slideX;
@@ -837,9 +848,38 @@ export function Stage({
         } else if (targetRef.current) {
           const t = targetRef.current;
           const r = stepStagePos(cur, { x: t.x, y: t.y }, speed * stageSpeedScale(cur.y, floor, settings) * jogRef.current, dt, a);
-          next = clampToWalkPoly(r.x, r.y, poly, worldW);
+          // A CLICKED target owes the walls the same respect as the arrow
+          // keys: slide along a blocked face, stop dead when boxed in. The
+          // straight-line fallback must never ghost the character through a
+          // barrier (or an actor standing behind one).
+          let cand = { x: r.x, y: r.y };
+          if (obstacles.length && !inSolid && stageBlockedPoly(cand.x, cand.y, obstacles, poly, a, worldW)) {
+            const slideX = { x: r.x, y: cur.y };
+            const slideY = { x: cur.x, y: r.y };
+            if (!stageBlockedPoly(slideX.x, slideX.y, obstacles, poly, a, worldW)) cand = slideX;
+            else if (!stageBlockedPoly(slideY.x, slideY.y, obstacles, poly, a, worldW)) cand = slideY;
+            else cand = { x: cur.x, y: cur.y };
+          }
+          next = clampToWalkPoly(cand.x, cand.y, poly, worldW);
           if (Math.abs(t.x - cur.x) > 0.5 || Math.abs(t.y - cur.y) > 0.5) setDir(dirOf(t.x - cur.x, t.y - cur.y));
-          moved = true;
+          moved = next.x !== cur.x || next.y !== cur.y;
+          if (!moved && !r.arrived) {
+            // Fully blocked with no way through: give the walk up after a
+            // beat. The pending verb simply doesn't fire (a locked marker's
+            // refusal is answered before the walk ever starts).
+            stuckRef.current += dt;
+            if (stuckRef.current > 0.75) {
+              targetRef.current = null;
+              routeRef.current = [];
+              pendingRef.current = null;
+              pursueRef.current = null;
+              stuckRef.current = 0;
+              setWalking(false);
+              setFrameIdx(0);
+            }
+          } else {
+            stuckRef.current = 0;
+          }
           if (r.arrived) arrived = true;
         } else {
           // No drive (keys released, no click target): settle the walk cycle
@@ -1244,6 +1284,13 @@ export function Stage({
       if (followRoute(route)) return true;
     }
     // No route (walled off) — fall back to walking straight at it.
+    if (!unlocked(hs)) {
+      // …unless the marker behind the wall is LOCKED: pressing the walker
+      // into the barrier forever buys nothing. Answer from right here — the
+      // gate's refusal caption beats a silent wall-hug the player can't read.
+      fireFromHere(hs, ctx);
+      return false;
+    }
     targetRef.current = { x: tx, y: ty, hotspotId: hs.id };
     setDir(dirOf(hs.bounds.x + hs.bounds.w / 2 - cur.x, m.y - cur.y));
     return true;
@@ -1264,10 +1311,12 @@ export function Stage({
       setMenuUse(null);
       return;
     }
-    // Only latch the pursuit when a walk was actually queued — an armed
-    // look (or a remote zone) fires from right here instead, and chasing
-    // with no aim left would be a walk that never lands.
-    if (walkToMarker(hs)) pursueRef.current = { hotspotId: hs.id };
+    // TALK, not whatever the coin has armed: N (and an NPC click) is a talk
+    // intent — with 👁 LOOK armed the old code "examined" the character from
+    // across the street and never walked. Forcing the verb keeps the chase;
+    // the linked marker answers TALK through its cursor (the validator's
+    // NPC-link check enforces exactly that).
+    if (walkToMarker(hs, { verb: "talk" })) pursueRef.current = { hotspotId: hs.id };
   };
   /** N KEY — walk to + talk with the NEAREST linked character (cycling
    *  through them is what the map is for; nearest is what the hands want). */
@@ -1285,7 +1334,7 @@ export function Stage({
     const hs = hotspots.find((h) => h.id === best.npc.talkHotspotId);
     if (!hs) return;
     audio.click();
-    if (walkToMarker(hs)) pursueRef.current = { hotspotId: hs.id };
+    if (walkToMarker(hs, { verb: "talk" })) pursueRef.current = { hotspotId: hs.id };
   };
 
   /** Object-first menu: the player picked a verb for the open object. USE on

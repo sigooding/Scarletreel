@@ -115,6 +115,7 @@ import { FULL_THROTTLE } from "../src/data/fullThrottle";
 import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
 import { FULL_THROTTLE_ORIGINAL } from "../src/data/fullThrottleOriginal";
 import { THROTTLE_ASH } from "../src/data/throttleAsh";
+import { RAIN_SECTOR } from "../src/data/rainSector";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
 let passed = 0;
@@ -3747,6 +3748,52 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 
   const notalk = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "l1" } as never], [looker, out]));
   check("npc link: linking a non-talker warns", notalk.some((i) => i.severity === "warning" && /isn't a 🗣 start-conversation/i.test(i.message)));
+}
+
+/* ================================================================== */
+/*  CREATOR-PASS regressions (found while authoring Rain Sector)       */
+/* ================================================================== */
+{
+  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+  const mk = (hotspots: Hotspot[]): Story => ({
+    id: "creator", title: "Creator", tagline: "", coverImage: "", startSceneId: "s1",
+    scenes: [{ id: "s1", title: "Room", background: "", prose: "text", choices: [], hotspots }, endScene],
+    items: [], characters: [],
+  });
+  const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+  // A useItem action carrying a targetSceneId is a way out (the Studio's own
+  // "locked door that swings open" pattern) — Rain Sector's mag-locked gate.
+  const useItemExit = validateStory(mk([
+    {
+      id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true,
+      gating: { requiresItems: ["card"] },
+      action: { type: "useItem", targetSceneId: "e", text: "The latch lets go." },
+    },
+  ]));
+  check("creator: a useItem exit counts as a way out (no soft-lock error)", !has(useItemExit, /has no way out/i), useItemExit.filter((i) => /way out/.test(i.message)));
+  check("creator: the useItem exit is a real edge", storyEdges(mk([
+    { id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true, action: { type: "useItem", targetSceneId: "e", text: "x" } },
+  ])).some((x) => x.source === "s1" && x.target === "e"));
+
+  // A VERB action can be the flag producer (kick the machine -> flag ->
+  // the machine's own take-gate opens). The audit must read verbs.
+  const verbProducer = validateStory(mk([
+    {
+      id: "vend", label: "the machine", bounds: { x: 30, y: 64, w: 12, h: 26 }, cursor: "look",
+      verbs: { kick: { type: "showText", text: "CLANG.", flagSet: "shaken" } },
+      gating: { requiresFlags: ["shaken"] },
+      action: { type: "giveItem", itemGranted: "card" },
+    },
+  ]));
+  check("creator: a verb action's flagSet counts as a producer", !has(verbProducer, /Flag "shaken" is required by a gate/i), verbProducer.filter((i) => /shaken/.test(i.message)));
+
+  // And the shipped case itself stays clean.
+  const rs = validateStory(RAIN_SECTOR);
+  check("rainsector: the shipped case validates with zero errors", rs.filter((i) => i.severity === "error").length === 0, rs.slice(0, 5));
+  check("rainsector: the walker sheet is the sliced magenta plate", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.playerSheet!.frameWidth === 109);
+  check("rainsector: an interactable NPC is linked to a talker", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.npcs?.some((n) => n.talkHotspotId === "rsh_ping"));
+  check("rainsector: the stair barrier is gate-aware", RAIN_SECTOR.scenes.find((x) => x.id === "rs_alley")!.stage!.obstacles?.some((o) => o.gating?.requiresFlags?.includes("rs_ping_told")));
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

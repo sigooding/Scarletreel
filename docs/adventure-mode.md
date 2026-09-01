@@ -515,6 +515,27 @@ Four player-facing conveniences, all stage-side, all opt-in-safe:
 - **N — nearest character.** With interactable NPCs in the room, N walks to
   and talks with the nearest one. No mouse, no chasing.
 
+**Walls are honest everywhere (Rain Sector hardening).** Click-to-walk
+used to honour 🚧 barriers only when a route existed — the straight-line
+fallback (and floor taps beyond furniture) ghosted straight through them.
+Now every walk respects the same collision as the arrow keys: slide along
+blocked faces, stop dead when boxed in, and give the walk up after ~0.75s
+of no progress so a click beyond a wall can't pin the walker against it.
+A marker that is walled off **behind a closed gate** refuses from wherever
+the player stands (the gate's caption plays; no doomed wall-hug). And a
+walker that *starts inside* furniture — a spawn dropped on an obstacle —
+may always step OUT: walls bind from outside, and the router will not snap
+them into a sealed pocket (the sliver between a dumpster and the world
+edge is free space no grid can leave). A free walker sealed away from the
+clicked side simply gets "no route".
+
+**N talks, regardless of the armed verb.** Pressing N (or clicking an
+interactable NPC) is a *talk* intent. It used to inherit the verb coin's
+armed verb — with 👁 LOOK armed, N "examined" the character from across
+the street instead of walking over. The walk now forces TALK; linked
+markers answer it through their cursor (the validator's NPC-link check
+already requires exactly that).
+
 **Interactable NPCs.** An ambient NPC (`stage.npcs[]`) can carry
 `talkHotspotId` — a link to a 🗣 start-conversation marker. When linked, the
 actor **becomes** that marker: the static diamond hides, the character
