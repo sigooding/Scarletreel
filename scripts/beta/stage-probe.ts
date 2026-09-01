@@ -998,6 +998,49 @@ async function parts2to4() {
     delBtn?.click();
     await sleep(400);
     ok(/🔁1/.test(card()?.textContent || ""), "removing it restores the badge", card()?.textContent);
+
+    /* ---- 🥾 WALK TEST — the visual stage editor's live walker ---- */
+    // NB: a SECOND "🚶 Stage" button exists (the add-scene template in the
+    // toolbar) — clicking THAT would mint a new empty stage scene. The tab
+    // strip renders later in the DOM, so take the LAST match.
+    const stageTab = qa<HTMLButtonElement>("button").filter((b) => (b.textContent || "").trim() === "🚶 Stage").pop();
+    ok(!!stageTab, "the 🚶 Stage tab is reachable");
+    stageTab?.click();
+    await sleep(800);
+    const wtBtn = () => qa<HTMLButtonElement>("button").find((b) => !!b.getAttribute("data-walktest-btn"));
+    ok(!!wtBtn(), "the 🥾 Walk test tool renders on the stage plate");
+    wtBtn()?.click();
+    await sleep(500);
+    const walkerEl = () => q<HTMLElement>("[data-walktest-walker]");
+    const noteEl = () => q<HTMLElement>("[data-walktest-note]");
+    ok(!!walkerEl(), "the live walker appears at spawn");
+    ok(!!noteEl() && /spawn/i.test(noteEl()!.textContent || ""), "the verdict chip introduces the test", noteEl()?.textContent);
+
+    // Doors SHUT: the office-door marker sits behind the gated barrier.
+    const doorMarker = () => qa<HTMLElement>("[data-drag]").find((n) => n.getAttribute("data-drag") === "hs:bswh_door");
+    ok(!!doorMarker(), "the door marker is on the stage plate", qa("[data-drag]").map((n) => n.getAttribute("data-drag")).join(" | ") || "(none)");
+    doorMarker()?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    await sleep(700);
+    ok(!!noteEl() && /no route/i.test(noteEl()!.textContent || ""), "a sealed marker reports NO ROUTE while the doors are shut", noteEl()?.textContent);
+
+    // Doors OPEN: the same press routes the walker there and it arrives.
+    const doorsBtn = () => qa<HTMLButtonElement>("[data-walktest-doors]")[0];
+    ok(!!doorsBtn(), "the 🚪 doors toggle appears while testing");
+    doorsBtn()?.click();
+    await sleep(300);
+    doorMarker()?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    await until("the walker reaches the far door", () => !!noteEl() && /reached the office door/i.test(noteEl()!.textContent || ""), 12000);
+    const wtLeft = parseFloat(walkerEl()?.style.left ?? "0");
+    const routeSvg = q<SVGSVGElement>("svg polyline");
+    ok(wtLeft > 85, "the walker crossed the opened barrier to the far end", `left=${wtLeft}% · note=${noteEl()?.textContent} · route=${routeSvg?.getAttribute("points")?.slice(0, 60) ?? "none"}`);
+
+    // Keyboard drive: ArrowLeft walks it back down the alley, live.
+    const kbBefore = parseFloat(walkerEl()?.style.left ?? "0");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    await sleep(700);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowLeft" }));
+    const kbAfter = parseFloat(walkerEl()?.style.left ?? "0");
+    ok(kbAfter < kbBefore - 0.5, "WASD/arrows drive the test walker live", `${kbBefore} → ${kbAfter}`);
   }
 
   /* ---------------- final report ---------------- */

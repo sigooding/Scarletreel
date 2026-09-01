@@ -95,7 +95,9 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    hotspots, exam card, choice keyboard shortcuts (W/S/arrows/digits) and
    default cursor — no walker, markers, captions or armed coin verb may leak
    across the boundary. Part 5 mounts the real Studio and drives the 🔁
-   States editor (badge, add, remove).
+   States editor (badge, add, remove) and the plate's 🥾 walk test (a sealed
+   marker reports NO ROUTE with the doors shut; opening them lets the live
+   walker cross and reach it; WASD/arrows drive it).
 
 ### Building a sprite sheet from a generated plate
 

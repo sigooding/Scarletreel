@@ -1643,7 +1643,7 @@ export function clampToWalkPoly(
 /** Where a hotspot's stage MARKER stands when the walkable zone is a path
  *  polygon: bottom-centre of the zone, snapped into the polygon. */
 export function stageMarkerPointPoly(
-  h: Hotspot,
+  h: { bounds: { x: number; y: number; w: number; h: number } },
   poly: WalkPoint[],
   width = 100
 ): { x: number; y: number } {

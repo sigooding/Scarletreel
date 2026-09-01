@@ -878,6 +878,15 @@
    walker can go through. Lock-and-key made spatial; the Check tab errors on a
    door whose flag nothing can ever set.
 
+   🥾 WALK TEST (Stage tab, on the plate's toolbar): drops a LIVE walker onto
+   the plate at spawn and drives it with the real engine router. Click the
+   floor to see the planned route drawn dashed and walked; click a MARKER and
+   the chip reports "✓ reached" — or "✗ No route" when your barriers/path
+   seal it off, which is exactly the mistake it exists to catch. WASD/arrows
+   drive it live, and the 🚪 Doors toggle flips every gated barrier at once so
+   you can prove the locked layout seals and the opened one flows. The test
+   never touches story data.
+
    💬 SENTENCE LINE (🎛 Interaction, per room): a SCUMM strip along the bottom
    reads the pending interaction as you hover — "Look at the drop-safe", "Use
    wrench on the bike", "Walk to" — and RIGHT-CLICK on an object is a quick

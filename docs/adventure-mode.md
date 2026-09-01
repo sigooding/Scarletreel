@@ -480,6 +480,25 @@ plain **"Walk to"** on the floor — and **right-clicking an object is a quick
 default) render nothing new, keep the browser's right-click menu, and classic
 novel scenes are untouched.
 
+### The walk test (🥾) — proof the room walks
+
+The Stage tab's plate toolbar has **🥾 Walk test**: a live walker drops onto
+the plate at spawn, driven by the **real engine router** — the same
+`stageRoutePoly` A* the game uses, against the floor/path and barriers you've
+authored, wide worlds included.
+
+- **Click the floor** → the dashed gold polyline is the planned route and the
+  walker walks it (depth-scaled speed, barrier sliding — the works).
+- **Click a marker** → the walker walks to that marker's stand-point and the
+  chip reports **✓ reached** — an unreachable marker says
+  **✗ No route**, so a layout mistake is caught here, not in playtest.
+- **WASD / arrows** drive the walker live, exactly like the player will.
+- **🚪 Doors: shut/open** toggles every gated barrier at once — prove the
+  locked room seals and the unlocked one flows, without setting a flag.
+
+Rooms without the test running render nothing extra; nothing about the test
+touches story data — it's a sandbox over the authored geometry.
+
 ## What the prototype is missing (ranked)
 
 Built on purpose: every gap below shows up as a compromise in

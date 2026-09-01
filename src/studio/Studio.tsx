@@ -61,6 +61,14 @@ import {
   seasonEpisodes,
   stageFloor as stageFloorOf,
   stagePlayerScale,
+  stageWalkPoly,
+  stageWalkDepth,
+  stageRoutePoly,
+  stageMarkerPointPoly,
+  clampToWalkPoly,
+  stepStagePos,
+  stageBlockedPoly,
+  STAGE_GRID_STEP,
   storyEdges,
   CURSOR_ICON,
   CURSOR_SLOTS,
@@ -150,6 +158,8 @@ import type {
   SceneNode,
   StageNpc,
   StageNpcWaypoint,
+  StageObstacle,
+  StageSettings,
   StageScriptStep,
   Story,
 } from "../types";
@@ -354,7 +364,7 @@ function StageFloorEditor({
    *  and the selected one shows a ✕ (onObstacleDelete). DRAG an obstacle's
    *  body to move it and pull the ↘ corner of the selected one to resize it
    *  (both commit through onObstacleMove). All world-%. */
-  obstacles?: { x: number; y: number; w: number; h: number }[];
+  obstacles?: StageObstacle[];
   selectedObstacle?: number | null;
   onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
   onObstacleSelect?: (index: number | null) => void;
@@ -438,6 +448,174 @@ function StageFloorEditor({
   const [playWalk, setPlayWalk] = useState(false);
   const walkFps = player?.sheet?.animations?.walk?.fps;
 
+  /* ---- 🥾 WALK TEST — a LIVE walker on the plate, driven by the REAL
+   * engine router. Click the floor or a marker and the character walks the
+   * exact route the game would take (A* around the authored barriers,
+   * clamped to the authored floor/path); WASD/arrows drive it too. The
+   * dashed polyline is the planned route and the chip is the verdict —
+   * including "no route" when the layout seals a marker off. Gated
+   * barriers (🚪 doors) default to SHUT so the locked layout is what's
+   * tested; toggle them open to prove the unlocked one. */
+  const [walkTest, setWalkTest] = useState(false);
+  const [doorsOpen, setDoorsOpen] = useState(false);
+  const [walkerPos, setWalkerPos] = useState<{ x: number; y: number } | null>(null);
+  const [walkerMoving, setWalkerMoving] = useState(false);
+  const [walkRouteDraw, setWalkRouteDraw] = useState<{ x: number; y: number }[]>([]);
+  const [walkNote, setWalkNote] = useState<{ text: string; ok: boolean } | null>(null);
+  const posRef = useRef<{ x: number; y: number } | null>(null);
+  const routeRef = useRef<{ x: number; y: number }[]>([]);
+  const labelRef = useRef<string | null>(null);
+  const keysRef = useRef(new Set<string>());
+  const EDITOR_WALK_SPEED = 34; // world-%/second — brisk enough to test, slow enough to read
+  const walkPoly = stageWalkPoly({ floor, floorPoints } as StageSettings, worldW);
+  const walkFloor = stageWalkDepth(walkPoly);
+  const solidObstacles = (obstacles ?? []).filter((o) => !(o.gating && doorsOpen));
+  const walkPolyRef = useRef(walkPoly);
+  walkPolyRef.current = walkPoly;
+  const solidRef = useRef(solidObstacles);
+  solidRef.current = solidObstacles;
+
+  const routeWalker = (to: { x: number; y: number }, label?: string) => {
+    const poly = walkPolyRef.current;
+    const from = posRef.current ?? clampToWalkPoly(spawn.x, spawn.y, poly, worldW);
+    posRef.current = from;
+    const dest = clampToWalkPoly(to.x, to.y, poly, worldW);
+    const route = stageRoutePoly(from, dest, solidRef.current, poly, walkFloor, STAGE_GRID_STEP, worldW);
+    labelRef.current = label ?? null;
+    if (!route.length) {
+      routeRef.current = [];
+      setWalkRouteDraw([]);
+      setWalkNote({
+        text: `✗ No route to ${label ?? "that spot"} — the layout seals it off${
+          (obstacles ?? []).some((o) => o.gating) && !doorsOpen ? " (try opening the 🚪 doors)" : ""
+        }`,
+        ok: false,
+      });
+      return;
+    }
+    // A clear path comes back as a SINGLE point (the destination) — only a
+    // detour carries the start as its first point. Drop the start when it's
+    // there, never the destination, or the walker would have nowhere to go.
+    const rest =
+      route.length > 1 && Math.hypot(route[0].x - from.x, route[0].y - from.y) < 0.5
+        ? route.slice(1)
+        : route;
+    routeRef.current = rest.length ? rest : [{ ...dest }];
+    setWalkRouteDraw(route);
+    setWalkNote({ text: `→ ${label ? `walking to ${label}` : "walking"}…`, ok: true });
+  };
+
+  const toggleWalkTest = () => {
+    const next = !walkTest;
+    if (next) {
+      const start = clampToWalkPoly(spawn.x, spawn.y, walkPolyRef.current, worldW);
+      posRef.current = start;
+      routeRef.current = [];
+      setWalkerPos({ ...start });
+      setWalkRouteDraw([]);
+      setWalkNote({ text: "Walker at spawn — click the floor or a marker to send it there · WASD/arrows drive it", ok: true });
+    } else {
+      posRef.current = null;
+      routeRef.current = [];
+      keysRef.current.clear();
+      setWalkerPos(null);
+      setWalkRouteDraw([]);
+      setWalkNote(null);
+    }
+    setWalkTest(next);
+  };
+
+  // The animation loop: route-following + keyboard drive, same movement
+  // rules as the game (aspect-corrected steps, blocked => slide along).
+  useEffect(() => {
+    if (!walkTest) return;
+    let raf = 0;
+    // Seed the clock from the FIRST rAF timestamp, not performance.now() —
+    // the two can be on different time bases (happy-dom), and a negative
+    // first delta would clamp dt to 0 and freeze the walker.
+    let last: number | null = null;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (last === null) last = now;
+      const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+      last = now;
+      const pos = posRef.current;
+      if (!pos) return;
+      const obs = solidRef.current;
+      const poly = walkPolyRef.current;
+      let moving = false;
+      if (keysRef.current.size) {
+        // Keyboard drive cancels any plotted route, exactly like the game.
+        if (routeRef.current.length) {
+          routeRef.current = [];
+          labelRef.current = null;
+          setWalkRouteDraw([]);
+          setWalkNote(null);
+        }
+        let dx = 0;
+        let dy = 0;
+        if (keysRef.current.has("left")) dx -= 1;
+        if (keysRef.current.has("right")) dx += 1;
+        if (keysRef.current.has("up")) dy -= 1;
+        if (keysRef.current.has("down")) dy += 1;
+        if (dx || dy) {
+          const step = stepStagePos(pos, { x: pos.x + dx, y: pos.y + dy }, EDITOR_WALK_SPEED, dt, 16 / 9);
+          if (!stageBlockedPoly(step.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = step;
+          else if (!stageBlockedPoly(step.x, pos.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: step.x, y: pos.y };
+          else if (!stageBlockedPoly(pos.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: pos.x, y: step.y };
+          moving = true;
+        }
+      } else if (routeRef.current.length) {
+        const tgt = routeRef.current[0];
+        const step = stepStagePos(pos, tgt, EDITOR_WALK_SPEED, dt, 16 / 9);
+        posRef.current = { x: step.x, y: step.y };
+        moving = !step.arrived;
+        if (step.arrived) {
+          routeRef.current.shift();
+          if (!routeRef.current.length) {
+            setWalkRouteDraw([]);
+            setWalkNote({ text: `✓ ${labelRef.current ? `reached ${labelRef.current}` : "arrived"}`, ok: true });
+          }
+        }
+      }
+      const cur = posRef.current;
+      if (cur) setWalkerPos({ ...cur });
+      setWalkerMoving((m) => (m === moving ? m : moving));
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [walkTest, worldW]);
+
+  // WASD/arrows while the walk test runs (never while typing in a field).
+  useEffect(() => {
+    if (!walkTest) return;
+    const KEYMAP: Record<string, string> = {
+      ArrowLeft: "left", a: "left", A: "left",
+      ArrowRight: "right", d: "right", D: "right",
+      ArrowUp: "up", w: "up", W: "up",
+      ArrowDown: "down", s: "down", S: "down",
+    };
+    const down = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      const k = KEYMAP[e.key];
+      if (!k) return;
+      e.preventDefault();
+      keysRef.current.add(k);
+    };
+    const up = (e: KeyboardEvent) => {
+      const k = KEYMAP[e.key];
+      if (k) keysRef.current.delete(k);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      keysRef.current.clear();
+    };
+  }, [walkTest]);
+
   // The player's drawn height as a % of the plate (clamped so the walker can't
   // blow through the plate or vanish) — reused by the emoji glyph so IT scales
   // with the resize handle too, not just sprite/image characters.
@@ -454,6 +632,15 @@ function StageFloorEditor({
         // element carrying `data-drag`.
         const dragEl = (e.target as HTMLElement).closest?.("[data-drag]") as HTMLElement | null;
         const kind = dragEl?.dataset.drag;
+        // 🥾 Walk test: a press on the plate sends the walker there — the
+        // REAL router plans and walks the route. Takes precedence over the
+        // drawing tools while the test runs.
+        if (!kind && walkTest) {
+          const p = pct(e);
+          routeWalker({ x: p.x / scale, y: p.y });
+          e.preventDefault();
+          return;
+        }
         // 🚧 obstacle tool: a press on empty plate starts a draft box.
         if (!kind && obstacleMode) {
           const p = pct(e);
@@ -506,6 +693,14 @@ function StageFloorEditor({
         } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
+          // 🥾 Walk test: pressing a MARKER sends the walker to its marker
+          // point — the exact spot the game would stop at — so a marker the
+          // layout can't reach is caught here, not in playtest.
+          if (walkTest) {
+            routeWalker(stageMarkerPointPoly(hs, walkPolyRef.current, worldW), hs.label);
+            e.preventDefault();
+            return;
+          }
           drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x * scale };
           onSelectHotspot?.(hs.id);
         } else if (kind.startsWith("entry:")) {
@@ -861,6 +1056,69 @@ function StageFloorEditor({
           </div>
         );
       })}
+      {/* 🥾 WALK TEST — the live walker: same art as the spawn dummy, minus
+          its handles. Routed by the real engine router (see routeWalker). */}
+      {walkTest && walkerPos ? (
+        <div
+          data-walktest-walker
+          className="pointer-events-none absolute z-[32] flex -translate-x-1/2 -translate-y-full flex-col items-center"
+          style={{ left: `${walkerPos.x * scale}%`, top: `${walkerPos.y}%`, height: `${playerHPct}%` }}
+          title="Walk-test walker — click the floor or a marker to send it there"
+        >
+          {player && sheetDrawable(player.sheet) ? (
+            <SheetSprite
+              sheet={player.sheet!}
+              anim={walkerMoving ? "walk" : "idle"}
+              fallbacks={["walk", "idle", "loop"]}
+              height="100%"
+              freezeOnFallback={!walkerMoving}
+            />
+          ) : player?.image && !player.image.startsWith("emoji:") ? (
+            <img
+              src={assetUrl(media(player.image) ?? player.image)}
+              alt=""
+              className={`h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] ${walkerMoving ? "stage2d-walk" : ""}`}
+              draggable={false}
+            />
+          ) : (
+            <span
+              className={`block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] ${walkerMoving ? "stage2d-walk" : ""}`}
+              style={{ fontSize: `${playerHPct * 0.8}cqh` }}
+            >
+              {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
+            </span>
+          )}
+          <span className="mt-0.5 rounded bg-noir-950/85 px-1 font-pulp text-[7px] uppercase tracking-wider text-gold">🥾 test</span>
+          <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
+        </div>
+      ) : null}
+      {/* 🥾 the planned route, dashed gold — what the router intends */}
+      {walkTest && walkRouteDraw.length > 1 ? (
+        <svg className="pointer-events-none absolute inset-0 z-[27] h-full w-full" viewBox={`0 0 ${worldW} 100`} preserveAspectRatio="none" aria-hidden>
+          <polyline
+            points={walkRouteDraw.map((pt) => `${pt.x},${pt.y}`).join(" ")}
+            fill="none"
+            stroke="#e8b23c"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            vectorEffect="non-scaling-stroke"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            opacity={0.85}
+          />
+        </svg>
+      ) : null}
+      {/* 🥾 the verdict chip — route found / arrived / walled off */}
+      {walkTest && walkNote ? (
+        <div
+          data-walktest-note
+          className={`pointer-events-none absolute left-2 top-2 z-[40] max-w-[75%] rounded border px-2 py-1 font-type text-[10px] shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${
+            walkNote.ok ? "border-gold/60 bg-noir-950/90 text-gold" : "border-crimson/70 bg-noir-950/90 text-crimson"
+          }`}
+        >
+          {walkNote.text}
+        </div>
+      ) : null}
       {/* ENTRY SPAWNS — cyan dots: where the walker appears when arriving
           from another room (drag to move; scene entrySpawns in the panel) */}
       {Object.entries(entrySpawns ?? {}).map(([fromId, p]) => (
@@ -976,6 +1234,34 @@ function StageFloorEditor({
 
   // ▶ Walk-cycle preview — play the walker's walk animation on the plate so
   // the author sees the frames and fps without a playtest.
+  // 🥾 WALK TEST — live walker + real router on the plate (see the state
+  // block near the walk-cycle preview). While on, a 🚪 doors toggle rides
+  // along: gated barriers shut (the locked layout) or open.
+  const walkTestBtn = (
+    <button
+      data-walktest-btn
+      onClick={toggleWalkTest}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        walkTest ? "border-gold bg-gold/20 text-gold" : "border-gold/40 bg-noir-900 text-gold/80 hover:bg-gold/10"
+      }`}
+      title="Put a live walker on the plate — click the floor or a marker and it walks the REAL route (around barriers, along the path). WASD/arrows drive it too."
+    >
+      🥾 Walk test{walkTest ? " (on)" : ""}
+    </button>
+  );
+  const doorsBtn = walkTest ? (
+    <button
+      data-walktest-doors
+      onClick={() => setDoorsOpen((v) => !v)}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        doorsOpen ? "border-emerald-400 bg-emerald-400/15 text-emerald-300" : "border-crimson/50 bg-noir-900 text-crimson/90 hover:bg-crimson/10"
+      }`}
+      title="Gated barriers (🚪 doors) during the test: shut = the locked layout, open = the unlocked one"
+    >
+      🚪 Doors: {doorsOpen ? "open" : "shut"}
+    </button>
+  ) : null;
+
   const walkToolBtn = (
     <button
       onClick={() => setPlayWalk((v) => !v)}
@@ -1008,6 +1294,8 @@ function StageFloorEditor({
               {pathToolBtn}
               {obstacleToolBtn}
               {walkToolBtn}
+              {walkTestBtn}
+              {doorsBtn}
               <button
                 onClick={() => setExpanded(false)}
                 className="border border-gold/40 bg-noir-900 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
@@ -1026,6 +1314,8 @@ function StageFloorEditor({
               {pathToolBtn}
               {obstacleToolBtn}
               {walkToolBtn}
+              {walkTestBtn}
+              {doorsBtn}
               <button
                 onClick={() => setExpanded(true)}
                 className="border border-cyan-neon/40 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
