@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { assetUrl } from "../assetPath";
 import { uploadDataUrlAsset, useResolvedMedia } from "../data/mediaLibrary";
 import { ImagePicker } from "./ImagePicker";
-import { FORGE_STRENGTHS, forgeSpriteSheet, type ForgeKind } from "./spriteForge";
+import { FORGE_SIZES, FORGE_STRENGTHS, forgeSpriteSheet, type ForgeKind } from "./spriteForge";
 import { sheetCols, sheetFramePos, spriteSheetIssues, type SpriteSheet, type SpriteSheetAnimation } from "../game/spriteSheet";
 
 /* ------------------------------------------------------------------ */
@@ -200,6 +200,7 @@ export function SpriteSheetControls({
   const [forging, setForging] = useState(false);
   const [forgeMsg, setForgeMsg] = useState<string | null>(null);
   const [keyStrength, setKeyStrength] = useState("normal");
+  const [outSize, setOutSize] = useState("standard");
   const autoBuild = async (file: File) => {
     setForging(true);
     setForgeMsg(null);
@@ -211,7 +212,11 @@ export function SpriteSheetControls({
         r.readAsDataURL(file);
       });
       const strength = FORGE_STRENGTHS.find((f) => f.id === keyStrength) ?? FORGE_STRENGTHS[1];
-      const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset), strength);
+      const size = FORGE_SIZES.find((s) => s.id === outSize) ?? FORGE_SIZES[0];
+      const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset), {
+        ...strength,
+        ...(size.height ? { targetHeight: size.height } : {}),
+      });
       const base = file.name.replace(/\.[a-z0-9]+$/i, "") || "sheet";
       const up = await uploadDataUrlAsset(storyId, `sheet-${base}.png`, "image", sheet.dataUrl, "sprites");
       onChange({
@@ -270,6 +275,20 @@ export function SpriteSheetControls({
           </select>
           — gentle if it eats into the art · strong if backdrop specks survive. For full manual control use
           Media Tools ▸ ✂ Sprite Cutout Lab.
+        </label>
+        <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+          output size:
+          <select
+            className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+            title="Frame height of the built sheet. A CAP, not a stretch: big art keeps its pixels up to it, small art is never upscaled into blur. Standard matches the classic presets (light story files)."
+            value={outSize}
+            onChange={(e) => setOutSize(e.target.value)}
+          >
+            {FORGE_SIZES.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+          — bring big art? Pick <b>big</b> or <b>source</b> to keep the detail (bigger story files; 4MB/image cap).
         </label>
         {forgeMsg && <p className="font-type text-[9px] text-paper/60">{forgeMsg}</p>}
       </div>

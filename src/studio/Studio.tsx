@@ -147,6 +147,8 @@ import type {
   MeterKey,
   SceneNode,
   StageNpc,
+  StageNpcWaypoint,
+  StageScriptStep,
   Story,
 } from "../types";
 
@@ -1438,6 +1440,323 @@ function mediaField(v?: string): string {
   if (!v) return "";
   if (v.startsWith("data:") || v.startsWith("asset:") || v.startsWith("video:asset:")) return "";
   return v;
+}
+
+/* ------------------------------------------------------------------ */
+/* SCRIPTED SEQUENCES — the compact step-list editor shared by the      */
+/* runScript hotspot action and the stage tab's room-entry script.      */
+/* One row per step: pick what it does, fill in the fields that kind    */
+/* needs. Stage-only by design — classic scenes never see scripts.      */
+
+const SCRIPT_STEP_KINDS: { v: StageScriptStep["do"]; label: string }[] = [
+  { v: "walkTo", label: "🚶 Player walks to" },
+  { v: "face", label: "↔ Player faces" },
+  { v: "pose", label: "🧍 Player pose" },
+  { v: "say", label: "💬 Say line" },
+  { v: "wait", label: "⏱ Wait" },
+  { v: "npcWalkTo", label: "🚶 NPC walks to" },
+  { v: "npcMotion", label: "🎭 NPC motion" },
+  { v: "setFlag", label: "🚩 Set flag" },
+  { v: "goToScene", label: "→ Go to scene (ends script)" },
+];
+
+/** A fresh step of the given kind with sensible defaults. */
+function defaultScriptStep(kind: StageScriptStep["do"], npcIds: string[], sceneId: string): StageScriptStep {
+  switch (kind) {
+    case "walkTo":
+      return { do: "walkTo", x: 50, y: 80 };
+    case "face":
+      return { do: "face", dir: "left" };
+    case "pose":
+      return { do: "pose" };
+    case "say":
+      return { do: "say", text: "" };
+    case "wait":
+      return { do: "wait", seconds: 1 };
+    case "npcWalkTo":
+      return { do: "npcWalkTo", npcId: npcIds[0] ?? "", x: 50, y: 80 };
+    case "npcMotion":
+      return { do: "npcMotion", npcId: npcIds[0] ?? "" };
+    case "setFlag":
+      return { do: "setFlag", flag: "" };
+    case "goToScene":
+      return { do: "goToScene", targetSceneId: sceneId };
+  }
+}
+
+function ScriptEditor({
+  steps,
+  onChange,
+  npcIds,
+  scenes,
+}: {
+  steps: StageScriptStep[];
+  onChange: (next: StageScriptStep[]) => void;
+  /** Ambient NPC ids in this scene (for the NPC step targets). */
+  npcIds: string[];
+  scenes: { id: string; title: string }[];
+}) {
+  const upd = (i: number, patch: Record<string, unknown>) =>
+    onChange(steps.map((s, si) => (si === i ? ({ ...s, ...patch } as StageScriptStep) : s)));
+  const swap = (i: number, j: number) => {
+    if (j < 0 || j >= steps.length) return;
+    const next = steps.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const num = (v: string, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return (
+    <div className="space-y-1">
+      {steps.map((st, i) => (
+        <div key={i} className="rounded border border-noir-700 bg-noir-950/60 p-1.5">
+          <div className="flex items-center gap-1">
+            <span className="w-4 text-right font-type text-[9px] text-paper/40">{i + 1}</span>
+            <select
+              className={`${inputCls} flex-1`}
+              value={st.do}
+              onChange={(e) => onChange(steps.map((s, si) => (si === i ? defaultScriptStep(e.target.value as StageScriptStep["do"], npcIds, scenes[0]?.id ?? "") : s)))}
+            >
+              {SCRIPT_STEP_KINDS.map((k) => (
+                <option key={k.v} value={k.v}>{k.label}</option>
+              ))}
+            </select>
+            <button className="px-1 text-[10px] text-paper/50 hover:text-paper" title="Move up" onClick={() => swap(i, i - 1)}>▲</button>
+            <button className="px-1 text-[10px] text-paper/50 hover:text-paper" title="Move down" onClick={() => swap(i, i + 1)}>▼</button>
+            <button className="px-1 text-[10px] text-red-300/70 hover:text-red-300" title="Remove step" onClick={() => onChange(steps.filter((_, si) => si !== i))}>✕</button>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1 pl-5">
+            {(st.do === "npcWalkTo" || st.do === "npcMotion" || (st.do === "say" && npcIds.length > 0)) && (
+              <select
+                className={`${inputCls} w-auto min-w-[90px] flex-none`}
+                value={("npcId" in st ? st.npcId : "") ?? ""}
+                onChange={(e) => upd(i, { npcId: e.target.value || undefined })}
+                title="Which actor"
+              >
+                {st.do === "say" ? <option value="">player</option> : null}
+                {npcIds.map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+            )}
+            {(st.do === "walkTo" || st.do === "npcWalkTo") && (
+              <>
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x %" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y %" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
+                <span className="text-[9px] text-paper/40">x / y (scene %)</span>
+              </>
+            )}
+            {st.do === "face" && (
+              <select className={`${inputCls} w-auto flex-none`} value={st.dir} onChange={(e) => upd(i, { dir: e.target.value })}>
+                <option value="left">left</option>
+                <option value="right">right</option>
+              </select>
+            )}
+            {st.do === "pose" && (
+              <input className={`${inputCls} flex-1`} value={st.pose ?? ""} placeholder="pose animation name (empty = back to idle)" onChange={(e) => upd(i, { pose: e.target.value || undefined })} />
+            )}
+            {st.do === "say" && (
+              <input className={`${inputCls} flex-1`} value={st.text} placeholder="the spoken line" onChange={(e) => upd(i, { text: e.target.value })} />
+            )}
+            {st.do === "wait" && (
+              <>
+                <input className={`${inputCls} w-16 flex-none`} type="number" step="0.1" min="0" value={st.seconds} onChange={(e) => upd(i, { seconds: Math.max(0, num(e.target.value, st.seconds)) })} />
+                <span className="text-[9px] text-paper/40">seconds</span>
+              </>
+            )}
+            {st.do === "npcMotion" && (
+              <>
+                <input className={`${inputCls} w-24 flex-none`} value={st.anim ?? ""} placeholder="motion" title="Named sheet animation" onChange={(e) => upd(i, { anim: e.target.value || undefined })} />
+                <input className={`${inputCls} flex-1`} value={st.say ?? ""} placeholder="say line" onChange={(e) => upd(i, { say: e.target.value || undefined })} />
+                <select className={`${inputCls} w-auto flex-none`} value={st.facing ?? ""} title="Face" onChange={(e) => upd(i, { facing: e.target.value || undefined })}>
+                  <option value="">face —</option>
+                  <option value="left">left</option>
+                  <option value="right">right</option>
+                </select>
+              </>
+            )}
+            {st.do === "setFlag" && (
+              <input className={`${inputCls} flex-1`} value={st.flag} placeholder="flag id" onChange={(e) => upd(i, { flag: e.target.value })} />
+            )}
+            {st.do === "goToScene" && (
+              <select className={`${inputCls} flex-1`} value={st.targetSceneId} onChange={(e) => upd(i, { targetSceneId: e.target.value })}>
+                {scenes.map((s) => (
+                  <option key={s.id} value={s.id}>{s.title}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+      ))}
+      <button
+        className="rounded border border-noir-600 px-2 py-0.5 text-[10px] text-paper/70 hover:border-neon hover:text-neon"
+        onClick={() => onChange([...steps, defaultScriptStep(steps.length ? "say" : "walkTo", npcIds, scenes[0]?.id ?? "")])}
+      >
+        ＋ add step
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* NPC PLATE PREVIEW — the room plate with every ambient NPC's spawn    */
+/* and patrol route drawn on it. Drag the actor (spawn) or a numbered   */
+/* stop to place it; click an actor to highlight their route. Purely a  */
+/* placement aid — spawn/waypoint numbers in the panel stay the truth.  */
+
+function NpcPlatePreview({
+  bg,
+  worldWidth,
+  floor,
+  npcs,
+  onMoveSpawn,
+  onMoveWp,
+}: {
+  bg: React.CSSProperties;
+  worldWidth?: number;
+  floor: { top: number; bottom: number };
+  npcs: {
+    id: string;
+    x: number;
+    y: number;
+    art: { emoji?: string; url?: string };
+    patrol?: StageNpcWaypoint[];
+  }[];
+  onMoveSpawn: (i: number, x: number, y: number) => void;
+  onMoveWp: (i: number, wi: number, x: number, y: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const worldW = Math.max(100, worldWidth ?? 100);
+  /** world-% → plate-% (a wide strip is shrunk to fit the preview). */
+  const k = 100 / worldW;
+  const [sel, setSel] = useState(0);
+  /** Live drag: which marker (wp -1 = the spawn) and where it currently is.
+   *  The story is only written on release — one undo step per drag. */
+  const [drag, setDrag] = useState<{ n: number; wp: number; x: number; y: number } | null>(null);
+  const pct = (e: React.PointerEvent) => {
+    const r = ref.current!.getBoundingClientRect();
+    return {
+      x: Math.min(worldW, Math.max(0, (((e.clientX - r.left) / r.width) * 100) / k)),
+      y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
+    };
+  };
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const grab = (n: number, wp: number, x: number, y: number) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setSel(n);
+    setDrag({ n, wp, x, y });
+  };
+  const move = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const p = pct(e);
+    setDrag({ ...drag, x: p.x, y: p.y });
+  };
+  const drop = () => {
+    if (!drag) return;
+    if (drag.wp < 0) onMoveSpawn(drag.n, round1(drag.x), round1(drag.y));
+    else onMoveWp(drag.n, drag.wp, round1(drag.x), round1(drag.y));
+    setDrag(null);
+  };
+  const posOf = (n: number, wp: number, x: number, y: number) =>
+    drag && drag.n === n && drag.wp === wp ? { x: drag.x, y: drag.y } : { x, y };
+  return (
+    <div className="space-y-0.5">
+      <div
+        ref={ref}
+        className="relative aspect-video w-full select-none overflow-hidden rounded border border-teal-400/30"
+        style={{ ...bg, touchAction: "none" }}
+      >
+        {/* floor band, so routes get placed on the walkable ground */}
+        {[floor.top, floor.bottom].map((y, i) => (
+          <div key={i} className="pointer-events-none absolute inset-x-0 border-t border-dashed border-neon/30" style={{ top: `${y}%` }} />
+        ))}
+        {/* viewport seams of a wide world */}
+        {worldW > 100
+          ? Array.from({ length: Math.ceil(worldW / 100) - 1 }, (_, i) => (
+              <div key={i} className="pointer-events-none absolute inset-y-0 border-l border-dashed border-paper/25" style={{ left: `${(i + 1) * 100 * k}%` }} />
+            ))
+          : null}
+        {/* routes under the markers */}
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
+          {npcs.map((n, i) => {
+            const pts = [posOf(i, -1, n.x, n.y), ...(n.patrol ?? []).map((w, wi) => posOf(i, wi, w.x, w.y))];
+            if (pts.length < 2) return null;
+            return (
+              <polyline
+                key={n.id + i}
+                points={pts.map((p) => `${p.x * k},${p.y}`).join(" ")}
+                fill="none"
+                stroke={sel === i ? "#2dd4bf" : "#2dd4bf55"}
+                strokeWidth={sel === i ? 0.5 : 0.3}
+                strokeDasharray="1.4 1"
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+        </svg>
+        {/* numbered stops */}
+        {npcs.map((n, i) =>
+          (n.patrol ?? []).map((w, wi) => {
+            const p = posOf(i, wi, w.x, w.y);
+            return (
+              <div
+                key={`${i}-${wi}`}
+                className={`absolute z-10 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border font-pulp text-[8px] leading-none ${
+                  sel === i ? "border-teal-200 bg-teal-500/90 text-noir-950" : "border-teal-400/50 bg-noir-950/70 text-teal-300/70"
+                }`}
+                style={{ left: `${p.x * k}%`, top: `${p.y}%` }}
+                title={`${n.id} · stop ${wi + 1} — drag to move${w.scale ? ` · size ×${w.scale}` : ""}`}
+                onPointerDown={grab(i, wi, w.x, w.y)}
+                onPointerMove={move}
+                onPointerUp={drop}
+              >
+                {wi + 1}
+                {w.scale ? (
+                  <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap font-type text-[7px] text-teal-200/90 [text-shadow:0_1px_2px_#000]">×{w.scale}</span>
+                ) : null}
+              </div>
+            );
+          }),
+        )}
+        {/* the actors themselves at spawn */}
+        {npcs.map((n, i) => {
+          const p = posOf(i, -1, n.x, n.y);
+          return (
+            <div
+              key={n.id + i}
+              className="absolute z-20 -translate-x-1/2 -translate-y-full cursor-grab"
+              style={{ left: `${p.x * k}%`, top: `${p.y}%` }}
+              title={`${n.id} — drag to move the spawn`}
+              onPointerDown={grab(i, -1, n.x, n.y)}
+              onPointerMove={move}
+              onPointerUp={drop}
+            >
+              <div className={`flex flex-col items-center ${sel === i ? "" : "opacity-70"}`}>
+                {n.art.url ? (
+                  <img src={n.art.url} alt="" draggable={false} className="h-10 w-auto object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]" />
+                ) : (
+                  <span className="text-2xl leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{n.art.emoji ?? "🚶"}</span>
+                )}
+                <span className={`mt-0.5 h-1.5 w-1.5 rounded-full ${sel === i ? "bg-teal-300 ring-2 ring-teal-300/40" : "bg-teal-400/50"}`} />
+                {sel === i ? (
+                  <span className="mt-0.5 whitespace-nowrap font-pulp text-[8px] uppercase tracking-wider text-teal-200 [text-shadow:0_1px_2px_#000]">{n.id}</span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="font-type text-[8px] italic leading-snug text-paper/40">
+        Drag an actor to move their spawn, or a numbered stop to move that waypoint (positions commit on release —
+        one undo step per drag). Click an actor to highlight their route. Dashed lines: the floor band and, on wide
+        rooms, the screen seams.
+      </p>
+    </div>
+  );
 }
 
 const sectionStateKey = (id: string) => `scarlet-studio-section-${id}`;
@@ -5031,18 +5350,23 @@ function GatingEditor({
 /*  hotspot drawer preview                                             */
 /* ------------------------------------------------------------------ */
 
+type ZoneBounds = { x: number; y: number; w: number; h: number };
+type ZoneHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
 function HotspotCanvas({
   scene,
   items = [],
   selectedId,
   onSelect,
   onDraw,
+  onMove,
   media,
   barrierMode,
   barriers = [],
   selectedBarrier,
   onBarrierSelect,
   onBarrierDraw,
+  onBarrierMove,
   spawn,
   spawnMode,
   onSpawnMove,
@@ -5053,6 +5377,8 @@ function HotspotCanvas({
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDraw: (bounds: { x: number; y: number; w: number; h: number }) => void;
+  /** Commit a MOVE/RESIZE of an existing hotspot (drag body / pull handles). */
+  onMove?: (id: string, bounds: { x: number; y: number; w: number; h: number }) => void;
   media: (v?: string) => string | undefined;
   /** Draw NO-GO BARRIERS instead of hotspots (🚶 stage rooms). */
   barrierMode?: boolean;
@@ -5061,6 +5387,8 @@ function HotspotCanvas({
   selectedBarrier?: number | null;
   onBarrierSelect?: (i: number | null) => void;
   onBarrierDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
+  /** Commit a MOVE/RESIZE of an existing barrier (drag body / pull handles). */
+  onBarrierMove?: (i: number, bounds: { x: number; y: number; w: number; h: number }) => void;
   /** 🚶 where the player character starts (scene %), drawn on the plate. */
   spawn?: { x: number; y: number };
   /** Dragging on the plate moves the player instead of drawing a box. */
@@ -5077,6 +5405,26 @@ function HotspotCanvas({
   onBarrierDrawRef.current = onBarrierDraw;
   const onSpawnMoveRef = useRef(onSpawnMove);
   onSpawnMoveRef.current = onSpawnMove;
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+  const onBarrierMoveRef = useRef(onBarrierMove);
+  onBarrierMoveRef.current = onBarrierMove;
+  /** MOVE/RESIZE an existing zone: drag its body to move it, pull the square
+   *  handles on the selected one to resize. `drag` holds the gesture; `live`
+   *  is the in-flight bounds drawn while the pointer is still down (committed
+   *  once, on pointer-up). */
+  const drag = useRef<{
+    target: "hs" | "bar";
+    id: string;
+    index: number;
+    mode: "move" | ZoneHandle;
+    start: { x: number; y: number };
+    orig: ZoneBounds;
+  } | null>(null);
+  const [live, setLive] = useState<{ target: "hs" | "bar"; id: string; index: number; b: ZoneBounds } | null>(null);
+  /** True once the pointer actually travelled — suppresses the click that
+   *  follows a drag so it doesn't toggle the selection. */
+  const movedRef = useRef(false);
   /** WIDE WORLD: the canvas shows the whole strip shrunk to fit; pointer
    *  positions are scaled up to world-% and rendering scaled back down. */
   const worldW = Math.max(100, scene.stage?.worldWidth ?? 100);
@@ -5090,12 +5438,61 @@ function HotspotCanvas({
     };
   };
 
+  /** Turn the current pointer position into new bounds for the zone being
+   *  moved/resized, clamped to the plate and a 2% minimum size. */
+  const applyDrag = (p: { x: number; y: number }): ZoneBounds => {
+    const d = drag.current!;
+    const dx = p.x - d.start.x;
+    const dy = p.y - d.start.y;
+    const MIN = 2;
+    if (d.mode === "move") {
+      return {
+        x: Math.min(Math.max(0, d.orig.x + dx), Math.max(0, worldW - d.orig.w)),
+        y: Math.min(Math.max(0, d.orig.y + dy), Math.max(0, 100 - d.orig.h)),
+        w: d.orig.w,
+        h: d.orig.h,
+      };
+    }
+    let L = d.orig.x;
+    let T = d.orig.y;
+    let R = d.orig.x + d.orig.w;
+    let Bt = d.orig.y + d.orig.h;
+    if (d.mode.includes("w")) L = Math.max(0, Math.min(L + dx, R - MIN));
+    if (d.mode.includes("e")) R = Math.min(worldW, Math.max(R + dx, L + MIN));
+    if (d.mode.includes("n")) T = Math.max(0, Math.min(T + dy, Bt - MIN));
+    if (d.mode.includes("s")) Bt = Math.min(100, Math.max(Bt + dy, T + MIN));
+    return { x: L, y: T, w: R - L, h: Bt - T };
+  };
+
+  const startZoneDrag = (
+    e: React.PointerEvent,
+    target: "hs" | "bar",
+    id: string,
+    index: number,
+    mode: "move" | ZoneHandle,
+    orig: ZoneBounds
+  ) => {
+    e.stopPropagation();
+    movedRef.current = false;
+    drag.current = { target, id, index, mode, start: pct(e), orig: { ...orig } };
+    setLive({ target, id, index, b: { ...orig } });
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
   return (
     <div
       ref={ref}
       className="relative aspect-video w-full cursor-crosshair overflow-hidden border border-noir-600"
       style={bgStyle(media(scene.background) ?? scene.background)}
       onPointerMove={(e) => {
+        // MOVE/RESIZE in flight — track the pointer, commit on release.
+        if (drag.current) {
+          const p = pct(e);
+          if (Math.abs(p.x - drag.current.start.x) + Math.abs(p.y - drag.current.start.y) > 0.3) movedRef.current = true;
+          const d = drag.current;
+          setLive({ target: d.target, id: d.id, index: d.index, b: applyDrag(p) });
+          return;
+        }
         if (!start.current) return;
         const p = pct(e);
         // 🚶 player start: dragging moves the character (clamped to the floor
@@ -5112,6 +5509,7 @@ function HotspotCanvas({
         });
       }}
       onPointerDown={(e) => {
+        if (drag.current) return;
         // In spawn mode a plain click places the character too.
         if (spawnMode && !(e.target as HTMLElement).dataset.bar && !(e.target as HTMLElement).dataset.hs) {
           start.current = pct(e);
@@ -5124,6 +5522,36 @@ function HotspotCanvas({
         (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
       }}
       onPointerUp={() => {
+        // Commit a MOVE/RESIZE (only if the bounds actually changed).
+        if (drag.current) {
+          const d = drag.current;
+          const b = live && live.target === d.target && live.id === d.id && live.index === d.index ? live.b : d.orig;
+          const r = {
+            x: Math.round(b.x * 10) / 10,
+            y: Math.round(b.y * 10) / 10,
+            w: Math.round(b.w * 10) / 10,
+            h: Math.round(b.h * 10) / 10,
+          };
+          const o = d.orig;
+          const changed =
+            r.x !== Math.round(o.x * 10) / 10 ||
+            r.y !== Math.round(o.y * 10) / 10 ||
+            r.w !== Math.round(o.w * 10) / 10 ||
+            r.h !== Math.round(o.h * 10) / 10;
+          if (changed) {
+            if (d.target === "hs") {
+              onMoveRef.current?.(d.id, r);
+              onSelect(d.id);
+            } else {
+              onBarrierMoveRef.current?.(d.index, r);
+              onBarrierSelect?.(d.index);
+              onSelect("");
+            }
+          }
+          drag.current = null;
+          setLive(null);
+          return;
+        }
         if (spawnMode) {
           start.current = null;
           setDraft(null);
@@ -5201,40 +5629,62 @@ function HotspotCanvas({
       ) : null}
       {/* NO-GO BARRIERS — hatched crimson. Click to select (then redraw to
           reshape); visible in both modes because they place the hotspots. */}
-      {barriers.map((b, bi) => (
+      {barriers.map((b, bi) => {
+        const bb = live && live.target === "bar" && live.index === bi ? live.b : b;
+        return (
         <button
           key={`bar-${bi}`}
           data-bar="1"
           onClick={() => {
+            if (movedRef.current) {
+              movedRef.current = false;
+              return;
+            }
             onBarrierSelect?.(selectedBarrier === bi ? null : bi);
             onSelect("");
           }}
-          className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} text-[8px] uppercase tracking-wider text-crimson`}
+          onPointerDown={(e) => {
+            if (!barrierMode) return;
+            startZoneDrag(e, "bar", "", bi, "move", b);
+          }}
+          className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} ${barrierMode ? "cursor-move" : ""} text-[8px] uppercase tracking-wider text-crimson`}
           style={{
-            left: `${b.x * scale}%`,
-            top: `${b.y}%`,
-            width: `${b.w * scale}%`,
-            height: `${b.h}%`,
+            left: `${bb.x * scale}%`,
+            top: `${bb.y}%`,
+            width: `${bb.w * scale}%`,
+            height: `${bb.h}%`,
             backgroundImage:
               "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
           }}
-          title={`No-go barrier ${bi + 1} — click to select, then drag a new box to reshape`}
+          title={`No-go barrier ${bi + 1} — drag to move; select it and pull the square handles to resize`}
         >
           <span className="absolute left-1 top-0.5 truncate">{barrierMode || selectedBarrier === bi ? "🚧 no-go" : ""}</span>
         </button>
-      ))}
+        );
+      })}
       {(scene.hotspots ?? []).map((h) => {
         const grantedItem = h.showItemImage && h.action.itemGranted ? items.find((i) => i.id === h.action.itemGranted) : undefined;
+        const hb = live && live.target === "hs" && live.id === h.id ? live.b : h.bounds;
         return (
           <button
             key={h.id}
             data-hs="1"
-            onClick={() => onSelect(h.id)}
+            onClick={() => {
+              if (movedRef.current) {
+                movedRef.current = false;
+                return;
+              }
+              onSelect(h.id);
+            }}
+            onPointerDown={(e) => {
+              if (barrierMode || spawnMode) return;
+              startZoneDrag(e, "hs", h.id, -1, "move", h.bounds);
+            }}
             className={`absolute border-2 text-[8px] uppercase tracking-wider ${
               selectedId === h.id ? "border-neon bg-neon/20 text-neon" : "border-gold/70 bg-gold/10 text-gold"
-            } ${barrierMode ? "pointer-events-none opacity-40" : ""}`}
-            style={{ left: `${h.bounds.x * scale}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w * scale}%`, height: `${h.bounds.h}%` }}
-            title={h.label}
+            } ${barrierMode ? "pointer-events-none opacity-40" : spawnMode ? "" : "cursor-move"}`}
+            style={{ left: `${hb.x * scale}%`, top: `${hb.y}%`, width: `${hb.w * scale}%`, height: `${hb.h}%` }}
+            title={`${h.label} — drag to move; select it and pull the square handles to resize`}
           >
             {h.image ? (
               <>
@@ -5246,7 +5696,7 @@ function HotspotCanvas({
                   }`}
                 />
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-noir-950/75 px-1 py-0.5 text-[7px]">
-                  {h.label}
+                  {h.remote ? "🔭 " : ""}{h.label}
                 </span>
               </>
             ) : grantedItem ? (
@@ -5256,11 +5706,48 @@ function HotspotCanvas({
                 <span className="pointer-events-none text-xl">{grantedItem.icon}</span>
               )
             ) : (
-              h.label.slice(0, 12)
+              `${h.remote ? "🔭 " : ""}${h.label.slice(0, 12)}`
             )}
           </button>
         );
       })}
+      {/* RESIZE HANDLES — eight squares on the selected zone's edges/corners.
+          Pull one to resize; the body itself drags to move. */}
+      {(() => {
+        const selHs = !barrierMode && !spawnMode && selectedId ? (scene.hotspots ?? []).find((h) => h.id === selectedId) : undefined;
+        const selBarB = barrierMode && selectedBarrier != null ? barriers[selectedBarrier] : undefined;
+        if (!selHs && !selBarB) return null;
+        const target: "hs" | "bar" = selHs ? "hs" : "bar";
+        const id = selHs?.id ?? "";
+        const index = selHs ? -1 : (selectedBarrier as number);
+        const base = selHs ? selHs.bounds : (selBarB as ZoneBounds);
+        const cur = live && live.target === target && live.id === id && live.index === index ? live.b : base;
+        const color = target === "hs" ? "border-neon" : "border-crimson";
+        const HANDLES: { m: ZoneHandle; fx: number; fy: number; c: string }[] = [
+          { m: "nw", fx: 0, fy: 0, c: "nwse-resize" },
+          { m: "n", fx: 0.5, fy: 0, c: "ns-resize" },
+          { m: "ne", fx: 1, fy: 0, c: "nesw-resize" },
+          { m: "e", fx: 1, fy: 0.5, c: "ew-resize" },
+          { m: "se", fx: 1, fy: 1, c: "nwse-resize" },
+          { m: "s", fx: 0.5, fy: 1, c: "ns-resize" },
+          { m: "sw", fx: 0, fy: 1, c: "nesw-resize" },
+          { m: "w", fx: 0, fy: 0.5, c: "ew-resize" },
+        ];
+        return HANDLES.map((hd) => (
+          <div
+            key={hd.m}
+            data-hd="1"
+            className={`absolute z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 border-2 bg-noir-950 ${color}`}
+            style={{
+              left: `${(cur.x + cur.w * hd.fx) * scale}%`,
+              top: `${cur.y + cur.h * hd.fy}%`,
+              cursor: hd.c,
+            }}
+            onPointerDown={(e) => startZoneDrag(e, target, id, index, hd.m, base)}
+            title="Drag to resize"
+          />
+        ));
+      })()}
       {draft && (
         <div
           className={`absolute border-2 border-dashed ${barrierMode ? "border-crimson bg-crimson/10" : "border-cyan-neon bg-cyan-neon/10"}`}
@@ -10288,6 +10775,30 @@ function StudioInner({
                             }
                           />
                         </Field>
+                        <Field label="🎬 Scripted sequence on scene entry (SCUMM room-entry cutscene)">
+                          <p className="mb-1 font-type text-[9px] leading-snug text-paper/45">
+                            Plays right after the scene fades in: input locks, letterbox bars drop, the steps run in
+                            order, then control returns. Give it a run-once flag so it plays once per story.
+                          </p>
+                          <ScriptEditor
+                            steps={scene.stage.enterScript ?? []}
+                            onChange={(next) =>
+                              updateScene(scene.id, { stage: { ...scene.stage!, enterScript: next.length ? next : undefined } })
+                            }
+                            npcIds={(scene.stage.npcs ?? []).map((n) => n.id)}
+                            scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
+                          />
+                          {(scene.stage.enterScript?.length ?? 0) > 0 ? (
+                            <input
+                              className={`${inputCls} mt-1`}
+                              value={scene.stage.enterScriptFlag ?? ""}
+                              placeholder="run-once flag (empty = replays on every entry)"
+                              onChange={(e) =>
+                                updateScene(scene.id, { stage: { ...scene.stage!, enterScriptFlag: e.target.value.trim() || undefined } })
+                              }
+                            />
+                          ) : null}
+                        </Field>
                         <Field label="Character sprite (emoji:… or an image url / asset)">
                           <input
                             className={inputCls}
@@ -10419,19 +10930,44 @@ function StudioInner({
                             updateScene(scene.id, { stage: { ...st, npcs: list.length ? list : undefined } });
                           const setNpc = (i: number, patch: Partial<StageNpc>) =>
                             setNpcs(npcs.map((n, j) => (j === i ? { ...n, ...patch } : n)));
-                          const setPatrol = (i: number, patrol: { x: number; y: number; pause?: number }[]) =>
+                          const setPatrol = (i: number, patrol: StageNpcWaypoint[]) =>
                             setNpc(i, { patrol: patrol.length ? patrol : undefined });
+                          const setWp = (i: number, wi: number, patch: Partial<StageNpcWaypoint>) =>
+                            setPatrol(i, (npcs[i].patrol ?? []).map((w, k) => (k === wi ? { ...w, ...patch } : w)));
                           return (
                             <div className="space-y-2 border border-teal-400/30 bg-teal-400/5 p-2">
                               <div className="font-pulp text-[9px] uppercase tracking-widest text-teal-300">
-                                🚶 Ambient NPCs (idle / walk cycles)
+                                🚶 Ambient NPCs (idle / walk cycles / set motions)
                               </div>
                               <p className="font-type text-[9px] leading-snug text-paper/45">
-                                Living set-dressing that idles and can patrol — a bartender polishing a glass, a barfly
-                                pacing the floor. Give one a sprite sheet with <b>idle</b> + <b>walk</b> animations: it
-                                idles at each waypoint and walks between them; no patrol stands it still forever.
-                                Interaction stays on the <b>Hotspots</b> tab — NPCs are pure stage life.
+                                Living set-dressing that idles, patrols and performs <b>SET MOTIONS</b> — a bartender
+                                polishing a glass, a dockhand who walks to a crate, faces left, plays his <b>hammer</b>
+                                animation and mutters a line before moving on. Give one a sprite sheet with <b>idle</b> +
+                                <b> walk</b> (plus any named motion animations); each waypoint can pick a motion, a facing
+                                and an ambient say-line for its pause. A single waypoint on the spawn = a standing actor
+                                cycling a motion on a timer. Interaction stays on the <b>Hotspots</b> tab — NPCs are pure
+                                stage life.
                               </p>
+                              {npcs.length > 0 ? (
+                                <NpcPlatePreview
+                                  bg={bgStyle(media(scene.background) ?? scene.background)}
+                                  worldWidth={st.worldWidth}
+                                  floor={stageFloorOf(st)}
+                                  npcs={npcs.map((n) => ({
+                                    id: n.id,
+                                    x: n.x,
+                                    y: n.y,
+                                    patrol: n.patrol,
+                                    art: n.image?.startsWith("emoji:")
+                                      ? { emoji: n.image.slice(6) }
+                                      : n.image
+                                        ? { url: assetUrl(media(n.image) ?? n.image) }
+                                        : { emoji: "🚶" },
+                                  }))}
+                                  onMoveSpawn={(i, x, y) => setNpc(i, { x, y })}
+                                  onMoveWp={(i, wi, x, y) => setWp(i, wi, { x, y })}
+                                />
+                              ) : null}
                               {npcs.map((n, i) => (
                                 <div key={i} className="space-y-1 border border-teal-400/20 p-1.5">
                                   <div className="flex items-center gap-2">
@@ -10479,6 +11015,8 @@ function StudioInner({
                                     <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Y %" value={Math.round(n.y)} onChange={(e) => setNpc(i, { y: Number(e.target.value) })} />
                                     <span className="font-type text-[9px] text-paper/50">speed</span>
                                     <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s)" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
+                                    <span className="font-type text-[9px] text-paper/50" title="Named sheet animation played while standing (instead of plain idle) — the barman's 'polish'">idle motion</span>
+                                    <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation at rest (blank = idle)" value={n.idleAnim ?? ""} onChange={(e) => setNpc(i, { idleAnim: e.target.value || undefined })} />
                                   </div>
                                   <SpriteSheetControls
                                     value={n.sheet}
@@ -10487,17 +11025,50 @@ function StudioInner({
                                     onChange={(sheet) => setNpc(i, { sheet: sheet || undefined })}
                                   />
                                   <div className="space-y-1 border border-teal-400/15 p-1.5">
-                                    <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
-                                      🚏 Patrol (leave empty to idle forever)
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
+                                        🚏 Patrol & set motions (leave empty to idle forever)
+                                      </span>
+                                      <label className="ml-auto flex items-center gap-1 font-type text-[9px] text-paper/50">
+                                        route
+                                        <select
+                                          className={inputCls}
+                                          title="loop: back to stop 1 · pingpong: walk the route backwards · once: walk it once and hold the last stop's motion forever"
+                                          value={n.patrolMode ?? "loop"}
+                                          onChange={(e) => setNpc(i, { patrolMode: e.target.value === "loop" ? undefined : (e.target.value as "pingpong" | "once") })}
+                                        >
+                                          <option value="loop">🔁 loop</option>
+                                          <option value="pingpong">↔ pingpong</option>
+                                          <option value="once">→ once (hold last)</option>
+                                        </select>
+                                      </label>
                                     </div>
                                     {(n.patrol ?? []).map((wp, wi) => (
-                                      <div key={wi} className="flex items-center gap-1">
-                                        <span className="w-5 font-pulp text-[8px] text-paper/40">{wi + 1}</span>
-                                        <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="Waypoint X %" value={Math.round(wp.x)} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, x: Number(e.target.value) } : w)))} />
-                                        <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Waypoint Y %" value={Math.round(wp.y)} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, y: Number(e.target.value) } : w)))} />
-                                        <span className="font-type text-[8px] text-paper/50">pause</span>
-                                        <input type="number" min={0} max={60} step={0.5} className={`${inputCls} w-12`} title="Idle seconds here" value={wp.pause ?? 2} onChange={(e) => setPatrol(i, (n.patrol ?? []).map((w, k) => (k === wi ? { ...w, pause: Number(e.target.value) } : w)))} />
-                                        <button type="button" className="shrink-0 px-1 font-pulp text-[9px] text-crimson" onClick={() => setPatrol(i, (n.patrol ?? []).filter((_, k) => k !== wi))}>✕</button>
+                                      <div key={wi} className="space-y-0.5 border-l-2 border-teal-400/20 pl-1">
+                                        <div className="flex items-center gap-1">
+                                          <span className="w-5 font-pulp text-[8px] text-paper/40">{wi + 1}</span>
+                                          <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="Waypoint X %" value={Math.round(wp.x)} onChange={(e) => setWp(i, wi, { x: Number(e.target.value) })} />
+                                          <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Waypoint Y %" value={Math.round(wp.y)} onChange={(e) => setWp(i, wi, { y: Number(e.target.value) })} />
+                                          <span className="font-type text-[8px] text-paper/50">pause</span>
+                                          <input type="number" min={0} max={60} step={0.5} className={`${inputCls} w-12`} title="Idle seconds here" value={wp.pause ?? 2} onChange={(e) => setWp(i, wi, { pause: Number(e.target.value) })} />
+                                          <label className="flex items-center gap-1 font-type text-[8px] text-paper/50">
+                                            face
+                                            <select className={inputCls} title="Face this way during the pause (default: direction of arrival)" value={wp.facing ?? ""} onChange={(e) => setWp(i, wi, { facing: (e.target.value || undefined) as "left" | "right" | undefined })}>
+                                              <option value="">—</option>
+                                              <option value="left">left</option>
+                                              <option value="right">right</option>
+                                            </select>
+                                          </label>
+                                          <button type="button" className="ml-auto shrink-0 px-1 font-pulp text-[9px] text-crimson" title="Remove this waypoint" onClick={() => setPatrol(i, (n.patrol ?? []).filter((_, k) => k !== wi))}>✕</button>
+                                        </div>
+                                        <div className="flex items-center gap-1 pl-5">
+                                          <span className="font-type text-[8px] text-paper/50" title="Named sheet animation played during the pause — 'sweep', 'hammer', 'drink'">motion</span>
+                                          <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation during the pause (blank = idle motion)" value={wp.anim ?? ""} onChange={(e) => setWp(i, wi, { anim: e.target.value || undefined })} />
+                                          <span className="font-type text-[8px] text-paper/50" title="Ambient line floated over their head during the pause — SCUMM background chatter">say</span>
+                                          <input className={`${inputCls} flex-1`} placeholder="ambient line while paused…" value={wp.say ?? ""} onChange={(e) => setWp(i, wi, { say: e.target.value || undefined })} />
+                                          <span className="font-type text-[8px] text-paper/50" title="Size ON ARRIVAL at this stop — the walk leg shrinks/grows smoothly toward it, so a route into the distance walks away and one down the plate walks toward the camera. Blank = the NPC's base scale.">size</span>
+                                          <input type="number" min={0.05} max={4} step={0.05} className={`${inputCls} w-14`} placeholder="—" title="Arrival size ×(blank = base scale)" value={wp.scale ?? ""} onChange={(e) => setWp(i, wi, { scale: e.target.value === "" ? undefined : Math.max(0.05, Number(e.target.value)) })} />
+                                        </div>
                                       </div>
                                     ))}
                                     <button
@@ -11885,8 +12456,8 @@ function StudioInner({
                   {zoneMode === "spawn" && scene.nodeType === "stage"
                     ? "Click or drag on the plate to place the PLAYER CHARACTER — they stand where you drop them, clamped to the walkable floor."
                     : zoneMode === "barrier" && scene.nodeType === "stage"
-                      ? "Drag on the plate to fence off a NO-GO area — a wall, a counter, a parked truck. The walker routes around it; click one to select, then drag a new box to reshape it."
-                      : "Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one."}
+                      ? "Drag on empty plate to fence off a NEW no-go area — a wall, a counter, a parked truck; the walker routes around it. Drag a barrier to MOVE it, and pull the square handles on the selected one to RESIZE."
+                      : "Drag on empty plate to draw a NEW hotspot. Drag an existing hotspot to MOVE it, and pull the square handles on the selected one to RESIZE. (Drawing a fresh box while one is selected also reshapes it.)"}
                 </p>
                 {zoneMode === "barrier" && scene.nodeType === "stage"
                   ? (() => {
@@ -11972,6 +12543,13 @@ function StudioInner({
                     updateScene(scene.id, { stage: { ...(scene.stage ?? {}), obstacles: next } });
                     if (selectedBarrier === null) setSelectedBarrier(next.length - 1);
                   }}
+                  onBarrierMove={(i, bounds) => {
+                    const obs = scene.stage?.obstacles ?? [];
+                    if (!obs[i]) return;
+                    updateScene(scene.id, {
+                      stage: { ...(scene.stage ?? {}), obstacles: obs.map((o, j) => (j === i ? bounds : o)) },
+                    });
+                  }}
                   onSelect={(id) => {
                     setSelectedHotspot(id);
                     if (id) setSelectedBarrier(null);
@@ -11998,6 +12576,13 @@ function StudioInner({
                       });
                       setSelectedHotspot(id);
                     }
+                  }}
+                  onMove={(id, bounds) => {
+                    mutate((d) => {
+                      const s = d.scenes.find((x) => x.id === scene.id)!;
+                      const h = s.hotspots?.find((x) => x.id === id);
+                      if (h) h.bounds = bounds;
+                    });
                   }}
                 />
                 {(scene.hotspots ?? []).map((h) => (
@@ -12055,6 +12640,28 @@ function StudioInner({
                         </select>
                       </Field>
                     </div>
+                    <Field label="Zone bounds — X · Y · W · H (%) — or drag/resize it on the plate above">
+                      <div className="grid grid-cols-4 gap-1">
+                        {(["x", "y", "w", "h"] as const).map((k) => (
+                          <input
+                            key={k}
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            className={inputCls}
+                            title={{ x: "Left edge %", y: "Top edge %", w: "Width %", h: "Height %" }[k]}
+                            value={h.bounds[k]}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                const hs = s.hotspots!.find((x) => x.id === h.id)!;
+                                hs.bounds = { ...hs.bounds, [k]: Math.max(0, Number(e.target.value) || 0) };
+                              })
+                            }
+                          />
+                        ))}
+                      </div>
+                    </Field>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Action type">
                         <select
@@ -12078,6 +12685,7 @@ function StudioInner({
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
                             { v: "startDialogue", label: "🗣 Start conversation (stage)" },
                             { v: "setPlayerPose", label: "🧍 Set player pose (stage)" },
+                            { v: "runScript", label: "🎬 Run scripted sequence (stage)" },
                           ].map((t) => (
                             <option key={t.v} value={t.v}>{t.label}</option>
                           ))}
@@ -12506,6 +13114,28 @@ function StudioInner({
                         </label>
                       </div>
                     )}
+                    {h.action.type === "runScript" && (
+                      <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
+                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Scripted sequence (stage cutscene)</div>
+                        <p className="font-type text-[9px] leading-snug text-paper/45">
+                          Steps play IN ORDER with input locked and letterbox bars down: walk the player, walk an NPC,
+                          float say lines, wait a beat, set a flag, or cut to another scene. 🚶 Walkable stages only —
+                          classic scenes ignore this action.
+                          {scene.nodeType !== "stage" ? " ⚠ This scene is NOT a walkable stage." : ""}
+                        </p>
+                        <ScriptEditor
+                          steps={h.action.script ?? []}
+                          onChange={(next) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.action.script = next.length ? next : undefined;
+                            })
+                          }
+                          npcIds={(scene.stage?.npcs ?? []).map((n) => n.id)}
+                          scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
+                        />
+                      </div>
+                    )}
                     {h.action.type === "startDialogue" && (
                       <div className="space-y-2 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
                         <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">💬 Topic-list conversation (opt-in)</div>
@@ -12810,6 +13440,28 @@ function StudioInner({
                       />
                       repeatable
                     </label>
+                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                      <input
+                        type="checkbox"
+                        checked={!!h.remote}
+                        onChange={(e) =>
+                          mutate((d) => {
+                            const s = d.scenes.find((x) => x.id === scene.id)!;
+                            s.hotspots!.find((x) => x.id === h.id)!.remote = e.target.checked || undefined;
+                          })
+                        }
+                      />
+                      🔭 out of reach — works from a distance (no walk-up)
+                    </label>
+                    {h.remote && (
+                      <p className="-mt-1 pl-6 font-type text-[9px] leading-snug text-paper/45">
+                        On a 🚶 walkable stage the character normally walks over before a zone fires. With this ON they
+                        interact from wherever they stand — the walker just turns to face it. Use it for things they can
+                        SEE but never REACH: a clock high on a tower, a sign across the water. 👁 Look reads naturally;
+                        any verb the zone answers works at range. The reticle stays on the object instead of dropping to
+                        the floor, and strolling underneath never triggers it.
+                      </p>
+                    )}
                     {h.action.itemGranted && (
                       <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
                         <input

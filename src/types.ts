@@ -67,7 +67,40 @@ export type HotspotActionType =
   | "useItem"
   | "patternPuzzle"
   | "startDialogue"
-  | "setPlayerPose";
+  | "setPlayerPose"
+  | "runScript";
+
+/**
+ * SCRIPTED SEQUENCE — one step of a stage cutscene (SCUMM-style room
+ * scripting). A script is an array of steps run IN ORDER on a 🚶 walkable
+ * stage: player input locks, letterbox bars drop in, the steps play, and
+ * control returns. Runs from a hotspot action (`type: "runScript"`) or on
+ * scene entry (StageSettings.enterScript). STAGE NODES ONLY — classic
+ * graphic-novel scenes (prose, beats, choices) are untouched by scripts,
+ * and a runScript hotspot on a classic scene is ignored with a warning.
+ *
+ * Steps that move actors reuse the room's own walkers: `walkTo` routes the
+ * player around obstacles exactly like a click; `npcWalkTo` drives an
+ * ambient NPC (straight line, like patrols). `say` floats a speech line
+ * over the player's head — or an NPC's when `npcId` is set — sized to the
+ * text and never touching the dialogue-beat system.
+ */
+export type StageScriptStep =
+  | { do: "walkTo"; x: number; y: number }
+  | { do: "face"; dir: "left" | "right" }
+  /** Switch the walker to a named pose animation ("" / omitted = back to idle). */
+  | { do: "pose"; pose?: string }
+  | { do: "wait"; seconds: number }
+  /** Speech line floated over the player's head, or over `npcId`'s. The step
+   *  holds the script for the line's reading time. */
+  | { do: "say"; text: string; npcId?: string }
+  | { do: "npcWalkTo"; npcId: string; x: number; y: number }
+  /** Fire a SET MOTION on an ambient NPC: named animation / say line / facing
+   *  (see StageNpcWaypoint). Does not hold the script — pair with `wait`. */
+  | { do: "npcMotion"; npcId: string; anim?: string; say?: string; facing?: "left" | "right" }
+  | { do: "setFlag"; flag: string }
+  /** Ends the script and navigates. Steps after it never run. */
+  | { do: "goToScene"; targetSceneId: string };
 
 export interface HotspotAction {
   type: HotspotActionType;
@@ -80,6 +113,10 @@ export interface HotspotAction {
   itemConsumed?: string;
   /** for patternPuzzle hotspots: the puzzle configuration */
   patternPuzzle?: import("./game/PatternPuzzleTypes").PatternPuzzleConfig;
+  /** runScript hotspots (STAGE nodes): the scripted sequence to play. The
+   *  action's flagSet still applies when the script starts, and gating/
+   *  isRepeatable behave exactly like any other hotspot. */
+  script?: StageScriptStep[];
   /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
    * a conversation. This action needs no payload of its own — the scene's
    * beats ARE the payload. Any flagSet / meterChange here still applies. */
@@ -152,6 +189,16 @@ export interface Hotspot {
   /** How the object image fits its zone: "contain" keeps the whole object
    *  visible (default); "cover" fills the zone, cropping the overflow. */
   imageFit?: "contain" | "cover";
+  /** OUT OF REACH — the object can't be walked to (a clock high on a tower,
+   *  a window across the street, the moon). On a 🚶 stage node, clicking it
+   *  fires its action from wherever the character stands: no walk-up, the
+   *  walker just turns to face it. The marker reticle sits on the object
+   *  itself instead of being clamped down to the walkable floor, and walking
+   *  underneath it never triggers it by accident. Pairs naturally with a
+   *  👁 look cursor ("You squint up at the clock tower…"), but any verb the
+   *  zone answers works at range. Ignored on classic (non-stage) scenes,
+   *  where hotspots already fire on click. */
+  remote?: boolean;
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release
@@ -1083,6 +1130,16 @@ export interface StageSettings {
   /** A caption bar line shown once when the scene begins — the stage
    *  equivalent of an opening narration beat (auto-fades, never blocks). */
   enterCaption?: string;
+  /** SCRIPTED SEQUENCE played when the scene begins — the SCUMM room-entry
+   *  script: walk the player in, walk an NPC up, trade a couple of floated
+   *  lines, set a flag, hand control back. Input locks and letterbox bars
+   *  show while it runs. See StageScriptStep. */
+  enterScript?: StageScriptStep[];
+  /** Run-once latch for enterScript: when set, the script is SKIPPED if this
+   *  flag is already active, and the flag is set the moment the script runs —
+   *  so the entrance plays once per story (save-proof), not on every visit.
+   *  Leave empty to replay on every entry. */
+  enterScriptFlag?: string;
   /** Furniture the character walks AROUND instead of through — a bar, a
    *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
    *  routes around them (A* on a coarse grid, then string-pulled to the
@@ -1136,12 +1193,48 @@ export interface StageNpc {
   scale?: number;
   /** Initial facing (default "right"). */
   facing?: "left" | "right";
-  /** Patrol route: walk from the spawn to each waypoint in turn, PAUSE idle
-   *  `pause` seconds at each, then loop back to the start. Omit to stand and
-   *  idle forever (the classic bartender). */
-  patrol?: { x: number; y: number; pause?: number }[];
+  /** SET MOTION at rest — a named sheet animation played while standing
+   *  around instead of plain "idle": the barman's "polish", the mechanic's
+   *  "hammer". Falls back to "idle"/"walk" when the sheet doesn't define it. */
+  idleAnim?: string;
+  /** Patrol route: walk from the spawn to each waypoint in turn, PAUSE
+   *  `pause` seconds at each (playing that waypoint's SET MOTION — see
+   *  StageNpcWaypoint), then repeat per `patrolMode`. Omit to stand and
+   *  idle forever (the classic bartender). TIP: a single waypoint at the
+   *  spawn position makes a STANDING actor that cycles a motion + ambient
+   *  line on a timer — SCUMM set-dressing with zero walking. */
+  patrol?: StageNpcWaypoint[];
   /** Walk speed in world-% / second (default: the room's walker speed). */
   speed?: number;
+  /** How the route repeats (default "loop" — jump back to waypoint 1):
+   *  "pingpong" walks the route backwards to the start and out again;
+   *  "once" walks it a single time and HOLDS the last waypoint's motion
+   *  forever (an actor that crosses the room and settles at the bar). */
+  patrolMode?: "loop" | "pingpong" | "once";
+}
+
+/** One stop on an ambient NPC's route — position plus the SET MOTION played
+ *  while paused there. This is the SCUMM "costume" beat: walk to the crate,
+ *  face left, play "hammer" for 4 seconds, mutter a line, move on. */
+export interface StageNpcWaypoint {
+  x: number;
+  y: number;
+  /** seconds idling here before moving on (default 2) */
+  pause?: number;
+  /** SET MOTION — named sheet animation played while paused here ("sweep",
+   *  "hammer", "drink"). Falls back to the NPC's idleAnim, then idle/walk. */
+  anim?: string;
+  /** Face this way during the pause (default: the direction of arrival). */
+  facing?: "left" | "right";
+  /** Ambient line said over their head while paused here — SCUMM background
+   *  chatter. Shown as a floating speech line, not a dialogue beat. */
+  say?: string;
+  /** WALK-AWAY / WALK-TOWARD SIZE — the NPC's size multiplier ON ARRIVAL at
+   *  this stop. The walk leg interpolates smoothly from the previous stop's
+   *  size to this one, so a route into the distance shrinks the actor and a
+   *  route toward the camera grows them (on top of the room's normal
+   *  floor-band depth scaling). Blank = the NPC's base `scale`. */
+  scale?: number;
 }
 
 /** One walk-off-screen exit of a stage room (see StageSettings.exitEdges). */

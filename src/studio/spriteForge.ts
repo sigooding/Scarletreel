@@ -328,6 +328,12 @@ export interface ForgeOptions {
   tolerance?: number;
   /** feathered band beyond the tolerance (default 40) */
   softness?: number;
+  /** OUTPUT FRAME HEIGHT CAP (px). 0 / undefined = the classic per-kind
+   *  presets (256 loop / 480 single / 384 otherwise, which also UPSCALE
+   *  small art — legacy behaviour, unchanged). Any other value: frames come
+   *  out at `min(cap, tallest source frame)` — big art keeps its detail up
+   *  to the cap, small art is never upscaled into blur. */
+  targetHeight?: number;
 }
 
 /** Named strengths for the auto-key, surfaced anywhere auto-build runs. */
@@ -335,6 +341,17 @@ export const FORGE_STRENGTHS: { id: string; label: string; tolerance: number; so
   { id: "gentle", label: "gentle (keeps detail)", tolerance: 35, softness: 25 },
   { id: "normal", label: "normal", tolerance: 60, softness: 40 },
   { id: "strong", label: "strong (dirty backdrop)", tolerance: 90, softness: 50 },
+];
+
+/** Output sizes for the forged sheet, surfaced anywhere auto-build runs.
+ *  `height` is the FRAME HEIGHT CAP passed to forgeSpriteSheet (0 = the
+ *  classic per-kind presets). "source" is a huge cap that in practice means
+ *  "keep every pixel the source has" — for authors who bring big art. */
+export const FORGE_SIZES: { id: string; label: string; height: number }[] = [
+  { id: "standard", label: "standard (light files · 256–480px)", height: 0 },
+  { id: "hd", label: "HD (up to 512px)", height: 512 },
+  { id: "big", label: "big (up to 1024px)", height: 1024 },
+  { id: "source", label: "source size (no downscale)", height: 8192 },
 ];
 
 /** The whole job in one call: key the backdrop, find the frames, crop and
@@ -376,7 +393,14 @@ export async function forgeSpriteSheet(imageUrl: string, kind: ForgeKind, option
   if (!crops.length) throw new Error("frames were empty after cutting out the backdrop");
 
   // Uniform grid: everything scaled to one height, bottom-centre aligned.
-  const targetH = kind === "loop" ? 256 : kind === "single" ? 480 : 384;
+  // The height comes from the author's output-size choice (a CAP — big art
+  // keeps its pixels up to it, small art is never upscaled into blur), or
+  // falls back to the classic per-kind presets when no cap is given.
+  const cap = options?.targetHeight ?? 0;
+  const targetH =
+    cap > 0
+      ? Math.max(64, Math.min(cap, Math.max(...crops.map((c) => c.h))))
+      : kind === "loop" ? 256 : kind === "single" ? 480 : 384;
   const widths = crops.map((c) => Math.max(1, Math.round((c.w * targetH) / c.h)));
   const fw = Math.max(...widths);
   const sheet = document.createElement("canvas");

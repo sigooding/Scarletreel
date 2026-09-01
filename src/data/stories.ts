@@ -26,6 +26,7 @@ import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
 import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
 import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
 import { SCOOBY_RAVENSWOOD } from "./scoobyRavenswood";
+import { INSPECTOR_GADGET } from "./inspectorGadget";
 
 /**
  * The playable catalogue.
@@ -71,6 +72,7 @@ import { SCOOBY_RAVENSWOOD } from "./scoobyRavenswood";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  INSPECTOR_GADGET,
   SCOOBY_RAVENSWOOD,
   FULL_THROTTLE_CORVILLE,
   FULL_THROTTLE,

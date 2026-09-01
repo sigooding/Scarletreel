@@ -9,7 +9,7 @@ import {
   type AiImageSettings,
   type AiProviderSettings,
 } from "../data/aiImages";
-import { FORGE_STRENGTHS, forgeSpriteSheet, type ForgedSheet, type ForgeKind } from "./spriteForge";
+import { FORGE_SIZES, FORGE_STRENGTHS, forgeSpriteSheet, type ForgedSheet, type ForgeKind } from "./spriteForge";
 
 const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
@@ -99,6 +99,7 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
   const [forging, setForging] = useState(false);
   const [copiedSheet, setCopiedSheet] = useState(false);
   const [keyStrength, setKeyStrength] = useState("normal");
+  const [outSize, setOutSize] = useState("standard");
   // Style transfer: a reference image + how closely to match it (providers
   // that support image-to-image only).
   const [refImage, setRefImage] = useState<string | null>(null);
@@ -124,7 +125,11 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
     setForgeError(null);
     try {
       const strength = FORGE_STRENGTHS.find((f) => f.id === keyStrength) ?? FORGE_STRENGTHS[1];
-      const sheet = await forgeSpriteSheet(imageDataUrl, kind, strength);
+      const size = FORGE_SIZES.find((s) => s.id === outSize) ?? FORGE_SIZES[0];
+      const sheet = await forgeSpriteSheet(imageDataUrl, kind, {
+        ...strength,
+        ...(size.height ? { targetHeight: size.height } : {}),
+      });
       const up = await uploadDataUrlAsset(storyId, `sprite-sheet-${kind}-${Date.now()}.png`, "image", sheet.dataUrl, "sprites");
       const image = up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl;
       const json = JSON.stringify(
@@ -381,6 +386,20 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
                 ))}
               </select>
               — use gentle if it eats into the art, strong if backdrop specks survive.
+            </label>
+            <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+              output size:
+              <select
+                className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+                title="Frame height of the built sheet. A CAP, not a stretch: big art keeps its pixels up to it, small art is never upscaled into blur."
+                value={outSize}
+                onChange={(e) => setOutSize(e.target.value)}
+              >
+                {FORGE_SIZES.map((s) => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+              — <b>big</b> / <b>source</b> keep large art's detail (bigger files).
             </label>
           </>
         ) : (

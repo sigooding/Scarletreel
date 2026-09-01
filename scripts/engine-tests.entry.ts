@@ -419,6 +419,80 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     ]);
     check("stage: setPlayerPose validates clean (no target scene, no reward warning)", !has(pose, /needs a target scene|replay rewards/), pose.filter((i) => /pose|target scene|replay/i.test(i.message)));
 
+    /* ---- scripted sequences (stage cutscenes) -------------------------- */
+    {
+      const script = (steps: import("../src/types").StageScriptStep[]): SceneNode => ({
+        ...stageBase,
+        stage: { ...stageBase.stage!, npcs: [{ id: "npc_dog", image: "emoji:🐕", x: 30, y: 88 }] },
+        hotspots: [
+          { id: "cue", label: "Cue", bounds: { x: 20, y: 70, w: 10, h: 15 }, cursor: "use", action: { type: "runScript", script: steps } },
+          ...stageBase.hotspots!,
+        ],
+      });
+      const good = craftIssues([
+        script([
+          { do: "walkTo", x: 40, y: 85 },
+          { do: "say", text: "Well, well.", npcId: "npc_dog" },
+          { do: "setFlag", flag: "cue_done" },
+          { do: "goToScene", targetSceneId: "e" },
+        ]),
+      ]);
+      check("script: a well-formed scripted sequence raises no script issues", !good.some((i) => /script/i.test(i.message)), good.filter((i) => /script/i.test(i.message)));
+
+      // The script's flag + navigation are engine-visible: the flag is
+      // collected and the goToScene step is a real edge (reachability).
+      const goodStory = craftStory([
+        script([
+          { do: "setFlag", flag: "cue_done" },
+          { do: "goToScene", targetSceneId: "e" },
+        ]),
+      ]);
+      check("script: a setFlag step is collected by collectFlags", collectFlags(goodStory).includes("cue_done"), collectFlags(goodStory));
+      check("script: a goToScene step is a navigation edge", storyEdges(goodStory).some((e) => e.source === "st" && e.target === "e" && /script/.test(e.label ?? "")), storyEdges(goodStory).map((e) => e.label));
+
+      // Aiming a step at an NPC the scene doesn't have = skipped at runtime.
+      const ghostNpc = craftIssues([script([{ do: "npcWalkTo", npcId: "npc_ghost", x: 50, y: 85 }])]);
+      check("script: a step aimed at a missing NPC warns", has(ghostNpc, /targets NPC "npc_ghost"/));
+
+      // A goToScene step to nowhere is an error; steps after it never play.
+      const badNav = craftIssues([script([{ do: "goToScene", targetSceneId: "nowhere" }, { do: "wait", seconds: 1 }])]);
+      check("script: goToScene to a missing scene is an error", has(badNav, /goes to missing scene "nowhere"/));
+      check("script: steps after goToScene warn (they never play)", has(badNav, /steps after the goToScene step/));
+
+      // An empty script plays nothing — tell the author.
+      const empty = craftIssues([script([])]);
+      check("script: an empty script warns", has(empty, /script is empty/));
+
+      // runScript on a CLASSIC scene is ignored by design — warned, and the
+      // graphic-novel flow is never hijacked.
+      const classic = craftIssues([
+        {
+          id: "st",
+          title: "Parlour",
+          background: "",
+          prose: "A classic scene.",
+          hotspots: [
+            { id: "cue", label: "Cue", bounds: { x: 20, y: 70, w: 10, h: 15 }, cursor: "use", action: { type: "runScript", script: [{ do: "wait", seconds: 1 }] } },
+          ],
+          choices: [{ id: "c1", text: "Leave", targetSceneId: "e" }],
+        },
+      ]);
+      check("script: runScript on a classic (non-stage) scene warns", has(classic, /not a 🚶 walkable stage/));
+
+      // Room-entry scripts: the run-once latch flag is a real flag, and a
+      // latch with no script is a mistake.
+      const entry = craftStory([
+        {
+          ...stageBase,
+          stage: { ...stageBase.stage!, enterScript: [{ do: "setFlag", flag: "walked_in" }], enterScriptFlag: "intro_played" },
+        },
+      ]);
+      const entryFlags = collectFlags(entry);
+      check("script: enterScript setFlag + run-once latch are collected", entryFlags.includes("walked_in") && entryFlags.includes("intro_played"), entryFlags);
+      const latchOnly = craftIssues([{ ...stageBase, stage: { ...stageBase.stage!, enterScriptFlag: "intro_played" } }]);
+      check("script: a run-once flag without an entry script warns", has(latchOnly, /run-once flag but no entry script/));
+    }
+
     // A talk marker with no beats to play does nothing.
     const muteTalk = craftIssues([
       {

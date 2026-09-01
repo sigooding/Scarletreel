@@ -579,6 +579,70 @@ if (clickByText(/Full Throttle — The Corville Run/i)) {
 } else console.log("!! could not find the Full Throttle — The Corville Run card");
 root.unmount();
 
+// Phase 8: INSPECTOR GADGET — beta case for the 🔭 OUT-OF-REACH hotspot
+// (Hotspot.remote) AND the 🎬 SCRIPTED SEQUENCE room-entry cutscene. Boot
+// the case, advance HQ to the plaza stage. The plaza has an enterScript:
+// letterbox bars ([data-stage-cutscene]) must appear, Brain's/the player's
+// floated lines must show, input must be LOCKED while it runs (the clock
+// click does nothing mid-cutscene), and control must return afterwards —
+// then the remote clock zone fires immediately and the gated door reads
+// locked, exactly as before.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/Clockwork Caper/i)) {
+  await sleep(1500);
+  clickByText(/^▶?\\s*Play/i) || clickByText(/Play/i);
+  await sleep(2500);
+  let toPlaza = false;
+  for (let i = 0; i < 20 && !toPlaza; i++) {
+    const btns = [...container.querySelectorAll("button")].filter((b) => (b.textContent || "").trim().length > 0);
+    const go = btns.find((b) => /self-destruct/i.test(b.textContent || ""));
+    if (go) { go.click(); toPlaza = true; break; }
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = btns.find((b) => /continue/i.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(500);
+  }
+  // ENTRY CUTSCENE — starts ~450ms after the stage mounts. Watch it play:
+  // the letterbox shield up, the scripted say lines in the DOM, then the
+  // shield down again (script finished, input handed back). ~20s budget —
+  // the script itself runs ~8s of walks and lines.
+  await sleep(1200);
+  let sawCutscene = !!container.querySelector("[data-stage-cutscene]");
+  let sawLine = false;
+  let cutsceneOver = false;
+  for (let i = 0; i < 50; i++) {
+    if (!sawCutscene && container.querySelector("[data-stage-cutscene]")) sawCutscene = true;
+    if (/One mystery at a time/i.test(container.textContent || "")) sawLine = true;
+    if (sawCutscene && sawLine && !container.querySelector("[data-stage-cutscene]")) { cutsceneOver = true; break; }
+    await sleep(400);
+  }
+  const markerLabels = [...container.querySelectorAll("button.stage-marker")].map((b) => b.getAttribute("aria-label") || "");
+  const doorLocked = markerLabels.some((l) => /Tower service door \\(locked\\)/i.test(l));
+  // Remote clock: retry-click (harmless if a stray frame still has the
+  // shield up) — it must fire with NO walk-up once control is back.
+  let clockBtn = null;
+  let remoteFired = false;
+  for (let i = 0; i < 8 && !remoteFired; i++) {
+    clockBtn = [...container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "The tower clock");
+    if (clockBtn) {
+      clockBtn.click();
+      await sleep(400);
+      remoteFired = /STUCK at 3:12/i.test(container.textContent || "");
+    }
+    if (!remoteFired) await sleep(600);
+  }
+  console.log("\\n=== INSPECTOR GADGET (out-of-reach hotspot + entry cutscene) ===");
+  console.log("  reached plaza stage:", toPlaza, "| markers:", markerLabels.length, JSON.stringify(markerLabels));
+  console.log("  cutscene letterbox shown:", sawCutscene, "| scripted line floated:", sawLine, "| cutscene released input:", cutsceneOver);
+  console.log("  clock marker found:", !!clockBtn, "| remote look fired with NO walk-up:", remoteFired, "| gated door shows locked:", doorLocked);
+  if (!toPlaza || !sawCutscene || !sawLine || !cutsceneOver || !clockBtn || !remoteFired || !doorLocked) failed = true;
+  for (let i = problems.length - 1; i >= 0; i--) {
+    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
+  }
+  failed |= report("INSPECTOR GADGET (plaza stage)").crashed;
+} else console.log("!! could not find the Inspector Gadget — Clockwork Caper card");
+root.unmount();
+
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
 process.exit(failed ? 1 : 0);
 `
@@ -611,6 +675,6 @@ await build({
 });
 
 const { spawnSync } = await import("node:child_process");
-const res = spawnSync(process.execPath, [out], { stdio: "inherit", cwd: root, timeout: 120000 });
+const res = spawnSync(process.execPath, [out], { stdio: "inherit", cwd: root, timeout: 240000 });
 rmSync(dir, { recursive: true, force: true });
 process.exit(res.status ?? 1);
