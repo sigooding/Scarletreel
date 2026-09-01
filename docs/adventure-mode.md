@@ -111,15 +111,28 @@ Rules the engine enforces (`resolveVerbAction` in `src/logic.ts`):
 | --- | --- |
 | verb = the hotspot's own cursor, no `verbs` entry | the hotspot's `action` |
 | verb has a `verbs` entry | that action |
-| USE + an item in `acceptsItems` | `verbs.use` ?? `action`, with `itemResponses[item]` as the line |
+| USE + an item in `acceptsItems` (or with an `itemResponses` line — a written reply implies acceptance) | `verbs.use` ?? the default `action` **when it can answer** (💬 say or 🗝 use-item), with `itemResponses[item]` as the line and `itemAudio[item]` as the clip. A take/move default (`giveItem`, `goToScene`, …) never fires on an item: write an explicit ⚙ use action, the Check tab warns when you don't |
 | USE + any other item | refused |
 | anything else | refused |
+
+**Spending is author-explicit.** Only a 🗝 use-item action with **Consumes
+item** picked spends anything — and only from the satchel when actually
+held. A 💬 say-a-line answer, or a use-item action with *consumes nothing*,
+never eats the armed item. (The old behaviour quietly spent whatever item
+was armed against any use-item hotspot, even ones that only had a reply —
+players read it as "the showText ate my item".) Every spoken answer — the
+default reply, each verb action, and each per-item reply line — can carry a
+recorded clip just like dialogue beats: upload/pick an mp3 or press 🎙 and
+any character's ElevenLabs voice reads it.
 
 Refusals read from `Hotspot.wrongVerbText` → `Story.verbResponses[verb]` → the
 house lines, varied so a repeated failure doesn't loop. Verb actions are
 **flavour and repeatable** — looking at a thing never uses it up; only an
 action that takes something (`giveItem`) or moves the player (`goToScene`)
-consumes its marker. In a coin room only the marker you actually clicked
+consumes its marker. And a 💬 say-line marker **stays on the scene even
+after its line plays** (its flag/meter extras fire exactly once, so they
+can't be re-farmed — reading a sign twice can't move a meter twice). In a
+coin room only the marker you actually clicked
 fires, so brushing past the bar on the way to the door doesn't talk to the bar.
 
 Authoring (Studio): 🎛 **Verb coin** + verb chips on the Walkable Stage

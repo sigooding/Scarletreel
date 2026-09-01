@@ -93,6 +93,7 @@ import {
   stageRoutePoly,
   validateStory,
   resolveVerbAction,
+  itemsConsumedBy,
   verbsForScene,
   wrongVerbLine,
   VERB_IDS,
@@ -527,6 +528,39 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     const mismatch: any = { ...stageBase, nodeType: undefined };
     const mismatchIssues = craftIssues([mismatch]);
     check("stage: stage settings on a non-stage node warn", has(mismatchIssues, /carries Stage settings but is not a Stage node/));
+    // Same for the NO-HUD flag — a classic scene can't hide its chrome.
+    const hudMismatch = craftIssues([{ ...stageBase, nodeType: undefined, hideHud: true } as any]);
+    check("stage: NO-HUD on a non-stage node warns", has(hudMismatch, /NO-HUD switched on but is not a Stage node/));
+
+    /* ---- ambient NPC hygiene ------------------------------------------- */
+    {
+      const npcRow = { id: "npc_a", image: "emoji:🚶", x: 30, y: 88 };
+      // Duplicate ids silently broke scripts (the control registry keys by
+      // id — last-mounted actor wins), so this is a hard ERROR.
+      const dup = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, npcs: [{ ...npcRow }, { ...npcRow, x: 40 }] } },
+      ]);
+      check("npc: duplicate ids are an error", dup.some((i) => i.severity === "error" && /sharing the id "npc_a"/.test(i.message)), dup);
+
+      // Off-plate coordinates are world-% — x=140 on a 100%-wide plate is
+      // off the edge forever and must warn; the same coordinates are legal
+      // on a 200%-wide world and stay clean.
+      const offPlate = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, npcs: [{ ...npcRow, x: 140, patrol: [{ x: 150, y: 88 }] }] } },
+      ]);
+      check("npc: off-plate spawn warns (x beyond room width)", has(offPlate, /spawns off the plate/), offPlate);
+      check("npc: off-plate patrol stop warns", has(offPlate, /patrol stop 1 sits at \(150/), offPlate);
+      const wide = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, worldWidth: 200, npcs: [{ ...npcRow, x: 140, patrol: [{ x: 150, y: 88 }] }] } },
+      ]);
+      check("npc: the same spawn+stop validate clean on a 200% world", !wide.some((i) => /off the plate|patrol stop/.test(i.message)), wide.filter((i) => /plate|stop/.test(i.message)));
+
+      // Unique ids + on-plate coords stay clean.
+      const fine = craftIssues([
+        { ...stageBase, stage: { ...stageBase.stage!, npcs: [{ ...npcRow }, { ...npcRow, id: "npc_b", x: 45 }] } },
+      ]);
+      check("npc: unique on-plate NPCs raise no npc hygiene issues", !fine.some((i) => /NPC/.test(i.message)), fine.filter((i) => /NPC/.test(i.message)));
+    }
 
     // Spawn outside the floor band gets flagged (the engine snaps it).
     const offFloor = craftIssues([{ ...stageBase, stage: { ...stageBase.stage!, spawn: { x: 50, y: 20 } } }]);
@@ -3188,6 +3222,81 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     resolveVerbAction(juke, "use").action?.type === "useItem");
   check("coin: an object that accepts nothing refuses every item",
     resolveVerbAction(bench, "use", "wrench").ok === false);
+
+  /* ---- the item-use contract: replies, implied accept, spending --------- */
+
+  // A 💬 SHOW-TEXT object that accepts an item ANSWERS with the item's reply
+  // line (what the Studio's "🎒 Accepts these items" panel promises: tick the
+  // item, write the line, the line plays) — previously the reply was only
+  // reachable when the default action was useItem; a plain say-line object
+  // just refused, and the authored joke was dead on arrival.
+  const strayDog: Hotspot = {
+    id: "stray",
+    label: "the stray dog",
+    bounds: { x: 12, y: 60, w: 12, h: 14 },
+    cursor: "look",
+    acceptsItems: ["snack"],
+    itemResponses: { snack: "Wolfed. Somebody is your friend now." },
+    action: { type: "showText", text: "Hungry eyes follow your pockets." },
+  };
+  const dogUse = resolveVerbAction(strayDog, "use", "snack");
+  check("use: an accepted item answers from a default showText action",
+    dogUse.ok === true && dogUse.action?.type === "showText");
+  check("use: the item's own reply line overrides the default text",
+    dogUse.text === "Wolfed. Somebody is your friend now.");
+  check("use: writing a reply line alone accepts the item (no tick needed)",
+    resolveVerbAction({ ...strayDog, acceptsItems: undefined }, "use", "snack").ok === true);
+
+  // …but accepting an item can never make a takes/moves default fire: a door
+  // must author an explicit ⚙ use verb action (say-a-line or consume-it).
+  const snackDoor: Hotspot = {
+    id: "snackdoor",
+    label: "the office door",
+    bounds: { x: 80, y: 30, w: 10, h: 40 },
+    cursor: "go",
+    acceptsItems: ["snack"],
+    itemResponses: { snack: "It is a snack. This is a door." },
+    action: { type: "goToScene", targetSceneId: "e" },
+  };
+  check("use: a goToScene default still refuses an armed item (needs an authored use action)",
+    resolveVerbAction(snackDoor, "use", "snack").ok === false);
+
+  // SPENDING IS AUTHOR-EXPLICIT. Only 🗝 useItem with itemConsumed spends
+  // anything; a say-a-line — or an unnamed use-item — NEVER eats the armed
+  // item from the satchel (the old arm-to-consume default read exactly like
+  // "the hotspot ate my item for showing text").
+  check("spend: useItem with itemConsumed spends exactly that item",
+    itemsConsumedBy({ type: "useItem", itemConsumed: "snack" }).join(",") === "snack");
+  check("spend: useItem WITHOUT itemConsumed spends nothing (say-a-line use)",
+    itemsConsumedBy({ type: "useItem" }).length === 0);
+  check("spend: a showText action NEVER consumes an armed item",
+    itemsConsumedBy({ type: "showText", text: "Nice dog." }).length === 0);
+  check("spend: giveItem / goToScene / scripts consume nothing",
+    itemsConsumedBy({ type: "giveItem", itemGranted: "x" }).length === 0 &&
+      itemsConsumedBy({ type: "goToScene", targetSceneId: "e" }).length === 0);
+
+  // …and the Check tab flags an accept that can never be answered.
+  const snackItem = { id: "snack", name: "Scooby Snack", icon: "🍪" };
+  const shedStory = (hotspots: Hotspot[]): Story => ({
+    id: "shedtest",
+    title: "Shedtest",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "shed",
+    scenes: [
+      { id: "shed", title: "The Shed", background: "", prose: "", hotspots, choices: [] },
+      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+    ],
+    items: [snackItem],
+    characters: [],
+  });
+  check("use: accepts-but-unanswerable warns in the validator",
+    validateStory(shedStory([snackDoor])).some((i) => /can never answer/.test(i.message)),
+    validateStory(shedStory([snackDoor])).filter((i) => i.severity !== "info").slice(0, 4));
+  check("use: accepts-unknown-item errors in the validator",
+    validateStory(shedStory([{ ...strayDog, acceptsItems: ["ghost"] }])).some((i) => i.severity === "error" && /accepts unknown item "ghost"/.test(i.message)));
+  check("use: a say-line accept resolves clean (no dead-accept warning)",
+    !validateStory(shedStory([strayDog])).some((i) => /can never answer|accepts unknown/.test(i.message)));
 
   // Refusal lines: authored > story > house style, and they vary.
   const storyLines = { verbResponses: { talk: ["a", "b", "c"] } } as unknown as Story;

@@ -300,6 +300,7 @@ function StageFloorEditor({
   onObstacleDraw,
   onObstacleSelect,
   onObstacleDelete,
+  onObstacleMove,
   floorPoints,
   onFloorPoints,
   onResizeProp,
@@ -348,12 +349,17 @@ function StageFloorEditor({
   /** 🚧 No-go obstacles (walk-around furniture), drawn as hatched crimson
    *  rectangles on the plate. When "Draw obstacle" is armed, dragging a box
    *  commits via onObstacleDraw; clicking one selects it (onObstacleSelect),
-   *  and the selected one shows a ✕ (onObstacleDelete). All world-%. */
+   *  and the selected one shows a ✕ (onObstacleDelete). DRAG an obstacle's
+   *  body to move it and pull the ↘ corner of the selected one to resize it
+   *  (both commit through onObstacleMove). All world-%. */
   obstacles?: { x: number; y: number; w: number; h: number }[];
   selectedObstacle?: number | null;
   onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
   onObstacleSelect?: (index: number | null) => void;
   onObstacleDelete?: (index: number) => void;
+  /** Commit a MOVE/RESIZE of an existing obstacle (drag body / pull the ↘
+   *  corner), so coordinates are placed by eye instead of typed. */
+  onObstacleMove?: (index: number, bounds: { x: number; y: number; w: number; h: number }) => void;
   /** 🧭 WALK PATH — the walkable polygon (world-%) when the scene is in path
    *  mode. With ≥3 points the plate shows the polygon with draggable corner
    *  points + midpoint ⊕ handles to add more, so you can carve a winding
@@ -383,6 +389,8 @@ function StageFloorEditor({
     | { kind: { entryId: string }; offX: number }
     | { kind: { pt: number }; offX: number; offY: number }
     | { kind: { propResize: string }; offX: number }
+    | { kind: { obMove: number }; offX: number; offY: number }
+    | { kind: { obSize: number }; offX: number; offY: number }
     | null
   >(null);
   /** 🧭 Path mode: the walkable zone is an editable polygon (floorPoints). */
@@ -478,6 +486,21 @@ function StageFloorEditor({
           const hs = hotspots.find((h) => h.id === kind.slice(9));
           if (!hs) return;
           drag.current = { kind: { propResize: hs.id }, offX: 0 };
+        } else if (kind.startsWith("obsize:")) {
+          // ↘ corner of the selected obstacle: resize w/h from its anchor.
+          const oi = Number(kind.slice(7));
+          if (!(obstacles ?? [])[oi]) return;
+          drag.current = { kind: { obSize: oi }, offX: 0, offY: 0 };
+          onObstacleSelect?.(oi);
+        } else if (kind.startsWith("ob:")) {
+          // Body drag = move the obstacle (grab offset keeps it from
+          // jumping under the cursor); pressing it also selects it.
+          const oi = Number(kind.slice(3));
+          const o = (obstacles ?? [])[oi];
+          if (!o) return;
+          const p = pct(e);
+          drag.current = { kind: { obMove: oi }, offX: o.x - p.x / scale, offY: o.y - p.y };
+          onObstacleSelect?.(oi);
         } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
@@ -534,6 +557,21 @@ function StageFloorEditor({
           const maxW = 2 * Math.min(m.x, worldW - m.x);
           const newW = clamp(Math.abs(nx - m.x) * 2, 1.5, Math.max(1.5, maxW));
           onResizeProp?.(hs.id, { x: round1(m.x - newW / 2), y: hs.bounds.y, w: round1(newW), h: hs.bounds.h });
+        } else if (typeof d.kind === "object" && "obMove" in d.kind) {
+          // Move the obstacle body by its grab offset, clamped on the plate.
+          const dd = d as { kind: { obMove: number }; offX: number; offY: number };
+          const o = (obstacles ?? [])[dd.kind.obMove];
+          if (!o) return;
+          const nx = clamp(round1(p.x / scale + dd.offX), 0, Math.max(0, worldW - o.w));
+          const ny = clamp(round1(p.y + dd.offY), 0, Math.max(0, 100 - o.h));
+          onObstacleMove?.(dd.kind.obMove, { ...o, x: nx, y: ny });
+        } else if (typeof d.kind === "object" && "obSize" in d.kind) {
+          // ↘ corner drag: w/h measured from the obstacle's own anchor.
+          const o = (obstacles ?? [])[d.kind.obSize];
+          if (!o) return;
+          const nw = clamp(round1(p.x / scale - o.x), 1, Math.max(1, worldW - o.x));
+          const nh = clamp(round1(p.y - o.y), 1, Math.max(1, 100 - o.y));
+          onObstacleMove?.(d.kind.obSize, { ...o, w: nw, h: nh });
         } else if (typeof d.kind === "object" && "hsId" in d.kind) {
           const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
           if (!hs) return;
@@ -678,13 +716,18 @@ function StageFloorEditor({
         </>
       )}
       {/* 🚧 NO-GO OBSTACLES — hatched crimson, walk-around furniture. Click to
-          select (ring + ✕ to delete); arm the Draw tool to fence a new one. */}
+          select (ring + ✕ to delete), DRAG the body to move it, pull the ↘
+          corner of the selected one to resize; arm the Draw tool to fence a
+          new one. */}
       {(obstacles ?? []).map((o, oi) => {
         const sel = selectedObstacle === oi;
         return (
           <div
             key={oi}
-            className={`absolute z-[14] border-2 ${sel ? "border-crimson bg-crimson/20" : "border-crimson/60 bg-crimson/10"} cursor-pointer`}
+            data-drag={`ob:${oi}`}
+            className={`absolute z-[14] touch-none border-2 ${
+              onObstacleMove ? "cursor-grab" : "cursor-pointer"
+            } ${sel ? "border-crimson bg-crimson/20" : "border-crimson/60 bg-crimson/10"}`}
             style={{
               left: `${o.x * scale}%`,
               top: `${o.y}%`,
@@ -693,7 +736,11 @@ function StageFloorEditor({
               backgroundImage:
                 "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
             }}
-            title={sel ? "Selected obstacle" : "Click to select, ✕ to delete"}
+            title={
+              sel
+                ? `Drag to move ↕↔ (${Math.round(o.x)}, ${Math.round(o.y)}) · pull ↘ to resize (${Math.round(o.w)}×${Math.round(o.h)})`
+                : `${Math.round(o.x)}, ${Math.round(o.y)} · ${Math.round(o.w)}×${Math.round(o.h)} — click to select · drag to move`
+            }
             onClick={(e) => {
               e.stopPropagation();
               onObstacleSelect?.(sel ? null : oi);
@@ -703,16 +750,29 @@ function StageFloorEditor({
               🚧 {Math.round(o.w)}×{Math.round(o.h)}
             </span>
             {sel ? (
-              <button
-                className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
-                title="Delete obstacle"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onObstacleDelete?.(oi);
-                }}
-              >
-                ✕
-              </button>
+              <>
+                <button
+                  className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
+                  title="Delete obstacle"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onObstacleDelete?.(oi);
+                  }}
+                >
+                  ✕
+                </button>
+                {onObstacleMove ? (
+                  <span
+                    data-drag={`obsize:${oi}`}
+                    title={`Pull to resize — ${Math.round(o.w)}×${Math.round(o.h)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute -bottom-2 -right-2 z-10 flex h-4 w-4 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
+                  >
+                    ↘
+                  </span>
+                ) : null}
+              </>
             ) : null}
           </div>
         );
@@ -1196,7 +1256,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           >
             {scene.nodeType === "credits" && "🎬 CREDITS · "}
             {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
-            {scene.nodeType === "stage" && "🚶 STAGE · "}
+            {scene.nodeType === "stage" && (scene.hideHud ? "🚶 STAGE · NO HUD · " : "🚶 STAGE · ")}
             {isStart && "★ START · "}
             {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
             {scene.title}
@@ -2557,12 +2617,9 @@ function CinematicControls({
           {(c.parallaxLayers ?? []).map((layer, i) => (
             <div key={i} className="mb-2 space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
               <div className="flex items-center justify-between gap-2">
-                <AssetDropdown
-                  assetType="image"
+                <ImagePicker
                   value={layer.image}
-                  returnReference
-                  storyId={storyId}
-                  placeholder="Pick a transparent plane image…"
+                  placeholder="Pick a transparent plane image from the library…"
                   onChange={(v) => {
                     const layers = [...(c.parallaxLayers ?? [])];
                     layers[i] = { ...layer, image: v ?? "" };
@@ -2635,13 +2692,10 @@ function CinematicControls({
             />
           </div>
           <div className="mt-1">
-            <AssetDropdown
-              storyId={storyId}
-              assetType="image"
-              returnReference
+            <ImagePicker
               value={c.foregroundImage}
-              onChange={(url) => set({ foregroundImage: url ?? undefined })}
-              placeholder="Or pick an uploaded image..."
+              onChange={(v) => set({ foregroundImage: v || undefined })}
+              placeholder="🖼 browse the image library (uploads, cutouts, built-ins)…"
             />
           </div>
         </Field>
@@ -2835,19 +2889,16 @@ function CinematicControls({
                               ✕
                             </button>
                           </div>
-                          <AssetDropdown
-                            storyId={storyId}
-                            assetType="image"
-                            returnReference
-                            value={f.startsWith("asset:") || f.startsWith("data:") ? f : undefined}
-                            onChange={(url) => {
+                          <ImagePicker
+                            value={f}
+                            onChange={(v) => {
                               const next = [...frames];
-                              if (url) next[i] = url;
+                              if (v) next[i] = v;
                               else next.splice(i, 1);
                               if (next.length) setAnim({ frames: next });
                               else set({ foregroundAnimation: undefined });
                             }}
-                            placeholder="📁 Pick an uploaded keyframe…"
+                            placeholder="🖼 pick this keyframe from the library…"
                           />
                         </div>
                       ))}
@@ -3033,13 +3084,10 @@ function CinematicControls({
                 ✕
               </button>
             </div>
-            <AssetDropdown
-              storyId={storyId}
-              assetType="image"
-              returnReference
+            <ImagePicker
               preferFolder="sprites"
               value={extra.image || undefined}
-              placeholder="Pick a transparent image…"
+              placeholder="Pick a transparent image from the library…"
               onChange={(url) => update({ image: url ?? "" })}
             />
             {/* Live preview — drag the sprite onto the plate, corner-drag to resize. */}
@@ -4058,13 +4106,11 @@ function CursorArtEditor({
             {open ? (
               <div className="space-y-1.5 border-t border-noir-700/70 p-1.5">
                 <Field label="Static image (transparent PNG/WebP, ≤128px)">
-                  <AssetDropdown
-                    storyId={story.id}
-                    assetType="image"
-                    returnReference
+                  <ImagePicker
                     preferFolder="sprites"
                     value={a?.image || undefined}
-                    placeholder="Pick cursor art…"
+                    placeholder="Pick cursor art from the library…"
+                    includeGradients={false}
                     onChange={(url) => setSlot(slot, { image: url ?? undefined, sheet: undefined })}
                   />
                 </Field>
@@ -4564,17 +4610,16 @@ function CharacterEditor({
                 onUpdate(next);
               }}
             />
-            <AssetDropdown
-              storyId={story.id}
-              assetType="image"
-              value={c.avatarUrl.startsWith("data:") || c.avatarUrl.startsWith("asset:") ? c.avatarUrl : undefined}
-              returnReference
-              onChange={(url) => {
+            <ImagePicker
+              value={c.avatarUrl.startsWith("emoji:") ? undefined : c.avatarUrl}
+              onChange={(v) => {
                 const next = deepClone(story);
-                next.characters.find((x) => x.id === c.id)!.avatarUrl = url ?? "emoji:👤";
+                next.characters.find((x) => x.id === c.id)!.avatarUrl = v ?? "emoji:👤";
                 onUpdate(next);
               }}
-              placeholder="Or pick uploaded portrait..."
+              placeholder="🖼 pick a portrait from the image library…"
+              preferFolder="sprites"
+              includeGradients={false}
             />
             <input
               className={inputCls}
@@ -5943,6 +5988,142 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
 /* ------------------------------------------------------------------ */
 /*  main studio                                                        */
 /* ------------------------------------------------------------------ */
+
+/** 🔊 VOICE A SPOKEN ACTION LINE — the hotspot/verb version of a beat's
+ *  audio widgets: pick an upload, upload a file, or press 🎙 to synthesize
+ *  the line with any character's ElevenLabs voice (spends credits, so it
+ *  confirms first). The clip plays when the action's line shows, in place of
+ *  the text-to-speech reader. Shared by the hotspot's own reply, each 🎚
+ *  verb action, and each per-item reply line. */
+function HotspotVoiceControls({
+  story,
+  sceneId,
+  assetKey,
+  line,
+  value,
+  onChange,
+}: {
+  story: Story;
+  sceneId: string;
+  /** naming key for generated assets (hotspot/verb/item id) */
+  assetKey: string;
+  /** the line the clip must read — the 🎙 button stays off while blank */
+  line: string;
+  value?: string;
+  onChange: (url: string | undefined) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [voicePick, setVoicePick] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const voiced = story.characters.filter((c) => c.elevenVoiceId);
+  const voice = voiced.find((c) => c.id === voicePick) ?? voiced[0];
+  // asset:<id> refs resolve through the library so ▶ can audition uploads too.
+  const uploads = useAllAssets("audio");
+  const auditionSrc = value?.startsWith("asset:")
+    ? uploads.find((a) => `asset:${a.id}` === value)?.dataUrl
+    : value;
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex items-center gap-1">
+        <span className="shrink-0 font-type text-[9px] text-paper/40" title="A recorded clip plays instead of the text-to-speech reader when this line shows">
+          🔊
+        </span>
+        <AssetDropdown
+          storyId={story.id}
+          assetType="audio"
+          returnReference
+          value={value}
+          onChange={(url) => onChange(url ?? undefined)}
+          placeholder="voice clip (mp3) — optional…"
+        />
+        <MediaUploadButton
+          storyId={story.id}
+          accept="audio/*"
+          label="⇧"
+          onUploaded={(_u, assetId) => onChange(`asset:${assetId}`)}
+        />
+        {value && (
+          <>
+            <button
+              type="button"
+              title="Audition the clip"
+              className="shrink-0 border border-paper/30 px-1.5 py-0.5 font-pulp text-[9px] text-paper/70 hover:text-gold"
+              onClick={() => {
+                if (auditionSrc) void new Audio(assetUrl(auditionSrc)).play();
+              }}
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              title="Remove the clip (the line falls back to the text-to-speech reader)"
+              className="shrink-0 border border-crimson/40 px-1.5 py-0.5 font-pulp text-[9px] text-crimson hover:bg-crimson/10"
+              onClick={() => onChange(undefined)}
+            >
+              ✕
+            </button>
+          </>
+        )}
+      </div>
+      {voiced.length > 0 && (
+        <div className="flex items-center gap-1">
+          <select
+            className="w-24 shrink-0 border border-noir-600 bg-noir-950 px-1 py-0.5 font-type text-[9px] text-paper/80"
+            value={voice?.id ?? ""}
+            title="Which character's ElevenLabs voice reads this line"
+            onChange={(e) => setVoicePick(e.target.value)}
+          >
+            {voiced.map((c) => (
+              <option key={c.id} value={c.id}>{c.avatarUrl?.startsWith("emoji:") ? c.avatarUrl.slice(6) + " " : ""}{c.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={busy || !line.trim() || !voice}
+            title={
+              !line.trim()
+                ? "Write the line first, then synthesize it"
+                : `Synthesize this line as ${voice?.name ?? "?"} with ElevenLabs — spends credits, you'll be asked to confirm`
+            }
+            onClick={async () => {
+              if (!voice || !line.trim()) return;
+              if (!window.confirm(convertConfirmMessage(`${voice.name} — hotspot line`, voice.elevenVoiceId!, getElevenModel(), line.trim()))) return;
+              setBusy(true);
+              setNote(null);
+              try {
+                const { dataUrl, blob } = await synthesizeElevenLabs(line.trim(), voice.elevenVoiceId!, getElevenModel());
+                const saved = await saveGeneratedVoice({
+                  storyId: story.id,
+                  characterId: voice.id,
+                  sceneId,
+                  beatId: assetKey,
+                  blob,
+                  dataUrl,
+                  assetName: `voice-${assetKey}`,
+                });
+                onChange(saved.url);
+                setNote(saved.note);
+                void new Audio(dataUrl).play();
+              } catch (err) {
+                window.alert((err as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="min-w-0 flex-1 border border-neon/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+          >
+            {busy ? "Converting…" : value ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
+          </button>
+        </div>
+      )}
+      {note && (
+        <p className="font-type text-[8px] leading-snug text-gold/90" title={note}>
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function StudioInner({
   baseStories,
@@ -8346,13 +8527,11 @@ function StudioInner({
                           {mode === "container" ? (
                             <>
                               <Field label="Container art (transparent PNG — a bag, a case, a tool roll)">
-                                <AssetDropdown
-                                  storyId={story.id}
-                                  assetType="image"
-                                  returnReference
+                                <ImagePicker
                                   preferFolder="sprites"
                                   value={inv.image || undefined}
-                                  placeholder="Default: the house leather case…"
+                                  placeholder="Pick art from the library (default: the house leather case)…"
+                                  includeGradients={false}
                                   onChange={(url) => setInv({ image: url ?? undefined })}
                                 />
                               </Field>
@@ -8665,13 +8844,21 @@ function StudioInner({
                           <b> Walkable Stage</b> panel. Define the protagonist ONCE here. Leave empty to keep
                           the per-scene default.
                         </p>
-                        <Field label="Character image (emoji:… or image url / asset)">
+                        <Field label="Character image (pick from the library — or type an emoji)">
                           <input
                             className={inputCls}
                             value={ps.image ?? ""}
-                            placeholder="emoji:🏍 or /img/… or asset:…"
+                            placeholder="emoji:🏍 — or pick art below"
                             onChange={(e) => setPs({ image: e.target.value || undefined })}
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={ps.image && !ps.image.startsWith("emoji:") ? ps.image : undefined}
+                              onChange={(v) => setPs({ image: v || undefined })}
+                              placeholder="…or pick art from your image library"
+                              preferFolder="sprites"
+                            />
+                          </div>
                         </Field>
                         <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
                           <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
@@ -8790,18 +8977,15 @@ function StudioInner({
                   <Field label="Backdrop image (optional)">
                     <input
                       className={inputCls}
-                      placeholder="/img/panel-parchment.jpg  ·  or gradient:linear-gradient(...)"
+                      placeholder="paste a gradient:linear-gradient(…) — or pick art below"
                       value={dbox.backgroundImage ?? ""}
                       onChange={(e) => setBox({ backgroundImage: e.target.value || undefined })}
                     />
                     <div className="mt-1">
-                      <AssetDropdown
-                        storyId={story.id}
-                        assetType="image"
-                        returnReference
-                        value={dbox.backgroundImage?.startsWith("asset:") || dbox.backgroundImage?.startsWith("data:") ? dbox.backgroundImage : undefined}
-                        onChange={(url) => setBox({ backgroundImage: url ?? undefined })}
-                        placeholder="Or pick an uploaded image..."
+                      <ImagePicker
+                        value={dbox.backgroundImage}
+                        onChange={(v) => setBox({ backgroundImage: v || undefined })}
+                        placeholder="🖼 browse the image library (incl. gradient presets)…"
                       />
                     </div>
                   </Field>
@@ -9007,17 +9191,14 @@ function StudioInner({
                         }}
                       />
                     </div>
-                    <AssetDropdown
-                      storyId="__global__"
-                      assetType="image"
+                    <ImagePicker
                       value={globalTitleTheme.bgImageUrl}
-                      returnReference
                       onChange={(value) => {
-                        const next = { ...globalTitleTheme, bgImageUrl: value };
+                        const next = { ...globalTitleTheme, bgImageUrl: value || undefined };
                         setGlobalTitleThemeState(next);
                         onUpdateTitleTheme(next);
                       }}
-                      placeholder="Pick an uploaded title background..."
+                      placeholder="🖼 browse the image library (uploads & built-ins)…"
                     />
                     {globalTitleTheme.bgImageUrl && !globalTitleTheme.bgImageUrl.startsWith("asset:") && (
                       <div className="flex items-center gap-2">
@@ -9365,14 +9546,46 @@ function StudioInner({
                 <Field label="Node Layout Type">
                   <select
                     className={inputCls}
-                    value={scene.nodeType ?? "standard"}
-                    onChange={(e) => updateScene(scene.id, { nodeType: e.target.value === "standard" ? undefined : e.target.value as any })}
+                    value={scene.nodeType === "stage" && scene.hideHud ? "stageNoHud" : scene.nodeType ?? "standard"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "standard") updateScene(scene.id, { nodeType: undefined, hideHud: undefined });
+                      else if (v === "stageNoHud")
+                        updateScene(scene.id, {
+                          nodeType: "stage",
+                          hideHud: true,
+                          // A no-HUD room must walk from frame one: seed the
+                          // stage settings if the scene doesn't have them yet.
+                          stage:
+                            scene.stage ??
+                            ({
+                              playerImage: "emoji:🕵️",
+                              spawn: { x: 50, y: 86 },
+                              speed: 18,
+                              reach: 4,
+                              keyboard: true,
+                              floor: { top: 62, bottom: 94 },
+                              depthScale: 0.35,
+                              hints: "proximity",
+                            } as const),
+                        });
+                      else if (v === "stage") updateScene(scene.id, { nodeType: "stage", hideHud: undefined });
+                      else updateScene(scene.id, { nodeType: v as any, hideHud: undefined });
+                    }}
                   >
                     <option value="standard">📁 Standard Game Scene (with HUD)</option>
                     <option value="credits">🎬 Opening Credits (Centered text, NO HUD)</option>
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
                     <option value="stage">🚶 Walkable Stage (free-roam exploration)</option>
+                    <option value="stageNoHud">🚶 Walkable Stage — NO HUD (cinematic free-roam)</option>
                   </select>
+                  {scene.nodeType === "stage" && scene.hideHud ? (
+                    <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">
+                      Same walkable stage, but <b className="text-gold">zero chrome</b>: no menu, meters, leads panel,
+                      chips, inventory dock or sound/help — just the art, the walker, markers and subtitles. The
+                      player can still press <b>Esc</b> for Save &amp; exit. Every 🚶 Stage setting below applies.
+                    </p>
+                  ) : null}
                 </Field>
                 </CollapsibleSection>
                 {(scene.nodeType === "credits" || scene.nodeType === "cutscene") && (
@@ -10442,12 +10655,26 @@ function StudioInner({
               <>
                 <HelpNote id="stage-tab" title="Walkable Stage">
                   Free-roam exploration — the player walks a character around the floor and walks up to
-                  interaction markers to use them. Lay the markers on the <b>Hotspots</b> tab, write the
-                  conversations a <b>🗣 Start conversation</b> marker starts on the <b>Beats</b> tab, and wire
-                  doors as <b>→ Go to scene</b> hotspots. Every number on this tab is a % of the whole strip.
+                  interaction markers to use them. Markers render <b>where you drew the zone</b> (a poster keeps
+                  its marker on the poster); the character walks to the floor <b>beneath</b> it. <b>👁 Looks never
+                  walk</b> — a 💬 show-text zone (or the Look verb) fires from a distance. Lay the markers on the{" "}
+                  <b>Hotspots</b> tab, write the conversations a <b>🗣 Start conversation</b> marker starts on the{" "}
+                  <b>Beats</b> tab, and wire doors as <b>→ Go to scene</b> hotspots. Every number on this tab is a
+                  % of the whole strip.
+                  <br /><br />
+                  Settings are grouped: <b>🗺 Room plate</b> (the drag-everything editor) · <b>➡ Entrances &amp;
+                  exits</b> · <b>🎬 Scene opening</b> (caption + scripted sequence) · <b>🕵️ Player character</b> ·{" "}
+                  <b>🚧 Obstacles</b> · <b>🚏 Ambient NPCs</b> · <b>🎛 Interaction</b> · <b>📐 Floor &amp; movement
+                  numbers</b>. Want a cinematic room with zero chrome? Set <b>Node Layout Type</b> (Scene tab) to{" "}
+                  <b>🚶 Walkable Stage — NO HUD</b>.
                 </HelpNote>
                 {/* ---- Stage node — free-roam walkable exploration ---- */}
-                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (free-roam)">
+                <CollapsibleSection
+                  id={`scene-stage-${scene.id}`}
+                  title="🚶 Walkable Stage (free-roam)"
+                  defaultOpen
+                  hint={scene.hideHud ? "NO-HUD layout" : `${scene.stage?.npcs?.length ?? 0} NPCs · ${(scene.stage?.obstacles ?? []).length} obstacles`}
+                >
                   <div className="space-y-2">
                     {scene.nodeType !== "stage" ? (
                       <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
@@ -10478,6 +10705,31 @@ function StudioInner({
                       </button>
                     ) : (
                       <>
+                        {scene.hideHud ? (
+                          <div className="flex items-start gap-2 border border-gold/40 bg-gold/10 p-2">
+                            <span className="text-base leading-none" aria-hidden>🎭</span>
+                            <p className="min-w-0 flex-1 font-type text-[10px] leading-snug text-paper/70">
+                              <b className="text-gold">No-HUD room.</b> In play this scene renders zero chrome — no
+                              menu, meters, leads panel, chips, inventory dock or sound/help corner; just the art, the
+                              walker, its markers and subtitles. The player can still press <b>Esc</b> for Save &amp;
+                              exit, so no one is trapped.
+                            </p>
+                            <button
+                              type="button"
+                              className="shrink-0 border border-gold/50 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-gold hover:bg-gold/10"
+                              title="Switch Node Layout Type back to 🚶 Walkable Stage (with HUD)"
+                              onClick={() => updateScene(scene.id, { hideHud: undefined })}
+                            >
+                              Show the HUD
+                            </button>
+                          </div>
+                        ) : null}
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-plate`}
+                          title="🗺 Room plate & layout"
+                          defaultOpen
+                          hint="the visual editor — drag everything"
+                        >
                         <p className="font-type text-[10px] leading-snug text-paper/55">
                           Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. The <b className="text-cyan-neon">↕</b>{" "}
                           handle on the character's head resizes it live; the <b className="text-neon">↔</b> on a prop/NPC's
@@ -10521,6 +10773,14 @@ function StudioInner({
                             updateScene(scene.id, { stage: { ...scene.stage!, obstacles: next.length ? next : undefined } });
                             setSelectedBarrier(null);
                           }}
+                          onObstacleMove={(i, bounds) =>
+                            updateScene(scene.id, {
+                              stage: {
+                                ...scene.stage!,
+                                obstacles: (scene.stage!.obstacles ?? []).map((o, j) => (j === i ? bounds : o)),
+                              },
+                            })
+                          }
                           onObstacleDraw={(bounds) => {
                             const obs = scene.stage!.obstacles ?? [];
                             updateScene(scene.id, { stage: { ...scene.stage!, obstacles: [...obs, bounds] } });
@@ -10581,6 +10841,12 @@ function StudioInner({
                             Use a wide background image so the pan has art to show.
                           </p>
                         </Field>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-edges`}
+                          title="➡ Entrances & exits"
+                          hint="walk-off edge arrows · per-room entry spawns"
+                        >
                         {/* ---- edge exits: walk off the screen into the next scene ---- */}
                         <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
                           <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">
@@ -10765,6 +11031,12 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-opening`}
+                          title="🎬 Scene opening"
+                          hint="caption + scripted entry sequence (SCUMM room-entry cutscene)"
+                        >
                         <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
                           <textarea
                             className={`${inputCls} h-14 font-type`}
@@ -10799,23 +11071,49 @@ function StudioInner({
                             />
                           ) : null}
                         </Field>
-                        <Field label="Character sprite (emoji:… or an image url / asset)">
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-player`}
+                          title="🕵️ Player character"
+                          hint="sprite · walk frames · sheet · size & pose"
+                        >
+                        <Field label="Character sprite (pick from the library — or type an emoji/tag)">
                           <input
                             className={inputCls}
                             value={scene.stage.playerImage ?? ""}
-                            placeholder="emoji:🕵️ or /img/… or asset:…"
+                            placeholder="emoji:🕵️ or bare 🕵️ — or pick art below"
                             onChange={(e) =>
                               updateScene(scene.id, {
                                 stage: { ...scene.stage!, playerImage: e.target.value || undefined },
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={
+                                scene.stage.playerImage && !scene.stage.playerImage.startsWith("emoji:")
+                                  ? scene.stage.playerImage
+                                  : undefined
+                              }
+                              onChange={(v) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerImage: v || undefined },
+                                })
+                              }
+                              placeholder="…or pick art from your image library"
+                              preferFolder="sprites"
+                            />
+                            <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
+                              No typing needed: <b>＋ upload</b> your art (or a cutout) once, then pick it here. Leave blank for
+                              the default walker; the typed box is for emojis / <code>lights:…</code> tags.
+                            </p>
+                          </div>
                         </Field>
-                        <Field label="Walk-cycle frames (one image url / asset: per line, optional)">
+                        <Field label="Walk-cycle frames (optional — add them with the picker)">
                           <textarea
                             className={`${inputCls} h-16 font-type`}
                             value={(scene.stage.walkFrames ?? []).join("\n")}
-                            placeholder={"/img/walk1.png\n/img/walk2.png\n/img/walk3.png"}
+                            placeholder={"No typing needed — add frames below…\n(each line is a frame asset)"}
                             onChange={(e) =>
                               updateScene(scene.id, {
                                 stage: {
@@ -10825,9 +11123,23 @@ function StudioInner({
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={undefined}
+                              onChange={(v) => {
+                                if (!v) return;
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, walkFrames: [...(scene.stage!.walkFrames ?? []), v] },
+                                });
+                              }}
+                              placeholder="＋ add a frame from the image library…"
+                              preferFolder="sprites"
+                              allowClear={false}
+                            />
+                          </div>
                           <p className="mt-1 font-type text-[9px] text-paper/40">
-                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Leave empty for the
-                            procedural bob.
+                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Each pick appends a frame; edit
+                            the list above to reorder or delete. Leave empty for the procedural bob.
                           </p>
                         </Field>
                         {/* ---- sprite-sheet walker (one image, gridded frames) ---- */}
@@ -10881,6 +11193,61 @@ function StudioInner({
                             );
                           })()}
                         </div>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label={`Close-up size ${(scene.stage.playerNearScale ?? 1).toFixed(2)}× (nearest)`}>
+                            <input
+                              type="range" min={0.5} max={2} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerNearScale ?? 1}
+                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerNearScale: Number(e.target.value) } })}
+                            />
+                          </Field>
+                          <Field label={`Distance size ${(scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)).toFixed(2)}× (furthest)`}>
+                            <input
+                              type="range" min={0.3} max={1.5} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)}
+                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerFarScale: Number(e.target.value) } })}
+                            />
+                          </Field>
+                          <Field label={`Character size ${(scene.stage.playerScale ?? 1).toFixed(2)}× (whole scene)`}>
+                            <input
+                              type="range" min={0.3} max={3} step={0.05} className="w-full accent-cyan-400"
+                              value={scene.stage.playerScale ?? 1}
+                              onChange={(e) => {
+                                const s = Number(e.target.value);
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
+                                });
+                              }}
+                            />
+                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                              Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
+                              classic look; the near/far sliders above only control the walk-toward-camera perspective.
+                            </span>
+                          </Field>
+                          <Field label="Default pose (named animation)">
+                            <input
+                              className={inputCls}
+                              value={scene.stage.playerPose ?? ""}
+                              placeholder="e.g. bend · crouch · reach"
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerPose: e.target.value.trim() || undefined },
+                                })
+                              }
+                            />
+                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
+                              A named animation on the player's sprite sheet held for the WHOLE scene (a hunched
+                              lookout, a seated figure). Leave empty for the normal idle/walk. A{" "}
+                              <b className="text-gold">🧍 Set player pose</b> hotspot can override it mid-scene.
+                            </span>
+                          </Field>
+                        </div>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-obstacles`}
+                          title="🚧 Obstacles (walk around)"
+                          hint={`${(scene.stage.obstacles ?? []).length || "no"} boxes — or draw them on the plate`}
+                        >
                         {/* ---- obstacles: furniture the walker routes around ---- */}
                         {(() => {
                           const obs = scene.stage!.obstacles ?? [];
@@ -10894,7 +11261,10 @@ function StudioInner({
                               <p className="font-type text-[9px] leading-snug text-paper/45">
                                 Furniture the character walks <b>around</b> instead of through — a bar, a counter, a parked
                                 bike. Click-to-walk routes around them (A* on a coarse grid, then smoothed to the corners a
-                                person would turn at); the keyboard slides along them. All values are scene percentages.
+                                person would turn at); the keyboard slides along them. All values are scene percentages — but
+                                you never type them: <b>arm 🚧 Draw obstacle</b> on the plate above and drag a box, then{" "}
+                                <b>drag a box to move it, pull its ↘ corner to resize</b>. The numbers below update as you
+                                drag (fine-tune here if you must).
                               </p>
                               {obs.map((o, oi) => (
                                 <div key={oi} className="flex items-center gap-1">
@@ -10922,6 +11292,12 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-npcs`}
+                          title="🚏 Ambient NPCs"
+                          hint={`${(scene.stage.npcs ?? []).length || "no"} actors — plate preview + patrols & set motions`}
+                        >
                         {/* ---- ambient NPCs (idle / walk cycles) ---- */}
                         {(() => {
                           const st = scene.stage!;
@@ -10946,7 +11322,10 @@ function StudioInner({
                                 <b> walk</b> (plus any named motion animations); each waypoint can pick a motion, a facing
                                 and an ambient say-line for its pause. A single waypoint on the spawn = a standing actor
                                 cycling a motion on a timer. Interaction stays on the <b>Hotspots</b> tab — NPCs are pure
-                                stage life.
+                                stage life. Every actor needs a <b>unique id</b> (scripts key off it — the validator
+                                errors on duplicates), patrol legs are <b>straight lines</b> (route around furniture
+                                yourself), and a blank speed walks at the slow <b>ambient default of 12</b> — never the
+                                player's pace.
                               </p>
                               {npcs.length > 0 ? (
                                 <NpcPlatePreview
@@ -11009,12 +11388,41 @@ function StudioInner({
                                       ✕
                                     </button>
                                   </div>
+                                  {/* 🖼 custom look: pick uploaded art from the library (no URL
+                                      typing) or type an emoji; a sprite sheet below beats both. */}
+                                  <div className="flex items-center gap-1">
+                                    <span className="shrink-0 font-type text-[9px] text-paper/50">art</span>
+                                    <input
+                                      type="text"
+                                      className={`${inputCls} w-20`}
+                                      title="A constant look without the library — type a bare emoji (🏍) or emoji:🏍. Clear (or pick art → ) to use an image instead."
+                                      value={n.image?.startsWith("emoji:") ? n.image.slice("emoji:".length) : ""}
+                                      placeholder="🏍"
+                                      onChange={(e) => {
+                                        const raw = e.target.value.trim();
+                                        // Bare glyph → emoji: tag; anything that looks like a path/url/tag passes through.
+                                        const norm =
+                                          raw && !raw.includes(":") && !raw.includes("/") && !raw.includes(".")
+                                            ? `emoji:${raw}`
+                                            : raw;
+                                        setNpc(i, { image: norm || undefined });
+                                      }}
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <ImagePicker
+                                        value={n.image && !n.image.startsWith("emoji:") ? n.image : undefined}
+                                        onChange={(v) => setNpc(i, { image: v || undefined })}
+                                        placeholder="…or pick an image"
+                                        preferFolder="sprites"
+                                      />
+                                    </div>
+                                  </div>
                                   <div className="flex items-center gap-1">
                                     <span className="font-type text-[9px] text-paper/50">spawn</span>
                                     <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="X %" value={Math.round(n.x)} onChange={(e) => setNpc(i, { x: Number(e.target.value) })} />
                                     <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Y %" value={Math.round(n.y)} onChange={(e) => setNpc(i, { y: Number(e.target.value) })} />
                                     <span className="font-type text-[9px] text-paper/50">speed</span>
-                                    <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s)" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
+                                    <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s) — blank = 12, the ambient default; deliberately slower than and independent of the player's walk speed" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
                                     <span className="font-type text-[9px] text-paper/50" title="Named sheet animation played while standing (instead of plain idle) — the barman's 'polish'">idle motion</span>
                                     <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation at rest (blank = idle)" value={n.idleAnim ?? ""} onChange={(e) => setNpc(i, { idleAnim: e.target.value || undefined })} />
                                   </div>
@@ -11091,6 +11499,12 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-interaction`}
+                          title="🎛 Interaction"
+                          hint="verb coin · object-first menus · marker labels"
+                        >
                         {/* ---- verb coin: pick a verb, then the object ---- */}
                         {(() => {
                           const st = scene.stage!;
@@ -11206,6 +11620,27 @@ function StudioInner({
                             </div>
                           );
                         })()}
+                        <Field label="Interaction labels on markers">
+                          <select
+                            className={inputCls}
+                            value={scene.stage.hints ?? "proximity"}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
+                              })
+                            }
+                          >
+                            <option value="proximity">Proximity — labels fade in as you approach</option>
+                            <option value="always">Always — every marker wears its label</option>
+                            <option value="none">None — reticles only (hover to peek)</option>
+                          </select>
+                        </Field>
+                        </CollapsibleSection>
+                        <CollapsibleSection
+                          id={`scene-stage-${scene.id}-numbers`}
+                          title="📐 Floor & movement numbers"
+                          hint="fine-tuning — the plate edits most of this visually"
+                        >
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Spawn X (%)">
                             <input
@@ -11227,20 +11662,6 @@ function StudioInner({
                                   stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
                                 })
                               }
-                            />
-                          </Field>
-                          <Field label={`Close-up size ${(scene.stage.playerNearScale ?? 1).toFixed(2)}× (nearest)`}>
-                            <input
-                              type="range" min={0.5} max={2} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerNearScale ?? 1}
-                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerNearScale: Number(e.target.value) } })}
-                            />
-                          </Field>
-                          <Field label={`Distance size ${(scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)).toFixed(2)}× (furthest)`}>
-                            <input
-                              type="range" min={0.3} max={1.5} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)}
-                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerFarScale: Number(e.target.value) } })}
                             />
                           </Field>
                           <Field label="Walk speed (% width / sec)">
@@ -11298,55 +11719,7 @@ function StudioInner({
                               }
                             />
                           </Field>
-                          <Field label={`Character size ${(scene.stage.playerScale ?? 1).toFixed(2)}× (whole scene)`}>
-                            <input
-                              type="range" min={0.3} max={3} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerScale ?? 1}
-                              onChange={(e) => {
-                                const s = Number(e.target.value);
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
-                                });
-                              }}
-                            />
-                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                              Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
-                              classic look; the near/far sliders above only control the walk-toward-camera perspective.
-                            </span>
-                          </Field>
-                          <Field label="Default pose (named animation)">
-                            <input
-                              className={inputCls}
-                              value={scene.stage.playerPose ?? ""}
-                              placeholder="e.g. bend · crouch · reach"
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerPose: e.target.value.trim() || undefined },
-                                })
-                              }
-                            />
-                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                              A named animation on the player's sprite sheet held for the WHOLE scene (a hunched
-                              lookout, a seated figure). Leave empty for the normal idle/walk. A{" "}
-                              <b className="text-gold">🧍 Set player pose</b> hotspot can override it mid-scene.
-                            </span>
-                          </Field>
                         </div>
-                        <Field label="Interaction labels on markers">
-                          <select
-                            className={inputCls}
-                            value={scene.stage.hints ?? "proximity"}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
-                              })
-                            }
-                          >
-                            <option value="proximity">Proximity — labels fade in as you approach</option>
-                            <option value="always">Always — every marker wears its label</option>
-                            <option value="none">None — reticles only (hover to peek)</option>
-                          </select>
-                        </Field>
                         <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
                           <input
                             type="checkbox"
@@ -11359,6 +11732,7 @@ function StudioInner({
                           />
                           Arrow / WASD movement enabled
                         </label>
+                        </CollapsibleSection>
                         <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
                           <b className="text-cyan-neon">The walkable loop:</b> Hotspots tab lays the markers (💬
                           show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
@@ -11816,6 +12190,8 @@ function StudioInner({
                         />
                         {b.background && (
                           <button
+                            type="button"
+                            title="Clear (use the scene default background)"
                             onClick={() =>
                               mutate((d) => {
                                 const s = d.scenes.find((x) => x.id === scene.id)!;
@@ -11829,18 +12205,15 @@ function StudioInner({
                         )}
                       </div>
                       <div className="mt-1">
-                        <AssetDropdown
-                          storyId={story.id}
-                          assetType="image"
-                          returnReference
-                          value={b.background?.startsWith("asset:") || b.background?.startsWith("data:") ? b.background : undefined}
-                          onChange={(url) =>
+                        <ImagePicker
+                          value={b.background}
+                          onChange={(v) =>
                             mutate((d) => {
                               const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.dialogueBeats!.find((x) => x.id === b.id)!.background = url;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.background = v || undefined;
                             })
                           }
-                          placeholder="Or pick an uploaded image..."
+                          placeholder="🖼 or browse the image library… (leave blank for scene default)"
                         />
                       </div>
                       {b.background && (
@@ -12691,25 +13064,40 @@ function StudioInner({
                           ))}
                         </select>
                       </Field>
-                      <Field label="Target scene">
-                        <select
-                          className={inputCls}
-                          value={h.action.targetSceneId ?? ""}
-                          onChange={(e) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.targetSceneId = e.target.value || undefined;
-                            })
-                          }
-                        >
-                          <option value="">—</option>
-                          {story.scenes.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.title}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
+                    {(() => {
+                      // The destination control only exists where a scene jump
+                      // can actually happen: → goToScene always; 🗝 use-item
+                      // when it carries one (a locked door that swings open).
+                      const canTravel = h.action.type === "goToScene" || h.action.type === "useItem";
+                      const needsTarget = h.action.type === "goToScene" && !h.action.targetSceneId;
+                      if (!canTravel && !h.action.targetSceneId) return null;
+                      return (
+                        <Field label="🗺 Target scene — where this goes">
+                          <select
+                            className={`${inputCls} ${needsTarget ? "border-crimson/70 text-crimson" : ""}`}
+                            value={h.action.targetSceneId ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.targetSceneId = e.target.value || undefined;
+                              })
+                            }
+                          >
+                            <option value="">{needsTarget ? "⚠ pick a scene…" : "— nowhere —"}</option>
+                            {story.scenes.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.title}
+                              </option>
+                            ))}
+                          </select>
+                          {needsTarget && (
+                            <p className="mt-1 font-type text-[9px] leading-snug text-crimson/90">
+                              A → go-to-scene marker without a target does nothing (the validator errors on it too).
+                            </p>
+                          )}
+                        </Field>
+                      );
+                    })()}
                     </div>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Object image (transparent)">
@@ -12830,6 +13218,12 @@ function StudioInner({
                         hsSet({ acceptsItems: accepts.includes(id) ? accepts.filter((x) => x !== id) : [...accepts, id] });
                       const setResponse = (id: string, text: string) =>
                         hsSet({ itemResponses: { ...(h.itemResponses ?? {}), [id]: text } });
+                      const setItemAudio = (id: string, url?: string) => {
+                        const map = { ...(h.itemAudio ?? {}) };
+                        if (url) map[id] = url;
+                        else delete map[id];
+                        hsSet({ itemAudio: Object.keys(map).length ? map : undefined });
+                      };
                       const unsetVerbs = VERB_IDS.filter((v) => !used.includes(v));
                       const actType = (v: string) => (verbs as Record<string, Hotspot["action"]>)[v]?.type ?? "showText";
                       return (
@@ -12890,11 +13284,33 @@ function StudioInner({
                                   </select>
                                 ) : null}
                                 {a?.type === "useItem" ? (
-                                  <select className={inputCls} value={a.itemConsumed ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemConsumed: e.target.value || undefined })}>
-                                    <option value="">— which item does this consume? —</option>
-                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
-                                  </select>
+                                  <>
+                                    <textarea
+                                      className={`${inputCls} h-14 font-type`}
+                                      placeholder="The line it says when the item is used…"
+                                      value={a.text ?? ""}
+                                      onChange={(e) => setVerbAction(v, { ...a, text: e.target.value })}
+                                    />
+                                    <select className={inputCls} value={a.itemConsumed ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemConsumed: e.target.value || undefined })}>
+                                      <option value="">— consumes nothing (a say-a-line use) —</option>
+                                      {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
+                                    </select>
+                                    <p className="font-type text-[8px] leading-snug text-paper/40">
+                                      Only the item picked above ever leaves the satchel — arming an item never
+                                      consumes it on its own.
+                                    </p>
+                                  </>
                                 ) : null}
+                                {(a?.type === "showText" || a?.type === "useItem") && (
+                                  <HotspotVoiceControls
+                                    story={story}
+                                    sceneId={scene.id}
+                                    assetKey={`${h.id}-${v}`}
+                                    line={a?.text ?? ""}
+                                    value={a?.audioUrl}
+                                    onChange={(url) => setVerbAction(v, { ...a, audioUrl: url })}
+                                  />
+                                )}
                               </div>
                             );
                           })}
@@ -12948,6 +13364,14 @@ function StudioInner({
                                     placeholder="What happens when they use it here…"
                                     value={h.itemResponses?.[id] ?? ""}
                                     onChange={(e) => setResponse(id, e.target.value)}
+                                  />
+                                  <HotspotVoiceControls
+                                    story={story}
+                                    sceneId={scene.id}
+                                    assetKey={`${h.id}-item-${id}`}
+                                    line={h.itemResponses?.[id] ?? ""}
+                                    value={h.itemAudio?.[id]}
+                                    onChange={(url) => setItemAudio(id, url)}
                                   />
                                 </div>
                               );
@@ -13074,6 +13498,19 @@ function StudioInner({
                             mutate((d) => {
                               const s = d.scenes.find((x) => x.id === scene.id)!;
                               s.hotspots!.find((x) => x.id === h.id)!.action.text = e.target.value;
+                            })
+                          }
+                        />
+                        <HotspotVoiceControls
+                          story={story}
+                          sceneId={scene.id}
+                          assetKey={`${h.id}-main`}
+                          line={h.action.text ?? ""}
+                          value={h.action.audioUrl}
+                          onChange={(url) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.action.audioUrl = url;
                             })
                           }
                         />
@@ -13363,23 +13800,54 @@ function StudioInner({
                       </div>
                     )}
                     {h.action.type === "useItem" && (
-                      <Field label="Consumes item (from Gating requirement)">
-                        <select
-                          className={inputCls}
-                          value={h.action.itemConsumed ?? ""}
-                          onChange={(e) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.itemConsumed = e.target.value || undefined;
-                            })
-                          }
-                        >
-                          <option value="">— none —</option>
-                          {story.items.map((i) => (
-                            <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
-                          ))}
-                        </select>
-                      </Field>
+                      <>
+                        <Field label="Reply line (shows when it's used)">
+                          <textarea
+                            className={`${inputCls} h-14 font-type`}
+                            placeholder="“That fits!” — what it says as the item is used…"
+                            value={h.action.text ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.text = e.target.value || undefined;
+                              })
+                            }
+                          />
+                          <HotspotVoiceControls
+                            story={story}
+                            sceneId={scene.id}
+                            assetKey={`${h.id}-main`}
+                            line={h.action.text ?? ""}
+                            value={h.action.audioUrl}
+                            onChange={(url) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.audioUrl = url;
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Consumes item (leaves the satchel)">
+                          <select
+                            className={inputCls}
+                            value={h.action.itemConsumed ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.itemConsumed = e.target.value || undefined;
+                              })
+                            }
+                          >
+                            <option value="">— consumes nothing (the item stays; only the line plays) —</option>
+                            {story.items.map((i) => (
+                              <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
+                            ))}
+                          </select>
+                          <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                            The engine ONLY spends the item picked here — arming an item is never enough to lose it.
+                          </p>
+                        </Field>
+                      </>
                     )}
                     {(h.action.type === "giveItem" || h.action.type === "showText") && (
                       <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
@@ -13457,9 +13925,9 @@ function StudioInner({
                       <p className="-mt-1 pl-6 font-type text-[9px] leading-snug text-paper/45">
                         On a 🚶 walkable stage the character normally walks over before a zone fires. With this ON they
                         interact from wherever they stand — the walker just turns to face it. Use it for things they can
-                        SEE but never REACH: a clock high on a tower, a sign across the water. 👁 Look reads naturally;
-                        any verb the zone answers works at range. The reticle stays on the object instead of dropping to
-                        the floor, and strolling underneath never triggers it.
+                        SEE but never REACH: a clock high on a tower, a sign across the water — any verb the zone answers
+                        works at range, and strolling underneath never triggers it. (Plain <b>👁 looks</b> and 💬
+                        show-text zones already fire from a distance without this box.)
                       </p>
                     )}
                     {h.action.itemGranted && (
@@ -13887,10 +14355,10 @@ function StudioInner({
                             />
                           </Field>
                         </div>
-                        <Field label="Rider's vehicle (image url / emoji: tag / emoji glyph)">
+                        <Field label="Rider's vehicle (pick from the library — or type an emoji: tag / glyph)">
                           <input
                             className={inputCls}
-                            placeholder="emoji:🏍"
+                            placeholder="emoji:🏍 — or pick art below"
                             value={c.ride.vehicleImage ?? ""}
                             onChange={(e) =>
                               mutate((d) => {
@@ -13899,8 +14367,21 @@ function StudioInner({
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={c.ride.vehicleImage && !c.ride.vehicleImage.startsWith("emoji:") ? c.ride.vehicleImage : undefined}
+                              onChange={(v) =>
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.vehicleImage = v || undefined;
+                                })
+                              }
+                              placeholder="…or pick art from the image library"
+                              preferFolder="sprites"
+                            />
+                          </div>
                         </Field>
-                        <Field label="Oncoming traffic (comma-separated — emoji: tags, urls, or glyphs)">
+                        <Field label="Oncoming traffic (comma-separated — emoji: tags, glyphs, or picked art)">
                           <input
                             className={inputCls}
                             placeholder="emoji:🚚, emoji:🚗, emoji:🚓"
@@ -13913,6 +14394,22 @@ function StudioInner({
                               })
                             }
                           />
+                          <div className="mt-1">
+                            <ImagePicker
+                              value={undefined}
+                              onChange={(v) => {
+                                if (!v) return;
+                                mutate((d) => {
+                                  const s = d.scenes.find((x) => x.id === scene.id)!;
+                                  const list = [...(s.choices!.find((x) => x.id === c.id)!.ride!.traffic ?? []), v];
+                                  s.choices!.find((x) => x.id === c.id)!.ride!.traffic = list;
+                                });
+                              }}
+                              placeholder="＋ add a vehicle from the image library…"
+                              preferFolder="sprites"
+                              allowClear={false}
+                            />
+                          </div>
                         </Field>
                         <div className="grid grid-cols-2 gap-1">
                           <Field label="Win caption (clean run)">

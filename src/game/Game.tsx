@@ -63,6 +63,7 @@ import {
   inventoryDisplay,
   resolveCursor,
   resolveVerbAction,
+  itemsConsumedBy,
   verbsForScene,
   wrongVerbLine,
   stageCaptionMs,
@@ -2881,54 +2882,30 @@ function CasePlayer({
    * "cinematic" (default): big pulp lettering centred over the art.
    * "classic": a compact reading-size caption — "SPEAKER: line" — for small
    * screens or players who prefer plain subtitles. Remembered per player. */
-  const [classicSubtitles, setClassicSubtitles] = useState(() => {
-    try {
-      return localStorage.getItem("scarlet-reel-subtitles") === "classic";
-    } catch {
-      return false;
-    }
-  });
+  /* Subtitles are ALWAYS the classic compact "SPEAKER — line" captions now;
+   * the cinematic overlay style was pulled from the menu (it towers over the
+   * art). Kept as a constant so the render branches below keep their shape. */
+  const classicSubtitles = true;
   useEffect(() => {
     try {
-      localStorage.setItem("scarlet-reel-subtitles", classicSubtitles ? "classic" : "cinematic");
+      localStorage.setItem("scarlet-reel-subtitles", "classic");
     } catch {
       /* storage unavailable — lasts the session */
     }
-  }, [classicSubtitles]);
+  }, []);
 
   /* Pacing options — remembered per player.
    * Auto: hands-off reading. Once a line finishes typing it advances on a
    *   comfortable timer; stops at choices so the player still decides.
    * Skip: fast-forward. Types instantly and steps with only a brief gap —
    *   the replay pacing win, since the game already auto-skips revisits. */
-  const [autoAdvance, setAutoAdvance] = useState(() => {
-    try {
-      return localStorage.getItem("scarlet-reel-auto") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("scarlet-reel-auto", autoAdvance ? "1" : "0");
-    } catch {
-      /* session only */
-    }
-  }, [autoAdvance]);
-  const [skipMode, setSkipMode] = useState(() => {
-    try {
-      return localStorage.getItem("scarlet-reel-skip") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("scarlet-reel-skip", skipMode ? "1" : "0");
-    } catch {
-      /* session only */
-    }
-  }, [skipMode]);
+  /* Pacing: auto-advance (hands-off reading) and skip-text fast-forward are
+   * no longer player-facing — both start OFF every session and the menu no
+   * longer exposes toggles. Scene-authored auto-read
+   * (autoAdvanceTargetSceneId) still plays itself. */
+  const [autoAdvance] = useState(false);
+  void autoAdvance;
+  const [skipMode] = useState(false);
 
   /* "Reveal hotspots" — a momentary shimmer over every interactable zone so a
    * stuck player can see what's clickable without spoilers. Auto-clears after
@@ -3173,6 +3150,12 @@ function CasePlayer({
     rawScene?.nodeType === "note" && !rawScene.prose ? { ...rawScene, prose: rawScene.title } : rawScene;
   /** STAGE node — free-roam walkable exploration. */
   const isStage = scene?.nodeType === "stage";
+  /** NO-HUD layout (credits, cutscene, or a 🚶 stage with hideHud set):
+   *  zero in-game chrome — no menu, meters, leads panel, chips, dock or
+   *  sound/help corner. Subtitles, stage markers and the verb coin stay;
+   *  Esc still opens the quit dialog so the player is never trapped. */
+  const hudHidden =
+    scene?.nodeType === "credits" || scene?.nodeType === "cutscene" || !!scene?.hideHud;
   /** The walker's feet (scene %) in a STAGE room — drives walk-behind masks:
    *  a foreground extra flagged `occludes` is drawn OVER the character while
    *  they stand behind it, so they disappear behind the counter. */
@@ -3253,6 +3236,16 @@ function CasePlayer({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageEnterScript, sceneId, story]);
+  // Entering a NO-HUD scene while the menu / mixer / case file was open
+  // would strand floating chrome whose trigger buttons just disappeared —
+  // close it all on entry.
+  useEffect(() => {
+    if (!hudHidden) return;
+    setMenuOpen(false);
+    setMixerOpen(false);
+    setShowCaseFile(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hudHidden, sceneId]);
   const dropKey = useRef(0);
   const handleItemDrop = useCallback(
     (item: Item, hotspotId: string) => {
@@ -5438,14 +5431,36 @@ function CasePlayer({
         return;
       }
       switch (act.type) {
-        case "showText":
+        case "showText": {
           audio.click();
           const examText = actText ?? act.text ?? "…";
           if (stageMode) showStageCaption(examText, "info", hs.label);
           else setExamCard({ label: hs.label, text: examText, kind: "info" });
-          if (soundOnRef.current && autoNarrate) audio.speak(examText);
-          if (act.flagSet || act.meterChange) completeHotspot(hs, undefined, act, markUsed);
+          {
+            // Voiced like the beats: a recorded clip wins over the TTS
+            // reader. A per-item reply uses its own clip (an overridden
+            // line must never lip-flap the action's default recording).
+            const over = actText != null && actText !== act.text;
+            const clip = over ? hs.itemAudio?.[ctx?.itemId ?? ""] : act.audioUrl;
+            if (clip) audio.playClip(clip);
+            else if (soundOnRef.current && autoNarrate) audio.speak(examText);
+          }
+          // READING A THING NEVER EATS ITS MARKER. A 💬 marker stays on the
+          // scene after its line shows (you can read it again) — authored
+          // extras (flag/meter) apply only the FIRST time so they can't be
+          // re-farmed by re-reading. (Hotspot visibility keys off
+          // usedHotspots with a showText exemption.)
+          const spentKey = `${sceneId}:${hs.id}`;
+          const rewardSpent = usedHotspots.has(spentKey);
+          if (!rewardSpent || markUsed) {
+            const firstTimeAct =
+              rewardSpent && (act.flagSet || act.meterChange)
+                ? { ...act, flagSet: undefined, itemGranted: undefined, meterChange: undefined }
+                : act;
+            completeHotspot(hs, undefined, firstTimeAct, markUsed);
+          }
           break;
+        }
         case "startDialogue":
           // STAGE nodes: walk up to a character, talk — the scene's beats
           // play as the conversation. The action's own flagSet/meterChange
@@ -5525,9 +5540,11 @@ function CasePlayer({
           // Derive the post-consumption state and hand it straight to
           // completeHotspot instead of mutating the ref behind React's back.
           let nextState = stateRef.current;
-          // The USE verb can name its own item: "use the coffee on this"
-          // consumes the coffee even if the object was authored for a wrench.
-          const consumed = ctx?.itemId ?? act.itemConsumed;
+          // Author-controlled vanishment: only an action that NAMES an item
+          // in "consumes …" spends anything. An unnamed use-item action (or
+          // any other kind) NEVER eats the armed item — it just plays its
+          // line, like a say-a-line reply.
+          const consumed = itemsConsumedBy(act)[0];
           if (consumed) {
             nextState = applyConsequences(story, { removeItems: [consumed] }, stateRef.current);
             if (nextState !== stateRef.current) {
@@ -5535,10 +5552,16 @@ function CasePlayer({
               pushToast(`Used: ${story.items.find((i) => i.id === consumed)?.name ?? consumed}`, "success");
             }
           }
-          if (actText) {
-            if (stageMode) showStageCaption(actText, "info", hs.label);
-            else setExamCard({ label: hs.label, text: actText, kind: "info" });
-            if (soundOnRef.current && autoNarrate) audio.speak(actText);
+          const useLine = actText ?? act.text;
+          if (useLine) {
+            if (stageMode) showStageCaption(useLine, "info", hs.label);
+            else setExamCard({ label: hs.label, text: useLine, kind: "info" });
+            // Per-item reply clips take priority over the action's own
+            // recording; only the TTS reader falls all the way through.
+            const over = actText != null && actText !== act.text;
+            const clip = over ? hs.itemAudio?.[ctx?.itemId ?? ""] : act.audioUrl;
+            if (clip) audio.playClip(clip);
+            else if (soundOnRef.current && autoNarrate) audio.speak(useLine);
           }
           completeHotspot(hs, nextState, act, markUsed);
           break;
@@ -5647,15 +5670,26 @@ function CasePlayer({
 
   const visibleHotspots = useMemo(() => {
     if (!scene?.hotspots) return [];
-    return scene.hotspots.filter((hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`));
+    // A read marker is forever: 💬 showText stays on the scene after its
+    // line plays (authored extras fire once — see activateHotspot). Only
+    // something genuinely REMOVED by use — an item taken, a route used —
+    // hides its marker.
+    return scene.hotspots.filter(
+      (hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`) || hs.action.type === "showText",
+    );
   }, [scene, usedHotspots, sceneId]);
 
-  /* Searchable things left in this scene: anything that isn't a pure exit.
-   * The end-of-scene nudge tells the player these exist before the choices
-   * carry them off. */
+  /* Searchable things left in this scene: anything that isn't a pure exit
+   * and hasn't been read/collected yet. The end-of-scene nudge tells the
+   * player these exist before the choices carry them off. */
   const searchableLeft = useMemo(
-    () => visibleHotspots.filter((hs) => hs.action.type !== "goToScene"),
-    [visibleHotspots]
+    () =>
+      visibleHotspots.filter(
+        (hs) =>
+          hs.action.type !== "goToScene" &&
+          (hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`)),
+      ),
+    [visibleHotspots, usedHotspots, sceneId]
   );
   const investigateNudge =
     !!scene &&
@@ -5845,13 +5879,6 @@ function CasePlayer({
           triggerHint();
         }
       }
-      if (e.key === "a" || e.key === "A") {
-        const tag = (e.target as HTMLElement).tagName;
-        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
-          e.preventDefault();
-          setAutoAdvance((v) => !v);
-        }
-      }
       if (e.key === "m" || e.key === "M") {
         const tag = (e.target as HTMLElement).tagName;
         if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
@@ -5999,7 +6026,7 @@ function CasePlayer({
             !scene.isEnding &&
             (scene.hotspots ?? [])
               .filter((hs) => !!hs.image && !hs.image.startsWith("gradient:"))
-              .filter((hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`))
+              .filter((hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`) || hs.action.type === "showText")
               .filter((hs) => meetsGating(hs.gating, state))
               .map((hs) => (
                 <div
@@ -6386,7 +6413,7 @@ function CasePlayer({
       )}
 
       {/* HUD */}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <>
           {!story.dialogueBox?.hideCaseProgress && (
             <MetersHUD
@@ -6421,7 +6448,7 @@ function CasePlayer({
       )}
 
       {/* A visible action list keeps point-and-click interactions discoverable. */}
-      {proseAcknowledged && !scene.isEnding && scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {proseAcknowledged && !scene.isEnding && !hudHidden && (
         <aside
           className={`hud-frame absolute right-3 top-24 z-50 w-64 p-2.5 ${
             investigateNudge ? "hud-frame-gold animate-pulse" : ""
@@ -6498,7 +6525,7 @@ function CasePlayer({
             <p className="font-type text-[10px] leading-snug text-paper/45">
               {stageTalking
                 ? "Talking — the conversation is on screen."
-                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to a marker and it happens."}
+                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to touch things — 👁 looking works from right here."}
             </p>
           )}
           {!isStage && (
@@ -6532,7 +6559,7 @@ function CasePlayer({
           <span className="hud-chip pop-in px-3 py-1" data-kind="good">✓ Checkpoint</span>
         </div>
       )}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-col items-start gap-1">
           {(autoAdvance || skipMode || hintActive) && (
             <div className="hud-frame flex items-center gap-1.5 px-2 py-1">
@@ -6549,7 +6576,7 @@ function CasePlayer({
           )}
         </div>
       )}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <div className="absolute right-3 top-3 z-[60]">
           <button
             onClick={() => {
@@ -6567,47 +6594,6 @@ function CasePlayer({
             <>
               <div className="fixed inset-0 z-40 cursor-default" onClick={() => setMenuOpen(false)} aria-hidden />
               <div className="hud-frame hud-frame-gold absolute right-0 top-9 z-50 w-56 py-1">
-                <button
-                  onClick={() => {
-                    audio.click();
-                    setClassicSubtitles((v) => !v);
-                  }}
-                  className="hud-menu-item text-paper/80"
-                  title="Cinematic: big pulp lettering over the art · Classic: compact SPEAKER: line captions"
-                >
-                  💬 Subtitles: {classicSubtitles ? "Classic" : "Cinematic"} <span className="text-paper/35">▸</span>
-                </button>
-                <button
-                  onClick={() => {
-                    audio.click();
-                    setAutoAdvance((v) => !v);
-                  }}
-                  className={`hud-menu-item ${autoAdvance ? "text-emerald-400" : "text-paper/80"}`}
-                  title="Hands-off reading — advances dialogue on a timer, stops at choices (A)"
-                >
-                  ⏩ Auto-advance: {autoAdvance ? "On" : "Off"} <span className="text-paper/35">▸</span>
-                </button>
-                <button
-                  onClick={() => {
-                    audio.click();
-                    setSkipMode((v) => !v);
-                  }}
-                  className={`hud-menu-item ${skipMode ? "text-emerald-400" : "text-paper/80"}`}
-                  title="Fast-forward — type instantly and skip ahead, great for replays"
-                >
-                  ⏭ Skip text: {skipMode ? "On" : "Off"} <span className="text-paper/35">▸</span>
-                </button>
-                <button
-                  onClick={() => {
-                    audio.click();
-                    setMenuOpen(false);
-                    triggerHint();
-                  }}
-                  className="hud-menu-item text-cyan-neon"
-                  title="Shimmer every clickable hotspot for a few seconds (H)"
-                >
-                  🔍 Reveal hotspots (H)
-                </button>
                 {onOpenInStudio && (
                   <button
                     onClick={() => {
@@ -6727,7 +6713,7 @@ function CasePlayer({
       )}
 
       {/* auto-narrate / back / skip controls */}
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <div className="hud-frame absolute right-[5.25rem] top-[52px] z-50 flex items-center gap-1.5 px-1.5 py-1">
           <button
             onClick={goBack}
@@ -7659,7 +7645,7 @@ function CasePlayer({
         </div>
       </div>
 
-      {scene.nodeType !== "credits" && scene.nodeType !== "cutscene" && (
+      {!hudHidden && (
         <InventoryDock
           state={state}
           display={invDisplay}
@@ -7671,7 +7657,9 @@ function CasePlayer({
         />
       )}
 
-      {/* Floating sound + help — one mixer button and one help button */}
+      {/* Floating sound + help — one mixer button and one help button.
+          Suppressed in the NO-HUD layout (the M key still mutes). */}
+      {!hudHidden && (
       <div className="hud-frame absolute bottom-4 right-4 z-[55] flex items-center gap-1.5 px-1.5 py-1">
         <button
           onClick={() => {
@@ -7701,9 +7689,10 @@ function CasePlayer({
           ?
         </button>
       </div>
+      )}
 
       {/* Sound mixer popover */}
-      {mixerOpen && (
+      {mixerOpen && !hudHidden && (
         <div className="hud-frame hud-frame-gold pop-in absolute bottom-16 right-4 z-[56] w-72 p-3">
           <div className="mb-2 flex items-center justify-between border-b border-gold/20 pb-1.5">
             <span className="hud-kicker hud-kicker-left">🎚 Sound</span>

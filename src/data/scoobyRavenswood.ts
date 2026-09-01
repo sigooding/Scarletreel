@@ -15,8 +15,18 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * its plate arrived fully bridged and was split by the NEW automatic
  * recovery in make-sprite-sheet.mjs), dedicated cover art, and a distinct
  * plate for every ending (corridor-after, boathouse, lawn, van).
+ * Playability pass (this pass): the EMERGENCY SCOOBY SNACK economy — the
+ * van's cooler grants it, waving it at the gate sign / manor door answers
+ * with gags that spend NOTHING (dogfooding the say-line USE fallback), and
+ * the corridor chase gains a third QTE line that hurls it at the Phantom
+ * (authored consume — one-time hero discount) with a cellar callback beat
+ * gated on sd_snack_bribe; the unmasking tribute beat now plays only when
+ * a snack survives to be tributed (fallback variants for every route).
  * Art pipeline: magenta plates → scripts/make-sprite-sheet.mjs (automatic
- * bridged-plate recovery) — see docs/sprite-sheets.md.
+ * bridged-plate recovery) — see docs/sprite-sheets.md. This pass also
+ * moved Scooby & Shaggy's talking portraits to 768px hi-res plates
+ * (plates/sd-*-talk-hi.png, pixelated off — twice the vertical detail at
+ * the same silhouettes).
  *
  * Feature coverage exercised in this one case:
  *   · 🚶 STAGE 2D — the manor grounds are a walkable scene (Scooby is the
@@ -41,16 +51,18 @@ import type { SpriteSheet } from "../game/spriteSheet";
 /*  SPRITE SHEETS                                                      */
 /* ------------------------------------------------------------------ */
 
-/** A three-frame talking portrait: rest on frame 0, mouth open on 1-2. */
-const talkSheet = (image: string, frameWidth: number): SpriteSheet => ({
+/** A three-frame talking portrait: rest on frame 0, mouth open on 1-2.
+ *  defaults match the pass-1/2 plates (384px, pixel-crisp); the pass-4
+ *  hi-res plates pass 768px frames with smooth scaling instead. */
+const talkSheet = (image: string, frameWidth: number, frameHeight = 384, pixelated = true): SpriteSheet => ({
   image,
   frameWidth,
-  frameHeight: 384,
+  frameHeight,
   animations: {
     rest: { frames: [0] },
     talk: { frames: [1, 2, 0, 2], fps: 7 },
   },
-  pixelated: true,
+  pixelated,
 });
 
 /** The Phantom — FOUR frames this pass: rest 0, talk 1-2, and a lunging
@@ -200,7 +212,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
       trustMeter: 3,
       voice: { pitch: 0.55, rate: 0.85 },
       // Far stage left, facing right — the biggest head in the cast.
-      talkingSheet: talkSheet("/assets/sprites/sd-scooby-talk.png", 205),
+      talkingSheet: talkSheet("/assets/sprites/sd-scooby-talk-hi.png", 484, 768, false), // pass 4: 768px plate — twice the vertical resolution, smooth scaled
       talkingX: 13,
       talkingScale: 0.95,
       talkingDim: 0.72,
@@ -213,7 +225,7 @@ export const SCOOBY_RAVENSWOOD: Story = {
       trustMeter: 2,
       voice: { pitch: 0.8, rate: 0.95 },
       // Far stage right, flipped to face the gang huddle.
-      talkingSheet: talkSheet("/assets/sprites/sd-shaggy-talk.png", 174),
+      talkingSheet: talkSheet("/assets/sprites/sd-shaggy-talk-hi.png", 484, 768, false), // pass 4: hi-res plate
       talkingX: 92,
       talkingScale: 0.75,
       talkingFlip: true,
@@ -348,6 +360,14 @@ export const SCOOBY_RAVENSWOOD: Story = {
       flavorText: "Farm machinery doesn't need insurance against water damage.",
       isClue: true,
     },
+    {
+      id: "sd_snack",
+      name: "Scooby Snack, Emergency Grade",
+      icon: "🍪",
+      description:
+        "One foil-wrapped Scooby Snack from the mystery cooler — the box Shaggy swears is 'rationed, inventory-managed, and absolutely not for dogs' before breaking the seal for a dog every time. Still good. Probably. The foil survived the rain.",
+      flavorText: "Courage, in a box. Handle with ceremony.",
+    },
   ],
   deduction: {
     suspectIds: ["sd_grimsby"],
@@ -406,11 +426,32 @@ export const SCOOBY_RAVENSWOOD: Story = {
           cursor: "look",
           examine: true,
           examineSeconds: 2,
+          // The snack's reply line plays WITHOUT spending it — ticked here
+          // with no ⚙ use verb action at all, so it exercises the
+          // say-line-default USE fallback end to end.
+          itemResponses: {
+            sd_snack: "You hold the snack up to the fresh paint. The paint declines. The paint, if anything, seems OFFENDED. Shaggy would have bribed first and read later. The snack stays in the satchel.",
+          },
+          itemAudio: { sd_snack: "/voices/narrator/sd-sign-offended.mp3" },
           action: {
             type: "showText",
             flagSet: "sd_saw_sign",
             text: "Two signs on the gate. The old one, county-stamped: 'RAVENSWOOD MANOR — CONDEMNED. KEEP OUT.' And below it, in fresh white paint, in a different hand entirely: '...OR THE PHANTOM WILL KEEP YOU OUT.' The fresh paint has run in the rain. Whoever wrote it stood exactly here.",
           },
+        },
+        {
+          id: "sdh_cooler",
+          label: "Check the van's cooler",
+          bounds: { x: 44, y: 58, w: 8, h: 10 },
+          cursor: "take",
+          showItemImage: true,
+          verbs: {
+            look: {
+              type: "showText",
+              text: "The Mystery Machine's cooler, strapped behind the seat since the swamp job. On the lid, in Shaggy's careful hand: 'EMERGENCY RATIONS — OPEN ONLY IN CASE OF PHANTOM.' Then, underneath, in what is obviously also Shaggy's hand: '…or hunger.'",
+            },
+          },
+          action: { type: "giveItem", itemGranted: "sd_snack", flagSet: "sd_got_snack" },
         },
         {
           id: "sdh_window",
@@ -438,6 +479,22 @@ export const SCOOBY_RAVENSWOOD: Story = {
           label: "The front door",
           bounds: { x: 44, y: 26, w: 18, h: 26 },
           cursor: "go",
+          acceptsItems: ["sd_snack"],
+          itemResponses: {
+            sd_snack:
+              "You wave the snack under the manor door like bait. Somewhere inside, a floorboard answers with a low, interested creak. Scooby's ears come to full attention. Ruh-roh. (The snack stays — the house doesn't get a free meal.)",
+          },
+          itemAudio: { sd_snack: "/voices/narrator/sd-door-bait.mp3" },
+          verbs: {
+            use: {
+              type: "showText",
+              text: "The door takes no offerings. The snack returns to the satchel, unbitten.",
+            },
+            look: {
+              type: "showText",
+              text: "Oak older than the county, someone has oiled the hinges — recently. Nobody oils a condemned house.",
+            },
+          },
           action: { type: "goToScene", targetSceneId: "sd_meet" },
         },
       ],
@@ -987,6 +1044,30 @@ export const SCOOBY_RAVENSWOOD: Story = {
           timedOutConsequences: { meterChanges: [{ meter: "Suspicion", delta: 2 }] },
         },
         {
+          // The snack bribe: a third QTE line that only exists while the
+          // satchel holds it — and it SPENDS the snack (authored consume),
+          // unlike the wave-at-the-door gag. Scooby's one-time hero discount.
+          id: "sdc_snack_toss",
+          text: "🍪 Scooby — FETCH! (hurl the Snack down the corridor and BOTH of you dive the other way)",
+          targetSceneId: "sd_cellar",
+          attitudeTag: "Clever",
+          quickTime: true,
+          timeLimitSeconds: 6,
+          qtePrompt: "THE PHANTOM!",
+          qteHeartbeat: true,
+          qteShakyCam: true,
+          gating: { requiresItems: ["sd_snack"], excludesFlags: ["sd_chase_done"] },
+          hidden: true,
+          consequences: {
+            removeItems: ["sd_snack"],
+            setFlags: ["sd_chase_done", "sd_snack_bribe"],
+            meterChanges: [{ meter: "Clever", delta: 1 }],
+          },
+          rememberLine: "The Phantom will remember being out-packeted.",
+          timedOutTargetSceneId: "sd_end_caught",
+          timedOutConsequences: { meterChanges: [{ meter: "Suspicion", delta: 2 }] },
+        },
+        {
           id: "sdc_c_foyer",
           text: "Retreat downstairs to the foyer.",
           targetSceneId: "sd_foyer",
@@ -1053,6 +1134,20 @@ export const SCOOBY_RAVENSWOOD: Story = {
         },
       ],
       dialogueBeats: [
+        {
+          id: "sdb_ce_snack",
+          characterId: "sd_shaggy",
+          expression: "deep personal loss",
+          conditionRule: { requiresFlags: ["sd_snack_bribe"] },
+          text: "Like, that was my rationed, inventory-managed, NOT-for-dogs snack, man. …Okay, maybe that ONE was for dogs. Scoob, you owe me a sandwich. Full height. No substitutions.",
+        },
+        {
+          id: "sdb_ce_snack2",
+          characterId: "sd_scooby",
+          expression: "unrepentant",
+          conditionRule: { requiresFlags: ["sd_snack_bribe"] },
+          text: "Rehehehehe. (Somewhere upstairs, a grey-robed ghost is discovering exactly what a Scooby Snack does to a phosphor paint job. It is not ghost-friendly. It is BOY-friendly.)",
+        },
         {
           id: "sdb_ce1",
           characterId: "sd_velma",
@@ -1184,7 +1279,22 @@ export const SCOOBY_RAVENSWOOD: Story = {
           id: "sdb_u3",
           characterId: "sd_scooby",
           expression: "magnanimous",
-          text: "Rand rhose RETECTIVES retter rhare RAREFUL. (He accepts a Scooby Snack as tribute.) Rooby-Rooby-DOO!",
+          conditionRule: { requiresItems: ["sd_snack"] },
+          text: "Rand rhose RETECTIVES retter rhare RAREFUL. (Shaggy produces the emergency snack with the ceremony it deserves. It disappears. Tribute accepted.) Rooby-Rooby-DOO!",
+        },
+        {
+          id: "sdb_u3b",
+          characterId: "sd_scooby",
+          expression: "magnanimous",
+          conditionRule: { requiresFlags: ["sd_snack_bribe"] },
+          text: "Rand rhose RETECTIVES retter rhare RAREFUL. (He points at the corridor ceiling with one paw: SOMETHING up there knows what a thrown snack can do. Legacy secured.) Rooby-Rooby-DOO!",
+        },
+        {
+          id: "sdb_u3c",
+          characterId: "sd_scooby",
+          expression: "magnanimous",
+          conditionRule: { excludesItems: ["sd_snack"], excludesFlags: ["sd_snack_bribe"] },
+          text: "Rand rhose RETECTIVES retter rhare RAREFUL. Rooby-Rooby-DOO!",
         },
         {
           id: "sdb_u4",
