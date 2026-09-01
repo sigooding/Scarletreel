@@ -2522,8 +2522,12 @@ export function validateStory(story: Story): ValidationIssue[] {
   // open a travel destination is used, not orphaned.
   story.map?.locations.forEach((loc) => loc.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag)));
   requiredFlags.forEach((flag) => {
-    if (!grantableFlags.has(flag))
-      issues.push({ severity: "error", sceneId: null, message: `Flag "${flag}" is required by a gate but no choice, hotspot, puzzle, or board connection sets it.` });
+    if (!grantableFlags.has(flag)) {
+      let message = `Flag "${flag}" is required by a gate but no choice, hotspot, puzzle, or board connection sets it.`;
+      if (memoryTags.has(flag))
+        message += ` (A choice records the memory "${flag}" via memoryLog — either gate on requiresMemories instead of requiresFlags, or set the flag in that choice's consequences.)`;
+      issues.push({ severity: "error", sceneId: null, message });
+    }
   });
 
   // Flag notes for flags that don't exist anywhere — a stray note, or a

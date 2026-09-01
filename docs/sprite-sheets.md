@@ -65,6 +65,24 @@ It prints the `frameWidth × frameHeight` grid to paste straight into a story's
 corners instead of taking a `--key`; `--tolerance`, `--softness` and `--gap`
 tune the key and the minimum gap that separates two frames.
 
+**Bridged plates recover automatically.** When `--frames N` is given and the
+gap-finder returns *fewer* than N runs, the figures were joined by opaque
+pixels — a glow, a crossing arm, a soft shadow — so no fully-transparent
+column gap separates them. The script splits the widest merged run at its
+lowest-occupancy interior column (the bridge's "waist"), repeating until the
+count is right or nothing can split further, then despeckles each recovered
+region (4-connected components under `--despeckle` px, default 2000) so cut
+fringe and stray specks disappear. Recovery narrates to stderr:
+
+    ♻ bridged plate: split run 49–1392 at column 1019 (waist occupancy 47px)
+    ♻ recovery: 3 waist split(s), 3 stray component(s) under 2000px despeckled
+
+Both phantom sheets in the Scooby case were built through this path — the
+pass-1 plate (one bridge) and the pass-2 four-frame plate (fully merged into
+one run, split three times). `scripts/split-bridged-plate.mjs` remains the
+manual override for pathological plates: `--probe` reports where the waists
+are, `--cols` cuts explicitly.
+
 ## The Sheet slicer (Media Tools tab)
 
 Studio → Media Tools tab → **🎞 Sheet slicer**: pick any uploaded image, set the

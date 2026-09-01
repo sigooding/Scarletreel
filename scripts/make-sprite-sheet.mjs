@@ -42,6 +42,9 @@ const tolerance = Number(arg("tolerance", 90));
 const softness = Number(arg("softness", 12));
 const minGap = Number(arg("gap", 8));
 const wantFrames = Number(arg("frames", 0));
+/** recovery only: connected components under this many source px are treated
+ *  as specks/fringe and dropped inside each recovered frame region. */
+const despecklePx = Number(arg("despeckle", 2000));
 
 /* ---------- minimal PNG codec (8-bit, non-interlaced) ---------- */
 function decodePng(buf) {
@@ -243,8 +246,89 @@ const keyed = key(plate.rgba, plate.w, plate.h, keyColor, tolerance, softness);
 
 let cols = frameColumns(keyed, plate.w, plate.h);
 if (!cols.length) cols = [[0, plate.w]];
-// Optional merge/split: keep the N widest frames when the count is given.
-if (wantFrames > 0 && cols.length !== wantFrames) {
+
+/* ---------- recovery: bridged plates ---------------------------------
+ * When N frames were asked for but FEWER runs were found, the figures were
+ * joined by opaque pixels (a glow, a crossing arm, a soft shadow) and no
+ * fully-transparent column gap separates them. Split the widest merged run
+ * at its lowest-occupancy interior column — the "waist" of the bridge —
+ * until the count is right or no run has a splittable interior, then
+ * despeckle each recovered region so cut fringe and stray specks go away.
+ * (`scripts/split-bridged-plate.mjs` remains the manual override for
+ * pathological plates, and can --probe where the waists are.) */
+function despeckleRegions(px, w, h, regions, minPx) {
+  let dropped = 0;
+  for (const [x0, x1] of regions) {
+    const seen = new Uint8Array(w * h);
+    let bestSize = 0;
+    const comps = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = x0; x < x1; x++) {
+        const start = y * w + x;
+        if (seen[start] || px[start * 4 + 3] <= 16) continue;
+        const stack = [start];
+        seen[start] = 1;
+        const comp = [start];
+        while (stack.length) {
+          const c = stack.pop();
+          const cx = c % w;
+          const cy = (c - cx) / w;
+          for (const [nx, ny] of [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]) {
+            if (nx < x0 || nx >= x1 || ny < 0 || ny >= h) continue;
+            const n = ny * w + nx;
+            if (seen[n] || px[n * 4 + 3] <= 16) continue;
+            seen[n] = 1;
+            stack.push(n);
+            comp.push(n);
+          }
+        }
+        comps.push(comp);
+        if (comp.length > bestSize) bestSize = comp.length;
+      }
+    }
+    for (const comp of comps) {
+      if (comp === comps.find((c) => c.length === bestSize)) continue; // keep a largest component
+      if (comp.length < minPx) {
+        for (const c of comp) px[c * 4 + 3] = 0;
+        dropped++;
+      }
+    }
+  }
+  return dropped;
+}
+let recoveredSplits = 0;
+if (wantFrames > 0 && cols.length < wantFrames) {
+  const occ = new Int32Array(plate.w);
+  for (let x = 0; x < plate.w; x++)
+    for (let y = 0; y < plate.h; y++) if (keyed[(y * plate.w + x) * 4 + 3] > 16) occ[x]++;
+  const minSeg = Math.max(24, Math.round((plate.w / wantFrames) * 0.15));
+  while (cols.length < wantFrames) {
+    let best = null; // [a, b, waistColumn, waistOccupancy]
+    for (const run of cols) {
+      const width = run[1] - run[0];
+      const margin = Math.max(12, Math.round(width * 0.1));
+      let minV = Infinity;
+      let at = -1;
+      for (let x = run[0] + margin; x <= run[1] - margin; x++)
+        if (occ[x] < minV) { minV = occ[x]; at = x; }
+      if (at < 0) continue;
+      if (at - run[0] < minSeg || run[1] - at < minSeg) continue;
+      if (!best || width > best[1] - best[0]) best = [run[0], run[1], at, minV];
+    }
+    if (!best) break;
+    const [a, b, at, v] = best;
+    cols = cols.flatMap((r) => (r[0] === a && r[1] === b ? [[a, at], [at, b]] : [r]));
+    recoveredSplits++;
+    console.error(`  ♻ bridged plate: split run ${a}–${b} at column ${at} (waist occupancy ${v}px)`);
+  }
+  if (recoveredSplits) {
+    const dropped = despeckleRegions(keyed, plate.w, plate.h, cols, despecklePx);
+    console.error(`  ♻ recovery: ${recoveredSplits} waist split(s), ${dropped} stray component(s) under ${despecklePx}px despeckled`);
+  }
+}
+
+// Optional merge: keep the N widest frames when the count is given.
+if (wantFrames > 0 && cols.length > wantFrames) {
   cols = [...cols]
     .sort((a, b) => b[1] - b[0] - (a[1] - a[0]))
     .slice(0, wantFrames)

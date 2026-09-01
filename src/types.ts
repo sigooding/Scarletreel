@@ -1781,10 +1781,15 @@ export interface GameSave {
   expiredChoices: string[];
   choiceClocks: Record<string, number>;
   /** live interrogation composure by sceneId (initial until first pressed,
-   * 0 = broken/clamped). Persists so a mid-interrogation save keeps its state. */
+   *  0 = broken/clamped). Persists so a mid-interrogation save keeps its state. */
   composure?: Record<string, number>;
   /** scenes whose suspect has already steadied once (recovery is one-shot). */
   steadied?: Record<string, boolean>;
+  /** dialogue beat ids the player has actually SEEN play, story-wide. A
+   *  revisit resumes after the last seen beat instead of skipping every
+   *  AUTHORED beat — so a gated beat that never played on the first visit
+   *  still surfaces on a later one, once its flag is set. */
+  seenBeats?: string[];
   /** ordered decision log powering the end-of-part flowchart */
   journey?: JourneyStep[];
   /** how many journey steps were already charted at the last part break */
