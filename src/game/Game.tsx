@@ -56,6 +56,7 @@ import {
   resolveBeatText,
   resolveRecap,
   resolveHotspot,
+  activeStageObstacles,
   sceneById,
   seasonEpisodes,
   CURSOR_ICON,
@@ -5701,6 +5702,15 @@ function CasePlayer({
       );
   }, [scene, usedHotspots, sceneId, state]);
 
+  /* DOORS — gate-aware barriers: while a barrier's gate is shut it is a wall
+   * (the router respects it); the moment the gate opens it stops existing.
+   * Resolved here, where the world state lives, and handed to the Stage as
+   * the obstacle list the walker actually collides with. */
+  const stageActiveObstacles = useMemo(
+    () => activeStageObstacles(scene?.stage?.obstacles, state),
+    [scene, state]
+  );
+
   /* Searchable things left in this scene: anything that isn't a pure exit
    * and hasn't been read/collected yet. The end-of-scene nudge tells the
    * player these exist before the choices carry them off. */
@@ -6202,6 +6212,7 @@ function CasePlayer({
         const stageEl = (
           <Stage
             key={`stage-${sceneId}`}
+            activeObstacles={stageActiveObstacles}
             settings={{
               ...scene.stage,
               // Story-wide walker default (In-game theme → 🚶 Player character);

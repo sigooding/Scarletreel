@@ -11532,6 +11532,22 @@ function StudioInner({
                                 <input
                                   type="checkbox"
                                   className="mt-0.5"
+                                  checked={!!st.sentenceLine}
+                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, sentenceLine: e.target.checked || undefined } })}
+                                />
+                                <span>
+                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💬 Sentence line (SCUMM)</span>
+                                  <br />
+                                  A strip along the bottom of the room reads out the pending interaction as you hover
+                                  ("Look at the drop-safe", "Use wrench on the bike", "Walk to"), and RIGHT-CLICKING an
+                                  object is a quick 👁 look. Off (the default): nothing renders and right-click stays the
+                                  browser's.
+                                </span>
+                              </label>
+                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5"
                                   checked={objectMenuOn}
                                   onChange={(e) => updateScene(scene.id, { stage: { ...st, objectVerbMenu: e.target.checked || undefined } })}
                                 />
@@ -12850,25 +12866,45 @@ function StudioInner({
                             </p>
                           ) : null}
                           {obs.map((o, oi) => (
-                            <div key={oi} className="flex items-center gap-1">
-                              <button
-                                className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
-                                  selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
-                                }`}
-                                onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
-                              >
-                                🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%
-                              </button>
-                              <button
-                                className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                title="Remove this barrier"
-                                onClick={() => {
-                                  setObs(obs.filter((_, j) => j !== oi));
-                                  setSelectedBarrier(null);
-                                }}
-                              >
-                                ✕
-                              </button>
+                            <div key={oi} className="space-y-1">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
+                                    selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
+                                  }`}
+                                  onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
+                                >
+                                  🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%{o.gating ? " 🚪" : ""}
+                                </button>
+                                <button
+                                  className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                  title="Remove this barrier"
+                                  onClick={() => {
+                                    setObs(obs.filter((_, j) => j !== oi));
+                                    setSelectedBarrier(null);
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              {selectedBarrier === oi ? (
+                                <div className="border border-crimson/20 bg-crimson/5 p-1">
+                                  <p className="font-type text-[9px] leading-snug text-paper/45">
+                                    🚪 <b className="text-crimson">Door:</b> give the barrier a gate and it blocks only
+                                    while the gate is SHUT — the moment it opens (a flag set by a key hotspot, a
+                                    conversation, a state's action) the walker can pass through. A barrier with no gate
+                                    always blocks (furniture).
+                                  </p>
+                                  <GatingEditor
+                                    gating={o.gating}
+                                    onChange={(g) => setObs(obs.map((b, j) => (j === oi ? { ...b, gating: g } : b)))}
+                                    items={story.items}
+                                    characters={story.characters}
+                                    flags={allFlags}
+                                    sectionId={`stage-barrier-${scene.id}-${oi}`}
+                                  />
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                           <button

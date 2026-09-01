@@ -101,6 +101,8 @@ import {
   activeHotspotState,
   resolveHotspot,
   hotspotReachableActions,
+  activeStageObstacles,
+  sentenceLineText,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
@@ -3657,6 +3659,63 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     const s1 = resolveHotspot(bench, withFlags("adv_has_line"));
     return bench.states?.length === 1 && s0.label === "the workbench" && s1.label === "the bare pegboard hook" && s1.action.text !== s0.action.text;
   })());
+}
+
+/* ================================================================== */
+/*  DOORS — gate-aware barriers (StageObstacle.gating)                 */
+/* ================================================================== */
+{
+  const st = (flags: string[]): GlobalState => ({ activeFlags: new Set(flags), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+  const wall = { x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["open"] } };
+  const crate = { x: 20, y: 70, w: 10, h: 10 };
+  const list = [crate, wall];
+
+  check("doors: an ungated barrier always blocks", activeStageObstacles(list, st([])).length === 2);
+  check("doors: a gated barrier blocks while its gate is shut", activeStageObstacles(list, st([])).some((o) => o === wall));
+  check("doors: the barrier is GONE the moment the gate opens", !activeStageObstacles(list, st(["open"])).some((o) => o === wall));
+  check("doors: furniture survives the door opening", activeStageObstacles(list, st(["open"]))[0] === crate);
+  check("doors: an item gate opens to the item", (() => {
+    const badge = { x: 0, y: 0, w: 10, h: 10, gating: { requiresItems: ["badge"] } };
+    const held = { ...st([]), inventory: [{ id: "badge" } as never] };
+    return activeStageObstacles([badge], st([])).length === 1 && activeStageObstacles([badge], held).length === 0;
+  })());
+
+  // Spatial routing: a full-height wall genuinely seals the room; the same
+  // room with the door open routes straight through.
+  {
+    const floor = { top: 60, bottom: 94 };
+    const sealed = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, [wall], undefined, floor, 2, 100);
+    check("doors: a shut door walls off the far side", sealed.length === 0, sealed);
+    const passable = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, activeStageObstacles([wall], st(["open"])), undefined, floor, 2, 100);
+    check("doors: the open door routes through", passable.length > 0 && passable[passable.length - 1].x > 85, passable);
+  }
+
+  // Validator: a door that can never open is an authoring error.
+  {
+    const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+    const doorStory: Story = {
+      id: "doors", title: "Doors", tagline: "", coverImage: "", startSceneId: "s1",
+      scenes: [
+        { id: "s1", title: "Room", background: "", prose: "text", choices: [], stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, obstacles: [{ x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["never_open"] } }] } as never, hotspots: [{ id: "out", label: "Out", bounds: { x: 80, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } }] },
+        endScene,
+      ],
+      items: [], characters: [],
+    };
+    const issues = validateStory(doorStory);
+    check("doors: a barrier gate on an unproduced flag errors", issues.some((i) => i.severity === "error" && /Flag "never_open" is required by a gate/.test(i.message)), issues.filter((i) => /never_open/.test(i.message)));
+  }
+}
+
+/* ================================================================== */
+/*  SENTENCE LINE (the SCUMM strip's text)                             */
+/* ================================================================== */
+{
+  check("sentence: bare floor reads Walk to", sentenceLineText({ verb: null }) === "Walk to");
+  check("sentence: an armed verb with no target reads its label", sentenceLineText({ verb: "look" }) === "Look at");
+  check("sentence: an armed item with no target reads Use item", sentenceLineText({ verb: "use", heldItemName: "wrench" }) === "Use wrench");
+  check("sentence: verb + object", sentenceLineText({ verb: "look", target: { label: "the drop-safe", cursor: "take" } }) === "Look at the drop-safe");
+  check("sentence: item on object", sentenceLineText({ verb: "use", heldItemName: "wrench", target: { label: "the bike", cursor: "use" } }) === "Use wrench on the bike");
+  check("sentence: no coin - the object's own verb reads out", sentenceLineText({ verb: null, target: { label: "the coil", cursor: "take" } }) === "Pick up the coil");
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

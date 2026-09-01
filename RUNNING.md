@@ -87,7 +87,9 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    every direction: WASD/arrow walking, click-to-walk around furniture, the
    verb coin, remote looks, conversations that lock the floor, wide-world
    camera pans, walk-off-screen edge exits, a live MULTI-STATE safe puzzle
-   (locked → opened → taken through `Hotspot.states`), and a real stage
+   (locked → opened → taken through `Hotspot.states`), a gate-aware DOOR
+   barrier that physically seals the alley until a conversation opens it, the
+   SCUMM sentence line (hover readout + right-click look), and a real stage
    round-trip through Demo Lab: Press the Lie. The non-interference half
    asserts the classic novel scenes between stages keep their prose panel,
    hotspots, exam card, choice keyboard shortcuts (W/S/arrows/digits) and

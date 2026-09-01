@@ -359,6 +359,9 @@ export const THROTTLE_ASH: Story = {
       stage: {
         ...walker({ top: 68, bottom: 95 }, { x: 50, y: 92 }, [{ x: 20, y: 70, w: 26, h: 12 }]),
         enterCaption: "Dell's. The only door in town that opens for a man with an empty tank.",
+        // The SCUMM strip — hover readout ("Look at the workbench") plus
+        // right-click quick-look. See docs/adventure-mode.md.
+        sentenceLine: true,
       },
       hotspots: [
         {

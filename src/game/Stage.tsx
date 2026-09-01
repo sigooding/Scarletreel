@@ -22,6 +22,7 @@ import {
   stageWalkDepth,
   stageWalkPoly,
   stepStagePos,
+  sentenceLineText,
 } from "../logic";
 import type { VerbId } from "../logic";
 import { assetUrl } from "../assetPath";
@@ -372,6 +373,7 @@ export function Stage({
   scriptRequest,
   enterScript,
   onScriptEffect,
+  activeObstacles,
 }: {
   settings: StageSettings;
   hotspots: Hotspot[];
@@ -429,6 +431,10 @@ export function Stage({
       | { type: "goToScene"; targetSceneId: string }
       | { type: "pose"; pose?: string },
   ) => void;
+  /** DOORS — the barriers that are SOLID right now, resolved against world
+   *  state by Game (a gated barrier blocks only while its gate is shut).
+   *  Defaults to the scene's full list (ungated = always solid). */
+  activeObstacles?: StageSettings["obstacles"];
 }) {
   const plateRef = useRef<HTMLDivElement>(null);
   /** WIDE WORLD: room width in viewport-% (100 = single screen). */
@@ -449,7 +455,7 @@ export function Stage({
   const hints = settings.hints ?? "proximity";
   const baseScale = stagePlayerScale(settings);
 
-  const obstacles = settings.obstacles ?? [];
+  const obstacles = activeObstacles ?? settings.obstacles ?? [];
 
   /** Where the marker RENDERS: on the object itself, bottom-centre of the
    *  drawn zone — a wall poster's reticle and label stay on the poster, not
@@ -522,6 +528,9 @@ export function Stage({
   const coinOn = verbMode && !objectMenu;
   const [verb, setVerb] = useState<VerbId>(verbs?.[0] ?? "look");
   const [heldItem, setHeldItem] = useState<string | null>(null);
+  // SENTENCE LINE — the object under the pointer, for the SCUMM strip
+  // ("Look at the drop-safe"). Null = the floor ("Walk to").
+  const [hoverObj, setHoverObj] = useState<{ label: string; cursor: Hotspot["cursor"] } | null>(null);
   const verbRef = useRef<VerbId>(verbs?.[0] ?? "look");
   const heldRef = useRef<string | null>(null);
   verbRef.current = verb;
@@ -538,6 +547,8 @@ export function Stage({
   // roam the pie freely) and the hover is computed geometrically — the pie
   // itself never intercepts the pointer.
   const holdMode = settings.objectMenuHold === true && objectMenu && !coinOn;
+  // SENTENCE LINE (SCUMM strip) - see sentenceLineText in logic.ts.
+  const sentenceOn = settings.sentenceLine === true;
   const holdTimerRef = useRef<number | null>(null);
   const holdRef = useRef<{ hs: Hotspot; startX: number; startY: number } | null>(null);
   const pieRef = useRef<{ open: boolean; cx: number; cy: number; verbs: VerbId[] }>({ open: false, cx: 0, cy: 0, verbs: [] });
@@ -1465,7 +1476,22 @@ export function Stage({
                   // pointer path is handled above; this is idempotent.
                   if (active && !(objectMenu && !coinOn)) walkToMarker(hs);
                 }}
-                onMouseEnter={() => active && audio.hover()}
+                onMouseEnter={() => {
+                  if (!active) return;
+                  audio.hover();
+                  // SENTENCE LINE: the strip reads out the object under the
+                  // pointer ("Look at the drop-safe").
+                  setHoverObj({ label: hs.label, cursor: hs.cursor });
+                }}
+                onMouseLeave={() => setHoverObj((cur) => (cur?.label === hs.label ? null : cur))}
+                // SENTENCE LINE rooms: RIGHT-CLICK is a quick Look, exactly
+                // like picking look off the coin - SCUMM muscle memory.
+                onContextMenu={(e) => {
+                  if (!sentenceOn) return; // the browser menu stays elsewhere
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (active && !scriptOnRef.current) pickVerb(hs, "look");
+                }}
               >
                 <span className={`stage-marker-label ${near ? "stage-marker-label-on" : ""}`}>
                   {coinOn ? VERB_ICON[verb] : markerIcon(hs)} {hs.label}
@@ -1788,6 +1814,25 @@ export function Stage({
               );
             })}
           </div>
+        </div>
+      ) : null}
+
+      {/* SENTENCE LINE — the SCUMM strip: the pending interaction read out
+          along the bottom of the room ("Look at the drop-safe", "Use wrench
+          on the bike", "Walk to"). Rooms without it render nothing. */}
+      {sentenceOn && active && !scriptOn ? (
+        <div
+          className="stage-sentence pointer-events-none absolute inset-x-0 bottom-0 z-[72] flex h-6 items-center justify-center border-t border-noir-700/70 bg-noir-950/75 px-16 font-type text-[11px] tracking-wide text-paper/85 backdrop-blur-[2px]"
+          aria-live="polite"
+        >
+          {sentenceLineText({
+            verb: coinOn ? verb : null,
+            heldItemName:
+              coinOn && verb === "use" && heldItem
+                ? inventory?.find((i) => i.id === heldItem)?.name
+                : null,
+            target: hoverObj,
+          })}
         </div>
       ) : null}
 

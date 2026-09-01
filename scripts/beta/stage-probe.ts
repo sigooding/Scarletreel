@@ -315,6 +315,12 @@ const STAGE_STORY: Story = {
         keyboard: true,
         floor: { top: 62, bottom: 94 },
         worldWidth: 200,
+        // SENTENCE LINE: the SCUMM strip (+ right-click look).
+        sentenceLine: true,
+        // DOOR: a gate-aware barrier sealing the alley past the kid. The
+        // kid's "Keep moving" reply sets bs_alley_clear and the wall ceases
+        // to exist - a spatial lock-and-key, not a menu gate.
+        obstacles: [{ x: 176, y: 56, w: 7, h: 40, gating: { requiresFlags: ["bs_alley_clear"] } }],
         exitEdges: {
           right: { targetSceneId: "bs_alibi", label: "Walk into the office" },
         },
@@ -345,6 +351,7 @@ const STAGE_STORY: Story = {
             text: "BELL: the counter bell rings; somewhere behind the wall a bolt slams back.",
             flagSet: "bs_safe_open",
           },
+          verbs: { look: { type: "showText", text: "BELL-LOOK: brass, dented by a hundred knuckles." } },
         },
         {
           id: "bswh_safe",
@@ -374,7 +381,7 @@ const STAGE_STORY: Story = {
         },
       ],
       dialogueBeats: [{ id: "bswb_1", characterId: "bs_kid", text: "WIDE-KID-LINE: this alley talks back." }],
-      choices: [{ id: "bswc_go", text: "Keep moving", reply: true }],
+      choices: [{ id: "bswc_go", text: "Keep moving", reply: true, consequences: { setFlags: ["bs_alley_clear"] } }],
     },
     /* ── the office: a CLASSIC graphic-novel scene ────────────────── */
     {
@@ -633,6 +640,8 @@ async function parts2to4() {
     }, 4000);
   }
 
+  ok(!q(".stage-sentence"), "rooms without the flag render no sentence strip");
+
   // C — click-to-walk + the coin: pick up the wrench AROUND the crate.
   {
     ok(await coinVerb("Pick up"), "arming the Pick up verb");
@@ -807,6 +816,21 @@ async function parts2to4() {
     const arrow = qa("button").find((b) => (b.getAttribute("aria-label") || "").includes("Walk into the office"));
     ok(!!arrow, "the walk-off-screen edge arrow renders at the strip's end");
 
+    /* ---- SENTENCE LINE, live: the SCUMM strip + right-click look ---- */
+    {
+      const strip = () => q<HTMLElement>(".stage-sentence");
+      ok(!!strip(), "the sentence strip renders on a sentence-line room");
+      ok(/walk to/i.test(strip()?.textContent || ""), "the bare floor reads 'Walk to'", strip()?.textContent);
+      const bellBtn = q<HTMLButtonElement>('.stage-marker[data-hs-id="bswh_bell"]');
+      // Hover: React's onMouseEnter rides the delegated mouseover.
+      bellBtn?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await until("the strip reads out the hovered object", () => /the counter bell/i.test(strip()?.textContent || ""), 3000);
+      ok(/use the counter bell/i.test(strip()?.textContent || ""), "with no coin armed it reads the object's own verb", strip()?.textContent);
+      // Right-click = quick Look (walks never; the look verb answers from here).
+      bellBtn?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      await until("right-click look fires the bell's look line", () => text().includes("BELL-LOOK"), 6000);
+    }
+
     /* ---- MULTI-STATE OBJECT, live: the drop-safe puzzle ----
      * One marker through three faces — locked, opened, taken — with the
      * marker count never changing until the take genuinely consumes it. */
@@ -840,6 +864,20 @@ async function parts2to4() {
       ok(!safe(), "the emptied safe is consumed by the take (base pickup rules)");
     }
 
+    /* ---- DOOR, live: the gate-aware barrier sealing the alley ----
+     * While the kid's flag is unset the wall past him is SOLID - the far
+     * markers stay visible but the walker physically cannot reach them. */
+    {
+      const doorBtn = q<HTMLButtonElement>('.stage-marker[data-hs-id="bswh_door"]');
+      ok(!!doorBtn, "the door marker is clickable even while walled off");
+      doorBtn!.click(); // click-to-walk at the far door: the wall must stop it
+      await sleep(1800);
+      const held = playerPos()?.x ?? 0;
+      ok(held < 175.5, "a shut door stops the walker cold at the wall", `x=${held}`);
+      ok(!!q('.stage-marker[data-hs-id="bswh_door"]'), "the markers behind the door stay visible");
+      ok(!q(".hotspot-box"), "the walled-off door never fires its scene change");
+    }
+
     // STUCK KEYS: hold right (keydown, no keyup), walk into the alley kid —
     // the conversation opens mid-hold; the floor lock must drop the key, or
     // the walker would sprint off on its own the moment it reopens.
@@ -864,11 +902,14 @@ async function parts2to4() {
     // Walk off the right edge of the world into the target scene.
     key("ArrowRight"); // re-press: the floor lock legitimately dropped the old hold
     const t0 = Date.now();
+    let maxX = playerPos()?.x ?? 0;
     while (Date.now() - t0 < 12000 && !q(".hotspot-box")) {
       maxCam = Math.max(maxCam, camAt());
+      maxX = Math.max(maxX, playerPos()?.x ?? 0);
       await sleep(80);
     }
     keyUp("ArrowRight");
+    ok(maxX > 184, "the opened barrier lets the walker cross to the far end", `maxX=${maxX}`);
     ok(maxCam > 90, "the camera pans ahead of the walker to the strip's end", `cam=${maxCam}`);
     await until("walking off the edge enters the target scene", () => !!q(".hotspot-box") && text().includes("ALIBI-PROSE"), 8000);
     ok(!q("[data-stage-player]"), "the walker is gone after the edge exit");

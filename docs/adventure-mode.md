@@ -436,6 +436,50 @@ shows a `🔁n` badge. `throttleAsh.ts` (`adv_garage` → `advh_bench`) ships th
 reference case, and `npm run test:stage` plays a full locked → opened →
 emptied safe puzzle through the real UI.
 
+### Doors as real doors (gate-aware barriers)
+
+A barrier may carry a gate: while the gate is **shut** the barrier is a solid
+wall the router respects, and the instant it opens the barrier *ceases to
+exist*. That makes lock-and-key puzzles **spatial** — the walker physically
+cannot reach the far side of the room, no matter what the menus say — instead
+of a hotspot that merely refuses.
+
+```ts
+stage: {
+  obstacles: [
+    // furniture: always blocks
+    { x: 20, y: 70, w: 26, h: 12 },
+    // the door: blocks until bs_alley_clear is set
+    { x: 176, y: 56, w: 7, h: 40, gating: { requiresFlags: ["bs_alley_clear"] } },
+  ],
+}
+```
+
+The gate is the full `Gating` vocabulary (items too — the crowd parts once
+you hold the badge). The opening flag can come from anywhere: a key hotspot's
+`flagSet`, a conversation choice's consequences, a puzzle reward, or a
+**multi-state object's** state action — the natural pairing is a door object
+whose *open* state re-skins the art while the barrier's gate lets the body
+through. Everything downstream just works: markers behind a shut door stay
+visible (you can see the exit, you can't reach it), click-to-walk slides the
+walker up against the wall, and the validator flags a door whose gate flag
+nothing can ever set.
+
+Studio: Hotspots tab → 🚧 **Barriers** → click a barrier → the **🚪 Door**
+gate editor. `npm run test:stage` plays the whole thing live — an alley the
+kid and his crates seal until you talk him into moving.
+
+### The sentence line (SCUMM's bottom strip)
+
+Opt-in per room: `stage.sentenceLine: true` (Studio: 🎛 **Interaction** → 💬
+**Sentence line**). A strip along the bottom of the room reads the pending
+interaction out as you hover — **"Look at the drop-safe"**, **"Use wrench on
+the bike"** with an item armed, the coin's verb with nothing hovered, or
+plain **"Walk to"** on the floor — and **right-clicking an object is a quick
+👁 Look**, exactly like picking look off the coin. Rooms without it (the
+default) render nothing new, keep the browser's right-click menu, and classic
+novel scenes are untouched.
+
 ## What the prototype is missing (ranked)
 
 Built on purpose: every gap below shows up as a compromise in

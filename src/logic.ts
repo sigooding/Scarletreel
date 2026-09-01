@@ -24,6 +24,7 @@ import type {
   RecapLine,
   SceneNode,
   SeasonLog,
+  StageObstacle,
   StageScriptStep,
   StageSettings,
   Story,
@@ -1119,6 +1120,24 @@ export const VERB_LABEL: Record<VerbId, string> = {
   kick: "Kick",
   punch: "Punch",
 };
+
+/** SENTENCE LINE — the SCUMM strip's text: what the pending interaction
+ *  reads as ("Look at the drop-safe", "Use wrench on the bike", "Walk to").
+ *  Pure composition so rooms, stories and tests share one voice. */
+export function sentenceLineText(opts: {
+  verb: VerbId | null;
+  heldItemName?: string | null;
+  target?: { label: string; cursor: CursorKind } | null;
+}): string {
+  const { verb, heldItemName, target } = opts;
+  if (!target) {
+    if (verb === "use" && heldItemName) return `Use ${heldItemName}`;
+    return verb ? VERB_LABEL[verb] : "Walk to";
+  }
+  if (verb === "use" && heldItemName) return `Use ${heldItemName} on ${target.label}`;
+  return `${VERB_LABEL[verb ?? target.cursor]} ${target.label}`;
+}
+
 export const VERB_ICON: Record<VerbId, string> = {
   look: "👁",
   take: "✋",
@@ -1663,11 +1682,20 @@ export const STAGE_AGENT_RADIUS = 1.6;
  *  nodes, which is far below anything a player can perceive. */
 export const STAGE_GRID_STEP = 2;
 
-export interface StageObstacle {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+/** One no-go rectangle. Canonical shape + gating docs live in types.ts
+ *  (StageObstacle); re-exported here for the routing helpers' callers. */
+export type { StageObstacle };
+
+/** Gate-aware barriers: the obstacles that are SOLID right now. A barrier
+ *  without a gate always blocks (furniture); a gated one — a locked door —
+ *  blocks only while its gate is CLOSED, and vanishes the instant it opens,
+ *  so the walker can finally pass. Pure: the game re-runs it whenever world
+ *  state changes and hands the survivors to the router. */
+export function activeStageObstacles(
+  list: StageObstacle[] | undefined,
+  s: GlobalState
+): StageObstacle[] {
+  return (list ?? []).filter((o) => (o.gating ? !meetsGating(o.gating, s) : true));
 }
 
 /** The floor band as a full-width rectangle polygon (world %). */
@@ -2751,6 +2779,9 @@ export function validateStory(story: Story): ValidationIssue[] {
         st.action?.itemGranted && st.action.type === "giveItem" && grantable.add(st.action.itemGranted);
       })
     );
+    // DOORS: a barrier's passage gate is a real read too (the crowd only
+    // parts once you hold the badge).
+    sc.stage?.obstacles?.forEach((o) => o.gating?.requiresItems?.forEach((i) => required.add(i)));
     sc.dialogueBeats?.forEach((b) => {
       b.conditionRule?.requiresItems?.forEach((i) => required.add(i));
       // The contradiction can only be won with a held clue — it's required.
@@ -2785,6 +2816,9 @@ export function validateStory(story: Story): ValidationIssue[] {
         st.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
       });
     });
+    // DOORS: a barrier's passage gate reads flags like everything else —
+    // a door that can never be unlocked is an authoring error.
+    sc.stage?.obstacles?.forEach((o) => o.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag)));
     sc.onEnterActions?.forEach((action) => action.consequences?.setFlags?.forEach((flag) => grantableFlags.add(flag)));
     sc.dialogueBeats?.forEach((beat) => {
       beat.conditionRule?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));

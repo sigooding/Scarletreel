@@ -871,6 +871,18 @@
    walkable floor band and every barrier. Click a barrier to select it, drag a
    new box to reshape it.
 
+   🚪 DOORS: click a barrier in the list and give it a GATE. While the gate is
+   shut the barrier is a solid wall (the walker physically cannot pass); the
+   moment something opens the gate — a key hotspot, a conversation choice, a
+   puzzle, a multi-state object's action — the barrier stops existing and the
+   walker can go through. Lock-and-key made spatial; the Check tab errors on a
+   door whose flag nothing can ever set.
+
+   💬 SENTENCE LINE (🎛 Interaction, per room): a SCUMM strip along the bottom
+   reads the pending interaction as you hover — "Look at the drop-safe", "Use
+   wrench on the bike", "Walk to" — and RIGHT-CLICK on an object is a quick
+   👁 look. Off by default; classic scenes never show it.
+
    INVENTORY DISPLAY (Items tab → "🎒 Inventory display"): Classic (the chip rail
    every case already has — the default, so nothing changes), Container (a
    pouch / case / saddlebag sprite that pops open with the items laid out INSIDE

@@ -1074,6 +1074,24 @@ export interface Interrogation {
  * lives in short caption lines (`showText` actions and `enterCaption`),
  * the way a walkable scene speaks through what you do, not paragraphs.
  */
+/** One no-go rectangle the walker routes around (StageSettings.obstacles).
+ *  Optionally carries a GATE: while the gate does NOT pass, the barrier is a
+ *  solid wall (a locked door); the moment the gate opens the barrier ceases
+ *  to exist and the walker may pass — the lock-and-key puzzle made spatial. */
+export interface StageObstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Stable id (editor/validator references). Optional. */
+  id?: string;
+  /** PASSAGE GATE — the barrier blocks while this gate is CLOSED and is
+   *  gone once it opens. Omit for furniture that always blocks (a counter,
+   *  a parked truck). A gate with an item requirement works too (the crowd
+   *  parts once you hold the badge). */
+  gating?: Gating;
+}
+
 export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
    *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
@@ -1088,6 +1106,13 @@ export interface StageSettings {
    *  When on, hotspots answer per verb (Hotspot.verbs) and the USE verb arms
    *  an inventory item. See docs/adventure-mode.md. */
   verbCoin?: boolean;
+  /** SENTENCE LINE — the SCUMM strip along the bottom of the room that
+   *  reads out the pending interaction as you hover ("Look at the
+   *  drop-safe", "Use wrench on the bike", or just "Walk to"). While on,
+   *  RIGHT-CLICKING an object is a quick 👁 Look, exactly like picking
+   *  look off the coin. Rooms without it (the default) render nothing
+   *  new and classic graphic-novel scenes are untouched. */
+  sentenceLine?: boolean;
   /** Which verbs the coin offers. Defaults to every verb the room uses. */
   verbs?: import("./types").VerbId[];
   /** OPT-IN for the two EXTRA body-verbs (👢 kick · 👊 punch). When true, the
@@ -1188,8 +1213,14 @@ export interface StageSettings {
    *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
    *  routes around them (A* on a coarse grid, then string-pulled to the
    *  corners a person would actually turn at); the keyboard slides along them
-   *  instead of stopping dead. See src/logic.ts `stageRoute`. */
-  obstacles?: { x: number; y: number; w: number; h: number }[];
+   *  instead of stopping dead. See src/logic.ts `stageRoute`.
+   *  A barrier may carry a GATE (`gating`): while the gate is CLOSED the
+   *  barrier is a solid wall, and the instant it opens the barrier is GONE —
+   *  a locked door made SPATIAL (the walker physically cannot pass, never
+   *  mind the menus). Pair it with a door hotspot (or a multi-state object)
+   *  whose action sets the opening flag. See docs/adventure-mode.md
+   *  § "Doors as real doors". */
+  obstacles?: StageObstacle[];
   /** WIDE WORLD — how many viewport-widths the room spans (default 100 =
    *  one screen, the classic single plate). 200 = two screens side by side,
    *  like a LucasArts scrolling alley: the camera follows the walker and
