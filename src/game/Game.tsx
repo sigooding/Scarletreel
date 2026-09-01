@@ -63,6 +63,7 @@ import {
   inventoryDisplay,
   resolveCursor,
   resolveVerbAction,
+  itemsConsumedBy,
   verbsForScene,
   wrongVerbLine,
   stageCaptionMs,
@@ -5459,7 +5460,15 @@ function CasePlayer({
           const examText = actText ?? act.text ?? "…";
           if (stageMode) showStageCaption(examText, "info", hs.label);
           else setExamCard({ label: hs.label, text: examText, kind: "info" });
-          if (soundOnRef.current && autoNarrate) audio.speak(examText);
+          {
+            // Voiced like the beats: a recorded clip wins over the TTS
+            // reader. A per-item reply uses its own clip (an overridden
+            // line must never lip-flap the action's default recording).
+            const over = actText != null && actText !== act.text;
+            const clip = over ? hs.itemAudio?.[ctx?.itemId ?? ""] : act.audioUrl;
+            if (clip) audio.playClip(clip);
+            else if (soundOnRef.current && autoNarrate) audio.speak(examText);
+          }
           if (act.flagSet || act.meterChange) completeHotspot(hs, undefined, act, markUsed);
           break;
         case "startDialogue":
@@ -5541,9 +5550,11 @@ function CasePlayer({
           // Derive the post-consumption state and hand it straight to
           // completeHotspot instead of mutating the ref behind React's back.
           let nextState = stateRef.current;
-          // The USE verb can name its own item: "use the coffee on this"
-          // consumes the coffee even if the object was authored for a wrench.
-          const consumed = ctx?.itemId ?? act.itemConsumed;
+          // Author-controlled vanishment: only an action that NAMES an item
+          // in "consumes …" spends anything. An unnamed use-item action (or
+          // any other kind) NEVER eats the armed item — it just plays its
+          // line, like a say-a-line reply.
+          const consumed = itemsConsumedBy(act)[0];
           if (consumed) {
             nextState = applyConsequences(story, { removeItems: [consumed] }, stateRef.current);
             if (nextState !== stateRef.current) {
@@ -5551,10 +5562,16 @@ function CasePlayer({
               pushToast(`Used: ${story.items.find((i) => i.id === consumed)?.name ?? consumed}`, "success");
             }
           }
-          if (actText) {
-            if (stageMode) showStageCaption(actText, "info", hs.label);
-            else setExamCard({ label: hs.label, text: actText, kind: "info" });
-            if (soundOnRef.current && autoNarrate) audio.speak(actText);
+          const useLine = actText ?? act.text;
+          if (useLine) {
+            if (stageMode) showStageCaption(useLine, "info", hs.label);
+            else setExamCard({ label: hs.label, text: useLine, kind: "info" });
+            // Per-item reply clips take priority over the action's own
+            // recording; only the TTS reader falls all the way through.
+            const over = actText != null && actText !== act.text;
+            const clip = over ? hs.itemAudio?.[ctx?.itemId ?? ""] : act.audioUrl;
+            if (clip) audio.playClip(clip);
+            else if (soundOnRef.current && autoNarrate) audio.speak(useLine);
           }
           completeHotspot(hs, nextState, act, markUsed);
           break;

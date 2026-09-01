@@ -109,8 +109,17 @@ export interface HotspotAction {
   flagSet?: string;
   meterChange?: MeterChange;
   text?: string;
-  /** for useItem hotspots: which held item is consumed */
+  /** for useItem hotspots: which held item is consumed. When unset the
+   *  action consumes NOTHING — arming an item never empties the satchel on
+   *  its own; consumption is always author-explicit. */
   itemConsumed?: string;
+  /** A recorded/uploaded clip (mp3, wav…) that plays INSTEAD of the
+   *  text-to-speech reader when this action's line shows — the hotspot
+   *  equivalent of a dialogue beat's audio. Author it in the Studio with an
+   *  upload, a library pick, or the 🎙 ElevenLabs button (any character
+   *  voice). When a per-item reply line overrides the line, that reply's own
+   *  clip (Hotspot.itemAudio) wins. */
+  audioUrl?: string;
   /** for patternPuzzle hotspots: the puzzle configuration */
   patternPuzzle?: import("./game/PatternPuzzleTypes").PatternPuzzleConfig;
   /** runScript hotspots (STAGE nodes): the scripted sequence to play. The
@@ -183,6 +192,11 @@ export interface Hotspot {
   /** Per-item reply when an accepted item is USEd here, keyed by item id.
    *  Falls back to the useItem action's own text. */
   itemResponses?: Record<string, string>;
+  /** Per-item reply CLIPS — when an accepted item's reply (itemResponses)
+   *  plays, this clip (if set for that item) plays instead of speech
+   *  synthesis, and beats the action's own audioUrl. Same authoring widgets
+   *  as beats: upload, library pick, or 🎙 ElevenLabs generation. */
+  itemAudio?: Record<string, string>;
   /** Said when the player tries a verb this object doesn't answer to (or a
    *  wrong item). Falls back to Story.verbResponses. */
   wrongVerbText?: string;

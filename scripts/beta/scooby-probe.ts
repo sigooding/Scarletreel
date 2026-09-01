@@ -12,6 +12,8 @@ import {
   interrogationOutcome,
   applyLieCaught,
   heatBustTarget,
+  resolveVerbAction,
+  itemsConsumedBy,
 } from "../../src/logic";
 import { spriteSheetIssues } from "../../src/game/spriteSheet";
 import type { SceneNode, GlobalState } from "../../src/types";
@@ -144,8 +146,24 @@ d = fire(d, "sdh_sign");
 d = fire(d, "sdh_window");
 d = fire(d, "sdh_mailbox");
 ok(holds(d, "sd_telegram"), "mailbox grants the second telegram");
+d = fire(d, "sdh_cooler");
+ok(holds(d, "sd_snack") && has(d, "sd_got_snack"), "van cooler grants the emergency Scooby Snack");
+/* the verb-coin gaits, probed engine-directly: */
+{
+  const door = d.scene.hotspots!.find((h) => h.id === "sdh_door")!;
+  const sign = d.scene.hotspots!.find((h) => h.id === "sdh_sign")!;
+  const doorUse = resolveVerbAction(door, "use", "sd_snack");
+  ok(doorUse.ok && doorUse.text?.includes("bait") === true, "snack-on-door answers with the bait gag (authored ⚙ use action)");
+  const signUse = resolveVerbAction(sign, "use", "sd_snack");
+  ok(signUse.ok && signUse.text?.includes("OFFENDED") === true, "snack-on-sign answers via the showText DEFAULT (say-line fallback)");
+  ok(itemsConsumedBy(signUse.action).length === 0 && itemsConsumedBy(doorUse.action).length === 0,
+    "neither say-line spends the snack (no more ate-my-item)");
+  const wrongItem = resolveVerbAction(sign, "use", "sd_telegram");
+  ok(!wrongItem.ok, "a wrong item is still refused on the sign");
+}
 d = fire(d, "sdh_door");
 ok(d.scene.id === "sd_meet", "front door leads to the caretaker");
+ok(holds(d, "sd_snack"), "snack still in the satchel walking through the door");
 
 d = pick(d, "sdc_ask_phantom");
 ok(has(d, "sd_asked_phantom"), "phantom question sets its flag");
@@ -206,8 +224,14 @@ const qteVisible = (d.scene.choices ?? []).filter(
   (c) => c.quickTime && !meetsGating(c.gating ? { ...c.gating, requiresFlags: [] } : undefined, d.state) || (c.quickTime && !has(d, "sd_chase_done")),
 );
 ok(qteVisible.length >= 2, "both QTE escapes offered before the chase is done");
-d = pick(d, "sdc_dive");
-ok(d.scene.id === "sd_cellar" && has(d, "sd_chase_done"), "dive lands in the cellar, chase done");
+/* gold run carries the snack: the bribe option is visible and spends it */
+ok(
+  (d.scene.choices ?? []).some((c) => c.id === "sdc_snack_toss" && meetsGating(c.gating, d.state)),
+  "snack-bribe escape offered while the snack is held",
+);
+d = pick(d, "sdc_snack_toss");
+ok(d.scene.id === "sd_cellar" && has(d, "sd_chase_done") && has(d, "sd_snack_bribe"), "snack toss lands in the cellar, chase done + bribe remembered");
+ok(!holds(d, "sd_snack"), "the bribe SPENDS the snack (authored consume) — one-time hero discount");
 
 d = fire(d, "sdh_projector");
 ok(holds(d, "sd_filmreel") && has(d, "sd_found_film"), "projector reel recovered");

@@ -198,3 +198,60 @@ Renders every authored hotspot zone onto its scene plate: **solid red** = open z
 - `scripts/split-bridged-plate.mjs` — new slicer companion for bridged plates (§3.2).
 - `scripts/beta/scooby-harness.mjs` + `scripts/beta/scooby-probe.ts` — the re-runnable beta harness (§1).
 - `docs/scooby-ravenswood-beta-test.md` — this report.
+---
+
+## 9. Pass 4 (2026-09-01) — playability pass: the Snack economy, hi-res leads, voiced gags
+
+**Beta request:** *"Extend and improve the playability of the Scooby-Doo game
+— hi-res characters, and an improved plot in the style of Scooby-Doo."* Two
+engine findings surfaced along the way and shipped as fixes first (see
+`docs/adventure-mode.md` "Spending is author-explicit"); the case then
+dogfoods both.
+
+### 9.1 The two side-effect fixes
+- **Say-a-line USE can no longer eat your item.** Consumption is now
+  author-explicit: only a 🗝 use-item action with *Consumes item* picked
+  spends anything (`itemsConsumedBy` in `src/logic.ts`; the armed item alone
+  used to vanish). `resolveVerbAction` also (a) lets a written reply line
+  imply acceptance and (b) lets an accepted item fall back to the hotspot's
+  own 💬 say / 🗝 use default action — the Studio "Accepts these items"
+  panel's promise, previously dead unless you also authored an ⚙ use verb.
+  The Check tab now warns on accepts that can never answer (and errors on
+  accepts pointing at unknown items).
+- **Verb actions can be voiced like beats.** `HotspotAction.audioUrl` and
+  `Hotspot.itemAudio` (per-item reply clips) play instead of the TTS reader;
+  the Studio hotspot editor now carries the same widgets as beats
+  (upload / library / 🎙 ElevenLabs with any character's voice).
+
+### 9.2 What the pass adds to the case
+- **🍪 Scooby Snack, Emergency Grade** (new item) — from the van's cooler on
+  the grounds (new `✋ Check the van's cooler` hotspot; its LOOK answer is
+  the ration-label gag).
+- **Two deliberately non-consuming gags** — wave the snack at the gate sign
+  (itemResponses implied-accept path) or under the manor door (authored
+  ⚙ use action path). Both play their joke and keep the snack.
+- **The corridor chase gains a third QTE line** — *"🍪 Scooby — FETCH!"*
+  appears only while the snack is held, lifts the chase on `sd_snack_bribe`,
+  and SPENDS the snack (the authored-consume demo).
+- **Cellar callback** — two beats gated on `sd_snack_bribe` (Shaggy's ration
+  mourning; Scooby's unrepentant burp). On a revisit after the toss they
+  surface thanks to the pass-3 seen-beat fix.
+- **Unmasking tribute beat, route-aware** — the Scooby tribute plays with the
+  snack in hand, nods at the legacy if you threw it, and falls back to the
+  plain cackle otherwise.
+- **Voiced gags** — both grounds replies carry narrator MP3s
+  (`public/voices/narrator/sd-*.mp3`) through the new per-item clip channel.
+- **Hi-res leads** — Scooby & Shaggy talking portraits re-plated at 2×
+  (768px frames, `pixelated` off): `plates/sd-*-talk-hi.png` →
+  `public/assets/sprites/sd-*-talk-hi.png`. Velma/Fred/Daphne/Phantom keep
+  the pass-1/2 sheets; the walker plate is untouched so the grounds read the
+  same.
+
+### 9.3 Gates re-run this pass
+`npx tsc --noEmit` clean · `npm test` engine **952/952** (11 new checks: the
+say-line fallback, implied accept, strict take/move refusal, the spend
+contract ×3/$1, three validator checks) + dom smoke + import/export ✔ ·
+`node scripts/beta/scooby-harness.mjs` **81/81** (gold run now dogfoods the
+full snack path: cooler grant → both gags probed via `resolveVerbAction` →
+QTE bribe → spend asserted gone) · `node scripts/preflight.mjs` → all 28
+stories ✔.

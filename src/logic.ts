@@ -1186,6 +1186,16 @@ export interface VerbResolution {
   verb: VerbId;
 }
 
+/** Which satchel item an activation actually SPENDS. Consumption is always
+ *  author-controlled: only an 🗝 use-item action with `itemConsumed` set
+ *  eats an item. A 💬 say-a-line reply — or a use-item action that authors
+ *  no consumption — never empties the satchel, even when the player armed
+ *  the item on purpose. (The old behaviour silently spent the armed item,
+ *  which read exactly like "the showText ate my item".) */
+export function itemsConsumedBy(act: HotspotAction | undefined | null): string[] {
+  return act?.type === "useItem" && act.itemConsumed ? [act.itemConsumed] : [];
+}
+
 /** Resolve "player used VERB (with ITEM) on hotspot" to the action to run.
  *
  *  Order of precedence for the USE verb with an item:
@@ -1196,9 +1206,19 @@ export interface VerbResolution {
  *  own cursor is that verb, else nothing. */
 export function resolveVerbAction(hs: Hotspot, verb: VerbId, itemId?: string): VerbResolution {
   if (verb === "use" && itemId) {
-    const accepted = (hs.acceptsItems ?? []).includes(itemId);
+    // An item is "accepted" when the author ticked it in the USE panel OR
+    // merely wrote the reply line for it (an authored reply implies intent).
+    const accepted = (hs.acceptsItems ?? []).includes(itemId) || hs.itemResponses?.[itemId] != null;
     if (!accepted) return { ok: false, verb };
-    const action = hs.verbs?.use ?? (hs.action.type === "useItem" ? hs.action : undefined);
+    // An accepted item is answered by the object's authored ⚙ USE action…
+    // and, failing that, by its DEFAULT action when that action is a reply
+    // (💬 say) or a consumption (🗝 use-item). That is what the Studio's
+    // "Accepts these items" panel promises: tick the item, write the line,
+    // and the line plays. Only actions that take/move things stay strict —
+    // accepting a snack must never make a → door teleport or a 🎁 pickup.
+    const answers =
+      hs.action.type === "useItem" || hs.action.type === "showText" ? hs.action : undefined;
+    const action = hs.verbs?.use ?? answers;
     if (!action) return { ok: false, verb };
     return { ok: true, action, text: hs.itemResponses?.[itemId], verb };
   }
@@ -2325,6 +2345,23 @@ export function validateStory(story: Story): ValidationIssue[] {
         issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" grants unknown item "${h.action.itemGranted}".` });
       if (h.action.itemConsumed && !itemIds.has(h.action.itemConsumed))
         issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" consumes unknown item "${h.action.itemConsumed}".` });
+      // An item the object promises to answer (tickled in 🎒 Accepts, or a
+      // written reply line) but that resolves to NOTHING at runtime: the
+      // default action must be 💬 say or 🗝 use-item, or there must be a 🎚
+      // "use" verb action. Otherwise the player arms it and gets refused —
+      // authored content that can never fire.
+      const promised = Array.from(new Set([...(h.acceptsItems ?? []), ...Object.keys(h.itemResponses ?? {})]));
+      for (const pid of promised) {
+        if (!itemIds.has(pid)) {
+          issues.push({ severity: "error", sceneId: sc.id, message: `Hotspot "${h.label}" accepts unknown item "${pid}".` });
+        } else if (!resolveVerbAction(h, "use", pid).ok) {
+          issues.push({
+            severity: "warning",
+            sceneId: sc.id,
+            message: `Hotspot "${h.label}" accepts "${pid}" but can never answer it: its default action is ${h.action.type} and it has no ⚙ "use" verb action. Add one (💬 say or 🗝 use-item) or remove the item.`,
+          });
+        }
+      }
       // Only hotspots that actually move the player between scenes need a
       // target. In-place mini-games (lockpick, safe, cipher, memory) grant
       // items/flags and keep the player put, so they must NOT be flagged —

@@ -5989,6 +5989,142 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
 /*  main studio                                                        */
 /* ------------------------------------------------------------------ */
 
+/** 🔊 VOICE A SPOKEN ACTION LINE — the hotspot/verb version of a beat's
+ *  audio widgets: pick an upload, upload a file, or press 🎙 to synthesize
+ *  the line with any character's ElevenLabs voice (spends credits, so it
+ *  confirms first). The clip plays when the action's line shows, in place of
+ *  the text-to-speech reader. Shared by the hotspot's own reply, each 🎚
+ *  verb action, and each per-item reply line. */
+function HotspotVoiceControls({
+  story,
+  sceneId,
+  assetKey,
+  line,
+  value,
+  onChange,
+}: {
+  story: Story;
+  sceneId: string;
+  /** naming key for generated assets (hotspot/verb/item id) */
+  assetKey: string;
+  /** the line the clip must read — the 🎙 button stays off while blank */
+  line: string;
+  value?: string;
+  onChange: (url: string | undefined) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [voicePick, setVoicePick] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const voiced = story.characters.filter((c) => c.elevenVoiceId);
+  const voice = voiced.find((c) => c.id === voicePick) ?? voiced[0];
+  // asset:<id> refs resolve through the library so ▶ can audition uploads too.
+  const uploads = useAllAssets("audio");
+  const auditionSrc = value?.startsWith("asset:")
+    ? uploads.find((a) => `asset:${a.id}` === value)?.dataUrl
+    : value;
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex items-center gap-1">
+        <span className="shrink-0 font-type text-[9px] text-paper/40" title="A recorded clip plays instead of the text-to-speech reader when this line shows">
+          🔊
+        </span>
+        <AssetDropdown
+          storyId={story.id}
+          assetType="audio"
+          returnReference
+          value={value}
+          onChange={(url) => onChange(url ?? undefined)}
+          placeholder="voice clip (mp3) — optional…"
+        />
+        <MediaUploadButton
+          storyId={story.id}
+          accept="audio/*"
+          label="⇧"
+          onUploaded={(_u, assetId) => onChange(`asset:${assetId}`)}
+        />
+        {value && (
+          <>
+            <button
+              type="button"
+              title="Audition the clip"
+              className="shrink-0 border border-paper/30 px-1.5 py-0.5 font-pulp text-[9px] text-paper/70 hover:text-gold"
+              onClick={() => {
+                if (auditionSrc) void new Audio(assetUrl(auditionSrc)).play();
+              }}
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              title="Remove the clip (the line falls back to the text-to-speech reader)"
+              className="shrink-0 border border-crimson/40 px-1.5 py-0.5 font-pulp text-[9px] text-crimson hover:bg-crimson/10"
+              onClick={() => onChange(undefined)}
+            >
+              ✕
+            </button>
+          </>
+        )}
+      </div>
+      {voiced.length > 0 && (
+        <div className="flex items-center gap-1">
+          <select
+            className="w-24 shrink-0 border border-noir-600 bg-noir-950 px-1 py-0.5 font-type text-[9px] text-paper/80"
+            value={voice?.id ?? ""}
+            title="Which character's ElevenLabs voice reads this line"
+            onChange={(e) => setVoicePick(e.target.value)}
+          >
+            {voiced.map((c) => (
+              <option key={c.id} value={c.id}>{c.avatarUrl?.startsWith("emoji:") ? c.avatarUrl.slice(6) + " " : ""}{c.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={busy || !line.trim() || !voice}
+            title={
+              !line.trim()
+                ? "Write the line first, then synthesize it"
+                : `Synthesize this line as ${voice?.name ?? "?"} with ElevenLabs — spends credits, you'll be asked to confirm`
+            }
+            onClick={async () => {
+              if (!voice || !line.trim()) return;
+              if (!window.confirm(convertConfirmMessage(`${voice.name} — hotspot line`, voice.elevenVoiceId!, getElevenModel(), line.trim()))) return;
+              setBusy(true);
+              setNote(null);
+              try {
+                const { dataUrl, blob } = await synthesizeElevenLabs(line.trim(), voice.elevenVoiceId!, getElevenModel());
+                const saved = await saveGeneratedVoice({
+                  storyId: story.id,
+                  characterId: voice.id,
+                  sceneId,
+                  beatId: assetKey,
+                  blob,
+                  dataUrl,
+                  assetName: `voice-${assetKey}`,
+                });
+                onChange(saved.url);
+                setNote(saved.note);
+                void new Audio(dataUrl).play();
+              } catch (err) {
+                window.alert((err as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="min-w-0 flex-1 border border-neon/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
+          >
+            {busy ? "Converting…" : value ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
+          </button>
+        </div>
+      )}
+      {note && (
+        <p className="font-type text-[8px] leading-snug text-gold/90" title={note}>
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function StudioInner({
   baseStories,
   initialStoryId,
@@ -13067,6 +13203,12 @@ function StudioInner({
                         hsSet({ acceptsItems: accepts.includes(id) ? accepts.filter((x) => x !== id) : [...accepts, id] });
                       const setResponse = (id: string, text: string) =>
                         hsSet({ itemResponses: { ...(h.itemResponses ?? {}), [id]: text } });
+                      const setItemAudio = (id: string, url?: string) => {
+                        const map = { ...(h.itemAudio ?? {}) };
+                        if (url) map[id] = url;
+                        else delete map[id];
+                        hsSet({ itemAudio: Object.keys(map).length ? map : undefined });
+                      };
                       const unsetVerbs = VERB_IDS.filter((v) => !used.includes(v));
                       const actType = (v: string) => (verbs as Record<string, Hotspot["action"]>)[v]?.type ?? "showText";
                       return (
@@ -13127,11 +13269,33 @@ function StudioInner({
                                   </select>
                                 ) : null}
                                 {a?.type === "useItem" ? (
-                                  <select className={inputCls} value={a.itemConsumed ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemConsumed: e.target.value || undefined })}>
-                                    <option value="">— which item does this consume? —</option>
-                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
-                                  </select>
+                                  <>
+                                    <textarea
+                                      className={`${inputCls} h-14 font-type`}
+                                      placeholder="The line it says when the item is used…"
+                                      value={a.text ?? ""}
+                                      onChange={(e) => setVerbAction(v, { ...a, text: e.target.value })}
+                                    />
+                                    <select className={inputCls} value={a.itemConsumed ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemConsumed: e.target.value || undefined })}>
+                                      <option value="">— consumes nothing (a say-a-line use) —</option>
+                                      {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
+                                    </select>
+                                    <p className="font-type text-[8px] leading-snug text-paper/40">
+                                      Only the item picked above ever leaves the satchel — arming an item never
+                                      consumes it on its own.
+                                    </p>
+                                  </>
                                 ) : null}
+                                {(a?.type === "showText" || a?.type === "useItem") && (
+                                  <HotspotVoiceControls
+                                    story={story}
+                                    sceneId={scene.id}
+                                    assetKey={`${h.id}-${v}`}
+                                    line={a?.text ?? ""}
+                                    value={a?.audioUrl}
+                                    onChange={(url) => setVerbAction(v, { ...a, audioUrl: url })}
+                                  />
+                                )}
                               </div>
                             );
                           })}
@@ -13185,6 +13349,14 @@ function StudioInner({
                                     placeholder="What happens when they use it here…"
                                     value={h.itemResponses?.[id] ?? ""}
                                     onChange={(e) => setResponse(id, e.target.value)}
+                                  />
+                                  <HotspotVoiceControls
+                                    story={story}
+                                    sceneId={scene.id}
+                                    assetKey={`${h.id}-item-${id}`}
+                                    line={h.itemResponses?.[id] ?? ""}
+                                    value={h.itemAudio?.[id]}
+                                    onChange={(url) => setItemAudio(id, url)}
                                   />
                                 </div>
                               );
@@ -13311,6 +13483,19 @@ function StudioInner({
                             mutate((d) => {
                               const s = d.scenes.find((x) => x.id === scene.id)!;
                               s.hotspots!.find((x) => x.id === h.id)!.action.text = e.target.value;
+                            })
+                          }
+                        />
+                        <HotspotVoiceControls
+                          story={story}
+                          sceneId={scene.id}
+                          assetKey={`${h.id}-main`}
+                          line={h.action.text ?? ""}
+                          value={h.action.audioUrl}
+                          onChange={(url) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.action.audioUrl = url;
                             })
                           }
                         />
@@ -13600,23 +13785,54 @@ function StudioInner({
                       </div>
                     )}
                     {h.action.type === "useItem" && (
-                      <Field label="Consumes item (from Gating requirement)">
-                        <select
-                          className={inputCls}
-                          value={h.action.itemConsumed ?? ""}
-                          onChange={(e) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.itemConsumed = e.target.value || undefined;
-                            })
-                          }
-                        >
-                          <option value="">— none —</option>
-                          {story.items.map((i) => (
-                            <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
-                          ))}
-                        </select>
-                      </Field>
+                      <>
+                        <Field label="Reply line (shows when it's used)">
+                          <textarea
+                            className={`${inputCls} h-14 font-type`}
+                            placeholder="“That fits!” — what it says as the item is used…"
+                            value={h.action.text ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.text = e.target.value || undefined;
+                              })
+                            }
+                          />
+                          <HotspotVoiceControls
+                            story={story}
+                            sceneId={scene.id}
+                            assetKey={`${h.id}-main`}
+                            line={h.action.text ?? ""}
+                            value={h.action.audioUrl}
+                            onChange={(url) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.audioUrl = url;
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Consumes item (leaves the satchel)">
+                          <select
+                            className={inputCls}
+                            value={h.action.itemConsumed ?? ""}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                s.hotspots!.find((x) => x.id === h.id)!.action.itemConsumed = e.target.value || undefined;
+                              })
+                            }
+                          >
+                            <option value="">— consumes nothing (the item stays; only the line plays) —</option>
+                            {story.items.map((i) => (
+                              <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
+                            ))}
+                          </select>
+                          <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
+                            The engine ONLY spends the item picked here — arming an item is never enough to lose it.
+                          </p>
+                        </Field>
+                      </>
                     )}
                     {(h.action.type === "giveItem" || h.action.type === "showText") && (
                       <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
