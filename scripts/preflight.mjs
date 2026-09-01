@@ -81,6 +81,10 @@ const canvas = canvasJs ? await import(canvasJs.replaceAll("\\", "/")) : null;
 const choiceHasEffects = (c) => !!(c.consequences && Object.values(c.consequences).some((v) => Array.isArray(v) && v.length));
 const choiceRepeats = (c) => (c.isRepeatable !== undefined ? c.isRepeatable : c.reply ? false : !choiceHasEffects(c));
 
+/* Optional walk trace: PF_DEBUG=<storyId> prints the walker's steps, topic
+ * flag-sets, scenery effects, hotspot routes and edge crossings to stderr. */
+const PF_DEBUG_ID = process.env.PF_DEBUG ?? "";
+const pfLog = (id, ...a) => { if (PF_DEBUG_ID && id === PF_DEBUG_ID) console.error(`[${id}]`, ...a); };
 function walk(story, avoidEndings = true) {
   const idx = new Map(story.scenes.map((s, i) => [s.id, i]));
   let state = createInitialState(story);
@@ -91,23 +95,49 @@ function walk(story, avoidEndings = true) {
     const sc = sceneById(story, cur);
     if (!sc) return { ending: null, visited, stuck: cur };
     visited.push(sc.id);
+    pfLog(story.id, `step ${step} @ ${sc.id} flags={${[...state.activeFlags].join(",")}} items={${(state.inventory??[]).map(i=>i.id).join(",")}}`);
     if (sc.onEnterActions) for (const a of sc.onEnterActions) state = applyConsequences(story, a.consequences, state);
     if (sc.isEnding) return { ending: sc, visited, state };
-    // Exploration pass — mirrors a player clicking every visible non-routing
-    // hotspot: giveItem / setFlag / meterChange effects land in the walker's
-    // state, so items and flags granted by scenery can open later gates
-    // (exactly what completeHotspot() does in Game.tsx).
-    for (const h of sc.hotspots ?? []) {
-      if (h.action?.targetSceneId || h.action?.patternPuzzle) continue; // routing & minigames handled below
-      const key = `${sc.id}:hs:${h.id}`;
-      if (used.has(key) || !meetsGating(h.gating, state)) continue;
-      const eff = {};
-      if (h.action?.itemGranted) eff.addItems = [h.action.itemGranted];
-      if (h.action?.flagSet) eff.setFlags = [h.action.flagSet];
-      if (h.action?.meterChange) eff.meterChanges = [h.action.meterChange];
-      if (Object.keys(eff).length) {
-        used.add(key);
-        state = applyConsequences(story, eff, state);
+    // Interaction passes — mirror a player working a room before leaving:
+    // TOPIC dialogues first (a topic's flag can unlock a marker), then the
+    // scenery clicks (giveItem / setFlag / meterChange land in the walker's
+    // state, exactly what completeHotspot() does in Game.tsx), looped to a
+    // fixpoint so "ask the bartender" → "grab the keys" happens in ONE visit.
+    // Without the loop, a one-shot door can carry the walker out of the room
+    // before the flag a topic just set ever unlocks the marker it gates.
+    for (let pass = 0, changed = true; changed && pass < 8; pass++) {
+      changed = false;
+      // Topic-list dialogues — a competent player asks every askable topic:
+      // the marker's own flagSet lands, then each topic's flagSet (an earlier
+      // topic's flag can unlock a later topic, hence the same fixpoint).
+      for (const h of sc.hotspots ?? []) {
+        if (h.action?.type !== "startDialogue" || !h.action.topics) continue;
+        if (h.gating && !meetsGating(h.gating, state)) continue;
+        if (h.action.flagSet) { state = applyConsequences(story, { setFlags: [h.action.flagSet] }, state); changed = true; }
+        for (const t of h.action.topics) {
+          const key = `${sc.id}:topic:${t.id}`;
+          if (used.has(key)) continue;
+          if (t.gating && !meetsGating(t.gating, state)) continue;
+          used.add(key);
+          changed = true;
+          if (t.flagSet) { state = applyConsequences(story, { setFlags: [t.flagSet] }, state); pfLog(story.id, `  topic ${t.id} -> ${t.flagSet}`); }
+        }
+      }
+      // Scenery pass — every visible non-routing hotspot.
+      for (const h of sc.hotspots ?? []) {
+        if (h.action?.targetSceneId || h.action?.patternPuzzle) continue; // routing & minigames handled below
+        const key = `${sc.id}:hs:${h.id}`;
+        if (used.has(key) || !meetsGating(h.gating, state)) continue;
+        const eff = {};
+        if (h.action?.itemGranted) eff.addItems = [h.action.itemGranted];
+        if (h.action?.flagSet) eff.setFlags = [h.action.flagSet];
+        if (h.action?.meterChange) eff.meterChanges = [h.action.meterChange];
+        if (Object.keys(eff).length) {
+          used.add(key);
+          changed = true;
+          state = applyConsequences(story, eff, state);
+          pfLog(story.id, `  hotspot ${h.id} eff=${JSON.stringify(eff)}`);
+        }
       }
     }
     // Press-the-lie pass — a competent player who HOLDS the breaking evidence
@@ -155,6 +185,7 @@ function walk(story, avoidEndings = true) {
     if (hs) {
       used.add(`${sc.id}:${hs.id}`);
       const target = hs.action.targetSceneId || hs.action.patternPuzzle?.targetSceneId;
+      pfLog(story.id, `  route via hotspot ${hs.id} -> ${target}`);
       // A walker that "solves" a pattern puzzle earns what the player earns —
       // flags/items granted on solve can gate the road ahead.
       if (hs.action.patternPuzzle?.rewardConsequences)
@@ -168,6 +199,21 @@ function walk(story, avoidEndings = true) {
     if (!pick && sc.autoAdvanceTargetSceneId) {
       cur = sc.autoAdvanceTargetSceneId;
       continue;
+    }
+    if (!pick) {
+      // Stage WALK-OFF-SCREEN exits — the edge arrow IS an exit. An OPEN edge
+      // routes the walker on; a gated-shut edge is not a way forward. Edges
+      // are movement, not one-shots, so they never enter `used` (the walker
+      // may legitimately cross an edge more than once; the step guard bounds
+      // pathological ping-pong).
+      const edges = sc.stage?.exitEdges ? Object.entries(sc.stage.exitEdges) : [];
+      const edge = edges.find(([, e]) => e && meetsGating(e.gating, state));
+      if (edge) {
+        const [, e] = edge;
+        if (e.flagSet) state = applyConsequences(story, { setFlags: [e.flagSet] }, state);
+        cur = e.targetSceneId;
+        continue;
+      }
     }
     if (!pick) return { ending: null, visited, stuck: sc.id };
     used.add(`${sc.id}:${pick.id}`);

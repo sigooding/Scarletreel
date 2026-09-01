@@ -3134,6 +3134,11 @@ function CasePlayer({
   // Fire the corkboard hint once per run, on the first collected clue.
   const boardHintShown = useRef(false);
   const visitedRef = useRef<Set<string>>(new Set());
+  /** Dialogue beats the player has actually seen play (by id), story-wide.
+   *  Drives the revisit resume point: a scene re-entered picks up after the
+   *  last SEEN beat rather than skipping all AUTHORED beats, so a gated beat
+   *  that never played on the first visit still plays on a later one. */
+  const seenBeatIdsRef = useRef<Set<string>>(new Set());
   const stateRef = useRef(state);
   stateRef.current = state;
   // The journey log is appended during the same handler that navigates, so
@@ -3429,9 +3434,35 @@ function CasePlayer({
       // exception: their animated intro controls when the Begin button appears.
       setProseDone(revisit || emptyProse || (!!scene.noTypewriter && scene.nodeType !== "credits"));
       setProseAcknowledged(revisit || emptyProse);
+      // Revisit: resume AFTER the beats the player has already seen — not
+      // past every AUTHORED beat. The old skip-to-end swallowed gated beats
+      // that never played on the first visit (their flag wasn't set yet);
+      // rebuilt here is the entry queue exactly as `visibleBeats` builds it:
+      // authored beats passing their gate, each broken lie's caught beat
+      // spliced after its claim, then the interrogation's broke/clamped beats.
+      let revisitStart = 0;
+      if (revisit && scene.nodeType !== "stage") {
+        const st = stateRef.current;
+        const queue: DialogueBeat[] = [];
+        for (const b of scene.dialogueBeats ?? []) {
+          if (!meetsGating(b.conditionRule, st)) continue;
+          queue.push(b);
+          if (b.lie && st.activeFlags.has(b.lie.contradictedFlag)) queue.push(b.lie.caughtBeat);
+        }
+        const iq = scene.interrogation;
+        if (iq) {
+          const iqBeats = [
+            st.activeFlags.has(iq.brokeFlag) ? iq.brokeBeat : null,
+            iq.clampFlag && iq.clampedBeat && st.activeFlags.has(iq.clampFlag) ? iq.clampedBeat : null,
+          ].filter((b): b is DialogueBeat => !!b && meetsGating(b.conditionRule, st));
+          queue.push(...iqBeats);
+        }
+        const firstUnseen = queue.findIndex((b) => !seenBeatIdsRef.current.has(b.id));
+        revisitStart = firstUnseen < 0 ? queue.length : firstUnseen;
+      }
       // STAGE nodes: beats NEVER auto-play — a startDialogue marker opens the
       // conversation — so the beat cursor always restarts at 0 on entry.
-      setBeatIdx(scene.nodeType === "stage" ? 0 : revisit ? (scene.dialogueBeats?.length ?? 0) : 0);
+      setBeatIdx(scene.nodeType === "stage" ? 0 : revisit ? revisitStart : 0);
       setBeatDone(false);
       setChoiceFocus(0);
       setExpiredChoices(new Set());
@@ -3732,6 +3763,7 @@ function CasePlayer({
       usedHotspots: [...usedHotspots],
       usedChoices: [...usedChoices],
       visitedScenes: [...visitedScenes],
+      seenBeats: [...seenBeatIdsRef.current],
       journey,
       chartedUpTo,
       seenActs: [...seenActs.current],
@@ -3764,6 +3796,7 @@ function CasePlayer({
       // Stage the save so the scene-entry pass applies it without clobbering.
       restoreRef.current = save;
       visitedRef.current = new Set(arr(save.visitedScenes));
+      seenBeatIdsRef.current = new Set(arr(save.seenBeats));
       enteredRef.current = "";
       heatBustFired.current = false;
       craftHintShown.current = true;
@@ -4116,6 +4149,17 @@ function CasePlayer({
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene, entrySeq, sceneId, beatsSignature, topicBeats]);
+
+  /* Beats the player has played: everything the cursor has moved past is
+   * remembered by id (story-wide, saved). Idempotent set-adds, so the queue
+   * reordering (a gated beat surfacing later) never un-marks a seen line. */
+  useEffect(() => {
+    if (beatIdx <= 0) return;
+    for (let i = 0; i < Math.min(beatIdx, visibleBeats.length); i++) {
+      const b = visibleBeats[i];
+      if (b?.id) seenBeatIdsRef.current.add(b.id);
+    }
+  }, [beatIdx, visibleBeats]);
 
 
 
@@ -7506,6 +7550,7 @@ function CasePlayer({
                         setActMap(null);
                         seenActs.current = new Set();
                         visitedRef.current = new Set();
+                        seenBeatIdsRef.current = new Set();
                         enteredRef.current = "";
                         heatBustFired.current = false;
                         craftHintShown.current = false;

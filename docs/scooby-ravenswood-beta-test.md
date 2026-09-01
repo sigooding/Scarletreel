@@ -52,7 +52,8 @@ The authoring model held up under a from-zero case: every feature I reached for 
 
 ## 3. Problems found
 
-### 3.1 `npm run preflight` FAILS on four shipped stories (pre-existing, not this case)
+### 3.1 `npm run preflight` FAILS on four shipped stories (pre-existing — **FIXED in pass 3**, see §8)
+> **Fixed 2026-09-01 (pass 3):** the preflight walker now models stage `exitEdges` (walk-off-screen exits) and topic-list dialogues, with the interaction passes looped to a fixpoint. `npm run preflight` → **PASSED, all 28 stories**. Original finding kept for the record.
 `ft2_bar`, `ft_alley`, `fto_alley` (+1 more) each report **"no ending reachable"** even though the validator is clean and the DOM smoke plays those scenes. The preflight deep-walker appears unable to progress through those stories' ride/QTE/gated branch structure — it walks 4–6 scenes then gives up. Same walker under-walks this case (7/12 scenes, ending only on the quit route) while the same scenes pass through the real engine in the dedicated harness. **Fix suggestion:** teach the preflight walker to (a) pick timed choices before expiry, (b) treat `ride` choices as winnable, or (c) fall back to the engine-test deep-walker used elsewhere. Right now `preflight` exit code 1 can't be used as a ship gate on this repo at all.
 
 ### 3.2 Sprite plates that bridge: `make-sprite-sheet.mjs` cannot recover (tooling gap — **FIXED in pass 2**, see §7)
@@ -64,10 +65,12 @@ The Phantom plate drew its green glow across the gap between poses, so after key
 `applyLieCaught` applies the lie's `contradictedConsequences` **before** `interrogationOutcome` decides crack vs clamp, and trust decides *after the swing*. My authored numbers (friendly +1, show-telegram +1, each caught lie −1, `crackTrust` 1) meant the model citizen run — charm up, catch **both** lies, then press — hit composure zero at trust 0 and got **CLAMP**, while a run that skipped a lie catch got the CRACK. The fix here: the empathetic press (`sdc_press_soft`) now carries `trustChanges +1`, so the warm path banks enough trust to afford both lie swings (verified by harness check *"four warm presses crack Grimsby (trust 2 vs crackTrust 1)"* and the cold-path clamp check).
 **Guard suggestion for the Check tab:** when a scene has both an `interrogation` and lie beats with trust swings, compute the max reachable trust at first possible zero-composure and warn if it's below `crackTrust` (i.e. the crack is authorially impossible). Today nothing flags this until a human plays it.
 
-### 3.4 Reply Q&A gating: `memoryLog` alone doesn't open a flag gate (sharp edge, worked as coded)
+### 3.4 Reply Q&A gating: `memoryLog` alone doesn't open a flag gate (sharp edge — **HINTED in pass 3**, see §8)
+> **Improved 2026-09-01 (pass 3):** the validator error now appends a pointed hint when the flag name is also a recorded memory — *"either gate on requiresMemories instead of requiresFlags, or set the flag in that choice's consequences."* Original finding kept for the record.
 Answering beats gated `requiresFlags: [sd_asked_phantom]` with only `memoryLog: "sd_asked_phantom"` on the reply is a validator **error** ("flag required by a gate but nothing sets it"). `requiresMemories` gating would be the idiomatic alternative; the error message is accurate but doesn't hint at the memory-gate option. **Suggestion:** either have the Check-tab message mention `requiresMemories`, or have Studio's beat-gate picker offer "remembers the reply `<tag>`" as a first-class option next to flags. (In this case I set both the memory and the flag on the two ask-replies.)
 
-### 3.5 Revisit beat-skip counts *authored* beats, including never-played gated ones (engine quirk — noted)
+### 3.5 Revisit beat-skip counts *authored* beats, including never-played gated ones (engine quirk — **FIXED in pass 3**, see §8)
+> **Fixed 2026-09-01 (pass 3):** revisits now resume after the last **seen** beat (tracked story-wide by id, persisted in saves as `seenBeats`), so a gated beat that never played on the first visit surfaces on a later one once its flag is set. Original finding kept for the record.
 `Game.tsx` resets `beatIdx` to `scene.dialogueBeats.length` on revisit — the **authored** count, not the count that actually played. If a first visit ends before a gated beat surfaced (e.g. you enter the library, don't crack the ledger, leave), that beat can never play on later visits even once its flag is set. In this case the exposure is minimal (the puzzle lives in the same scene), but for any hub scene with late-unlocking beats this silently eats content. **Suggestion:** reset to the number of beats that were *visible* at exit (or re-scan on entry for beats never shown).
 
 ### 3.6 Smaller notes
@@ -133,6 +136,34 @@ New checks: 10 sheet configs validated (7 talk + 2 variants + walker) · variant
 - `docs/sprite-sheets.md`, `RUNNING.md` — recovery documented.
 
 ---
+ 
+## 8. Pass 3 (2026-09-01) — the engine/tooling pass: preflight fixed catalogue-wide
+
+No image budget spent — everything left on the queue was engine or tooling work. Three of the five pass-1 findings are now closed at the source, plus one new tool.
+
+### 8.1 §3.1 closed — `npm run preflight` now passes on ALL 28 stories
+The walker had two blind spots, both found by tracing (`PF_DEBUG=<storyId>` — now a permanent opt-in trace in the script):
+1. **Stage walk-off-screen exits.** A stage scene whose only exit is an `exitEdges` arrow (e.g. the Corville bar) simply had no exits as far as the walker was concerned. An OPEN edge is now taken as an exit (locked edges are not); edges are movement, not one-shots, so they never enter the used-set.
+2. **Topic-list dialogues + the one-shot-door trap.** The deeper bug: the walker didn't play `startDialogue` topics, and even with topics added, running them *after* the scenery pass wasn't enough — at the Corville bar the topic set `ft2_quohog_talked`, but the keys-grab marker had already been passed over in that step's exploration, and the alley's one-shot door meant the walker could never come back to click it. The interaction passes (topics, then scenery) are now **looped to a fixpoint per visit**, so "ask the bartender → grab the keys" happens in one room. Result: `full-throttle-corville`, `full-throttle`, `full-throttle-original` and every other story walk to an ending — **`PREFLIGHT PASSED — catalogue is production-ready`**, which means preflight can actually be used as a ship gate now.
+
+### 8.2 §3.5 closed — revisits resume after the last SEEN beat
+`Game.tsx` previously reset a revisit's beat cursor to the **authored** beat count, permanently swallowing gated beats that hadn't played on the first visit. Beats are now tracked by id as the player sees them (`seenBeats`, story-wide, persisted in save slots — additive field, old saves load fine), and a revisit resumes at the first **unseen** beat of the entry queue (rebuilt exactly as `visibleBeats` builds it: gated-authored + lie-caught splices + interrogation broke/clamped). Rewind still works (seen ≠ forgotten), stage scenes are unchanged (their conversations are marker-driven), and a fresh run resets the set.
+
+### 8.3 §3.4 improved — the validator now points at the fix
+The "flag required by a gate but nothing sets it" error now checks whether that name is also a `memoryLog` tag recorded by a choice, and when it is, appends: *"either gate on requiresMemories instead of requiresFlags, or set the flag in that choice's consequences."* (This is exactly the pass-1 slip on `sd_asked_phantom`/`sd_asked_heirs` — a future author hits a signpost instead of a dead end.)
+
+### 8.4 New tool — `scripts/beta/zone-map.mjs` (closes the §3.6 "authored blind" gap)
+Renders every authored hotspot zone onto its scene plate: **solid red** = open zone, **amber dashed** = gated, `HOLD·` = examine, `→` = routing; plus the stage floor band (blue), obstacles (orange) and spawn marker. Output for this case is committed at `zone-maps/scooby-ravenswood/` (sd_gate, sd_foyer, sd_library, sd_cellar — the meeting scene has no zones) so the zones can be eyeballed without opening Studio. Requires ImageMagick (`convert`); regenerates with `node scripts/beta/zone-map.mjs`.
+
+### 8.5 Gates re-run this pass
+`npx tsc --noEmit` clean · `npm test` engine **925/925** + import/export round-trip + **DOM smoke** (which exercises the changed Game.tsx beat machinery on real playthroughs) · `npm run build` OK · **`npm run preflight` PASSED (28/28 stories)** · `node scripts/beta/scooby-harness.mjs` 72/72.
+
+### 8.6 Still open
+- **§3.3's Check-tab guard** (authorially-impossible interrogation crack) — suggested, not yet built; the balance trap itself is fixed in this case's data.
+- **Music**: no cartoon-appropriate loop in the asset library yet (audio generation, not images).
+- Zone drag-pass in Studio remains worthwhile if anything in `zone-maps/` looks off to a human eye — I authored the zones against plate descriptions, and the maps are the verification.
+
+---
 
 ## 4. Playtest script (5 minutes, in `npm run dev`)
 
@@ -150,9 +181,10 @@ New checks: 10 sheet configs validated (7 talk + 2 variants + walker) · variant
 
 1. ~~Talk sprites for Fred, Daphne, Grimsby~~ — **done in pass 2 (§7)**.
 2. ~~Unmasked-Grimsby variant, dedicated cover, phantom lunge frame, post-chase corridor plate~~ — **done in pass 2 (§7)**.
-3. A spooky-sweet **music loop** (foyer/cellar bed) — needs audio, not image, generation.
-4. Hotspot-zone drag pass over the plates in Studio's Scene tab (§3.6) — zones were authored blind but compositions were re-checked against the prompts.
-5. Studio engine suggestions from §3.1 / §3.4 / §3.5 (preflight walker, memory-gate hint, revisit beat-skip).
+3. ~~Preflight walker, memory-gate hint, revisit beat-skip~~ — **done in pass 3 (§8)**.
+4. A spooky-sweet **music loop** (foyer/cellar bed) — needs audio, not image, generation.
+5. Studio Check-tab guard for authorially-impossible interrogation cracks (§3.3 / §8.6).
+6. Zone drag-pass in Studio if `zone-maps/` shows anything off (§8.4).
 
 ---
 
