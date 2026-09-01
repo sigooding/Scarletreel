@@ -5031,18 +5031,23 @@ function GatingEditor({
 /*  hotspot drawer preview                                             */
 /* ------------------------------------------------------------------ */
 
+type ZoneBounds = { x: number; y: number; w: number; h: number };
+type ZoneHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
 function HotspotCanvas({
   scene,
   items = [],
   selectedId,
   onSelect,
   onDraw,
+  onMove,
   media,
   barrierMode,
   barriers = [],
   selectedBarrier,
   onBarrierSelect,
   onBarrierDraw,
+  onBarrierMove,
   spawn,
   spawnMode,
   onSpawnMove,
@@ -5053,6 +5058,8 @@ function HotspotCanvas({
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDraw: (bounds: { x: number; y: number; w: number; h: number }) => void;
+  /** Commit a MOVE/RESIZE of an existing hotspot (drag body / pull handles). */
+  onMove?: (id: string, bounds: { x: number; y: number; w: number; h: number }) => void;
   media: (v?: string) => string | undefined;
   /** Draw NO-GO BARRIERS instead of hotspots (🚶 stage rooms). */
   barrierMode?: boolean;
@@ -5061,6 +5068,8 @@ function HotspotCanvas({
   selectedBarrier?: number | null;
   onBarrierSelect?: (i: number | null) => void;
   onBarrierDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
+  /** Commit a MOVE/RESIZE of an existing barrier (drag body / pull handles). */
+  onBarrierMove?: (i: number, bounds: { x: number; y: number; w: number; h: number }) => void;
   /** 🚶 where the player character starts (scene %), drawn on the plate. */
   spawn?: { x: number; y: number };
   /** Dragging on the plate moves the player instead of drawing a box. */
@@ -5077,6 +5086,26 @@ function HotspotCanvas({
   onBarrierDrawRef.current = onBarrierDraw;
   const onSpawnMoveRef = useRef(onSpawnMove);
   onSpawnMoveRef.current = onSpawnMove;
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+  const onBarrierMoveRef = useRef(onBarrierMove);
+  onBarrierMoveRef.current = onBarrierMove;
+  /** MOVE/RESIZE an existing zone: drag its body to move it, pull the square
+   *  handles on the selected one to resize. `drag` holds the gesture; `live`
+   *  is the in-flight bounds drawn while the pointer is still down (committed
+   *  once, on pointer-up). */
+  const drag = useRef<{
+    target: "hs" | "bar";
+    id: string;
+    index: number;
+    mode: "move" | ZoneHandle;
+    start: { x: number; y: number };
+    orig: ZoneBounds;
+  } | null>(null);
+  const [live, setLive] = useState<{ target: "hs" | "bar"; id: string; index: number; b: ZoneBounds } | null>(null);
+  /** True once the pointer actually travelled — suppresses the click that
+   *  follows a drag so it doesn't toggle the selection. */
+  const movedRef = useRef(false);
   /** WIDE WORLD: the canvas shows the whole strip shrunk to fit; pointer
    *  positions are scaled up to world-% and rendering scaled back down. */
   const worldW = Math.max(100, scene.stage?.worldWidth ?? 100);
@@ -5090,12 +5119,61 @@ function HotspotCanvas({
     };
   };
 
+  /** Turn the current pointer position into new bounds for the zone being
+   *  moved/resized, clamped to the plate and a 2% minimum size. */
+  const applyDrag = (p: { x: number; y: number }): ZoneBounds => {
+    const d = drag.current!;
+    const dx = p.x - d.start.x;
+    const dy = p.y - d.start.y;
+    const MIN = 2;
+    if (d.mode === "move") {
+      return {
+        x: Math.min(Math.max(0, d.orig.x + dx), Math.max(0, worldW - d.orig.w)),
+        y: Math.min(Math.max(0, d.orig.y + dy), Math.max(0, 100 - d.orig.h)),
+        w: d.orig.w,
+        h: d.orig.h,
+      };
+    }
+    let L = d.orig.x;
+    let T = d.orig.y;
+    let R = d.orig.x + d.orig.w;
+    let Bt = d.orig.y + d.orig.h;
+    if (d.mode.includes("w")) L = Math.max(0, Math.min(L + dx, R - MIN));
+    if (d.mode.includes("e")) R = Math.min(worldW, Math.max(R + dx, L + MIN));
+    if (d.mode.includes("n")) T = Math.max(0, Math.min(T + dy, Bt - MIN));
+    if (d.mode.includes("s")) Bt = Math.min(100, Math.max(Bt + dy, T + MIN));
+    return { x: L, y: T, w: R - L, h: Bt - T };
+  };
+
+  const startZoneDrag = (
+    e: React.PointerEvent,
+    target: "hs" | "bar",
+    id: string,
+    index: number,
+    mode: "move" | ZoneHandle,
+    orig: ZoneBounds
+  ) => {
+    e.stopPropagation();
+    movedRef.current = false;
+    drag.current = { target, id, index, mode, start: pct(e), orig: { ...orig } };
+    setLive({ target, id, index, b: { ...orig } });
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
   return (
     <div
       ref={ref}
       className="relative aspect-video w-full cursor-crosshair overflow-hidden border border-noir-600"
       style={bgStyle(media(scene.background) ?? scene.background)}
       onPointerMove={(e) => {
+        // MOVE/RESIZE in flight — track the pointer, commit on release.
+        if (drag.current) {
+          const p = pct(e);
+          if (Math.abs(p.x - drag.current.start.x) + Math.abs(p.y - drag.current.start.y) > 0.3) movedRef.current = true;
+          const d = drag.current;
+          setLive({ target: d.target, id: d.id, index: d.index, b: applyDrag(p) });
+          return;
+        }
         if (!start.current) return;
         const p = pct(e);
         // 🚶 player start: dragging moves the character (clamped to the floor
@@ -5112,6 +5190,7 @@ function HotspotCanvas({
         });
       }}
       onPointerDown={(e) => {
+        if (drag.current) return;
         // In spawn mode a plain click places the character too.
         if (spawnMode && !(e.target as HTMLElement).dataset.bar && !(e.target as HTMLElement).dataset.hs) {
           start.current = pct(e);
@@ -5124,6 +5203,36 @@ function HotspotCanvas({
         (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
       }}
       onPointerUp={() => {
+        // Commit a MOVE/RESIZE (only if the bounds actually changed).
+        if (drag.current) {
+          const d = drag.current;
+          const b = live && live.target === d.target && live.id === d.id && live.index === d.index ? live.b : d.orig;
+          const r = {
+            x: Math.round(b.x * 10) / 10,
+            y: Math.round(b.y * 10) / 10,
+            w: Math.round(b.w * 10) / 10,
+            h: Math.round(b.h * 10) / 10,
+          };
+          const o = d.orig;
+          const changed =
+            r.x !== Math.round(o.x * 10) / 10 ||
+            r.y !== Math.round(o.y * 10) / 10 ||
+            r.w !== Math.round(o.w * 10) / 10 ||
+            r.h !== Math.round(o.h * 10) / 10;
+          if (changed) {
+            if (d.target === "hs") {
+              onMoveRef.current?.(d.id, r);
+              onSelect(d.id);
+            } else {
+              onBarrierMoveRef.current?.(d.index, r);
+              onBarrierSelect?.(d.index);
+              onSelect("");
+            }
+          }
+          drag.current = null;
+          setLive(null);
+          return;
+        }
         if (spawnMode) {
           start.current = null;
           setDraft(null);
@@ -5201,40 +5310,62 @@ function HotspotCanvas({
       ) : null}
       {/* NO-GO BARRIERS — hatched crimson. Click to select (then redraw to
           reshape); visible in both modes because they place the hotspots. */}
-      {barriers.map((b, bi) => (
+      {barriers.map((b, bi) => {
+        const bb = live && live.target === "bar" && live.index === bi ? live.b : b;
+        return (
         <button
           key={`bar-${bi}`}
           data-bar="1"
           onClick={() => {
+            if (movedRef.current) {
+              movedRef.current = false;
+              return;
+            }
             onBarrierSelect?.(selectedBarrier === bi ? null : bi);
             onSelect("");
           }}
-          className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} text-[8px] uppercase tracking-wider text-crimson`}
+          onPointerDown={(e) => {
+            if (!barrierMode) return;
+            startZoneDrag(e, "bar", "", bi, "move", b);
+          }}
+          className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} ${barrierMode ? "cursor-move" : ""} text-[8px] uppercase tracking-wider text-crimson`}
           style={{
-            left: `${b.x * scale}%`,
-            top: `${b.y}%`,
-            width: `${b.w * scale}%`,
-            height: `${b.h}%`,
+            left: `${bb.x * scale}%`,
+            top: `${bb.y}%`,
+            width: `${bb.w * scale}%`,
+            height: `${bb.h}%`,
             backgroundImage:
               "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
           }}
-          title={`No-go barrier ${bi + 1} — click to select, then drag a new box to reshape`}
+          title={`No-go barrier ${bi + 1} — drag to move; select it and pull the square handles to resize`}
         >
           <span className="absolute left-1 top-0.5 truncate">{barrierMode || selectedBarrier === bi ? "🚧 no-go" : ""}</span>
         </button>
-      ))}
+        );
+      })}
       {(scene.hotspots ?? []).map((h) => {
         const grantedItem = h.showItemImage && h.action.itemGranted ? items.find((i) => i.id === h.action.itemGranted) : undefined;
+        const hb = live && live.target === "hs" && live.id === h.id ? live.b : h.bounds;
         return (
           <button
             key={h.id}
             data-hs="1"
-            onClick={() => onSelect(h.id)}
+            onClick={() => {
+              if (movedRef.current) {
+                movedRef.current = false;
+                return;
+              }
+              onSelect(h.id);
+            }}
+            onPointerDown={(e) => {
+              if (barrierMode || spawnMode) return;
+              startZoneDrag(e, "hs", h.id, -1, "move", h.bounds);
+            }}
             className={`absolute border-2 text-[8px] uppercase tracking-wider ${
               selectedId === h.id ? "border-neon bg-neon/20 text-neon" : "border-gold/70 bg-gold/10 text-gold"
-            } ${barrierMode ? "pointer-events-none opacity-40" : ""}`}
-            style={{ left: `${h.bounds.x * scale}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w * scale}%`, height: `${h.bounds.h}%` }}
-            title={h.label}
+            } ${barrierMode ? "pointer-events-none opacity-40" : spawnMode ? "" : "cursor-move"}`}
+            style={{ left: `${hb.x * scale}%`, top: `${hb.y}%`, width: `${hb.w * scale}%`, height: `${hb.h}%` }}
+            title={`${h.label} — drag to move; select it and pull the square handles to resize`}
           >
             {h.image ? (
               <>
@@ -5261,6 +5392,43 @@ function HotspotCanvas({
           </button>
         );
       })}
+      {/* RESIZE HANDLES — eight squares on the selected zone's edges/corners.
+          Pull one to resize; the body itself drags to move. */}
+      {(() => {
+        const selHs = !barrierMode && !spawnMode && selectedId ? (scene.hotspots ?? []).find((h) => h.id === selectedId) : undefined;
+        const selBarB = barrierMode && selectedBarrier != null ? barriers[selectedBarrier] : undefined;
+        if (!selHs && !selBarB) return null;
+        const target: "hs" | "bar" = selHs ? "hs" : "bar";
+        const id = selHs?.id ?? "";
+        const index = selHs ? -1 : (selectedBarrier as number);
+        const base = selHs ? selHs.bounds : (selBarB as ZoneBounds);
+        const cur = live && live.target === target && live.id === id && live.index === index ? live.b : base;
+        const color = target === "hs" ? "border-neon" : "border-crimson";
+        const HANDLES: { m: ZoneHandle; fx: number; fy: number; c: string }[] = [
+          { m: "nw", fx: 0, fy: 0, c: "nwse-resize" },
+          { m: "n", fx: 0.5, fy: 0, c: "ns-resize" },
+          { m: "ne", fx: 1, fy: 0, c: "nesw-resize" },
+          { m: "e", fx: 1, fy: 0.5, c: "ew-resize" },
+          { m: "se", fx: 1, fy: 1, c: "nwse-resize" },
+          { m: "s", fx: 0.5, fy: 1, c: "ns-resize" },
+          { m: "sw", fx: 0, fy: 1, c: "nesw-resize" },
+          { m: "w", fx: 0, fy: 0.5, c: "ew-resize" },
+        ];
+        return HANDLES.map((hd) => (
+          <div
+            key={hd.m}
+            data-hd="1"
+            className={`absolute z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 border-2 bg-noir-950 ${color}`}
+            style={{
+              left: `${(cur.x + cur.w * hd.fx) * scale}%`,
+              top: `${cur.y + cur.h * hd.fy}%`,
+              cursor: hd.c,
+            }}
+            onPointerDown={(e) => startZoneDrag(e, target, id, index, hd.m, base)}
+            title="Drag to resize"
+          />
+        ));
+      })()}
       {draft && (
         <div
           className={`absolute border-2 border-dashed ${barrierMode ? "border-crimson bg-crimson/10" : "border-cyan-neon bg-cyan-neon/10"}`}
@@ -11885,8 +12053,8 @@ function StudioInner({
                   {zoneMode === "spawn" && scene.nodeType === "stage"
                     ? "Click or drag on the plate to place the PLAYER CHARACTER — they stand where you drop them, clamped to the walkable floor."
                     : zoneMode === "barrier" && scene.nodeType === "stage"
-                      ? "Drag on the plate to fence off a NO-GO area — a wall, a counter, a parked truck. The walker routes around it; click one to select, then drag a new box to reshape it."
-                      : "Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one."}
+                      ? "Drag on empty plate to fence off a NEW no-go area — a wall, a counter, a parked truck; the walker routes around it. Drag a barrier to MOVE it, and pull the square handles on the selected one to RESIZE."
+                      : "Drag on empty plate to draw a NEW hotspot. Drag an existing hotspot to MOVE it, and pull the square handles on the selected one to RESIZE. (Drawing a fresh box while one is selected also reshapes it.)"}
                 </p>
                 {zoneMode === "barrier" && scene.nodeType === "stage"
                   ? (() => {
@@ -11972,6 +12140,13 @@ function StudioInner({
                     updateScene(scene.id, { stage: { ...(scene.stage ?? {}), obstacles: next } });
                     if (selectedBarrier === null) setSelectedBarrier(next.length - 1);
                   }}
+                  onBarrierMove={(i, bounds) => {
+                    const obs = scene.stage?.obstacles ?? [];
+                    if (!obs[i]) return;
+                    updateScene(scene.id, {
+                      stage: { ...(scene.stage ?? {}), obstacles: obs.map((o, j) => (j === i ? bounds : o)) },
+                    });
+                  }}
                   onSelect={(id) => {
                     setSelectedHotspot(id);
                     if (id) setSelectedBarrier(null);
@@ -11998,6 +12173,13 @@ function StudioInner({
                       });
                       setSelectedHotspot(id);
                     }
+                  }}
+                  onMove={(id, bounds) => {
+                    mutate((d) => {
+                      const s = d.scenes.find((x) => x.id === scene.id)!;
+                      const h = s.hotspots?.find((x) => x.id === id);
+                      if (h) h.bounds = bounds;
+                    });
                   }}
                 />
                 {(scene.hotspots ?? []).map((h) => (
@@ -12055,6 +12237,28 @@ function StudioInner({
                         </select>
                       </Field>
                     </div>
+                    <Field label="Zone bounds — X · Y · W · H (%) — or drag/resize it on the plate above">
+                      <div className="grid grid-cols-4 gap-1">
+                        {(["x", "y", "w", "h"] as const).map((k) => (
+                          <input
+                            key={k}
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            className={inputCls}
+                            title={{ x: "Left edge %", y: "Top edge %", w: "Width %", h: "Height %" }[k]}
+                            value={h.bounds[k]}
+                            onChange={(e) =>
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                const hs = s.hotspots!.find((x) => x.id === h.id)!;
+                                hs.bounds = { ...hs.bounds, [k]: Math.max(0, Number(e.target.value) || 0) };
+                              })
+                            }
+                          />
+                        ))}
+                      </div>
+                    </Field>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Action type">
                         <select
