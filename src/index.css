@@ -205,6 +205,15 @@ body,
   border: 0;
   cursor: pointer;
 }
+/* HINT KEY (H) — every marker + NPC chip pulses so the player can see what
+   is interactive. Filter-only: no transforms, so marker layout never jumps. */
+.stage-marker-flash {
+  animation: stage-flash-pulse 0.55s ease-in-out 4;
+}
+@keyframes stage-flash-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(2) drop-shadow(0 0 8px rgba(232, 178, 60, 0.95)); }
+}
 .stage-marker-reticle {
   width: 13px;
   height: 13px;

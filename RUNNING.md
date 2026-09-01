@@ -97,7 +97,11 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    across the boundary. Part 5 mounts the real Studio and drives the 🔁
    States editor (badge, add, remove) and the plate's 🥾 walk test (a sealed
    marker reports NO ROUTE with the doors shut; opening them lets the live
-   walker cross and reach it; WASD/arrows drive it).
+   walker cross and reach it; WASD/arrows drive it). The play phases also
+   pin the interaction QoL — the H marker flash, coin hotkeys 1-9, the
+   double-click jog (timed: a jog crosses the room where a walk can't), and
+   an interactable NPC: clicking the patrolling character gives chase and
+   the conversation fires on catch; N does it with no mouse at all.
 
 ### Building a sprite sheet from a generated plate
 

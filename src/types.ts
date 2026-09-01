@@ -1281,6 +1281,14 @@ export interface StageNpc {
   patrol?: StageNpcWaypoint[];
   /** Walk speed in world-% / second (default: the room's walker speed). */
   speed?: number;
+  /** INTERACTABLE NPC — link this actor to a 🗣 start-conversation marker
+   *  (by hotspot id) and the actor BECOMES that marker: the static diamond
+   *  hides and the character itself is clickable — the walker chases the
+   *  actor's LIVE position (re-routing while they patrol) and the
+   *  conversation fires on catch. Pressing N in play walks to + talks with
+   *  the nearest linked character. Ambient (no link) NPCs stay pure
+   *  set-dressing, exactly as before. */
+  talkHotspotId?: string;
   /** How the route repeats (default "loop" — jump back to waypoint 1):
    *  "pingpong" walks the route backwards to the start and out again;
    *  "once" walks it a single time and HOLDS the last waypoint's motion

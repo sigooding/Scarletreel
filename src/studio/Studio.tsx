@@ -77,6 +77,7 @@ import {
   VERB_IDS,
   VERB_LABEL,
   verbsForScene,
+  hotspotReachableActions,
   uid,
   validateStory,
   type ValidationIssue,
@@ -11657,6 +11658,22 @@ function StudioInner({
                                       >
                                         <option value="right">right</option>
                                         <option value="left">left</option>
+                                      </select>
+                                    </label>
+                                    {/* INTERACTABLE NPC — link to a talker marker */}
+                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70" title="Link this actor to a talk marker: the character becomes clickable — the player clicks them (or presses N) and the walker chases them to start the conversation.">
+                                      talk marker
+                                      <select
+                                        className={inputCls}
+                                        value={n.talkHotspotId ?? ""}
+                                        onChange={(e) => setNpc(i, { talkHotspotId: e.target.value || undefined })}
+                                      >
+                                        <option value="">— ambient (not clickable) —</option>
+                                        {(scene.hotspots ?? [])
+                                          .filter((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue"))
+                                          .map((h) => (
+                                            <option key={h.id} value={h.id}>💬 {h.label}</option>
+                                          ))}
                                       </select>
                                     </label>
                                     <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">

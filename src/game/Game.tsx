@@ -6558,7 +6558,7 @@ function CasePlayer({
             <p className="font-type text-[10px] leading-snug text-paper/45">
               {stageTalking
                 ? "Talking — the conversation is on screen."
-                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to touch things — 👁 looking works from right here."}
+                : "🚶 Walk with WASD / arrows or click the floor · double-click to jog · H reveals markers · N talks to the nearest character · 1-9 pick coin verbs. 👁 looking works from right here."}
             </p>
           )}
           {!isStage && (

@@ -499,6 +499,32 @@ authored, wide worlds included.
 Rooms without the test running render nothing extra; nothing about the test
 touches story data — it's a sandbox over the authored geometry.
 
+### Interaction QoL (and clicking a moving NPC)
+
+Four player-facing conveniences, all stage-side, all opt-in-safe:
+
+- **H — reveal markers.** Pressing H pulses every marker (and every
+  interactable NPC's chip) for a couple of seconds — the modern adventure
+  "where can I click?" key.
+- **Double-click — jog.** A second press on the same floor spot or marker
+  within 320ms puts the walker into a 5× jog until they arrive or steer.
+  Crossing a 200%-wide alley no longer means watching a stroll.
+- **1-9 — coin hotkeys.** Number keys pick the verb coin's verbs in order
+  (the SCUMM verb grid's muscle memory). Only while the coin is on screen —
+  choice lists keep their digits during conversations.
+- **N — nearest character.** With interactable NPCs in the room, N walks to
+  and talks with the nearest one. No mouse, no chasing.
+
+**Interactable NPCs.** An ambient NPC (`stage.npcs[]`) can carry
+`talkHotspotId` — a link to a 🗣 start-conversation marker. When linked, the
+actor **becomes** that marker: the static diamond hides, the character
+carries a 💬 chip, and clicking them (or pressing N) sends the walker after
+their **live** position — the pursuit re-routes ~3×/second while the actor
+patrols, and the conversation fires the moment they're caught. Walking into
+them works too. The validator flags dangling links (error) and links to
+non-conversation markers (warning); Studio's NPC row has a **talk marker**
+picker. Ambient NPCs without a link are untouched set-dressing.
+
 ## What the prototype is missing (ranked)
 
 Built on purpose: every gap below shows up as a compromise in

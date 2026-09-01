@@ -3718,6 +3718,37 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("sentence: no coin - the object's own verb reads out", sentenceLineText({ verb: null, target: { label: "the coil", cursor: "take" } }) === "Pick up the coil");
 }
 
+/* ================================================================== */
+/*  INTERACTABLE NPCS (StageNpc.talkHotspotId) — validator             */
+/* ================================================================== */
+{
+  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+  const mk = (npcs: never[], hotspots: Hotspot[]): Story => ({
+    id: "npcs", title: "NPCs", tagline: "", coverImage: "", startSceneId: "s1",
+    scenes: [
+      {
+        id: "s1", title: "Room", background: "", prose: "text", choices: [],
+        stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, npcs } as never,
+        hotspots,
+      },
+      endScene,
+    ],
+    items: [], characters: [],
+  });
+  const talker: Hotspot = { id: "t1", label: "the sweeper", bounds: { x: 40, y: 60, w: 10, h: 30 }, cursor: "talk", isRepeatable: true, action: { type: "startDialogue" } };
+  const looker: Hotspot = { id: "l1", label: "the sign", bounds: { x: 60, y: 30, w: 10, h: 20 }, cursor: "look", action: { type: "showText", text: "x" } };
+  const out: Hotspot = { id: "out", label: "Out", bounds: { x: 84, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } };
+
+  const good = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "t1" } as never], [talker, out]));
+  check("npc link: a linked talker raises no issue", !good.some((i) => /NPC "n1"/.test(i.message)), good.filter((i) => /NPC/.test(i.message)));
+
+  const dangling = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "nope" } as never], [talker, out]));
+  check("npc link: a dangling link is an error", dangling.some((i) => i.severity === "error" && /NPC "n1" is linked to talk marker "nope"/.test(i.message)), dangling.map((i) => i.message));
+
+  const notalk = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "l1" } as never], [looker, out]));
+  check("npc link: linking a non-talker warns", notalk.some((i) => i.severity === "warning" && /isn't a 🗣 start-conversation/i.test(i.message)));
+}
+
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   for (const f of failures) console.log(`  ✖ ${f}`);

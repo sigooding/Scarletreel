@@ -878,6 +878,18 @@
    walker can go through. Lock-and-key made spatial; the Check tab errors on a
    door whose flag nothing can ever set.
 
+   PLAYER QoL KEYS (walkable rooms, automatic): H pulses every marker so the
+   player can see what's interactive; DOUBLE-CLICKING a floor spot or marker
+   jogs the walker there at 5x speed; 1-9 pick the verb coin's verbs in
+   order; N walks to and talks with the nearest interactable character.
+
+   INTERACTABLE NPCS (🚏 Ambient NPCs, per actor): give an actor a "talk
+   marker" link and the CHARACTER becomes that marker — their diamond hides,
+   they get a 💬 chip, and clicking them (or pressing N) sends the walker
+   after their LIVE position: the pursuit re-routes while they patrol and the
+   conversation fires on catch. The Check tab errors on a link to a marker
+   that doesn't exist and warns on one that isn't a conversation starter.
+
    🥾 WALK TEST (Stage tab, on the plate's toolbar): drops a LIVE walker onto
    the plate at spawn and drives it with the real engine router. Click the
    floor to see the planned route drawn dashed and walked; click a MARKER and

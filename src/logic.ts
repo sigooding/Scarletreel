@@ -2338,6 +2338,18 @@ export function validateStory(story: Story): ValidationIssue[] {
           issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: state "${st.id}" overrides nothing (no label/image/cursor/action/gate) — fill it in or remove it.` });
       });
     }
+
+    // INTERACTABLE NPCs: a talk link must point at a real talker marker
+    // in the same scene — a dangling link is a clickable nothing, and a
+    // non-talker link is a click that can't converse.
+    for (const n of sc.stage?.npcs ?? []) {
+      if (!n.talkHotspotId) continue;
+      const hs = (sc.hotspots ?? []).find((h) => h.id === n.talkHotspotId);
+      if (!hs)
+        issues.push({ severity: "error", sceneId: sc.id, message: `NPC "${n.id}" is linked to talk marker "${n.talkHotspotId}" which doesn't exist in this scene.` });
+      else if (!hotspotReachableActions(hs).some((a) => a.type === "startDialogue"))
+        issues.push({ severity: "warning", sceneId: sc.id, message: `NPC "${n.id}" is linked to "${hs.label}", which isn't a 🗣 start-conversation marker — clicking the character won't start a conversation.` });
+    }
   }
 
   // Reachability. In a season every episode is its own entry point — the

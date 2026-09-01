@@ -250,6 +250,23 @@ const STAGE_STORY: Story = {
         // walk to the wrench must route AROUND it (not through).
         obstacles: [{ x: 24, y: 84, w: 16, h: 10 }],
         enterCaption: "BETA STREET — walk with WASD or the arrow keys.",
+        // INTERACTABLE NPC — the sweeper is linked to a talker marker: their
+        // body IS the marker (the static diamond hides), they patrol, and
+        // clicking them (or pressing N) makes the walker give chase.
+        npcs: [
+          {
+            id: "bs_npc_sweeper",
+            image: "emoji:🧹",
+            x: 44,
+            y: 86,
+            speed: 14,
+            patrol: [
+              { x: 60, y: 86, pause: 0.3 },
+              { x: 44, y: 86, pause: 0.3 },
+            ],
+            talkHotspotId: "bsh_sweeper",
+          },
+        ],
       },
       hotspots: [
         {
@@ -282,6 +299,29 @@ const STAGE_STORY: Story = {
           bounds: { x: 4, y: 58, w: 10, h: 30 },
           cursor: "go",
           action: { type: "goToScene", targetSceneId: "bs_wide" },
+        },
+        {
+          // INTERACTABLE NPC talker — hidden as a diamond (the sweeper
+          // carries it); repeatable so both the click and the N-key tests
+          // can start the conversation.
+          id: "bsh_sweeper",
+          label: "the street sweeper",
+          bounds: { x: 44, y: 60, w: 10, h: 28 },
+          cursor: "talk",
+          isRepeatable: true,
+          action: { type: "startDialogue" },
+        },
+        {
+          // Far-wall target for the DOUBLE-CLICK JOG test — it answers TALK
+          // (the armed verb) so the click produces a real WALK across the
+          // room, not an from-here line. Repeatable read: forever visible.
+          id: "bsh_plates",
+          label: "the peeling licence plates",
+          bounds: { x: 2, y: 56, w: 8, h: 30 },
+          cursor: "look",
+          isRepeatable: true,
+          verbs: { talk: { type: "showText", text: "PLATES-TALK: a decade of states, screwed to the wall in no order at all." } },
+          action: { type: "showText", text: "PLATES-LINE: a decade of states, screwed to the wall in no order at all." },
         },
         {
           id: "bsh_door",
@@ -610,7 +650,7 @@ async function parts2to4() {
 
   // A — the stage mounts with markers and NO novel chrome.
   await until("stage mounts its walker", () => !!q("[data-stage-player]"));
-  ok(qa(".stage-marker").length === 5, "every stage hotspot renders as a walkable marker", `${qa(".stage-marker").length} markers`);
+  ok(qa(".stage-marker").length === 6, "every stage hotspot renders as a walkable marker (the linked NPC's diamond hides)", `${qa(".stage-marker").length} markers`);
   ok(qa(".hotspot-box").length === 0, "NO classic hotspot boxes on a stage node");
   ok(!text().includes("ALIBI-PROSE"), "no prose panel bleeds onto the stage");
   ok(await coinVerb("Look at"), "the verb coin rail offers Look at");
@@ -704,6 +744,68 @@ async function parts2to4() {
     ok(!!pAfter && !!pAfter2 && pAfter2.x < pAfter.x - 1, "walking works again after the conversation", `${pAfter?.x} → ${pAfter2?.x}`);
   }
 
+  // G — INTERACTION QoL: hint-key flash, coin hotkeys, double-click jog,
+  //     and a MOVING NPC you can click (or press N) to talk to.
+  {
+    // H — every marker pulses, and the linked NPC's chip pulses with them.
+    key("h");
+    await sleep(80);
+    ok(qa(".stage-marker-flash").length >= 5, "the hint key flashes every marker", `${qa(".stage-marker-flash").length} flashing`);
+    ok(!!q('[data-npc-id="bs_npc_sweeper"] .stage-marker-flash'), "the interactable NPC's chip flashes too");
+
+    // 1-9 — coin verbs positionally. By now the wrench is taken, so the
+    // coin reads Look at · Talk to · Go to — 2 = Talk to, which the NPC
+    // phases below want armed anyway.
+    key("2");
+    await sleep(80);
+    const pressed = qa<HTMLButtonElement>("button[aria-pressed]").find((b) => b.getAttribute("aria-pressed") === "true" && b.getAttribute("aria-label") === "Talk to");
+    ok(!!pressed, "coin hotkey 2 arms Talk to");
+
+    // Double-click jog: two presses on the far-wall plates (which answers
+    // the armed verb) jog the walker across the room — the flag shows and
+    // the line lands in a window only a jog can meet.
+    {
+      const plates = marker("bsh_plates")!;
+      const t0 = Date.now();
+      plates.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      await sleep(70);
+      plates.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+      let sawJog = false;
+      let caption = false;
+      while (Date.now() - t0 < 1500 && !(caption = text().includes("PLATES-TALK"))) {
+        sawJog = sawJog || !!q('[data-stage-player][data-jog="1"]');
+        await sleep(15);
+      }
+      ok(sawJog, "the double-click puts the walker into a jog");
+      ok(caption && Date.now() - t0 < 1100, "the jog crosses the room in under a second (a walk would need ~1.7s)", `${Date.now() - t0}ms`);
+      await until("the walker ends at the plates wall", () => (playerPos()?.x ?? 100) < 15, 3000);
+    }
+
+    // Interactable NPC: the sweeper's diamond is GONE, their body is the
+    // marker — click the MOVING character and the walker gives chase.
+    ok(!q('.stage-marker[data-hs-id="bsh_sweeper"]'), "a linked NPC's static diamond hides");
+    const sweeper = q<HTMLElement>('[data-npc-id="bs_npc_sweeper"]');
+    ok(!!sweeper && /the street sweeper/i.test(sweeper.textContent || ""), "the sweeper carries their own talk chip");
+    sweeper!.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    await until("clicking the moving NPC starts the conversation", () => qa(".stage-marker[disabled]").length > 0, 12000);
+    for (let i = 0; i < 10 && !qa("button").some((b) => /keep walking/i.test(b.textContent || "")); i++) {
+      key(" ", "Space");
+      await sleep(400);
+    }
+    qa<HTMLButtonElement>("button").find((b) => /keep walking/i.test(b.textContent || ""))?.click();
+    await until("the sweeper conversation hands the floor back", () => qa(".stage-marker[disabled]").length === 0, 8000);
+
+    // N — walk to + talk with the NEAREST linked character, no mouse at all.
+    key("n");
+    await until("the N key starts the nearest-character conversation", () => qa(".stage-marker[disabled]").length > 0, 12000);
+    for (let i = 0; i < 10 && !qa("button").some((b) => /keep walking/i.test(b.textContent || "")); i++) {
+      key(" ", "Space");
+      await sleep(400);
+    }
+    qa<HTMLButtonElement>("button").find((b) => /keep walking/i.test(b.textContent || ""))?.click();
+    await until("the N-key conversation hands the floor back", () => qa(".stage-marker[disabled]").length === 0, 8000);
+  }
+
   // F — leave through the door; the classic novel must be pristine.
   console.log("\n=== PART 3 · NON-INTERFERENCE (classic graphic novel) ===");
   {
@@ -793,7 +895,7 @@ async function parts2to4() {
     // The entry caption fades after a few seconds — catch it before the
     // slower marker poll eats its lifetime.
     await until("the entry caption replays", () => text().includes("BETA STREET"), 6000);
-    await until("the street's markers are back", () => qa(".stage-marker").length === 4, 8000);
+    await until("the street's markers are back", () => qa(".stage-marker").length === 5, 8000);
     ok(qa(".stage-marker[disabled]").length === 0, "the conversation gate re-opens closed (markers live)");
     ok(!text().includes("KID-LINE-ONE"), "no conversation beats auto-leak onto re-entry");
     const p0 = playerPos();
