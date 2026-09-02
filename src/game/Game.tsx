@@ -6017,6 +6017,28 @@ function CasePlayer({
         : "scene-fade";
 
   // Single cinematic background helper
+  // TALK ZOOM — while a stage conversation plays, the ROOM eases in toward
+  // the talking pair (plate AND actors, one shared transform so the
+  // background zooms in lockstep with the characters) and back out when
+  // the floor is handed back. Origin sits on the conversation's marker —
+  // between the walker and who they're talking to — clamped inside the
+  // frame; a CSS transition does the easing both ways.
+  const talkHs =
+    stageConvo === "open" && convoHotspotId
+      ? (scene.hotspots ?? []).find((h) => h.id === convoHotspotId)
+      : undefined;
+  const talkZoomEase = { transition: "transform 0.45s cubic-bezier(0.3, 0.7, 0.3, 1)" };
+  const talkZoomStyle: React.CSSProperties = talkHs
+    ? {
+        ...talkZoomEase,
+        transform: "scale(1.22)",
+        transformOrigin: `${Math.min(86, Math.max(14, talkHs.bounds.x + talkHs.bounds.w / 2))}% ${Math.min(
+          82,
+          Math.max(30, talkHs.bounds.y + talkHs.bounds.h - 12),
+        )}%`,
+      }
+    : { ...talkZoomEase };
+
   const buildSingleBg = () => {
     const resolvedBackground = assetBackground(scene.background);
     const { className: cinClass, style: cinStyle } = cinematicLayer(bgCinematic, scene.background);
@@ -6029,12 +6051,12 @@ function CasePlayer({
       transformOrigin: b ? `${b.x + b.w / 2}% ${b.y + b.h / 2}%` : "50% 50%",
       transition: "transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1)",
     };
-    const plateParallax = hasParallax(bgCinematic) && !b;
+    const plateParallax = hasParallax(bgCinematic) && !b && !talkHs;
     return (
       <div className="absolute inset-0 overflow-hidden">
         <div
           className={`absolute inset-0 will-change-transform ${plateParallax ? "parallax-plate parallax-idle" : ""}`}
-          style={{ ...examineStyle, ...(plateParallax ? parallaxStyle(bgCinematic) : {}) }}
+          style={{ ...examineStyle, ...(plateParallax ? parallaxStyle(bgCinematic) : {}), ...(talkHs ? talkZoomStyle : {}) }}
         >
           {resolvedBackground.startsWith("video:") ? (
             <>
@@ -6318,12 +6340,19 @@ function CasePlayer({
         // grade; only added when a grade is active (a filter would otherwise
         // change the containing block for no reason).
         const g = spriteGradeStyle(bgCinematic);
-        return g.filter ? (
-          <div className="pointer-events-none absolute inset-0 z-[45]" style={g}>
+        // The zoom wrapper carries the SAME talkZoomStyle as the plate
+        // wrapper, so background and characters scale as one room.
+        const stageZoomed = (
+          <div className="absolute inset-0" data-stage-world style={talkZoomStyle}>
             {stageEl}
           </div>
+        );
+        return g.filter ? (
+          <div className="pointer-events-none absolute inset-0 z-[45]" style={g}>
+            {stageZoomed}
+          </div>
         ) : (
-          stageEl
+          stageZoomed
         );
       })()}
 

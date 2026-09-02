@@ -748,29 +748,6 @@ export function Stage({
    *  single-screen room). Follows the walker with light smoothing; the world
    *  div is translated by -cam, so markers, props and the walker all pan
    *  together. */
-  // TALK ZOOM — while a conversation with an NPC plays, the camera punches
-  // in on the walker (origin at their chest) and eases back out when the
-  // room returns. Purely visual: input is inert during conversations and
-  // the transform rides the panning viewport, so world-% math is untouched.
-  const [talkZoom, setTalkZoom] = useState(1);
-  const talkZoomRef = useRef(1);
-  useEffect(() => {
-    const target = convoHotspotId != null ? 1.22 : 1;
-    let raf = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      const z = talkZoomRef.current + (target - talkZoomRef.current) * Math.min(1, dt * 6);
-      const done = Math.abs(target - z) < 0.002;
-      talkZoomRef.current = done ? target : z;
-      setTalkZoom(done ? target : Math.round(z * 1000) / 1000);
-      if (!done) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [convoHotspotId]);
-
   const camRef = useRef(0);
   const [cam, setCam] = useState(0);
   /** The last rounded camera value pushed to state — the rAF loop outlives
@@ -1699,15 +1676,10 @@ export function Stage({
           transform, exactly the old behaviour. */}
       <div
         className="absolute inset-y-0 left-0"
-        data-stage-world
         style={{
           width: "100%",
-          transform: `translateX(-${cam}%)${talkZoom > 1.001 ? ` scale(${talkZoom})` : ""}`,
-          transformOrigin:
-            talkZoom > 1.001
-              ? `${Math.min(86, Math.max(14, pos.x - cam))}% ${Math.min(82, Math.max(30, pos.y - 12))}%`
-              : undefined,
-          willChange: wide || talkZoom > 1.001 ? "transform" : undefined,
+          transform: `translateX(-${cam}%)`,
+          willChange: wide ? "transform" : undefined,
         }}
       >
         {/* the world's own background on wide worlds — spans the whole strip
