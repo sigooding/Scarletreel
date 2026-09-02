@@ -108,6 +108,7 @@ import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
 import { coveragePercent, coverageReport, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
+import { openaiGenerationBody, openaiSizesForModel } from "../src/data/aiImages";
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
@@ -1055,6 +1056,16 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // formula held a line for up to NINE seconds, glued over the character).
   check("stage: a short caption holds ~2.5s", Math.abs(stageCaptionMs("Hi.") - 2500) < 1e-9, stageCaptionMs("Hi."));
   check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 5200 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+
+  // AI Images: the OpenAI request only carries response_format for the
+  // dall-e family — gpt-image models REJECT it with a 400 (unknown_parameter),
+  // which is exactly what Generate was hitting with the default model.
+  check("ai: gpt-image body omits response_format", !("response_format" in openaiGenerationBody("gpt-image-1", "p", "1024x1024")));
+  check("ai: dall-e-3 body keeps response_format", "response_format" in openaiGenerationBody("dall-e-3", "p", "1024x1024"));
+  check("ai: body carries model/prompt/size", (openaiGenerationBody("gpt-image-1", "noir alley", "1024x1024") as { model: string; prompt: string; size: string }).model === "gpt-image-1");
+  // ...and each family's size list excludes the other's (invalid pairs 400).
+  check("ai: gpt-image sizes exclude dall-e's 1792x1024", !openaiSizesForModel("gpt-image-1").includes("1792x1024") && openaiSizesForModel("gpt-image-1").includes("1536x1024"));
+  check("ai: dall-e sizes exclude gpt-image's 1536x1024", !openaiSizesForModel("dall-e-3").includes("1536x1024") && openaiSizesForModel("dall-e-3").includes("1792x1024"));
 
   // Legacy exports: stage2d bolt-on maps to a stage node; clean stories pass through untouched.
   const legacy: any = {

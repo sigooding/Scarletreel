@@ -178,6 +178,44 @@ for (const t of ["scene", "beats", "hotspots", "choices", "characters", "items",
   reportProblems("tab " + t);
 }
 
+/* ============ 5b. AI tab: per-provider instructions + converter ============ */
+await tab("ai");
+{
+  const text0 = snap();
+  check("ai tab shows the provider instructions panel", /How .* connects/.test(text0) && /platform\.openai\.com/.test(text0), text0.slice(0, 160));
+  const provSelect = q("select").find((s) => [...s.querySelectorAll("option")].some((o) => /Local — ComfyUI/.test(o.textContent || "")));
+  check("ai tab has the provider select", !!provSelect);
+  if (provSelect) {
+    const setVal = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, "value").set;
+    const want = [
+      ["openai", /platform\.openai\.com/],
+      ["stability", /platform\.stability\.ai/],
+      ["together", /api\.together\.ai/],
+      ["a1111", /--cors-allow-origins/],
+      ["comfyui", /--enable-cors-header/],
+    ];
+    for (const [value, re] of want) {
+      setVal.call(provSelect, value);
+      provSelect.dispatchEvent(new win.Event("change", { bubbles: true }));
+      await sleep(250);
+      const t = snap();
+      check("ai instructions swap for " + value, re.test(t) && /How .* connects/.test(t), t.match(/How [^.]{0,40}/)?.[0]);
+    }
+  }
+  // The converter appears only with a rendered image in hand (no generation in
+  // happy-dom), but the starters' shared knobs must exist in sprite mode.
+  const starter = byText(/Walk cycle \\(6 frames\\)/i);
+  check("walk-cycle starter button exists", !!starter);
+  if (starter) { starter.click(); await sleep(350); }
+  const st = snap();
+  check(
+    "sprite mode shows the shared forge options",
+    /backdrop removal:/.test(st) && /output size:/.test(st),
+    "starter=" + !!starter + " spriteOn=" + /Sprite mode ON/.test(st) + " text=" + st.match(/Sprite sheet starters.{0,120}/)?.[0]
+  );
+  reportProblems("ai tab");
+}
+
 /* ============ 6. acts: add two acts ============ */
 await tab("acts");
 let added = false;
