@@ -131,6 +131,14 @@ import type {
   StageScriptStep,
   Story,
 } from "../types";
+import { initGameSeedFromUrl } from "./rng";
+
+/* SEEDED RUNS — ?seed=1234 on the URL pins every gameplay draw (minigame
+ * shuffles, ride spawns) to one deterministic stream, applied once at
+ * import before anything mounts. Same seed + same inputs = same run: a
+ * bug that needs an unlucky roll replays on demand. */
+const bootSeed = initGameSeedFromUrl();
+if (bootSeed) console.info(`[seed] deterministic run — seed "${bootSeed}" (same seed + same inputs = same run)`);
 
 /* ------------------------------------------------------------------ */
 /*  helpers                                                            */

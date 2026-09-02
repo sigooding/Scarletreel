@@ -110,7 +110,8 @@ import { coveragePercent, coverageReport, cutsceneStepKey, emptyCoverage, record
 import { spriteSheetIssues, sheetAnim } from "../src/game/spriteSheet";
 import { resolveVerbAction, verbsForScene } from "../src/logic";
 import { SOUTH_PARK } from "../src/data/southPark";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mulberry32, hashSeed, setGameSeed, currentGameSeed, gameRandom, gameRange, gamePick, gameShuffle, seedFromSearch } from "../src/game/rng";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
@@ -3983,6 +3984,57 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("rainsector: the walker sheet is the sliced magenta plate", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.playerSheet!.frameWidth === 293);
   check("rainsector: an interactable NPC is linked to a talker", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.npcs?.some((n) => n.talkHotspotId === "rsh_ping"));
   check("rainsector: the stair barrier is gate-aware", RAIN_SECTOR.scenes.find((x) => x.id === "rs_alley")!.stage!.obstacles?.some((o) => o.gating?.requiresFlags?.includes("rs_ping_told")));
+}
+
+/* ── SEEDED RNG — deterministic playtests (?seed=) ──────────────────── */
+console.log("\n=== SEEDED RNG — deterministic playtests ===");
+{
+  // mulberry32: same seed in, same stream out; a different seed diverges.
+  const g1 = mulberry32(hashSeed("42"));
+  const g2 = mulberry32(hashSeed("42"));
+  const seq = Array.from({ length: 6 }, () => g1());
+  check("rng: mulberry32 same seed replays the same stream", seq.every((v, i) => v === g2()));
+  check("rng: draws stay in [0, 1)", seq.every((v) => v >= 0 && v < 1));
+  const g3 = mulberry32(hashSeed("43"));
+  check("rng: a different seed diverges", Array.from({ length: 6 }, () => g3()).some((v, i) => v !== seq[i]));
+  check("rng: hashSeed is stable and separating", hashSeed("fred") === hashSeed("fred") && hashSeed("fred") !== hashSeed("42"));
+
+  // ?seed= parsing.
+  check("rng: ?seed=42 parses", seedFromSearch("?seed=42") === "42");
+  check("rng: seed parses mid-query and decodes", seedFromSearch("?a=1&seed=hello%20world") === "hello world");
+  check("rng: no seed param means null", seedFromSearch("?x=1") === null && seedFromSearch("") === null);
+  check("rng: a bare ?seed= means null", seedFromSearch("?seed=") === null);
+
+  // The shared module stream.
+  setGameSeed("42");
+  const s1 = Array.from({ length: 8 }, () => gameRandom());
+  setGameSeed("42");
+  const s2 = Array.from({ length: 8 }, () => gameRandom());
+  check("rng: setGameSeed replays the module stream", s1.every((v, i) => v === s2[i]));
+  check("rng: currentGameSeed reports the pin", currentGameSeed() === "42");
+  setGameSeed(null);
+  check("rng: unsetting hands the stream back to Math.random", currentGameSeed() === null);
+  const live = Array.from({ length: 8 }, () => gameRandom());
+  setGameSeed(null);
+  check("rng: unseeded draws are live (two runs differ)", Array.from({ length: 8 }, () => gameRandom()).some((v, i) => v !== live[i]));
+
+  // The helpers games actually call.
+  const base = ["a", "b", "c", "d", "e", "f"];
+  setGameSeed("42");
+  const sh1 = gameShuffle(base);
+  const picked = gamePick(base);
+  const r = gameRange(5, 9);
+  setGameSeed("42");
+  const sh3 = gameShuffle(base);
+  check("rng: gameShuffle same seed replays the permutation", JSON.stringify(sh1) === JSON.stringify(sh3));
+  check("rng: gameShuffle preserves the multiset, input untouched", sh1.slice().sort().join("") === "abcdef" && base.join("") === "abcdef");
+  check("rng: gamePick returns a member", base.includes(picked));
+  check("rng: gameRange stays in band", r >= 5 && r < 9);
+  setGameSeed(null);
+
+  // The gameplay call sites route through the stream.
+  check("rng: PatternPuzzle shuffles via the seeded stream", /gameShuffle\(config\.rows\)/.test(readFileSync("src/game/PatternPuzzle.tsx", "utf8")));
+  check("rng: RideGame spawns via the seeded stream", /gameRandom\(\) \* spawnMs/.test(readFileSync("src/game/RideGame.tsx", "utf8")));
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);
