@@ -2032,7 +2032,11 @@ export function posReachesMarker(
  *  subtitle, long enough to actually read. Used by stage captions. */
 export function stageCaptionMs(text: string): number {
   const chars = Math.max(1, (text ?? "").trim().length);
-  return clamp(2400 + chars * 55, 3000, 9000);
+  // Snappy subtitles: ~2.5s floor, ~45ms/char, 5.2s cap. The old formula
+  // (2.4s base + 55ms/char, capped 9s) glued a wall of text over the
+  // character for up to nine seconds — longer than the player needs to read
+  // a line, and long enough to feel like the game had stalled.
+  return clamp(1500 + chars * 45, 2500, 5200);
 }
 
 /**

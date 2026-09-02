@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { gameRandom } from "./rng";
 import type { RideConfig } from "../types";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
@@ -135,12 +136,14 @@ export function RideGame({
         return { ...o, y };
       });
       if (now >= spawnAt) {
-        spawnAt = now + spawnMs + Math.random() * spawnMs * 0.4;
+        // Seeded via the game RNG: ?seed= pins spawn timing, lane and
+        // sprite so a run that crashes at a specific pattern replays.
+        spawnAt = now + spawnMs + gameRandom() * spawnMs * 0.4;
         objs.push({
           id: nextId++,
-          lane: Math.floor(Math.random() * lanes),
+          lane: Math.floor(gameRandom() * lanes),
           y: -18,
-          sprite: traffic[Math.floor(Math.random() * traffic.length)],
+          sprite: traffic[Math.floor(gameRandom() * traffic.length)],
         });
       }
       objs = objs.filter((o) => o.y < 108);

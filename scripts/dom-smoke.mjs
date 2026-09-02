@@ -710,7 +710,7 @@ root.unmount();
 //       without the character walking;
 //   (d) ✋ take (and friends) still walk up first.
 const wireZone = { id: "igh_wire", label: "Pigeon wire", bounds: { x: 44, y: 22, w: 10, h: 12 }, cursor: "look", isRepeatable: true, action: { type: "showText", text: "Tiny grey witnesses, and none of them talking." } };
-async function bootPlaza() {
+async function bootPlaza(opts = {}) {
   try { win.localStorage.clear(); win.sessionStorage.clear(); } catch {}
   container.innerHTML = "";
   const story = {
@@ -720,8 +720,8 @@ async function bootPlaza() {
         ? sc
         : {
             ...sc,
-            stage: sc.stage ? { ...sc.stage, enterScript: undefined } : sc.stage,
-            hotspots: [...(sc.hotspots || []), wireZone],
+            stage: sc.stage ? { ...sc.stage, enterScript: undefined, ...(opts.stageEdits || {}) } : sc.stage,
+            hotspots: [...(sc.hotspots || []), wireZone, ...(opts.hotspot ? [opts.hotspot] : [])],
           }
     ),
   };
@@ -785,6 +785,39 @@ console.log("  look fired at distance:", lookFired, "| character did NOT walk (x
 console.log("  take still walks up (reached x>35):", walkedToGlove, "| glove consumed on arrival:", gloveGone);
 if (!markerOnObject || !floorMarkerOk || !noDim || !posterBtn || !lookFired || !lookNoWalk || !walkedToGlove || !gloveGone) failed = true;
 failed |= report("STAGE interaction niceties").crashed;
+root.unmount();
+
+// Phase 10b: PROP OCCLUSION + MENU Z-ORDER —
+//   (a) a hotspot flagged "occludes" draws its object art OVER the walkers
+//       (z 160 beats every actor's 50+y depth sort);
+//   (b) the object-first verb menu opens ABOVE every actor (z-[200]) so the
+//       choice options are never hidden behind a character.
+//   NOTE: this file's body is one big template literal: no backticks in
+//   comments or strings here, ever.
+const OCCL_ZONE = { id: "igh_occl", label: "Big prop", bounds: { x: 26, y: 40, w: 18, h: 26 }, cursor: "look", isRepeatable: true, occludes: true, image: "/img/prop-occluder.png", action: { type: "showText", text: "A very large foreground prop." } };
+root = await bootPlaza({ hotspot: OCCL_ZONE }); problems.length = 0;
+const occlBtn = markerBtn("Big prop");
+const occlArt = occlBtn ? occlBtn.previousElementSibling : null;
+const occlZ = occlArt instanceof win.HTMLElement ? occlArt.style.zIndex : "";
+const playerZ = (container.querySelector("[data-stage-player]") || {}).style?.zIndex || "";
+const occlAbove = occlZ === "160" && playerZ !== "" && Number(playerZ) < 160;
+root.unmount();
+
+root = await bootPlaza({ stageEdits: { objectVerbMenu: true, verbs: undefined, objectMenuHold: undefined } }); problems.length = 0;
+const menuBtn = markerBtn("Pigeon wire");
+if (menuBtn) {
+  try {
+    menuBtn.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1 }));
+  } catch {
+    menuBtn.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+  }
+  await sleep(400);
+}
+const menuDiv = [...container.querySelectorAll("div")].find((d) => typeof d.className === "string" && d.className.includes("z-[200]") && (d.textContent || "").includes("Pigeon wire"));
+console.log("\\n=== STAGE — PROP OCCLUSION + MENU Z-ORDER ===");
+console.log("  occluder art over walkers (art z " + occlZ + " > player z " + playerZ + "):", occlAbove, "| object menu above actors:", !!menuDiv);
+if (!occlAbove || !menuDiv) failed = true;
+failed |= report("STAGE prop occlusion + menu z").crashed;
 root.unmount();
 
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");

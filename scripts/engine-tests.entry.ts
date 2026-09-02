@@ -106,8 +106,16 @@ import {
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
-import { coveragePercent, coverageReport, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { coveragePercent, coverageReport, cutsceneStepKey, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { spriteSheetIssues, sheetAnim } from "../src/game/spriteSheet";
+import { resolveVerbAction, verbsForScene } from "../src/logic";
+import { SOUTH_PARK } from "../src/data/southPark";
+import { existsSync, readFileSync } from "node:fs";
+import { mulberry32, hashSeed, setGameSeed, currentGameSeed, gameRandom, gameRange, gamePick, gameShuffle, seedFromSearch } from "../src/game/rng";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
+import { openaiGenerationBody, openaiSizesForModel } from "../src/data/aiImages";
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
@@ -1051,9 +1059,20 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));
   check("stage: posReachesMarker misses far away", !posReachesMarker({ x: 10, y: 90 }, m, 4, 16 / 9));
 
-  // Caption hold scales with length and stays sane.
-  check("stage: a short caption holds ~3s", Math.abs(stageCaptionMs("Hi.") - 3000) < 1e-9, stageCaptionMs("Hi."));
-  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 9000 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+  // Caption hold scales with length and stays sane — and snappy (the old
+  // formula held a line for up to NINE seconds, glued over the character).
+  check("stage: a short caption holds ~2.5s", Math.abs(stageCaptionMs("Hi.") - 2500) < 1e-9, stageCaptionMs("Hi."));
+  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 5200 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+
+  // AI Images: the OpenAI request only carries response_format for the
+  // dall-e family — gpt-image models REJECT it with a 400 (unknown_parameter),
+  // which is exactly what Generate was hitting with the default model.
+  check("ai: gpt-image body omits response_format", !("response_format" in openaiGenerationBody("gpt-image-1", "p", "1024x1024")));
+  check("ai: dall-e-3 body keeps response_format", "response_format" in openaiGenerationBody("dall-e-3", "p", "1024x1024"));
+  check("ai: body carries model/prompt/size", (openaiGenerationBody("gpt-image-1", "noir alley", "1024x1024") as { model: string; prompt: string; size: string }).model === "gpt-image-1");
+  // ...and each family's size list excludes the other's (invalid pairs 400).
+  check("ai: gpt-image sizes exclude dall-e's 1792x1024", !openaiSizesForModel("gpt-image-1").includes("1792x1024") && openaiSizesForModel("gpt-image-1").includes("1536x1024"));
+  check("ai: dall-e sizes exclude gpt-image's 1536x1024", !openaiSizesForModel("dall-e-3").includes("1536x1024") && openaiSizesForModel("dall-e-3").includes("1792x1024"));
 
   // Legacy exports: stage2d bolt-on maps to a stage node; clean stories pass through untouched.
   const legacy: any = {
@@ -2878,6 +2897,177 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 }
 
 /* ================================================================== */
+/*  Playtest coverage v2 — stage markers + cutscene steps              */
+/* ================================================================== */
+{
+  const stageStory: Story = {
+    id: "cov-stage",
+    title: "Stage coverage",
+    tagline: "",
+    startSceneId: "s1",
+    characters: [],
+    items: [],
+    scenes: [
+      {
+        id: "s1",
+        title: "Dock",
+        background: "/img/d.jpg",
+        nodeType: "stage",
+        dialogueBeats: [],
+        choices: [],
+        hotspots: [
+          { id: "h1", label: "Crate", bounds: { x: 10, y: 40, w: 20, h: 20 }, action: { type: "showText", text: "A crate." } },
+          { id: "h2", label: "Lever", bounds: { x: 40, y: 40, w: 20, h: 20 }, action: { type: "runScript", script: [{ do: "say", text: "Clunk." }, { do: "setFlag", flag: "lever" }] } },
+        ],
+        stage: {
+          floor: { top: 60, bottom: 95 },
+          spawn: { x: 50, y: 90 },
+          enterScript: [{ do: "wait", seconds: 1 }, { do: "face", dir: "left" }],
+        },
+      },
+    ],
+  };
+
+  const blank = coverageReport(stageStory, null);
+  check("coverage v2: a stage story tallies its markers and steps", blank.markerTotal === 2 && blank.cutsceneTotal === 4, blank);
+  check("coverage v2: an empty tally misses every marker and step", blank.missedMarkers.length === 2 && blank.missedCutsceneSteps.length === 4, blank);
+  check("coverage v2: classic scenes contribute no stage tallies", coverageReport({ ...stageStory, scenes: [{ id: "c1", title: "C", background: "/img/c.jpg", hotspots: [], dialogueBeats: [], choices: [] }] }, null).markerTotal === 0);
+
+  // The recorder/report key contract: one shared function, so the two sides
+  // can never drift. Entry script = empty hotspot tag; runScript = its id.
+  check("coverage v2: entry-script keys use an empty hotspot tag", cutsceneStepKey("s1", undefined, 0) === "s1:#0" && cutsceneStepKey("s1", undefined, 1) === "s1:#1");
+  check("coverage v2: hotspot step keys carry the hotspot id", cutsceneStepKey("s1", "h2", 1) === "s1:h2#1");
+
+  let cov = emptyCoverage("cov-stage");
+  cov = recordVisit(cov, "marker", "s1:h1");
+  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", undefined, 0));
+  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", "h2", 1));
+  const rv = coverageReport(stageStory, cov);
+  check("coverage v2: fired markers are counted", rv.markerFired === 1 && rv.markerTotal === 2, rv.markerFired);
+  check("coverage v2: the unfired marker is reported with its label", rv.missedMarkers.length === 1 && rv.missedMarkers[0].hotspotId === "h2" && rv.missedMarkers[0].text === "Lever", rv.missedMarkers);
+  check("coverage v2: played steps are counted", rv.cutsceneRun === 2 && rv.cutsceneTotal === 4, rv.cutsceneRun);
+  check("coverage v2: unplayed steps are reported", rv.missedCutsceneSteps.length === 2, rv.missedCutsceneSteps);
+  check("coverage v2: entry and hotspot gaps name themselves apart", rv.missedCutsceneSteps.some((g) => g.text === "entry step 2") && rv.missedCutsceneSteps.some((g) => g.text === "Lever — step 1"), rv.missedCutsceneSteps);
+  check("coverage v2: an unrecorded key reads as zero", (cov.cutscene["s1:h9#0"] ?? 0) === 0, cov.cutscene);
+  check("coverage v2: recording a marker never mutates the input", (cov.markers["s1:h1"] ?? 0) === 1 && !("s1:h2" in cov.markers), cov.markers);
+}
+
+/* ================================================================== */
+/*  SOUTH PARK: THE RECESS WARS — the walkable-stage beta data         */
+/* ================================================================== */
+{
+  // The beta must pass the validator clean — it ships in the catalogue.
+  const spIssues = validateStory(SOUTH_PARK);
+  const spErrors = spIssues.filter((i) => i.severity === "error");
+  check("south park: the beta validates with no errors", spErrors.length === 0, spErrors.map((i) => i.message).join(" | "));
+
+  // Every sheet it references is on disk and well-formed, with walk+idle.
+  // The harness bundles to /tmp — resolve public/ from the npm cwd instead.
+  const spRoot = path.join(process.cwd(), "public");
+  const spSheets: [string, import("../src/game/spriteSheet").SpriteSheet][] = [
+    ["stan", SOUTH_PARK.playerSprite!.sheet!],
+    ["cartman walk", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
+    ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
+    ["kenny walk", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
+    ["barbrady walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
+    ["tweek walk", SOUTH_PARK.scenes[3].stage!.npcs![1].sheet!],
+    ["barbrady talk", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")!.talkingSheet!],
+    ["cartman moods", SOUTH_PARK.scenes[5].hotspots![0].sheet!],
+  ];
+  for (const [label, sheet] of spSheets) {
+    check("south park: " + label + " sheet exists on disk", existsSync(path.join(spRoot, sheet.image)), sheet.image);
+    check("south park: " + label + " sheet is well-formed", spriteSheetIssues(sheet, label).length === 0, spriteSheetIssues(sheet, label).join(" | "));
+    check("south park: " + label + " sheet has a walk animation", !!sheetAnim(sheet, "walk"));
+  }
+  for (const sc of SOUTH_PARK.scenes) {
+    check("south park: background exists for " + sc.id, existsSync(path.join(spRoot, sc.background)), sc.background);
+  }
+
+  // Pure stage game: every non-ending scene is a walkable stage with the
+  // verb menu on and at least one verb answerable.
+  for (const sc of SOUTH_PARK.scenes) {
+    if (sc.isEnding) continue;
+    check("south park: " + sc.id + " is a verb-menu stage", sc.nodeType === "stage" && sc.stage?.verbCoin === true && verbsForScene(sc).length > 0, verbsForScene(sc).join(","));
+  }
+
+  // The USE puzzle: the locker answers the snowball (and only via USE with
+  // it armed); the sled is gated on the key the locker grants.
+  const spLocker = SOUTH_PARK.scenes[1].hotspots![0];
+  const spUse = resolveVerbAction(spLocker, "use", "sp_snowball");
+  check("south park: the locker answers USE + snowball", spUse.ok && spUse.action.type === "useItem" && spUse.action.itemGranted === "sp_key", spUse);
+  check("south park: the locker refuses an unaccepted item", !resolveVerbAction(spLocker, "use", "sp_sled").ok);
+  const spSled = SOUTH_PARK.scenes[2].hotspots![1];
+  check("south park: the sled is gated on the frozen key", JSON.stringify(spSled.gating) === JSON.stringify({ requiresItems: ["sp_key"] }), spSled.gating);
+  check("south park: taking the sled sets the pond flag", spSled.action.flagSet === "sp_got_sled");
+  const spPondEdge = SOUTH_PARK.scenes[2].stage!.exitEdges?.right;
+  check("south park: the pond edge opens only with the sled", spPondEdge?.gating?.requiresFlags?.[0] === "sp_got_sled");
+
+  // The pond cutscene walks Kenny onto the ice and speaks the two lines.
+  const spEnter = SOUTH_PARK.scenes[5].stage!.enterScript ?? [];
+  check("south park: the pond cutscene has the Kenny gag", spEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_kenny_npc") && spEnter.some((st) => st.do === "say" && /killed Kenny/.test(st.text)), spEnter.map((st) => st.do).join(","));
+
+  // The finale branches into two distinct ending cards.
+  const spChoices = SOUTH_PARK.scenes[5].choices ?? [];
+  check("south park: the confrontation offers two endings", spChoices.length === 2 && new Set(spChoices.map((c) => c.targetSceneId)).size === 2, spChoices.map((c) => c.targetSceneId).join(","));
+  const spEndings = SOUTH_PARK.scenes.filter((sc) => sc.isEnding);
+  check("south park: both endings carry ending cards", spEndings.length === 2 && spEndings.every((sc) => !!sc.endingData && sc.choices.length === 0));
+
+  // Pass-2: 1.5x cast, talking sheets, item icons, title cover, the cafe.
+  check("south park: the cast plays at 1.5x", SOUTH_PARK.scenes[0].stage!.playerScale === 1.5 && SOUTH_PARK.scenes[0].stage!.npcs!.every((n) => n.scale === 1.5) && SOUTH_PARK.scenes[3].stage!.npcs!.every((n) => n.scale === 1.5));
+  const spTalkers = SOUTH_PARK.characters.filter((c) => c.talkingSheet);
+  check("south park: the whole cast carries talking sheets", spTalkers.length === 5 && spTalkers.every((c) => !!c.talkingSheet!.animations.talk && !!c.talkingSheet!.animations.rest), spTalkers.map((c) => c.id).join(","));
+  check("south park: every talking sheet exists on disk", spTalkers.every((c) => existsSync(path.join(spRoot, c.talkingSheet!.image))), spTalkers.map((c) => c.talkingSheet!.image).join(","));
+  const spItems = SOUTH_PARK.items.filter((i) => i.iconUrl);
+  check("south park: item icons exist on disk", spItems.length === 3 && spItems.every((i) => existsSync(path.join(spRoot, i.iconUrl!))), spItems.map((i) => i.iconUrl).join(","));
+  check("south park: the cover is the title card", SOUTH_PARK.coverImage.endsWith("sp-title.png") && existsSync(path.join(spRoot, SOUTH_PARK.coverImage)));
+  const spCafe = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_cafe")!;
+  check("south park: the cafe is a verb-menu stage with Barbrady", spCafe.nodeType === "stage" && spCafe.stage!.verbCoin === true && spCafe.stage!.npcs![0].talkHotspotId === "sp_cafe_barbrady");
+  check("south park: the hall links to the cafe and back", SOUTH_PARK.scenes[1].stage!.exitEdges?.right?.targetSceneId === "sp_cafe" && spCafe.stage!.exitEdges?.left?.targetSceneId === "sp_hall");
+  // Pass 3: directional walks for the whole cast, object art on markers,
+  // the verb-wheel sprite, and object-first menus on.
+  for (const [who, sheet] of [
+    ["stan", SOUTH_PARK.playerSprite!.sheet!],
+    ["kyle", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
+    ["cartman", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
+    ["kenny", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
+  ] as const) {
+    check("south park: " + who + " walks away from camera (walk-up)", !!sheet.animations["walk-up"] && sheet.animations["walk-up"].frames.length === 6, sheet.image);
+  }
+  const spObjArt: [string, string][] = [
+    ["snow pile", "sp_bus_snow"],
+    ["black ice", "sp_bus_ice"],
+    ["locker 27", "sp_hall_locker"],
+    ["trophy case", "sp_hall_trophy"],
+    ["the sled", "sp_base_sled"],
+    ["toy chest", "sp_base_chest"],
+    ["pond sign", "sp_pond_sign"],
+    ["espresso machine", "sp_cafe_machine"],
+  ];
+  for (const [label, hsId] of spObjArt) {
+    const hs = SOUTH_PARK.scenes.flatMap((sc) => sc.hotspots ?? []).find((h) => h.id === hsId)!;
+    check("south park: " + label + " carries object art on disk", !!hs.image && existsSync(path.join(spRoot, hs.image)), hs.image);
+  }
+  check("south park: the verb-wheel snowflake exists", !!SOUTH_PARK.verbMenuIcon && existsSync(path.join(spRoot, SOUTH_PARK.verbMenuIcon)), SOUTH_PARK.verbMenuIcon);
+  check("south park: object-first verb menus are on", SOUTH_PARK.scenes[0].stage!.objectVerbMenu === true);
+  check("south park: barbrady talks with his own sheet", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")?.talkingSheet?.animations.talk != null);
+
+  // The wrong-cartoon cameo: a wide reel, the gag cutscene, the portal loop.
+  const spCrash = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_crash")!;
+  check("south park: the cameo is THE wide reel (worldWidth 200)", spCrash.nodeType === "stage" && spCrash.stage!.worldWidth === 200, spCrash.stage!.worldWidth);
+  const spCrashEnter = spCrash.stage!.enterScript ?? [];
+  check("south park: the cameo cutscene says the line", spCrashEnter.some((st) => st.do === "say" && /wrong CARTOON/.test(st.text)) && spCrashEnter.some((st) => st.do === "say" && /Wrong scene\. Wrong cartoon\. Bye/.test(st.text)), spCrashEnter.map((st) => st.do).join(","));
+  check("south park: the cameo walks both visitors on cue", spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_rick_cameo") && spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_morty_cameo"));
+  for (const [who, npcId] of [["rick", "sp_rick_cameo"], ["morty", "sp_morty_cameo"]] as const) {
+    const npc = spCrash.stage!.npcs!.find((n) => n.id === npcId)!;
+    check("south park: " + who + " sheet exists and is well-formed", existsSync(path.join(spRoot, npc.sheet!.image)) && spriteSheetIssues(npc.sheet!, who).length === 0, npc.sheet!.image);
+  }
+  check("south park: cameo characters stay stage-only (no cutouts)", SOUTH_PARK.characters.filter((c) => ["sp_rick", "sp_morty"].includes(c.id)).every((c) => !c.talkingSheet));
+  const spPortal = spCrash.hotspots!.find((h) => h.id === "sp_crash_portal")!;
+  check("south park: the portal opens after the talk and loops home", spPortal.gating?.requiresFlags?.[0] === "sp_cameo_talked" && spPortal.action.targetSceneId === "sp_cafe");
+  check("south park: the cafe's right edge leads to the crash", SOUTH_PARK.scenes[3].stage!.exitEdges?.right?.targetSceneId === "sp_crash");
+}
+
+/* ================================================================== */
 /*  Background remover — the keying tools behind 🪄 Media Tools        */
 /* ================================================================== */
 {
@@ -3794,6 +3984,57 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("rainsector: the walker sheet is the sliced magenta plate", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.playerSheet!.frameWidth === 293);
   check("rainsector: an interactable NPC is linked to a talker", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.npcs?.some((n) => n.talkHotspotId === "rsh_ping"));
   check("rainsector: the stair barrier is gate-aware", RAIN_SECTOR.scenes.find((x) => x.id === "rs_alley")!.stage!.obstacles?.some((o) => o.gating?.requiresFlags?.includes("rs_ping_told")));
+}
+
+/* ── SEEDED RNG — deterministic playtests (?seed=) ──────────────────── */
+console.log("\n=== SEEDED RNG — deterministic playtests ===");
+{
+  // mulberry32: same seed in, same stream out; a different seed diverges.
+  const g1 = mulberry32(hashSeed("42"));
+  const g2 = mulberry32(hashSeed("42"));
+  const seq = Array.from({ length: 6 }, () => g1());
+  check("rng: mulberry32 same seed replays the same stream", seq.every((v, i) => v === g2()));
+  check("rng: draws stay in [0, 1)", seq.every((v) => v >= 0 && v < 1));
+  const g3 = mulberry32(hashSeed("43"));
+  check("rng: a different seed diverges", Array.from({ length: 6 }, () => g3()).some((v, i) => v !== seq[i]));
+  check("rng: hashSeed is stable and separating", hashSeed("fred") === hashSeed("fred") && hashSeed("fred") !== hashSeed("42"));
+
+  // ?seed= parsing.
+  check("rng: ?seed=42 parses", seedFromSearch("?seed=42") === "42");
+  check("rng: seed parses mid-query and decodes", seedFromSearch("?a=1&seed=hello%20world") === "hello world");
+  check("rng: no seed param means null", seedFromSearch("?x=1") === null && seedFromSearch("") === null);
+  check("rng: a bare ?seed= means null", seedFromSearch("?seed=") === null);
+
+  // The shared module stream.
+  setGameSeed("42");
+  const s1 = Array.from({ length: 8 }, () => gameRandom());
+  setGameSeed("42");
+  const s2 = Array.from({ length: 8 }, () => gameRandom());
+  check("rng: setGameSeed replays the module stream", s1.every((v, i) => v === s2[i]));
+  check("rng: currentGameSeed reports the pin", currentGameSeed() === "42");
+  setGameSeed(null);
+  check("rng: unsetting hands the stream back to Math.random", currentGameSeed() === null);
+  const live = Array.from({ length: 8 }, () => gameRandom());
+  setGameSeed(null);
+  check("rng: unseeded draws are live (two runs differ)", Array.from({ length: 8 }, () => gameRandom()).some((v, i) => v !== live[i]));
+
+  // The helpers games actually call.
+  const base = ["a", "b", "c", "d", "e", "f"];
+  setGameSeed("42");
+  const sh1 = gameShuffle(base);
+  const picked = gamePick(base);
+  const r = gameRange(5, 9);
+  setGameSeed("42");
+  const sh3 = gameShuffle(base);
+  check("rng: gameShuffle same seed replays the permutation", JSON.stringify(sh1) === JSON.stringify(sh3));
+  check("rng: gameShuffle preserves the multiset, input untouched", sh1.slice().sort().join("") === "abcdef" && base.join("") === "abcdef");
+  check("rng: gamePick returns a member", base.includes(picked));
+  check("rng: gameRange stays in band", r >= 5 && r < 9);
+  setGameSeed(null);
+
+  // The gameplay call sites route through the stream.
+  check("rng: PatternPuzzle shuffles via the seeded stream", /gameShuffle\(config\.rows\)/.test(readFileSync("src/game/PatternPuzzle.tsx", "utf8")));
+  check("rng: RideGame spawns via the seeded stream", /gameRandom\(\) \* spawnMs/.test(readFileSync("src/game/RideGame.tsx", "utf8")));
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

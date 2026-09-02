@@ -4,9 +4,11 @@ import {
   AI_PROVIDERS,
   generateAiImage,
   loadAiSettings,
+  openaiSizesForModel,
   providerReferenceSupport,
   saveAiSettings,
   type AiImageSettings,
+  type AiProviderId,
   type AiProviderSettings,
 } from "../data/aiImages";
 import { FORGE_SIZES, FORGE_STRENGTHS, forgeSpriteSheet, type ForgedSheet, type ForgeKind } from "./spriteForge";
@@ -31,7 +33,8 @@ const OPENAI_MODELS = [
   { id: "gpt-image-1", label: "gpt-image-1 (1024–1536px)" },
   { id: "dall-e-3", label: "dall-e-3 (1024–1792px)" },
 ];
-const OPENAI_SIZES = ["1024x1024", "1536x1024", "1024x1536", "1792x1024", "1024x1792"];
+// Size options come from openaiSizesForModel — the two OpenAI model
+// families accept different size sets and an invalid pair is a hard 400.
 const TOGETHER_MODELS = [
   { id: "black-forest-labs/FLUX.1-schnell-Free", label: "FLUX.1 schnell (free tier)" },
   { id: "black-forest-labs/FLUX.1-schnell", label: "FLUX.1 schnell" },
@@ -49,12 +52,121 @@ const PROMPT_IDEAS = [
   "Vintage detective office, venetian blinds",
 ];
 
+/**
+ * Per-provider connection instructions — swaps with the selected generator.
+ * Kept in step with src/data/aiImages.ts: the endpoints, launch flags and key
+ * locations named here are exactly what that module calls. `providerLabel`
+ * is the short provider name for the header.
+ */
+function ProviderInstructions({ provider, model, providerLabel }: { provider: AiProviderId; model?: string; providerLabel: string }) {
+  const items: string[] = [];
+  switch (provider) {
+    case "openai":
+      items.push(
+        "Get a key: platform.openai.com → API keys, then add a few dollars of credit under Billing (you pay per image).",
+        "What gets called: POST api.openai.com/v1/images/generations with your key in the Authorization header — straight from this browser, nothing in between.",
+        /^gpt-image/.test(model ?? "gpt-image-1")
+          ? "gpt-image-1: sizes 1024x1024, 1536x1024, 1024x1536. Accepts a reference image (edit endpoint) — the model decides how closely to follow it. Always returns base64."
+          : "dall-e-3: sizes 1024x1024, 1792x1024, 1024x1792. Text-only — reference-image style transfer is not available on this model.",
+        "The rendered image appears under the Generate button; save it to the media library to reuse it in any picker.",
+      );
+      break;
+    case "stability":
+      items.push(
+        "Get a key: platform.stability.ai → API keys. Every image costs credits from your account.",
+        "What gets called: api.stability.ai/v2beta/stable-image/generate/core for text-to-image (aspect ratio from the picker above), or /generate/sd3 in image-to-image mode when a reference is set — the match slider maps to their strength parameter (inverted: high match = low strength).",
+        "The image comes back as raw PNG bytes and renders under the Generate button.",
+      );
+      break;
+    case "together":
+      items.push(
+        "Get a key: api.together.ai → API Keys. The FLUX.1 schnell (Free) model needs no credit; the paid schnell / dev / SD 3.5 models bill per image.",
+        "What gets called: api.together.xyz/v1/images/generations, base64 JSON back.",
+        "No reference-image support on this provider. Step count is fixed at 4 — schnell is a few-step model.",
+      );
+      break;
+    case "a1111":
+      items.push(
+        "Start the WebUI with: --api --cors-allow-origins=*  (the CORS flag is what allows this page to call it).",
+        "Server URL default: http://127.0.0.1:7860 — the same machine this browser runs on. To generate from another device, add --listen and use that machine's address.",
+        "What gets called: /sdapi/v1/txt2img, or /sdapi/v1/img2img when a reference is set (denoise = 1 − match). Sampler, CFG and steps come from the fields above.",
+        "Free and offline, on your own GPU. No key needed.",
+      );
+      break;
+    case "comfyui":
+      items.push(
+        "Start ComfyUI with: --enable-cors-header '*'  (add --listen 0.0.0.0 to reach it from other devices).",
+        "Server URL default: http://127.0.0.1:8188. The checkpoint filename must match a file in ComfyUI/models/checkpoints.",
+        "What gets called: POST /prompt with the default txt2img graph (checkpoint → CLIP → KSampler → VAE decode → save), then /history is polled until the image is finished and fetched from /view.",
+        "Free and offline, on your own GPU. No key needed.",
+      );
+      break;
+  }
+  return (
+    <div className="space-y-1 border border-paper/15 bg-noir-900/60 p-2">
+      <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/55">
+        How {providerLabel} connects
+      </div>
+      <ul className="list-inside list-disc space-y-0.5 font-type text-[9px] leading-snug text-paper/50">
+        {items.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Backdrop-removal strength and output frame size — the two knobs shared by
+ * the automatic starter pipeline and the manual convert button. */
+function ForgeOptions({
+  keyStrength,
+  outSize,
+  onStrength,
+  onSize,
+}: {
+  keyStrength: string;
+  outSize: string;
+  onStrength: (v: string) => void;
+  onSize: (v: string) => void;
+}) {
+  return (
+    <>
+      <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+        backdrop removal:
+        <select
+          className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+          value={keyStrength}
+          onChange={(e) => onStrength(e.target.value)}
+        >
+          {FORGE_STRENGTHS.map((f) => (
+            <option key={f.id} value={f.id}>{f.label}</option>
+          ))}
+        </select>
+        — use gentle if it eats into the art, strong if backdrop specks survive.
+      </label>
+      <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+        output size:
+        <select
+          className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+          title="Frame height of the built sheet. A CAP, not a stretch: big art keeps its pixels up to it, small art is never upscaled into blur."
+          value={outSize}
+          onChange={(e) => onSize(e.target.value)}
+        >
+          {FORGE_SIZES.map((s) => (
+            <option key={s.id} value={s.id}>{s.label}</option>
+          ))}
+        </select>
+        — <b>big</b> / <b>source</b> keep large art's detail (bigger files).
+      </label>
+    </>
+  );
+}
+
 /** One-click sprite-sheet starters. Each generates frames side by side on a
  * flat magenta backdrop — and because the backdrop is flat, the whole rest of
  * the job (cut out, slice into frames, build the sheet) runs automatically
  * after generation. They skip the noir style suffix because each prompt
- * carries its own style. */
-const SPRITE_SHEET_PROMPTS: { label: string; prompt: string; kind: ForgeKind }[] = [
+ * carries its own style. */const SPRITE_SHEET_PROMPTS: { label: string; prompt: string; kind: ForgeKind }[] = [
   {
     label: "🗣 Talking portrait (3 frames)",
     kind: "talking",
@@ -100,6 +212,8 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
   const [copiedSheet, setCopiedSheet] = useState(false);
   const [keyStrength, setKeyStrength] = useState("normal");
   const [outSize, setOutSize] = useState("standard");
+  // Manual converter: which animation set to build from the rendered image.
+  const [convertKind, setConvertKind] = useState<ForgeKind>("talking");
   // Style transfer: a reference image + how closely to match it (providers
   // that support image-to-image only).
   const [refImage, setRefImage] = useState<string | null>(null);
@@ -208,6 +322,9 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
         <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">{meta.blurb}</p>
       </Field>
 
+      {/* per-provider setup instructions — swap with the selected generator */}
+      <ProviderInstructions provider={provider} model={cfg.model} providerLabel={meta.label.split(" — ")[0]} />
+
       {/* ---- per-provider configuration ---- */}
       {meta.needsKey && (
         <Field label="API key">
@@ -226,7 +343,18 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
       {provider === "openai" && (
         <div className="grid grid-cols-2 gap-2">
           <Field label="Model">
-            <select className={inputCls} value={cfg.model ?? "gpt-image-1"} onChange={(e) => setCfg({ model: e.target.value })}>
+            <select
+              className={inputCls}
+              value={cfg.model ?? "gpt-image-1"}
+              onChange={(e) => {
+                const model = e.target.value;
+                // The families take different size sets — keep the current
+                // size only if the new model accepts it, else fall back.
+                const size = `${cfg.width ?? 1024}x${cfg.height ?? 1024}`;
+                if (openaiSizesForModel(model).includes(size)) setCfg({ model });
+                else setCfg({ model, width: 1024, height: 1024 });
+              }}
+            >
               {OPENAI_MODELS.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
@@ -241,7 +369,7 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
                 setCfg({ width: w, height: h });
               }}
             >
-              {OPENAI_SIZES.map((s) => (
+              {openaiSizesForModel(cfg.model).map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
@@ -374,33 +502,12 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
                 turn off
               </button>
             </p>
-            <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
-              backdrop removal:
-              <select
-                className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
-                value={keyStrength}
-                onChange={(e) => setKeyStrength(e.target.value)}
-              >
-                {FORGE_STRENGTHS.map((f) => (
-                  <option key={f.id} value={f.id}>{f.label}</option>
-                ))}
-              </select>
-              — use gentle if it eats into the art, strong if backdrop specks survive.
-            </label>
-            <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
-              output size:
-              <select
-                className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
-                title="Frame height of the built sheet. A CAP, not a stretch: big art keeps its pixels up to it, small art is never upscaled into blur."
-                value={outSize}
-                onChange={(e) => setOutSize(e.target.value)}
-              >
-                {FORGE_SIZES.map((s) => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </select>
-              — <b>big</b> / <b>source</b> keep large art's detail (bigger files).
-            </label>
+            <ForgeOptions
+              keyStrength={keyStrength}
+              outSize={outSize}
+              onStrength={setKeyStrength}
+              onSize={setOutSize}
+            />
           </>
         ) : (
           <p className="font-type text-[8px] leading-snug text-paper/45">
@@ -493,14 +600,69 @@ export function AiImageStudio({ storyId }: { storyId: string }) {
 
       {error && <div className="border border-crimson/40 bg-crimson/10 p-2 font-type text-[10px] text-crimson">⚠ {error}</div>}
 
+      {busy && (
+        <div className="border border-paper/20 p-6 text-center font-type text-[10px] text-paper/50">
+          Generating — the rendered image will appear here.
+        </div>
+      )}
+
       {result && (
         <div className="border border-gold/40 bg-gold/5 p-2">
-          <img src={result} alt="Generated" className="w-full border border-noir-600" />
+          <div className="mb-1 flex items-center justify-between">
+            <span className="font-pulp text-[8px] uppercase tracking-widest text-gold">Rendered image</span>
+            <button
+              onClick={() => {
+                try {
+                  window.open(result, "_blank");
+                } catch {
+                  /* pop-up blocked — the inline preview is still here */
+                }
+              }}
+              className="border border-noir-600 px-1.5 py-0.5 font-type text-[9px] text-paper/60 hover:text-gold"
+              title="Open the full-size image in a new tab"
+            >
+              full size
+            </button>
+          </div>
+          <img src={result} alt="Rendered" className="w-full border border-noir-600" />
           <button onClick={saveToLibrary} className="mt-2 w-full border border-emerald-500/60 bg-emerald-500/10 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-emerald-400 hover:bg-emerald-500/20">
-            💾 Save to media library
+            Save to media library
           </button>
         </div>
       )}
+
+      {/* ---- manual converter: turn the rendered image into a sprite sheet ---- */}
+      {result && !forging && (
+        <div className="space-y-1.5 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
+          <div className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon">Convert to animated sprite</div>
+          <p className="font-type text-[8px] leading-snug text-paper/50">
+            Keys the backdrop out, slices the image into frames and builds a ready-to-use sheet with animations, saved
+            to the media library. Works best on a plain, flat backdrop — for a clean cut, generate the frames side by
+            side on flat magenta with the starters above.
+          </p>
+          <Field label="Animation set">
+            <select className={inputCls} value={convertKind} onChange={(e) => setConvertKind(e.target.value as ForgeKind)}>
+              <option value="talking">Talking character (talk + rest)</option>
+              <option value="walk">Walk cycle (walk + idle)</option>
+              <option value="loop">Looping prop (loop)</option>
+              <option value="single">Single still (one frame)</option>
+            </select>
+          </Field>
+          <ForgeOptions
+            keyStrength={keyStrength}
+            outSize={outSize}
+            onStrength={setKeyStrength}
+            onSize={setOutSize}
+          />
+          <button
+            onClick={() => void autoForge(result, convertKind)}
+            className="w-full border border-cyan-neon/60 bg-cyan-neon/10 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/20"
+          >
+            Convert to animated sprite
+          </button>
+        </div>
+      )}
+
       {forging && (
         <div className="border border-cyan-neon/40 bg-cyan-neon/5 p-2 font-type text-[10px] text-cyan-neon">
           ⚙ Building the sprite sheet — keying out the backdrop, slicing frames…

@@ -27,7 +27,7 @@ import {
 import type { VerbId } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
-import { SheetSprite } from "./SheetSprite";
+import { SheetSprite, preloadStageArt } from "./SheetSprite";
 import { sheetAnim, sheetDrawable } from "./spriteSheet";
 import { presetStyle } from "./animation";
 
@@ -107,8 +107,11 @@ function StageNpcActor({
   register,
   linkedHotspot,
   onPress,
+  onContext,
   onPos,
   flash,
+  frozen,
+  faceX,
 }: {
   npc: StageNpc;
   floor: { top: number; bottom: number };
@@ -121,10 +124,17 @@ function StageNpcActor({
   linkedHotspot?: Hotspot;
   /** Pressed (click/tap) — Stage routes the walker over and talks. */
   onPress?: (npc: StageNpc) => void;
+  /** RIGHT-CLICKED — Stage opens the linked hotspot's object-first verb menu. */
+  onContext?: (npc: StageNpc) => void;
   /** Live position reports for pursuit + the N key (world %). */
   onPos?: (id: string, pos: { x: number; y: number }) => void;
   /** The hint-key pulse, shared with markers. */
   flash?: boolean;
+  /** CONVERSATION OPEN — the patrol suspends (the actor stands, drops its
+   *  ambient chatter and faces the walker) until the talk is over. */
+  frozen?: boolean;
+  /** The walker's live x (world %) — which way to face while frozen. */
+  faceX?: number;
 }) {
   const [pos, setPos] = useState({ x: npc.x, y: npc.y });
   const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
@@ -156,6 +166,17 @@ function StageNpcActor({
    *  the actor there (resolve fires on arrival), then it holds in place
    *  until the script releases it. */
   const overrideRef = useRef<{ target?: { x: number; y: number }; resolve?: () => void } | null>(null);
+  /** CONVERSATION FREEZE — mirrors the `frozen` prop for the rAF loop; on
+   *  the rising edge the actor turns to face the walker (they've been
+   *  addressed, after all). */
+  const frozenRef = useRef(frozen ?? false);
+  const faceXRef = useRef(faceX);
+  faceXRef.current = faceX;
+  useEffect(() => {
+    const was = frozenRef.current;
+    frozenRef.current = frozen ?? false;
+    if (!was && frozen) setFacing((faceXRef.current ?? posRef.current.x) >= posRef.current.x ? "right" : "left");
+  }, [frozen]);
 
   const hasSheet = sheetDrawable(npc.sheet);
 
@@ -278,6 +299,13 @@ function StageNpcActor({
         raf = requestAnimationFrame(step);
         return;
       }
+      // CONVERSATION — hold the feet, drop the chatter, face the walker.
+      if (frozenRef.current) {
+        setWalking(false);
+        setMotion(null);
+        raf = requestAnimationFrame(step);
+        return;
+      }
       // AUTHORED PATROL — nothing to drive without one (or once finished).
       if (!waypoints || routeDone) {
         setWalking(false);
@@ -334,6 +362,16 @@ function StageNpcActor({
             }
           : undefined
       }
+      onContextMenu={
+        linkedHotspot
+          ? (e) => {
+              // RIGHT-CLICK on a character = their object-first verb menu.
+              e.preventDefault();
+              e.stopPropagation();
+              onContext?.(npc);
+            }
+          : undefined
+      }
     >
       {/* ambient SAY line — SCUMM background chatter, floated over the head.
           Counter-flipped so the text never mirrors with the sprite (and the
@@ -371,10 +409,12 @@ function StageNpcActor({
       ) : (
         <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]">🚶</span>
       )}
-      {/* ground shadow (not mirrored) */}
+      {/* ground shadow — pinned to the FEET line (the container anchor is
+          translate(-50%,-92%), so 92% down is where the character stands;
+          an in-flow shadow below the sprite box read as floating). */}
       <span
-        className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]"
-        style={{ transform: `scaleX(${flip})` }}
+        className="pointer-events-none absolute left-1/2 top-[92%] block h-2 w-10 -translate-x-1/2 rounded-[100%] bg-black/40 blur-[2px]"
+        style={{ transform: `translate(-50%, -50%) scaleX(${flip})` }}
       />
       {/* INTERACTABLE: the talk chip — this actor IS that marker. Counter-
           flipped like the say line so it never mirrors with the sprite. */}
@@ -398,6 +438,7 @@ export function Stage({
   onInteract,
   active,
   verbs,
+  convoHotspotId,
   inventory,
   onPosChange,
   dropRequest,
@@ -413,6 +454,7 @@ export function Stage({
   scriptRequest,
   enterScript,
   onScriptEffect,
+  onScriptStep,
   activeObstacles,
 }: {
   settings: StageSettings;
@@ -427,6 +469,10 @@ export function Stage({
   /** VERB COIN: the verbs this room offers. Undefined/empty = no coin, and
    *  the room behaves exactly as it always has. */
   verbs?: VerbId[];
+  /** The hotspot id whose conversation is playing (startDialogue) — ONLY
+   *  the linked NPC holds their patrol and faces the walker; everyone else
+   *  carries on living. Null = nobody is talking. */
+  convoHotspotId?: string | null;
   /** Carried inventory, listed under the coin when USE is selected. */
   inventory?: CoinItem[];
   /** The walker's feet (scene %), reported whenever they move — Game uses it
@@ -458,8 +504,9 @@ export function Stage({
   /** Fired when a one-shot pose's loop completes — Game clears the pose. */
   onPoseEnd?: () => void;
   /** SCRIPTED SEQUENCE ordered by a hotspot (`runScript` action): play these
-   *  steps now. `key` dedupes — same request object, run once. */
-  scriptRequest?: { steps: StageScriptStep[]; key: number } | null;
+   *  steps now. `key` dedupes — same request object, run once. `coverageTag`
+   *  (a hotspot id) lets playtest coverage attribute the steps that ran. */
+  scriptRequest?: { steps: StageScriptStep[]; key: number; coverageTag?: string } | null;
   /** SCRIPTED SEQUENCE played once when the scene mounts (the SCUMM
    *  room-entry script). Game handles the run-once flag latch. */
   enterScript?: StageScriptStep[];
@@ -471,6 +518,10 @@ export function Stage({
       | { type: "goToScene"; targetSceneId: string }
       | { type: "pose"; pose?: string },
   ) => void;
+  /** Playtest coverage: one cutscene STEP actually started running. `tag`
+   *  is the hotspot id (or "enter" for the room-entry script); Game turns
+   *  it into the stored coverage key. */
+  onScriptStep?: (info: { tag: string; index: number; total: number }) => void;
   /** DOORS — the barriers that are SOLID right now, resolved against world
    *  state by Game (a gated barrier blocks only while its gate is shut).
    *  Defaults to the scene's full list (ungated = always solid). */
@@ -628,7 +679,7 @@ export function Stage({
   // small pie menu of the verbs it answers pops up next to it. `menu` holds the
   // open object + its marker point; `menuUse` is the object whose USE was
   // picked and is waiting for an inventory item to arm.
-  const [menu, setMenu] = useState<{ hs: Hotspot; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ hs: Hotspot; x: number; y: number; via: "object" | "context" } | null>(null);
   const [menuUse, setMenuUse] = useState<Hotspot | null>(null);
   // HOLD-TO-OPEN (stage.objectMenuHold): press and hold an object and the
   // big skull pie opens in the MIDDLE of the screen; release over a verb to
@@ -1038,6 +1089,20 @@ export function Stage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // SCENE-ENTRY WARM-UP — kick off loads for everything this room draws
+  // (player, cast, marker art, menu icon) the moment the scene mounts.
+  // SheetSprite's module image cache shares the results, so first frames
+  // render on arrival instead of popping in a beat later.
+  useEffect(() => {
+    preloadStageArt([
+      settings.playerSheet?.image,
+      ...(settings.npcs ?? []).flatMap((n) => [n.sheet?.image, n.image?.startsWith("emoji:") ? undefined : n.image]),
+      ...hotspots.flatMap((h) => [h.sheet?.image, h.image]),
+      settings.objectMenuIcon,
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Follow a route: the first waypoint becomes the live target, the rest wait
    *  in `routeRef` and are picked up on arrival. */
   const followRoute = (route: { x: number; y: number }[]) => {
@@ -1067,6 +1132,9 @@ export function Stage({
   }, []);
   const scriptEffectRef = useRef(onScriptEffect);
   scriptEffectRef.current = onScriptEffect;
+  /** Coverage tap — Game records that this step genuinely started running. */
+  const scriptStepRef = useRef(onScriptStep);
+  scriptStepRef.current = onScriptStep;
   /** False once unmounted — a running script checks it between steps. */
   const scriptAliveRef = useRef(true);
   useEffect(() => {
@@ -1110,8 +1178,9 @@ export function Stage({
     });
 
   /** Play a script. Locks input, drops the letterbox, runs steps in order,
-   *  then releases everything (even on a mid-script scene exit). */
-  const runScript = async (steps: StageScriptStep[]) => {
+   *  then releases everything (even on a mid-script scene exit). `tag`
+   *  attributes the run for playtest coverage ("enter" or a hotspot id). */
+  const runScript = async (steps: StageScriptStep[], tag = "enter") => {
     if (scriptOnRef.current || !steps.length) return;
     scriptOnRef.current = true;
     setScriptOn(true);
@@ -1121,8 +1190,9 @@ export function Stage({
     setMenu(null);
     setMenuUse(null);
     try {
-      for (const step of steps) {
+      for (const [index, step] of steps.entries()) {
         if (!scriptAliveRef.current) return;
+        scriptStepRef.current?.({ tag, index, total: steps.length });
         switch (step.do) {
           case "walkTo":
             await scriptWalkPlayer(step.x, step.y);
@@ -1183,7 +1253,7 @@ export function Stage({
   useEffect(() => {
     if (!scriptRequest || scriptRequest.key === scriptKeyRef.current) return;
     scriptKeyRef.current = scriptRequest.key;
-    void runScript(scriptRequest.steps);
+    void runScript(scriptRequest.steps, scriptRequest.coverageTag ?? "enter");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scriptRequest?.key]);
 
@@ -1199,7 +1269,7 @@ export function Stage({
     const t = window.setTimeout(() => {
       if (enterRanRef.current) return;
       enterRanRef.current = true;
-      void runScript(enterScript);
+      void runScript(enterScript, "enter");
     }, 450);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1307,7 +1377,7 @@ export function Stage({
     tapJog(live?.x ?? npc.x, live?.y ?? npc.y);
     audio.click();
     if (objectMenu && !coinOn) {
-      setMenu({ hs, x: live?.x ?? npc.x, y: live?.y ?? npc.y });
+      setMenu({ hs, x: live?.x ?? npc.x, y: live?.y ?? npc.y, via: "object" });
       setMenuUse(null);
       return;
     }
@@ -1318,6 +1388,18 @@ export function Stage({
     // NPC-link check enforces exactly that).
     if (walkToMarker(hs, { verb: "talk" })) pursueRef.current = { hotspotId: hs.id };
   };
+  /** RIGHT-CLICK on a character — open the linked hotspot's object-first
+   *  verb menu at the actor's live position (no walking implied). */
+  const openNpcMenu = (npc: StageNpc) => {
+    if (!active || scriptOnRef.current) return;
+    const hs = hotspots.find((h) => h.id === npc.talkHotspotId);
+    if (!hs) return;
+    const live = npcPosRef.current[npc.id];
+    audio.click();
+    setMenu({ hs, x: live?.x ?? npc.x, y: live?.y ?? npc.y, via: "context" });
+    setMenuUse(null);
+  };
+
   /** N KEY — walk to + talk with the NEAREST linked character (cycling
    *  through them is what the map is for; nearest is what the hands want). */
   const nearestNpc = () => {
@@ -1369,7 +1451,7 @@ export function Stage({
       pie.cx = window.innerWidth / 2;
       pie.cy = window.innerHeight / 2;
       pie.verbs = vs;
-      setMenu({ hs: g.hs, x: 50, y: 50 });
+      setMenu({ hs: g.hs, x: 50, y: 50, via: "object" });
       setMenuUse(null);
       setPieHover(null);
     }, PIE_HOLD_MS);
@@ -1560,7 +1642,7 @@ export function Stage({
         if (hit) {
           if (objectMenu && !coinOn) {
             const m = markerPoint(hit);
-            setMenu({ hs: hit, x: m.x, y: m.y });
+            setMenu({ hs: hit, x: m.x, y: m.y, via: "object" });
           } else {
             walkToMarker(hit);
           }
@@ -1656,7 +1738,7 @@ export function Stage({
               {hs.image || sheetDrawable(hs.sheet) ? (
                 <div
                   className={`pointer-events-none absolute ${ok ? "" : "opacity-80 saturate-[0.7]"}`}
-                  style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: z }}
+                  style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: hs.occludes ? 160 : z }}
                 >
                   {(() => {
                     const preset = presetStyle(hs.anim);
@@ -1699,7 +1781,7 @@ export function Stage({
                 data-hs-id={hs.id}
                 disabled={!active}
                 className={`stage-marker pointer-events-auto absolute ${ok ? "" : "stage-marker-locked"}${flashOn ? " stage-marker-flash" : ""}`}
-                style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: z + 1 }}
+                style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: hs.occludes ? 161 : z + 1 }}
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   if (!active) return;
@@ -1715,7 +1797,7 @@ export function Stage({
                   } else if (objectMenu && !coinOn) {
                     // OBJECT-FIRST, CLICK-TO-OPEN: the object → a small pie
                     // menu of its verbs pops up next to it (FT's "skull").
-                    setMenu({ hs, x: m.x, y: m.y });
+                    setMenu({ hs, x: m.x, y: m.y, via: "object" });
                     setMenuUse(null);
                   } else {
                     walkToMarker(hs);
@@ -1734,13 +1816,26 @@ export function Stage({
                   setHoverObj({ label: hs.label, cursor: hs.cursor });
                 }}
                 onMouseLeave={() => setHoverObj((cur) => (cur?.label === hs.label ? null : cur))}
-                // SENTENCE LINE rooms: RIGHT-CLICK is a quick Look, exactly
-                // like picking look off the coin - SCUMM muscle memory.
+                // RIGHT-CLICK: a quick Look in sentence-line rooms (SCUMM
+                // muscle memory); everywhere else it opens the OBJECT-FIRST
+                // verb menu for this object — the fastest route to "kick the
+                // black ice" without switching modes or hunting the coin.
                 onContextMenu={(e) => {
-                  if (!sentenceOn) return; // the browser menu stays elsewhere
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (active && !scriptOnRef.current) pickVerb(hs, "look");
+                  if (!active || scriptOnRef.current) return;
+                  if (sentenceOn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    pickVerb(hs, "look");
+                  } else if (verbMode && menuVerbs(hs).length) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // right-click again on the open object closes its pie
+                    if (menu?.via === "context" && menu.hs.id === hs.id) setMenu(null);
+                    else {
+                      setMenu({ hs, x: m.x, y: m.y, via: "context" });
+                      setMenuUse(null);
+                    }
+                  }
                 }}
               >
                 <span className={`stage-marker-label ${near ? "stage-marker-label-on" : ""}`}>
@@ -1757,9 +1852,9 @@ export function Stage({
         {/* OBJECT-FIRST VERB MENU — a small pie of the verbs THIS object
             answers, popped up at the object (Full Throttle's "skull"). USE
             expands to the inventory when the object accepts items. */}
-        {objectMenu && !holdMode && menu && active ? (
+        {(menu?.via === "context" || (objectMenu && !holdMode)) && menu && active ? (
           <div
-            className="pointer-events-auto absolute z-[78] -translate-x-1/2"
+            className="pointer-events-auto absolute z-[200] -translate-x-1/2"
             style={{ left: `${menu.x}%`, top: `${Math.max(8, menu.y - 8)}%`, transform: "translate(-50%,-100%)" }}
           >
             <div className="flex flex-col items-center gap-1.5 rounded border border-noir-700 bg-noir-950/92 p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.6)] backdrop-blur-sm">
@@ -1816,7 +1911,7 @@ export function Stage({
             the skull or outside to cancel. The pie never intercepts the
             pointer — the window-gesture computes hover geometrically. */}
         {holdMode && menu && active ? (
-          <div className="pointer-events-none fixed left-1/2 top-1/2 z-[95] -translate-x-1/2 -translate-y-1/2 select-none" aria-hidden>
+          <div className="pointer-events-none fixed left-1/2 top-1/2 z-[210] -translate-x-1/2 -translate-y-1/2 select-none" aria-hidden>
             <div className="relative h-[340px] w-[340px]">
               {pieRef.current.verbs.map((v, i) => {
                 const n = Math.max(1, pieRef.current.verbs.length);
@@ -1927,8 +2022,12 @@ export function Stage({
                 ) : (
                   <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]">{emoji}</span>
                 )}
-                {/* ground shadow (not mirrored or bobbed) */}
-                <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${flip})` }} />
+                {/* ground shadow — pinned to the feet line, not floated
+                    below the sprite box (same anchor as the NPC actors). */}
+                <span
+                  className="pointer-events-none absolute left-1/2 top-[92%] block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]"
+                  style={{ transform: `translate(-50%, -50%) scaleX(${flip})` }}
+                />
               </div>
               {/* CUTSCENE SAY LINE — the player's floating speech during a
                   scripted sequence. Counter-flipped so the text never mirrors
@@ -1962,10 +2061,13 @@ export function Stage({
             register={registerNpc}
             linkedHotspot={npc.talkHotspotId ? hotspots.find((h) => h.id === npc.talkHotspotId) : undefined}
             onPress={pressNpc}
+            onContext={openNpcMenu}
             onPos={(id, pos) => {
               npcPosRef.current[id] = pos;
             }}
             flash={flashOn}
+            frozen={convoHotspotId != null && npc.talkHotspotId === convoHotspotId}
+            faceX={posRef.current?.x}
           />
         ))}
       </div>
@@ -2016,7 +2118,7 @@ export function Stage({
       {/* VERB COIN — bottom-left, the way a LucasArts room puts it. Pick a
           verb, then click the object; USE arms an inventory item first. */}
       {coinOn && active && !scriptOn ? (
-        <div className="pointer-events-auto absolute bottom-3 left-3 z-[76] flex flex-col items-start gap-1.5">
+        <div className="pointer-events-auto absolute bottom-3 left-3 z-[200] flex flex-col items-start gap-1.5">
           {verb === "use" && (inventory?.length ?? 0) > 0 ? (
             <div className="flex max-w-[min(70vw,640px)] flex-wrap gap-1 rounded border border-noir-700 bg-noir-950/90 p-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm">
               <span className="self-center px-1 font-pulp text-[9px] uppercase tracking-[0.2em] text-gold/70">Use</span>
