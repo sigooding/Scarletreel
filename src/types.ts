@@ -225,6 +225,36 @@ export interface Hotspot {
   examine?: boolean;
   /** Seconds the examine hold takes (default 2.5). */
   examineSeconds?: number;
+  /** MULTI-STATE OBJECT — one object that changes with the story instead of
+   *  being faked with flag-gated duplicate hotspots. States are evaluated in
+   *  order and the LAST one whose gate passes is active (so list the
+   *  unconditional default FIRST, then increasingly specific ones). The
+   *  active state overrides the hotspot's label / image / cursor / action /
+   *  gating; everything else (identity, bounds, verbs, accepted items,
+   *  repeatable…) is inherited unchanged — the marker never duplicates or
+   *  re-mounts, it just re-skins and re-answers in place. See
+   *  docs/adventure-mode.md § Multi-state objects. */
+  states?: HotspotState[];
+}
+
+/** One state of a multi-stage object (see Hotspot.states). Every field is an
+ *  OVERRIDE — undefined means "keep the hotspot's own value" (and an empty
+ *  string for `image` means 'draw no object art in this state'). */
+export interface HotspotState {
+  /** Stable id (validator references, Studio list keys). */
+  id: string;
+  /** When this state is active. Omitted = always active: list that state
+   *  FIRST as the default — an unconditional state listed later would
+   *  permanently shadow everything above it (the validator warns on it). */
+  when?: Gating;
+  label?: string;
+  image?: string;
+  cursor?: CursorKind;
+  action?: HotspotAction;
+  /** Replaces the hotspot's own gate while this state is active.
+   *  `undefined` = inherit the hotspot's gating; an EXPLICIT null = this
+   *  state is always unlocked (the "door now open" state of a locked door). */
+  gating?: Gating | null;
 }
 
 export interface Choice {
@@ -1044,6 +1074,24 @@ export interface Interrogation {
  * lives in short caption lines (`showText` actions and `enterCaption`),
  * the way a walkable scene speaks through what you do, not paragraphs.
  */
+/** One no-go rectangle the walker routes around (StageSettings.obstacles).
+ *  Optionally carries a GATE: while the gate does NOT pass, the barrier is a
+ *  solid wall (a locked door); the moment the gate opens the barrier ceases
+ *  to exist and the walker may pass — the lock-and-key puzzle made spatial. */
+export interface StageObstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Stable id (editor/validator references). Optional. */
+  id?: string;
+  /** PASSAGE GATE — the barrier blocks while this gate is CLOSED and is
+   *  gone once it opens. Omit for furniture that always blocks (a counter,
+   *  a parked truck). A gate with an item requirement works too (the crowd
+   *  parts once you hold the badge). */
+  gating?: Gating;
+}
+
 export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
    *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
@@ -1058,6 +1106,13 @@ export interface StageSettings {
    *  When on, hotspots answer per verb (Hotspot.verbs) and the USE verb arms
    *  an inventory item. See docs/adventure-mode.md. */
   verbCoin?: boolean;
+  /** SENTENCE LINE — the SCUMM strip along the bottom of the room that
+   *  reads out the pending interaction as you hover ("Look at the
+   *  drop-safe", "Use wrench on the bike", or just "Walk to"). While on,
+   *  RIGHT-CLICKING an object is a quick 👁 Look, exactly like picking
+   *  look off the coin. Rooms without it (the default) render nothing
+   *  new and classic graphic-novel scenes are untouched. */
+  sentenceLine?: boolean;
   /** Which verbs the coin offers. Defaults to every verb the room uses. */
   verbs?: import("./types").VerbId[];
   /** OPT-IN for the two EXTRA body-verbs (👢 kick · 👊 punch). When true, the
@@ -1158,8 +1213,14 @@ export interface StageSettings {
    *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
    *  routes around them (A* on a coarse grid, then string-pulled to the
    *  corners a person would actually turn at); the keyboard slides along them
-   *  instead of stopping dead. See src/logic.ts `stageRoute`. */
-  obstacles?: { x: number; y: number; w: number; h: number }[];
+   *  instead of stopping dead. See src/logic.ts `stageRoute`.
+   *  A barrier may carry a GATE (`gating`): while the gate is CLOSED the
+   *  barrier is a solid wall, and the instant it opens the barrier is GONE —
+   *  a locked door made SPATIAL (the walker physically cannot pass, never
+   *  mind the menus). Pair it with a door hotspot (or a multi-state object)
+   *  whose action sets the opening flag. See docs/adventure-mode.md
+   *  § "Doors as real doors". */
+  obstacles?: StageObstacle[];
   /** WIDE WORLD — how many viewport-widths the room spans (default 100 =
    *  one screen, the classic single plate). 200 = two screens side by side,
    *  like a LucasArts scrolling alley: the camera follows the walker and
@@ -1220,6 +1281,14 @@ export interface StageNpc {
   patrol?: StageNpcWaypoint[];
   /** Walk speed in world-% / second (default: the room's walker speed). */
   speed?: number;
+  /** INTERACTABLE NPC — link this actor to a 🗣 start-conversation marker
+   *  (by hotspot id) and the actor BECOMES that marker: the static diamond
+   *  hides and the character itself is clickable — the walker chases the
+   *  actor's LIVE position (re-routing while they patrol) and the
+   *  conversation fires on catch. Pressing N in play walks to + talks with
+   *  the nearest linked character. Ambient (no link) NPCs stay pure
+   *  set-dressing, exactly as before. */
+  talkHotspotId?: string;
   /** How the route repeats (default "loop" — jump back to waypoint 1):
    *  "pingpong" walks the route backwards to the start and out again;
    *  "once" walks it a single time and HOLDS the last waypoint's motion

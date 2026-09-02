@@ -55,6 +55,8 @@ import {
   recordPresentation,
   resolveBeatText,
   resolveRecap,
+  resolveHotspot,
+  activeStageObstacles,
   sceneById,
   seasonEpisodes,
   CURSOR_ICON,
@@ -3183,6 +3185,12 @@ function CasePlayer({
   /** The verb the coin is holding, reported by the Stage — in a coin room that
    *  is the cursor, because the verb IS the cursor. */
   const [coinVerb, setCoinVerb] = useState<VerbId | null>(null);
+  // The coin only exists on STAGE scenes; when the player walks off one into
+  // a classic scene the armed verb must NOT survive as that scene's cursor
+  // art (the leak showed the "Pick up" hand over every novel hotspot).
+  useEffect(() => {
+    if (!isStage) setCoinVerb(null);
+  }, [isStage, sceneId]);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const cursorSlot = (hoverCursor ?? coinVerb ?? "default") as import("../logic").CursorSlot;
   const cursor = useMemo(() => resolveCursor(story, cursorSlot), [story, cursorSlot]);
@@ -5397,6 +5405,11 @@ function CasePlayer({
   const activateHotspot = useCallback(
     (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
       const stageMode = sceneById(story, sceneId)?.nodeType === "stage";
+      // MULTI-STATE: act on the object as it stands RIGHT NOW — the active
+      // state's action/cursor/label override the base. Callers usually pass
+      // the already-resolved view from the render; resolving again here is
+      // idempotent and covers fire paths that hold the raw hotspot.
+      hs = resolveHotspot(hs, stateRef.current);
       // VERB COIN — "use the wrench on the bike" resolves to the action the
       // object answers with for that verb (and item), or to a refusal line.
       let act = hs.action;
@@ -5674,10 +5687,29 @@ function CasePlayer({
     // line plays (authored extras fire once — see activateHotspot). Only
     // something genuinely REMOVED by use — an item taken, a route used —
     // hides its marker.
-    return scene.hotspots.filter(
-      (hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`) || hs.action.type === "showText",
-    );
-  }, [scene, usedHotspots, sceneId]);
+    // MULTI-STATE: the survivors are then re-skinned by their active state
+    // (Hotspot.states) — one marker that changes with the story instead of
+    // flag-gated duplicates. Identity (id, bounds, verbs, items) is
+    // untouched, so used-marker tracking and coin verbs stay stable while
+    // the label/art/action follow the world. Resolving BEFORE the used-
+    // filter matters: the 💬-exemption must read the action the object
+    // would fire NOW — a safe whose "open" state grants the item is a
+    // pickup, not a re-readable line, and must stay consumed.
+    return scene.hotspots
+      .map((hs) => resolveHotspot(hs, state))
+      .filter(
+        (hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`) || hs.action.type === "showText",
+      );
+  }, [scene, usedHotspots, sceneId, state]);
+
+  /* DOORS — gate-aware barriers: while a barrier's gate is shut it is a wall
+   * (the router respects it); the moment the gate opens it stops existing.
+   * Resolved here, where the world state lives, and handed to the Stage as
+   * the obstacle list the walker actually collides with. */
+  const stageActiveObstacles = useMemo(
+    () => activeStageObstacles(scene?.stage?.obstacles, state),
+    [scene, state]
+  );
 
   /* Searchable things left in this scene: anything that isn't a pure exit
    * and hasn't been read/collected yet. The end-of-scene nudge tells the
@@ -6180,6 +6212,7 @@ function CasePlayer({
         const stageEl = (
           <Stage
             key={`stage-${sceneId}`}
+            activeObstacles={stageActiveObstacles}
             settings={{
               ...scene.stage,
               // Story-wide walker default (In-game theme → 🚶 Player character);
@@ -6222,7 +6255,7 @@ function CasePlayer({
                 setPlayerPoseOnce(false);
               }
             }}
-            verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene(scene) : undefined}
+            verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene({ ...scene, hotspots: visibleHotspots }) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}
             onEdgeExit={(edge) => {
@@ -6525,7 +6558,7 @@ function CasePlayer({
             <p className="font-type text-[10px] leading-snug text-paper/45">
               {stageTalking
                 ? "Talking — the conversation is on screen."
-                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to touch things — 👁 looking works from right here."}
+                : "🚶 Walk with WASD / arrows or click the floor · double-click to jog · H reveals markers · N talks to the nearest character · 1-9 pick coin verbs. 👁 looking works from right here."}
             </p>
           )}
           {!isStage && (

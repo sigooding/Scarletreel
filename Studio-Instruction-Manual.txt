@@ -841,6 +841,20 @@
    "🎒 Accepts these items (USE)", and anything else is refused with a line
    (story-wide defaults: Flags tab → "🎛 Verb coin — refusal lines").
 
+   MULTI-STATE OBJECTS ("🔁 States", in each hotspot's inspector): ONE marker
+   that changes with the story — a lever up/down, a drawer full/empty, a door
+   locked/open — instead of stacking flag-gated duplicate hotspots. States are
+   checked top to bottom and the LAST one whose gate passes is the face the
+   player sees, so leave the unconditional one out (the object itself is the
+   default) or list it FIRST. A state overrides only what you fill in: label,
+   object image (or "no art in this state"), cursor, action (with its own voice
+   clip), and the lock (inherit the object's gate / always unlocked / its own
+   gate — the opened door needs no key). The zone, the verb answers and the
+   accepted items are shared, and the marker re-skins IN PLACE — it never
+   duplicates or resets the walk. The Check tab understands them: a state's
+   flag counts as produced, an unsatisfiable when-flag is an error, a state
+   route that leads to a scene is a real connection on the reel.
+
    PERSPECTIVE: "Close-up size" / "Distance size" on the Walkable Stage panel set
    how big the walker is at the front of the floor band vs the back (walking away
    also covers less screen per second, so it doesn't read as skating).
@@ -856,6 +870,50 @@
    a parked truck — and the walker routes around them; the plate shows the
    walkable floor band and every barrier. Click a barrier to select it, drag a
    new box to reshape it.
+
+   🚪 DOORS: click a barrier in the list and give it a GATE. While the gate is
+   shut the barrier is a solid wall (the walker physically cannot pass); the
+   moment something opens the gate — a key hotspot, a conversation choice, a
+   puzzle, a multi-state object's action — the barrier stops existing and the
+   walker can go through. Lock-and-key made spatial; the Check tab errors on a
+   door whose flag nothing can ever set.
+
+   Barriers are honest for EVERY kind of walk — clicks, floor taps, and the
+   straight-line fallback all slide along blocked faces instead of ghosting
+   through. Two details worth knowing as an author:
+   • A marker that sits BEHIND a shut gate (no route to it at all) refuses
+     from wherever the player stands — its gate caption plays immediately,
+     which is usually the clearest "come back later" signal you can give.
+   • Don't drop a spawn or entry-spawn point inside a barrier. The engine
+     now rescues that (the walker steps out toward whichever side can reach
+     the destination, and never snaps into a sealed sliver), but the rescue
+     walk looks like a bug to a player. Spawn NEXT to the furniture.
+
+   PLAYER QoL KEYS (walkable rooms, automatic): H pulses every marker so the
+   player can see what's interactive; DOUBLE-CLICKING a floor spot or marker
+   jogs the walker there at 5x speed; 1-9 pick the verb coin's verbs in
+   order; N walks to and talks with the nearest interactable character.
+
+   INTERACTABLE NPCS (🚏 Ambient NPCs, per actor): give an actor a "talk
+   marker" link and the CHARACTER becomes that marker — their diamond hides,
+   they get a 💬 chip, and clicking them (or pressing N) sends the walker
+   after their LIVE position: the pursuit re-routes while they patrol and the
+   conversation fires on catch. The Check tab errors on a link to a marker
+   that doesn't exist and warns on one that isn't a conversation starter.
+
+   🥾 WALK TEST (Stage tab, on the plate's toolbar): drops a LIVE walker onto
+   the plate at spawn and drives it with the real engine router. Click the
+   floor to see the planned route drawn dashed and walked; click a MARKER and
+   the chip reports "✓ reached" — or "✗ No route" when your barriers/path
+   seal it off, which is exactly the mistake it exists to catch. WASD/arrows
+   drive it live, and the 🚪 Doors toggle flips every gated barrier at once so
+   you can prove the locked layout seals and the opened one flows. The test
+   never touches story data.
+
+   💬 SENTENCE LINE (🎛 Interaction, per room): a SCUMM strip along the bottom
+   reads the pending interaction as you hover — "Look at the drop-safe", "Use
+   wrench on the bike", "Walk to" — and RIGHT-CLICK on an object is a quick
+   👁 look. Off by default; classic scenes never show it.
 
    INVENTORY DISPLAY (Items tab → "🎒 Inventory display"): Classic (the chip rail
    every case already has — the default, so nothing changes), Container (a

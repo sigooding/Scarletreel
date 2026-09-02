@@ -376,6 +376,176 @@ the Roadhouse a *reply* choice carries `presentItem: "adv_receipt"` → sets
 after the coffee-in-the-jukebox distraction. Swing instead and you get the
 bust ending.
 
+### Multi-state objects (a lever up/down, a drawer full/empty)
+
+One marker that **changes with the story** instead of being faked with
+flag-gated duplicate hotspots. A hotspot may carry `states: […]`; states are
+checked in order and the **last one whose gate passes wins** — so list the
+unconditional default *first* (or rely on the base object as the default) and
+put the specific ones after it:
+
+```ts
+{
+  id: "bench",
+  label: "the workbench",
+  cursor: "look",
+  action: { type: "showText", text: "…there's a fresh coil on the pegboard…" },
+  states: [
+    {
+      id: "bare",
+      when: { requiresFlags: ["adv_has_line"] },   // once the coil is taken
+      label: "the bare pegboard hook",
+      action: { type: "showText", text: "…nothing but a bright clean ring…" },
+    },
+  ],
+}
+```
+
+A state only overrides what you fill in — `label`, `image` (an empty string
+means "no object art in this state"), `cursor`, `action`, and `gating`
+(`null` = always unlocked: the door's *open* state). Everything else —
+identity, zone bounds, verb answers, accepted items, `isRepeatable` — is
+shared, so **the marker re-skins in place**: it never duplicates, never
+re-mounts, and the walk animation never resets. That's the whole point: one
+object, one `used` history, many faces.
+
+The machinery reasons about states everywhere the base object goes:
+
+- **Play** — the marker, its lock and its fired action follow the active
+  state live (stage rooms *and* classic novel scenes; the scene-action list
+  re-labels too).
+- **Visibility** — a used marker hides only if what it would do *now* is a
+  real take/route: a picked-up safe disappears, but the same object's later
+  "empty drawer" look state can bring the marker back as a readable line.
+- **Validator** — a state's `flagSet` counts as a flag producer, its `when`
+  flags as consumers (an impossible state is an error), a
+  `goToScene`-without-target warns, duplicate state ids and an
+  unconditional-state-listed-after-a-gated-one are errors (the latter would
+  permanently shadow everything above it).
+- **The flowgraph** — a route that only exists in a later state (the door's
+  open state) is a real edge: its destination counts as reachable, and a
+  stage room may legally exit *only* through a state's action.
+- **Exports** — state images and every hotspot voice clip (base action,
+  verb actions, per-item replies, per-state actions) are bundled in
+  `.reel.json` exports and compacted to `asset:` refs like all other media.
+
+Studio: the hotspot's inspector has a **🔁 States** section — add states,
+reorder them (↑/↓; order = specificity), and edit each state's label, art,
+cursor, action, `when` gate and lock override. The hotspot's canvas card
+shows a `🔁n` badge. `throttleAsh.ts` (`adv_garage` → `advh_bench`) ships the
+reference case, and `npm run test:stage` plays a full locked → opened →
+emptied safe puzzle through the real UI.
+
+### Doors as real doors (gate-aware barriers)
+
+A barrier may carry a gate: while the gate is **shut** the barrier is a solid
+wall the router respects, and the instant it opens the barrier *ceases to
+exist*. That makes lock-and-key puzzles **spatial** — the walker physically
+cannot reach the far side of the room, no matter what the menus say — instead
+of a hotspot that merely refuses.
+
+```ts
+stage: {
+  obstacles: [
+    // furniture: always blocks
+    { x: 20, y: 70, w: 26, h: 12 },
+    // the door: blocks until bs_alley_clear is set
+    { x: 176, y: 56, w: 7, h: 40, gating: { requiresFlags: ["bs_alley_clear"] } },
+  ],
+}
+```
+
+The gate is the full `Gating` vocabulary (items too — the crowd parts once
+you hold the badge). The opening flag can come from anywhere: a key hotspot's
+`flagSet`, a conversation choice's consequences, a puzzle reward, or a
+**multi-state object's** state action — the natural pairing is a door object
+whose *open* state re-skins the art while the barrier's gate lets the body
+through. Everything downstream just works: markers behind a shut door stay
+visible (you can see the exit, you can't reach it), click-to-walk slides the
+walker up against the wall, and the validator flags a door whose gate flag
+nothing can ever set.
+
+Studio: Hotspots tab → 🚧 **Barriers** → click a barrier → the **🚪 Door**
+gate editor. `npm run test:stage` plays the whole thing live — an alley the
+kid and his crates seal until you talk him into moving.
+
+### The sentence line (SCUMM's bottom strip)
+
+Opt-in per room: `stage.sentenceLine: true` (Studio: 🎛 **Interaction** → 💬
+**Sentence line**). A strip along the bottom of the room reads the pending
+interaction out as you hover — **"Look at the drop-safe"**, **"Use wrench on
+the bike"** with an item armed, the coin's verb with nothing hovered, or
+plain **"Walk to"** on the floor — and **right-clicking an object is a quick
+👁 Look**, exactly like picking look off the coin. Rooms without it (the
+default) render nothing new, keep the browser's right-click menu, and classic
+novel scenes are untouched.
+
+### The walk test (🥾) — proof the room walks
+
+The Stage tab's plate toolbar has **🥾 Walk test**: a live walker drops onto
+the plate at spawn, driven by the **real engine router** — the same
+`stageRoutePoly` A* the game uses, against the floor/path and barriers you've
+authored, wide worlds included.
+
+- **Click the floor** → the dashed gold polyline is the planned route and the
+  walker walks it (depth-scaled speed, barrier sliding — the works).
+- **Click a marker** → the walker walks to that marker's stand-point and the
+  chip reports **✓ reached** — an unreachable marker says
+  **✗ No route**, so a layout mistake is caught here, not in playtest.
+- **WASD / arrows** drive the walker live, exactly like the player will.
+- **🚪 Doors: shut/open** toggles every gated barrier at once — prove the
+  locked room seals and the unlocked one flows, without setting a flag.
+
+Rooms without the test running render nothing extra; nothing about the test
+touches story data — it's a sandbox over the authored geometry.
+
+### Interaction QoL (and clicking a moving NPC)
+
+Four player-facing conveniences, all stage-side, all opt-in-safe:
+
+- **H — reveal markers.** Pressing H pulses every marker (and every
+  interactable NPC's chip) for a couple of seconds — the modern adventure
+  "where can I click?" key.
+- **Double-click — jog.** A second press on the same floor spot or marker
+  within 320ms puts the walker into a 5× jog until they arrive or steer.
+  Crossing a 200%-wide alley no longer means watching a stroll.
+- **1-9 — coin hotkeys.** Number keys pick the verb coin's verbs in order
+  (the SCUMM verb grid's muscle memory). Only while the coin is on screen —
+  choice lists keep their digits during conversations.
+- **N — nearest character.** With interactable NPCs in the room, N walks to
+  and talks with the nearest one. No mouse, no chasing.
+
+**Walls are honest everywhere (Rain Sector hardening).** Click-to-walk
+used to honour 🚧 barriers only when a route existed — the straight-line
+fallback (and floor taps beyond furniture) ghosted straight through them.
+Now every walk respects the same collision as the arrow keys: slide along
+blocked faces, stop dead when boxed in, and give the walk up after ~0.75s
+of no progress so a click beyond a wall can't pin the walker against it.
+A marker that is walled off **behind a closed gate** refuses from wherever
+the player stands (the gate's caption plays; no doomed wall-hug). And a
+walker that *starts inside* furniture — a spawn dropped on an obstacle —
+may always step OUT: walls bind from outside, and the router will not snap
+them into a sealed pocket (the sliver between a dumpster and the world
+edge is free space no grid can leave). A free walker sealed away from the
+clicked side simply gets "no route".
+
+**N talks, regardless of the armed verb.** Pressing N (or clicking an
+interactable NPC) is a *talk* intent. It used to inherit the verb coin's
+armed verb — with 👁 LOOK armed, N "examined" the character from across
+the street instead of walking over. The walk now forces TALK; linked
+markers answer it through their cursor (the validator's NPC-link check
+already requires exactly that).
+
+**Interactable NPCs.** An ambient NPC (`stage.npcs[]`) can carry
+`talkHotspotId` — a link to a 🗣 start-conversation marker. When linked, the
+actor **becomes** that marker: the static diamond hides, the character
+carries a 💬 chip, and clicking them (or pressing N) sends the walker after
+their **live** position — the pursuit re-routes ~3×/second while the actor
+patrols, and the conversation fires the moment they're caught. Walking into
+them works too. The validator flags dangling links (error) and links to
+non-conversation markers (warning); Studio's NPC row has a **talk marker**
+picker. Ambient NPCs without a link are untouched set-dressing.
+
 ## What the prototype is missing (ranked)
 
 Built on purpose: every gap below shows up as a compromise in
@@ -408,9 +578,13 @@ Built on purpose: every gap below shows up as a compromise in
 ## Testing it
 
 ```
-npm run test:engine     # 727 checks — includes a "point-and-click prototype"
+npm run test:engine     # 978 checks — includes a "point-and-click prototype"
                         # block that walks every exit, item, flag and ending
-                        # cross-reference in throttleAsh.ts
+                        # cross-reference in throttleAsh.ts, plus the
+                        # multi-state resolver/validator/graph checks
+npm run test:stage      # the walking stage's own beta harness — engine math,
+                        # a full stage↔novel play-through, and a live
+                        # multi-state safe puzzle in the real UI
 npm run build
 ```
 

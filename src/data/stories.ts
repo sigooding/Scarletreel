@@ -10,6 +10,7 @@ import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
 import { TINTIN_MERIDIAN } from "./tintinMeridian";
 import { THROTTLE_ASH } from "./throttleAsh";
+import { RAIN_SECTOR } from "./rainSector";
 import { KINGFISHER_JOB } from "./kingfisherJob";
 import { BUMPY_NIGHT } from "./allAboutEve";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
@@ -72,6 +73,7 @@ import { INSPECTOR_GADGET } from "./inspectorGadget";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  RAIN_SECTOR,
   INSPECTOR_GADGET,
   SCOOBY_RAVENSWOOD,
   FULL_THROTTLE_CORVILLE,

@@ -14,6 +14,7 @@ import type {
   CursorKind,
   Hotspot,
   HotspotAction,
+  HotspotState,
   InventorySettings,
   HotspotActionType,
   Interrogation,
@@ -23,6 +24,7 @@ import type {
   RecapLine,
   SceneNode,
   SeasonLog,
+  StageObstacle,
   StageScriptStep,
   StageSettings,
   Story,
@@ -613,16 +615,22 @@ export function storyEdges(story: Story): StoryEdge[] {
         });
     });
     sc.hotspots?.forEach((hs) => {
-      if (hs.action.targetSceneId)
+      // MULTI-STATE: every state's action is a route the object can take
+      // (the door's "open" state leads elsewhere than its "locked" state),
+      // so each one contributes its own edge. The base action keeps the
+      // plain edge id (canvas compatibility); states append their state id.
+      hotspotReachableActions(hs).forEach((act, ai) => {
+        if (!act.targetSceneId) return;
         edges.push({
-          id: `e-${sc.id}-h-${hs.id}`,
+          id: ai === 0 ? `e-${sc.id}-h-${hs.id}` : `e-${sc.id}-h-${hs.id}-s${ai}`,
           source: sc.id,
-          target: hs.action.targetSceneId,
+          target: act.targetSceneId,
           kind: "hotspot",
           ref: hs,
-          label: `⌖ ${hs.label.slice(0, 22)}`,
+          label: `⌖ ${hs.label.slice(0, 22)}${ai > 0 ? " (state)" : ""}`,
           attitude: "Hotspot",
         });
+      });
       // A pattern puzzle is a real branch: solving it (and, when retry is off,
       // failing it) routes the player to a scene. Those destinations are
       // authored on the puzzle config rather than the hotspot action, so they
@@ -1112,6 +1120,24 @@ export const VERB_LABEL: Record<VerbId, string> = {
   kick: "Kick",
   punch: "Punch",
 };
+
+/** SENTENCE LINE — the SCUMM strip's text: what the pending interaction
+ *  reads as ("Look at the drop-safe", "Use wrench on the bike", "Walk to").
+ *  Pure composition so rooms, stories and tests share one voice. */
+export function sentenceLineText(opts: {
+  verb: VerbId | null;
+  heldItemName?: string | null;
+  target?: { label: string; cursor: CursorKind } | null;
+}): string {
+  const { verb, heldItemName, target } = opts;
+  if (!target) {
+    if (verb === "use" && heldItemName) return `Use ${heldItemName}`;
+    return verb ? VERB_LABEL[verb] : "Walk to";
+  }
+  if (verb === "use" && heldItemName) return `Use ${heldItemName} on ${target.label}`;
+  return `${VERB_LABEL[verb ?? target.cursor]} ${target.label}`;
+}
+
 export const VERB_ICON: Record<VerbId, string> = {
   look: "👁",
   take: "✋",
@@ -1237,6 +1263,57 @@ export function resolveVerbAction(hs: Hotspot, verb: VerbId, itemId?: string): V
  *  markers a verb can't touch without leaking what the puzzle is)? */
 export function hotspotAnswersVerb(hs: Hotspot, verb: VerbId): boolean {
   return resolveVerbAction(hs, verb).ok;
+}
+
+/* --------------------- multi-state objects ----------------
+ * A hotspot may carry `states` — one object that changes with the story
+ * (a lever up/down, a drawer full/empty, a door locked/open) instead of
+ * the author faking it with flag-gated duplicate hotspots. States are
+ * evaluated in order and the LAST one whose gate passes is active, so
+ * the unconditional default is listed first and specific ones after.
+ * The active state only overrides label/image/cursor/action/gating —
+ * identity, bounds, verbs and items are inherited, so the marker
+ * re-skins in place and never duplicates. */
+
+/** The currently active state of a hotspot (null when it has no states or
+ *  none of its gates pass — the hotspot's own fields then stand). Pure; the
+ *  game re-runs it whenever world state changes. */
+export function activeHotspotState(
+  hs: { states?: HotspotState[] },
+  s: GlobalState
+): HotspotState | null {
+  const states = hs.states;
+  if (!states || states.length === 0) return null;
+  let active: HotspotState | null = null;
+  for (const st of states) {
+    if (!st.when || meetsGating(st.when, s)) active = st;
+  }
+  return active;
+}
+
+/** The hotspot the player currently SEES and interacts with: the base object
+ *  re-skinned by its active state. Returns the same object when there are no
+ *  states (or none pass), so callers can use it unconditionally. Resolving an
+ *  already-resolved hotspot is idempotent — the states array rides along
+ *  untouched and the same state wins again. */
+export function resolveHotspot(hs: Hotspot, s: GlobalState): Hotspot {
+  const st = activeHotspotState(hs, s);
+  if (!st) return hs;
+  const next: Hotspot = { ...hs };
+  if (st.label !== undefined) next.label = st.label;
+  // Empty string = "no object art in this state" (the drawer stood empty).
+  if (st.image !== undefined) next.image = st.image === "" ? undefined : st.image;
+  if (st.cursor !== undefined) next.cursor = st.cursor;
+  if (st.action !== undefined) next.action = st.action;
+  if (st.gating !== undefined) next.gating = st.gating ?? undefined;
+  return next;
+}
+
+/** Every action a hotspot could possibly fire — its base action plus every
+ *  state's action (used by the validator and the edge graph, which must see
+ *  routes that only exist in a later state of the object). */
+export function hotspotReachableActions(hs: Hotspot): HotspotAction[] {
+  return [hs.action, ...(hs.states ?? []).map((st) => st.action).filter((a): a is HotspotAction => !!a)];
 }
 
 /** Default walk speed: scene-width % per second. */
@@ -1566,7 +1643,7 @@ export function clampToWalkPoly(
 /** Where a hotspot's stage MARKER stands when the walkable zone is a path
  *  polygon: bottom-centre of the zone, snapped into the polygon. */
 export function stageMarkerPointPoly(
-  h: Hotspot,
+  h: { bounds: { x: number; y: number; w: number; h: number } },
   poly: WalkPoint[],
   width = 100
 ): { x: number; y: number } {
@@ -1605,11 +1682,20 @@ export const STAGE_AGENT_RADIUS = 1.6;
  *  nodes, which is far below anything a player can perceive. */
 export const STAGE_GRID_STEP = 2;
 
-export interface StageObstacle {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+/** One no-go rectangle. Canonical shape + gating docs live in types.ts
+ *  (StageObstacle); re-exported here for the routing helpers' callers. */
+export type { StageObstacle };
+
+/** Gate-aware barriers: the obstacles that are SOLID right now. A barrier
+ *  without a gate always blocks (furniture); a gated one — a locked door —
+ *  blocks only while its gate is CLOSED, and vanishes the instant it opens,
+ *  so the walker can finally pass. Pure: the game re-runs it whenever world
+ *  state changes and hands the survivors to the router. */
+export function activeStageObstacles(
+  list: StageObstacle[] | undefined,
+  s: GlobalState
+): StageObstacle[] {
+  return (list ?? []).filter((o) => (o.gating ? !meetsGating(o.gating, s) : true));
 }
 
 /** The floor band as a full-width rectangle polygon (world %). */
@@ -1695,27 +1781,41 @@ export function stageLineClear(
 
 /** Nearest walkable grid node to a point (spiral search outward). A click
  *  that lands inside a wall still has to go SOMEWHERE. */
-function nearestFreePoly(
+function nearestFreeCells(
   x: number,
   y: number,
   obstacles: StageObstacle[] | undefined,
   poly: WalkPoint[] | undefined,
   depth: { top: number; bottom: number },
   step: number,
-  width = 100
-): { x: number; y: number } | null {
-  if (!stageBlockedPoly(x, y, obstacles, poly, 16 / 9, width)) return { x, y };
-  for (let ring = 1; ring <= 24; ring++) {
-    for (let dy = -ring; dy <= ring; dy++) {
-      for (let dx = -ring; dx <= ring; dx++) {
+  width = 100,
+  want = 1,
+  accept?: (x: number, y: number) => boolean
+): { x: number; y: number }[] {
+  if (!stageBlockedPoly(x, y, obstacles, poly, 16 / 9, width) && (!accept || accept(x, y))) return [{ x, y }];
+  // Not just THE nearest free cell: the nearest ones, nearest-first. A
+  // "free" cell can sit in a sealed pocket — the sliver between a dumpster
+  // and the world edge is free space the grid can never route OUT of — and
+  // neighbours-scored heuristics can't tell a two-cell pocket from open
+  // floor. Callers that must actually route try each candidate in turn
+  // until A* succeeds; a pocket candidate fails fast and the next one wins.
+  const out: { x: number; y: number }[] = [];
+  for (let ring = 1; ring <= 24 && out.length < want; ring++) {
+    for (let dy = -ring; dy <= ring && out.length < want; dy++) {
+      for (let dx = -ring; dx <= ring && out.length < want; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
         const nx = clamp(x + dx * step, 1, width - 1);
         const ny = clamp(y + dy * step, depth.top, depth.bottom);
-        if (!stageBlockedPoly(nx, ny, obstacles, poly, 16 / 9, width)) return { x: nx, y: ny };
+        // A CLAMPED candidate isn't a cell NEAR the point — it's a
+        // projection onto the band edge. Skip those.
+        if (nx !== x + dx * step || ny !== y + dy * step) continue;
+        if (stageBlockedPoly(nx, ny, obstacles, poly, 16 / 9, width)) continue;
+        if (accept && !accept(nx, ny)) continue;
+        out.push({ x: nx, y: ny });
       }
     }
   }
-  return null;
+  return out;
 }
 
 /** A* across a coarse grid, then string-pulled: any waypoint the character
@@ -1740,11 +1840,11 @@ export function stageRoutePoly(
     // No furniture: the straight line is the route (and it is already optimal).
     return stageLineClearPoly(from, to, obstacles, poly, 16 / 9, width) ? [{ x: to.x, y: to.y }] : [];
   }
-  const start = nearestFreePoly(from.x, from.y, obstacles, poly, depth, step, width);
-  const goal = nearestFreePoly(to.x, to.y, obstacles, poly, depth, step, width);
-  if (!start || !goal) return [];
-  if (stageLineClearPoly(start, goal, obstacles, poly, 16 / 9, width)) return [{ x: goal.x, y: goal.y }];
-
+  // The GOAL's nearest free cell is all the goal needs; the START, though,
+  // can sit inside furniture (a spawn dropped in an obstacle), and its
+  // NEAREST free cell may be a sealed pocket (the sliver between a dumpster
+  // and the world edge is free, and unreachable). Take the first few
+  // candidates and keep the first search that actually routes.
   const w = Math.max(100, width);
   const cols = Math.floor(w / step) + 1;
   const rows = Math.floor((depth.bottom - depth.top) / step) + 1;
@@ -1763,84 +1863,143 @@ export function stageRoutePoly(
     }
   }
 
-  const s = snap(start);
-  const g = snap(goal);
-  // If the snapped nodes landed in a wall (a click inside a fat obstacle),
-  // fall back to the nearest free node found above.
-  const startIdx = blocked[idx(s.c, s.r)] ? 0 : idx(s.c, s.r);
-  const goalIdx = idx(g.c, g.r);
-  const h = (c: number, r: number) => Math.hypot(c - g.c, r - g.r);
-  const gScore = new Float64Array(cols * rows).fill(Infinity);
-  const cameFrom = new Int32Array(cols * rows).fill(-1);
-  const open: { i: number; f: number }[] = [];
-  gScore[startIdx] = h(s.c, s.r);
-  open.push({ i: startIdx, f: h(s.c, s.r) });
-
-  const closed = new Uint8Array(cols * rows);
-  while (open.length) {
-    // Small frontiers: a linear scan for the best node beats heap bookkeeping.
-    let bestAt = 0;
-    for (let i = 1; i < open.length; i++) if (open[i].f < open[bestAt].f) bestAt = i;
-    const current = open.splice(bestAt, 1)[0].i;
-    if (closed[current]) continue;
-    closed[current] = 1;
-    if (current === goalIdx) break;
-    const cc = current % cols;
-    const cr = (current - cc) / cols;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const nc = cc + dx;
-        const nr = cr + dy;
+  // REACHABILITY, not just nearness: flood the component the GOAL sits in,
+  // then only accept start cells inside it. That is what makes a start deep
+  // inside furniture route out the correct side instead of snapping into the
+  // sealed sliver between the furniture and the world edge.
+  const goals = nearestFreeCells(to.x, to.y, obstacles, poly, depth, step, width, 1);
+  if (!goals.length) return [];
+  const goal = goals[0];
+  const g0 = snap(goal);
+  const goalNode = blocked[idx(g0.c, g0.r)] ? -1 : idx(g0.c, g0.r);
+  const floodFrom = (node: number): Uint8Array => {
+    const seen = new Uint8Array(cols * rows);
+    const queue = [node];
+    seen[node] = 1;
+    while (queue.length) {
+      const cur = queue.shift() as number;
+      const cc = cur % cols;
+      const cr = (cur - cc) / cols;
+      for (const [nc, nr] of [
+        [cc - 1, cr],
+        [cc + 1, cr],
+        [cc, cr - 1],
+        [cc, cr + 1],
+      ] as const) {
         if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
         const ni = idx(nc, nr);
-        if (blocked[ni] || closed[ni]) continue;
-        // No corner-cutting: a diagonal step needs both orthogonals clear.
-        if (dx && dy && (blocked[idx(cc + dx, cr)] || blocked[idx(cc, cr + dy)])) continue;
-        const stepCost = dx && dy ? Math.SQRT2 : 1;
-        const tentative = gScore[current] - h(cc, cr) + stepCost;
-        if (tentative < gScore[ni]) {
-          gScore[ni] = tentative + h(nc, nr);
-          cameFrom[ni] = current;
-          open.push({ i: ni, f: gScore[ni] });
+        if (blocked[ni] || seen[ni]) continue;
+        seen[ni] = 1;
+        queue.push(ni);
+      }
+    }
+    return seen;
+  };
+  const reachGoal = goalNode >= 0 ? floodFrom(goalNode) : new Uint8Array(cols * rows);
+  // The START'S OWN component matters too: a FREE start that is sealed away
+  // from the goal's side must refuse the walk — its escape candidates would
+  // otherwise "tunnel" across the wall into the goal's component. Only a
+  // start that is INSIDE furniture may pick its way out to whichever side
+  // can actually reach the goal.
+  let reachStart: Uint8Array | null = null;
+  if (!stageBlockedPoly(from.x, from.y, obstacles, poly, 16 / 9, width)) {
+    const s0 = snap(from);
+    const sNode = blocked[idx(s0.c, s0.r)] ? -1 : idx(s0.c, s0.r);
+    if (sNode >= 0) reachStart = floodFrom(sNode);
+  }
+  const starts = nearestFreeCells(from.x, from.y, obstacles, poly, depth, step, width, 8, (px, py) => {
+    const sn = snap({ x: px, y: py });
+    const i = idx(sn.c, sn.r);
+    return !!reachGoal[i] && (!reachStart || !!reachStart[i]);
+  });
+
+  const attempt = (start: { x: number; y: number }): { x: number; y: number }[] => {
+    if (stageLineClearPoly(start, goal, obstacles, poly, 16 / 9, width)) return [{ x: goal.x, y: goal.y }];
+    const g = snap(goal);
+    const goalIdx = idx(g.c, g.r);
+    const s = snap(start);
+    // If the snapped node landed in a wall (a click inside a fat obstacle),
+    // fall back to the nearest free node found above.
+    const startIdx = blocked[idx(s.c, s.r)] ? 0 : idx(s.c, s.r);
+    const h = (c: number, r: number) => Math.hypot(c - g.c, r - g.r);
+    const gScore = new Float64Array(cols * rows).fill(Infinity);
+    const cameFrom = new Int32Array(cols * rows).fill(-1);
+    const open: { i: number; f: number }[] = [];
+    gScore[startIdx] = h(s.c, s.r);
+    open.push({ i: startIdx, f: h(s.c, s.r) });
+
+    const closed = new Uint8Array(cols * rows);
+    while (open.length) {
+      // Small frontiers: a linear scan for the best node beats heap bookkeeping.
+      let bestAt = 0;
+      for (let i = 1; i < open.length; i++) if (open[i].f < open[bestAt].f) bestAt = i;
+      const current = open.splice(bestAt, 1)[0].i;
+      if (closed[current]) continue;
+      closed[current] = 1;
+      if (current === goalIdx) break;
+      const cc = current % cols;
+      const cr = (current - cc) / cols;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nc = cc + dx;
+          const nr = cr + dy;
+          if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+          const ni = idx(nc, nr);
+          if (blocked[ni] || closed[ni]) continue;
+          // No corner-cutting: a diagonal step needs both orthogonals clear.
+          if (dx && dy && (blocked[idx(cc + dx, cr)] || blocked[idx(cc, cr + dy)])) continue;
+          const stepCost = dx && dy ? Math.SQRT2 : 1;
+          const tentative = gScore[current] - h(cc, cr) + stepCost;
+          if (tentative < gScore[ni]) {
+            gScore[ni] = tentative + h(nc, nr);
+            cameFrom[ni] = current;
+            open.push({ i: ni, f: gScore[ni] });
+          }
         }
       }
     }
-  }
 
-  if (cameFrom[goalIdx] === -1 && goalIdx !== startIdx) return [];
-  // Walk the chain backwards, then reverse it.
-  const chain: { x: number; y: number }[] = [];
-  let node = goalIdx;
-  let guard = 0;
-  while (node !== -1 && guard++ < cols * rows) {
-    const c = node % cols;
-    const r = (node - c) / cols;
-    chain.push(toXY(c, r));
-    if (node === startIdx) break;
-    node = cameFrom[node];
-  }
-  chain.reverse();
-  chain.shift(); // drop the start
-  if (chain.length) chain[chain.length - 1] = { x: goal.x, y: goal.y }; // land on the real click
-
-  // String-pull: keep only the corners.
-  const pulled: { x: number; y: number }[] = [];
-  let cur = { x: start.x, y: start.y };
-  let i = 0;
-  while (i < chain.length) {
-    let furthest = i;
-    for (let j = chain.length - 1; j > i; j--) {
-      if (stageLineClearPoly(cur, chain[j], obstacles, poly, 16 / 9, w)) {
-        furthest = j;
-        break;
-      }
+    if (cameFrom[goalIdx] === -1 && goalIdx !== startIdx) return [];
+    // Walk the chain backwards, then reverse it.
+    const chain: { x: number; y: number }[] = [];
+    let node = goalIdx;
+    let guard = 0;
+    while (node !== -1 && guard++ < cols * rows) {
+      const c = node % cols;
+      const r = (node - c) / cols;
+      chain.push(toXY(c, r));
+      if (node === startIdx) break;
+      node = cameFrom[node];
     }
-    pulled.push(chain[furthest]);
-    cur = chain[furthest];
-    i = furthest + 1;
+    chain.reverse();
+    chain.shift(); // drop the start
+    if (chain.length) chain[chain.length - 1] = { x: goal.x, y: goal.y }; // land on the real click
+
+    // String-pull: keep only the corners.
+    const pulled: { x: number; y: number }[] = [];
+    let cur = { x: start.x, y: start.y };
+    let i = 0;
+    while (i < chain.length) {
+      let furthest = i;
+      for (let j = chain.length - 1; j > i; j--) {
+        if (stageLineClearPoly(cur, chain[j], obstacles, poly, 16 / 9, w)) {
+          furthest = j;
+          break;
+        }
+      }
+      pulled.push(chain[furthest]);
+      cur = chain[furthest];
+      i = furthest + 1;
+    }
+    return pulled;
+  };
+
+  for (const start of starts) {
+    const route = attempt(start);
+    if (route.length) return route;
   }
-  return pulled;
+  return [];
 }
 
 /** Band form of stageRoutePoly — kept for the flat-floor call sites and the
@@ -2160,18 +2319,26 @@ export function validateStory(story: Story): ValidationIssue[] {
     // A stage scene the player can never leave is a soft-lock: exits must be
     // walk-to markers (goToScene hotspots), walk-off-screen edge exits, or
     // an auto-advance — a choice only appears after a conversation, so it
-    // can't be the only way out.
+    // can't be the only way out. A state's action counts: the door's "open"
+    // state can be the only way out of the room.
     if (!sc.isEnding) {
-      const doorOut = (sc.hotspots ?? []).some((h) => h.action.type === "goToScene" && h.action.targetSceneId);
+      // A way out is any navigating action: a goToScene door OR a useItem
+      // that carries a target (the classic "locked door that swings open"
+      // once the right item is used on it).
+      const isDoor = (a: { type: string; targetSceneId?: string }) =>
+        !!a.targetSceneId && (a.type === "goToScene" || a.type === "useItem");
+      const doorOut = (sc.hotspots ?? []).some((h) => hotspotReachableActions(h).some(isDoor));
       const edgeOut = Object.values(sc.stage?.exitEdges ?? {}).some((e) => e?.targetSceneId);
       if (!doorOut && !edgeOut && !sc.autoAdvanceTargetSceneId && !(sc.choices ?? []).some((c) => c.targetSceneId))
         issues.push({ severity: "error", sceneId: sc.id, message: `${label} has no way out. Add a hotspot with action "→ Go to scene" (a door/exit marker the player walks to), a walk-off-screen edge exit, or an auto-advance target.` });
     }
-    const starters = (sc.hotspots ?? []).filter((h) => h.action.type === "startDialogue");
-    const topicStarter = starters.some((h) => (h.action.topics?.length ?? 0) > 0);
+    const starters = (sc.hotspots ?? []).filter((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue"));
+    const topicStarter = starters.some((h) =>
+      hotspotReachableActions(h).some((a) => a.type === "startDialogue" && (a.topics?.length ?? 0) > 0)
+    );
     if (starters.length > 0 && !topicStarter && (sc.dialogueBeats ?? []).length === 0)
       issues.push({ severity: "error", sceneId: sc.id, message: `${label} has a "Start conversation" marker but no dialogue beats — write the conversation in the Beats tab or the marker does nothing.` });
-    if ((sc.dialogueBeats ?? []).length > 0 && !(sc.hotspots ?? []).some((h) => h.action.type === "startDialogue"))
+    if ((sc.dialogueBeats ?? []).length > 0 && !(sc.hotspots ?? []).some((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue")))
       issues.push({ severity: "warning", sceneId: sc.id, message: `${label} has dialogue beats but no "Start conversation" (🗣) hotspot — nobody can trigger the conversation. Add a talk marker (Hotspots tab → action type "🗣 Start conversation").` });
     if (sc.stage) {
       const f = stageFloor(sc.stage);
@@ -2221,8 +2388,44 @@ export function validateStory(story: Story): ValidationIssue[] {
     // choices and no after-beat route just closes — fine — but if the ONLY
     // exits are choices the player must talk to leave; surface that
     // deliberately-authored pattern as a heads-up, not an error.
-    if (!sc.isEnding && !(sc.hotspots ?? []).some((h) => h.action.type === "goToScene") && (sc.choices ?? []).some((c) => c.targetSceneId) && (sc.dialogueBeats ?? []).length > 0)
+    if (!sc.isEnding && !(sc.hotspots ?? []).some((h) => hotspotReachableActions(h).some((a) => !!a.targetSceneId && (a.type === "goToScene" || a.type === "useItem"))) && (sc.choices ?? []).some((c) => c.targetSceneId) && (sc.dialogueBeats ?? []).length > 0)
       issues.push({ severity: "warning", sceneId: sc.id, message: `${label} exits only through choices, which appear after a conversation — the player must talk before they can leave. That can be exactly right; just make sure it's on purpose.` });
+  }
+
+  // ---- MULTI-STATE OBJECTS (any node type) ----
+  // Structural traps the Studio can't see locally: an unconditional state
+  // that isn't first silently freezes the object, duplicate state ids break
+  // keying, and a state that overrides nothing is dead weight.
+  for (const sc of story.scenes) {
+    for (const h of sc.hotspots ?? []) {
+      const states = h.states ?? [];
+      if (!states.length) continue;
+      const label = `Hotspot "${h.label}" (scene "${sc.title}")`;
+      const seen = new Set<string>();
+      states.forEach((st, i) => {
+        if (seen.has(st.id))
+          issues.push({ severity: "error", sceneId: sc.id, message: `${label}: states share the id "${st.id}" — give each state its own id.` });
+        seen.add(st.id);
+        if (!st.when && i > 0)
+          issues.push({ severity: "error", sceneId: sc.id, message: `${label}: state "${st.id}" has no gate but isn't first — it always wins, permanently hiding every state above it. List the unconditional default state first.` });
+        if (st.action?.type === "goToScene" && !st.action.targetSceneId)
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: state "${st.id}" goes to a scene but no target is picked — it does nothing.` });
+        if (st.label === undefined && st.image === undefined && st.cursor === undefined && st.action === undefined && st.gating === undefined)
+          issues.push({ severity: "warning", sceneId: sc.id, message: `${label}: state "${st.id}" overrides nothing (no label/image/cursor/action/gate) — fill it in or remove it.` });
+      });
+    }
+
+    // INTERACTABLE NPCs: a talk link must point at a real talker marker
+    // in the same scene — a dangling link is a clickable nothing, and a
+    // non-talker link is a click that can't converse.
+    for (const n of sc.stage?.npcs ?? []) {
+      if (!n.talkHotspotId) continue;
+      const hs = (sc.hotspots ?? []).find((h) => h.id === n.talkHotspotId);
+      if (!hs)
+        issues.push({ severity: "error", sceneId: sc.id, message: `NPC "${n.id}" is linked to talk marker "${n.talkHotspotId}" which doesn't exist in this scene.` });
+      else if (!hotspotReachableActions(hs).some((a) => a.type === "startDialogue"))
+        issues.push({ severity: "warning", sceneId: sc.id, message: `NPC "${n.id}" is linked to "${hs.label}", which isn't a 🗣 start-conversation marker — clicking the character won't start a conversation.` });
+    }
   }
 
   // Reachability. In a season every episode is its own entry point — the
@@ -2655,6 +2858,21 @@ export function validateStory(story: Story): ValidationIssue[] {
       if (c.presentItem) required.add(c.presentItem);
     });
     sc.hotspots?.forEach((h) => h.gating?.requiresItems?.forEach((i) => required.add(i)));
+    // MULTI-STATE: a state's `when` gate and its own (non-inherited) gate are
+    // real reads; a state's action can also be what grants the item.
+    sc.hotspots?.forEach((h) => {
+      (h.states ?? []).forEach((st) => {
+        st.when?.requiresItems?.forEach((i) => required.add(i));
+        st.gating?.requiresItems?.forEach((i) => required.add(i));
+        st.action?.itemGranted && st.action.type === "giveItem" && grantable.add(st.action.itemGranted);
+      });
+      Object.values(h.verbs ?? {}).forEach((a) => {
+        if (a?.type === "giveItem" && a.itemGranted) grantable.add(a.itemGranted);
+      });
+    });
+    // DOORS: a barrier's passage gate is a real read too (the crowd only
+    // parts once you hold the badge).
+    sc.stage?.obstacles?.forEach((o) => o.gating?.requiresItems?.forEach((i) => required.add(i)));
     sc.dialogueBeats?.forEach((b) => {
       b.conditionRule?.requiresItems?.forEach((i) => required.add(i));
       // The contradiction can only be won with a held clue — it's required.
@@ -2681,7 +2899,22 @@ export function validateStory(story: Story): ValidationIssue[] {
       puzzle?.rewardConsequences?.setFlags?.forEach((flag) => grantableFlags.add(flag));
       puzzle?.wrongSubmissionConsequences?.setFlags?.forEach((flag) => grantableFlags.add(flag));
       hotspot.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+      // MULTI-STATE: states produce (their actions' flagSet) and consume
+      // (their when/gate flags) exactly like the base object does.
+      (hotspot.states ?? []).forEach((st) => {
+        if (st.action?.flagSet) grantableFlags.add(st.action.flagSet);
+        st.when?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+        st.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));
+      });
+      // VERB actions are full actions: a coin verb (kick the machine) can
+      // be what sets the flag the object's own take-gate reads.
+      Object.values(hotspot.verbs ?? {}).forEach((a) => {
+        if (a?.flagSet) grantableFlags.add(a.flagSet);
+      });
     });
+    // DOORS: a barrier's passage gate reads flags like everything else —
+    // a door that can never be unlocked is an authoring error.
+    sc.stage?.obstacles?.forEach((o) => o.gating?.requiresFlags?.forEach((flag) => requiredFlags.add(flag)));
     sc.onEnterActions?.forEach((action) => action.consequences?.setFlags?.forEach((flag) => grantableFlags.add(flag)));
     sc.dialogueBeats?.forEach((beat) => {
       beat.conditionRule?.requiresFlags?.forEach((flag) => requiredFlags.add(flag));

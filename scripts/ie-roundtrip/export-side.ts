@@ -94,6 +94,35 @@ scene0.hotspots = [
     action: { type: "showText", text: "Round trip." },
     image: await up("image", "scene0-hotspot", png("scene0-hotspot")),
   },
+  // MULTI-STATE + hotspot VOICE media: every state image and every action
+  // clip (base, verb, per-item, per-state) must survive the export →
+  // import → resolve round trip exactly like any other media field.
+  {
+    id: "hs-ie-states",
+    label: "The many-faced drawer",
+    bounds: { x: 40, y: 10, w: 20, h: 20 },
+    cursor: "look",
+    action: {
+      type: "showText",
+      text: "Shut.",
+      audioUrl: await up("audio", "hs-states-base", mp3("hs-states-base")),
+    },
+    verbs: { take: { type: "showText", text: "No.", audioUrl: await up("audio", "hs-states-take", mp3("hs-states-take")) } },
+    itemAudio: { coin: await up("audio", "hs-states-coin", mp3("hs-states-coin")) },
+    states: [
+      {
+        id: "st-open",
+        when: { requiresFlags: ["opened"] },
+        label: "The open drawer",
+        image: await up("image", "scene0-drawer-open", png("scene0-drawer-open")),
+        action: {
+          type: "showText",
+          text: "Empty.",
+          audioUrl: await up("audio", "hs-states-open", mp3("hs-states-open")),
+        },
+      },
+    ],
+  },
 ];
 
 // Stage-node walker media: single sprite, loose walk frames, and the sprite sheet.

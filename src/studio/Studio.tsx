@@ -61,6 +61,14 @@ import {
   seasonEpisodes,
   stageFloor as stageFloorOf,
   stagePlayerScale,
+  stageWalkPoly,
+  stageWalkDepth,
+  stageRoutePoly,
+  stageMarkerPointPoly,
+  clampToWalkPoly,
+  stepStagePos,
+  stageBlockedPoly,
+  STAGE_GRID_STEP,
   storyEdges,
   CURSOR_ICON,
   CURSOR_SLOTS,
@@ -69,6 +77,7 @@ import {
   VERB_IDS,
   VERB_LABEL,
   verbsForScene,
+  hotspotReachableActions,
   uid,
   validateStory,
   type ValidationIssue,
@@ -137,6 +146,8 @@ import type {
   Gating,
   GlobalState,
   Hotspot,
+  HotspotAction,
+  HotspotState,
   InventorySettings,
   Item,
   LensFlareGhostTier,
@@ -148,6 +159,8 @@ import type {
   SceneNode,
   StageNpc,
   StageNpcWaypoint,
+  StageObstacle,
+  StageSettings,
   StageScriptStep,
   Story,
 } from "../types";
@@ -352,7 +365,7 @@ function StageFloorEditor({
    *  and the selected one shows a ✕ (onObstacleDelete). DRAG an obstacle's
    *  body to move it and pull the ↘ corner of the selected one to resize it
    *  (both commit through onObstacleMove). All world-%. */
-  obstacles?: { x: number; y: number; w: number; h: number }[];
+  obstacles?: StageObstacle[];
   selectedObstacle?: number | null;
   onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
   onObstacleSelect?: (index: number | null) => void;
@@ -436,6 +449,174 @@ function StageFloorEditor({
   const [playWalk, setPlayWalk] = useState(false);
   const walkFps = player?.sheet?.animations?.walk?.fps;
 
+  /* ---- 🥾 WALK TEST — a LIVE walker on the plate, driven by the REAL
+   * engine router. Click the floor or a marker and the character walks the
+   * exact route the game would take (A* around the authored barriers,
+   * clamped to the authored floor/path); WASD/arrows drive it too. The
+   * dashed polyline is the planned route and the chip is the verdict —
+   * including "no route" when the layout seals a marker off. Gated
+   * barriers (🚪 doors) default to SHUT so the locked layout is what's
+   * tested; toggle them open to prove the unlocked one. */
+  const [walkTest, setWalkTest] = useState(false);
+  const [doorsOpen, setDoorsOpen] = useState(false);
+  const [walkerPos, setWalkerPos] = useState<{ x: number; y: number } | null>(null);
+  const [walkerMoving, setWalkerMoving] = useState(false);
+  const [walkRouteDraw, setWalkRouteDraw] = useState<{ x: number; y: number }[]>([]);
+  const [walkNote, setWalkNote] = useState<{ text: string; ok: boolean } | null>(null);
+  const posRef = useRef<{ x: number; y: number } | null>(null);
+  const routeRef = useRef<{ x: number; y: number }[]>([]);
+  const labelRef = useRef<string | null>(null);
+  const keysRef = useRef(new Set<string>());
+  const EDITOR_WALK_SPEED = 34; // world-%/second — brisk enough to test, slow enough to read
+  const walkPoly = stageWalkPoly({ floor, floorPoints } as StageSettings, worldW);
+  const walkFloor = stageWalkDepth(walkPoly);
+  const solidObstacles = (obstacles ?? []).filter((o) => !(o.gating && doorsOpen));
+  const walkPolyRef = useRef(walkPoly);
+  walkPolyRef.current = walkPoly;
+  const solidRef = useRef(solidObstacles);
+  solidRef.current = solidObstacles;
+
+  const routeWalker = (to: { x: number; y: number }, label?: string) => {
+    const poly = walkPolyRef.current;
+    const from = posRef.current ?? clampToWalkPoly(spawn.x, spawn.y, poly, worldW);
+    posRef.current = from;
+    const dest = clampToWalkPoly(to.x, to.y, poly, worldW);
+    const route = stageRoutePoly(from, dest, solidRef.current, poly, walkFloor, STAGE_GRID_STEP, worldW);
+    labelRef.current = label ?? null;
+    if (!route.length) {
+      routeRef.current = [];
+      setWalkRouteDraw([]);
+      setWalkNote({
+        text: `✗ No route to ${label ?? "that spot"} — the layout seals it off${
+          (obstacles ?? []).some((o) => o.gating) && !doorsOpen ? " (try opening the 🚪 doors)" : ""
+        }`,
+        ok: false,
+      });
+      return;
+    }
+    // A clear path comes back as a SINGLE point (the destination) — only a
+    // detour carries the start as its first point. Drop the start when it's
+    // there, never the destination, or the walker would have nowhere to go.
+    const rest =
+      route.length > 1 && Math.hypot(route[0].x - from.x, route[0].y - from.y) < 0.5
+        ? route.slice(1)
+        : route;
+    routeRef.current = rest.length ? rest : [{ ...dest }];
+    setWalkRouteDraw(route);
+    setWalkNote({ text: `→ ${label ? `walking to ${label}` : "walking"}…`, ok: true });
+  };
+
+  const toggleWalkTest = () => {
+    const next = !walkTest;
+    if (next) {
+      const start = clampToWalkPoly(spawn.x, spawn.y, walkPolyRef.current, worldW);
+      posRef.current = start;
+      routeRef.current = [];
+      setWalkerPos({ ...start });
+      setWalkRouteDraw([]);
+      setWalkNote({ text: "Walker at spawn — click the floor or a marker to send it there · WASD/arrows drive it", ok: true });
+    } else {
+      posRef.current = null;
+      routeRef.current = [];
+      keysRef.current.clear();
+      setWalkerPos(null);
+      setWalkRouteDraw([]);
+      setWalkNote(null);
+    }
+    setWalkTest(next);
+  };
+
+  // The animation loop: route-following + keyboard drive, same movement
+  // rules as the game (aspect-corrected steps, blocked => slide along).
+  useEffect(() => {
+    if (!walkTest) return;
+    let raf = 0;
+    // Seed the clock from the FIRST rAF timestamp, not performance.now() —
+    // the two can be on different time bases (happy-dom), and a negative
+    // first delta would clamp dt to 0 and freeze the walker.
+    let last: number | null = null;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (last === null) last = now;
+      const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+      last = now;
+      const pos = posRef.current;
+      if (!pos) return;
+      const obs = solidRef.current;
+      const poly = walkPolyRef.current;
+      let moving = false;
+      if (keysRef.current.size) {
+        // Keyboard drive cancels any plotted route, exactly like the game.
+        if (routeRef.current.length) {
+          routeRef.current = [];
+          labelRef.current = null;
+          setWalkRouteDraw([]);
+          setWalkNote(null);
+        }
+        let dx = 0;
+        let dy = 0;
+        if (keysRef.current.has("left")) dx -= 1;
+        if (keysRef.current.has("right")) dx += 1;
+        if (keysRef.current.has("up")) dy -= 1;
+        if (keysRef.current.has("down")) dy += 1;
+        if (dx || dy) {
+          const step = stepStagePos(pos, { x: pos.x + dx, y: pos.y + dy }, EDITOR_WALK_SPEED, dt, 16 / 9);
+          if (!stageBlockedPoly(step.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = step;
+          else if (!stageBlockedPoly(step.x, pos.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: step.x, y: pos.y };
+          else if (!stageBlockedPoly(pos.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: pos.x, y: step.y };
+          moving = true;
+        }
+      } else if (routeRef.current.length) {
+        const tgt = routeRef.current[0];
+        const step = stepStagePos(pos, tgt, EDITOR_WALK_SPEED, dt, 16 / 9);
+        posRef.current = { x: step.x, y: step.y };
+        moving = !step.arrived;
+        if (step.arrived) {
+          routeRef.current.shift();
+          if (!routeRef.current.length) {
+            setWalkRouteDraw([]);
+            setWalkNote({ text: `✓ ${labelRef.current ? `reached ${labelRef.current}` : "arrived"}`, ok: true });
+          }
+        }
+      }
+      const cur = posRef.current;
+      if (cur) setWalkerPos({ ...cur });
+      setWalkerMoving((m) => (m === moving ? m : moving));
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [walkTest, worldW]);
+
+  // WASD/arrows while the walk test runs (never while typing in a field).
+  useEffect(() => {
+    if (!walkTest) return;
+    const KEYMAP: Record<string, string> = {
+      ArrowLeft: "left", a: "left", A: "left",
+      ArrowRight: "right", d: "right", D: "right",
+      ArrowUp: "up", w: "up", W: "up",
+      ArrowDown: "down", s: "down", S: "down",
+    };
+    const down = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      const k = KEYMAP[e.key];
+      if (!k) return;
+      e.preventDefault();
+      keysRef.current.add(k);
+    };
+    const up = (e: KeyboardEvent) => {
+      const k = KEYMAP[e.key];
+      if (k) keysRef.current.delete(k);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      keysRef.current.clear();
+    };
+  }, [walkTest]);
+
   // The player's drawn height as a % of the plate (clamped so the walker can't
   // blow through the plate or vanish) — reused by the emoji glyph so IT scales
   // with the resize handle too, not just sprite/image characters.
@@ -452,6 +633,15 @@ function StageFloorEditor({
         // element carrying `data-drag`.
         const dragEl = (e.target as HTMLElement).closest?.("[data-drag]") as HTMLElement | null;
         const kind = dragEl?.dataset.drag;
+        // 🥾 Walk test: a press on the plate sends the walker there — the
+        // REAL router plans and walks the route. Takes precedence over the
+        // drawing tools while the test runs.
+        if (!kind && walkTest) {
+          const p = pct(e);
+          routeWalker({ x: p.x / scale, y: p.y });
+          e.preventDefault();
+          return;
+        }
         // 🚧 obstacle tool: a press on empty plate starts a draft box.
         if (!kind && obstacleMode) {
           const p = pct(e);
@@ -504,6 +694,14 @@ function StageFloorEditor({
         } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
+          // 🥾 Walk test: pressing a MARKER sends the walker to its marker
+          // point — the exact spot the game would stop at — so a marker the
+          // layout can't reach is caught here, not in playtest.
+          if (walkTest) {
+            routeWalker(stageMarkerPointPoly(hs, walkPolyRef.current, worldW), hs.label);
+            e.preventDefault();
+            return;
+          }
           drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x * scale };
           onSelectHotspot?.(hs.id);
         } else if (kind.startsWith("entry:")) {
@@ -859,6 +1057,69 @@ function StageFloorEditor({
           </div>
         );
       })}
+      {/* 🥾 WALK TEST — the live walker: same art as the spawn dummy, minus
+          its handles. Routed by the real engine router (see routeWalker). */}
+      {walkTest && walkerPos ? (
+        <div
+          data-walktest-walker
+          className="pointer-events-none absolute z-[32] flex -translate-x-1/2 -translate-y-full flex-col items-center"
+          style={{ left: `${walkerPos.x * scale}%`, top: `${walkerPos.y}%`, height: `${playerHPct}%` }}
+          title="Walk-test walker — click the floor or a marker to send it there"
+        >
+          {player && sheetDrawable(player.sheet) ? (
+            <SheetSprite
+              sheet={player.sheet!}
+              anim={walkerMoving ? "walk" : "idle"}
+              fallbacks={["walk", "idle", "loop"]}
+              height="100%"
+              freezeOnFallback={!walkerMoving}
+            />
+          ) : player?.image && !player.image.startsWith("emoji:") ? (
+            <img
+              src={assetUrl(media(player.image) ?? player.image)}
+              alt=""
+              className={`h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] ${walkerMoving ? "stage2d-walk" : ""}`}
+              draggable={false}
+            />
+          ) : (
+            <span
+              className={`block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] ${walkerMoving ? "stage2d-walk" : ""}`}
+              style={{ fontSize: `${playerHPct * 0.8}cqh` }}
+            >
+              {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
+            </span>
+          )}
+          <span className="mt-0.5 rounded bg-noir-950/85 px-1 font-pulp text-[7px] uppercase tracking-wider text-gold">🥾 test</span>
+          <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
+        </div>
+      ) : null}
+      {/* 🥾 the planned route, dashed gold — what the router intends */}
+      {walkTest && walkRouteDraw.length > 1 ? (
+        <svg className="pointer-events-none absolute inset-0 z-[27] h-full w-full" viewBox={`0 0 ${worldW} 100`} preserveAspectRatio="none" aria-hidden>
+          <polyline
+            points={walkRouteDraw.map((pt) => `${pt.x},${pt.y}`).join(" ")}
+            fill="none"
+            stroke="#e8b23c"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            vectorEffect="non-scaling-stroke"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            opacity={0.85}
+          />
+        </svg>
+      ) : null}
+      {/* 🥾 the verdict chip — route found / arrived / walled off */}
+      {walkTest && walkNote ? (
+        <div
+          data-walktest-note
+          className={`pointer-events-none absolute left-2 top-2 z-[40] max-w-[75%] rounded border px-2 py-1 font-type text-[10px] shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${
+            walkNote.ok ? "border-gold/60 bg-noir-950/90 text-gold" : "border-crimson/70 bg-noir-950/90 text-crimson"
+          }`}
+        >
+          {walkNote.text}
+        </div>
+      ) : null}
       {/* ENTRY SPAWNS — cyan dots: where the walker appears when arriving
           from another room (drag to move; scene entrySpawns in the panel) */}
       {Object.entries(entrySpawns ?? {}).map(([fromId, p]) => (
@@ -974,6 +1235,34 @@ function StageFloorEditor({
 
   // ▶ Walk-cycle preview — play the walker's walk animation on the plate so
   // the author sees the frames and fps without a playtest.
+  // 🥾 WALK TEST — live walker + real router on the plate (see the state
+  // block near the walk-cycle preview). While on, a 🚪 doors toggle rides
+  // along: gated barriers shut (the locked layout) or open.
+  const walkTestBtn = (
+    <button
+      data-walktest-btn
+      onClick={toggleWalkTest}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        walkTest ? "border-gold bg-gold/20 text-gold" : "border-gold/40 bg-noir-900 text-gold/80 hover:bg-gold/10"
+      }`}
+      title="Put a live walker on the plate — click the floor or a marker and it walks the REAL route (around barriers, along the path). WASD/arrows drive it too."
+    >
+      🥾 Walk test{walkTest ? " (on)" : ""}
+    </button>
+  );
+  const doorsBtn = walkTest ? (
+    <button
+      data-walktest-doors
+      onClick={() => setDoorsOpen((v) => !v)}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        doorsOpen ? "border-emerald-400 bg-emerald-400/15 text-emerald-300" : "border-crimson/50 bg-noir-900 text-crimson/90 hover:bg-crimson/10"
+      }`}
+      title="Gated barriers (🚪 doors) during the test: shut = the locked layout, open = the unlocked one"
+    >
+      🚪 Doors: {doorsOpen ? "open" : "shut"}
+    </button>
+  ) : null;
+
   const walkToolBtn = (
     <button
       onClick={() => setPlayWalk((v) => !v)}
@@ -1006,6 +1295,8 @@ function StageFloorEditor({
               {pathToolBtn}
               {obstacleToolBtn}
               {walkToolBtn}
+              {walkTestBtn}
+              {doorsBtn}
               <button
                 onClick={() => setExpanded(false)}
                 className="border border-gold/40 bg-noir-900 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
@@ -1024,6 +1315,8 @@ function StageFloorEditor({
               {pathToolBtn}
               {obstacleToolBtn}
               {walkToolBtn}
+              {walkTestBtn}
+              {doorsBtn}
               <button
                 onClick={() => setExpanded(true)}
                 className="border border-cyan-neon/40 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
@@ -11367,6 +11660,22 @@ function StudioInner({
                                         <option value="left">left</option>
                                       </select>
                                     </label>
+                                    {/* INTERACTABLE NPC — link to a talker marker */}
+                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70" title="Link this actor to a talk marker: the character becomes clickable — the player clicks them (or presses N) and the walker chases them to start the conversation.">
+                                      talk marker
+                                      <select
+                                        className={inputCls}
+                                        value={n.talkHotspotId ?? ""}
+                                        onChange={(e) => setNpc(i, { talkHotspotId: e.target.value || undefined })}
+                                      >
+                                        <option value="">— ambient (not clickable) —</option>
+                                        {(scene.hotspots ?? [])
+                                          .filter((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue"))
+                                          .map((h) => (
+                                            <option key={h.id} value={h.id}>💬 {h.label}</option>
+                                          ))}
+                                      </select>
+                                    </label>
                                     <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
                                       scale
                                       <input
@@ -11525,6 +11834,22 @@ function StudioInner({
                                   onChange={(e) => updateScene(scene.id, { stage: { ...st, verbCoin: e.target.checked || undefined } })}
                                 />
                                 Show the verb coin in this room
+                              </label>
+                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5"
+                                  checked={!!st.sentenceLine}
+                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, sentenceLine: e.target.checked || undefined } })}
+                                />
+                                <span>
+                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💬 Sentence line (SCUMM)</span>
+                                  <br />
+                                  A strip along the bottom of the room reads out the pending interaction as you hover
+                                  ("Look at the drop-safe", "Use wrench on the bike", "Walk to"), and RIGHT-CLICKING an
+                                  object is a quick 👁 look. Off (the default): nothing renders and right-click stays the
+                                  browser's.
+                                </span>
                               </label>
                               <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
                                 <input
@@ -12848,25 +13173,45 @@ function StudioInner({
                             </p>
                           ) : null}
                           {obs.map((o, oi) => (
-                            <div key={oi} className="flex items-center gap-1">
-                              <button
-                                className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
-                                  selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
-                                }`}
-                                onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
-                              >
-                                🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%
-                              </button>
-                              <button
-                                className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                title="Remove this barrier"
-                                onClick={() => {
-                                  setObs(obs.filter((_, j) => j !== oi));
-                                  setSelectedBarrier(null);
-                                }}
-                              >
-                                ✕
-                              </button>
+                            <div key={oi} className="space-y-1">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
+                                    selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
+                                  }`}
+                                  onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
+                                >
+                                  🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%{o.gating ? " 🚪" : ""}
+                                </button>
+                                <button
+                                  className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                  title="Remove this barrier"
+                                  onClick={() => {
+                                    setObs(obs.filter((_, j) => j !== oi));
+                                    setSelectedBarrier(null);
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              {selectedBarrier === oi ? (
+                                <div className="border border-crimson/20 bg-crimson/5 p-1">
+                                  <p className="font-type text-[9px] leading-snug text-paper/45">
+                                    🚪 <b className="text-crimson">Door:</b> give the barrier a gate and it blocks only
+                                    while the gate is SHUT — the moment it opens (a flag set by a key hotspot, a
+                                    conversation, a state's action) the walker can pass through. A barrier with no gate
+                                    always blocks (furniture).
+                                  </p>
+                                  <GatingEditor
+                                    gating={o.gating}
+                                    onChange={(g) => setObs(obs.map((b, j) => (j === oi ? { ...b, gating: g } : b)))}
+                                    items={story.items}
+                                    characters={story.characters}
+                                    flags={allFlags}
+                                    sectionId={`stage-barrier-${scene.id}-${oi}`}
+                                  />
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                           <button
@@ -12962,7 +13307,7 @@ function StudioInner({
                   <div key={h.id} onClick={() => setSelectedHotspot(h.id)}>
                     <CollapsibleSection
                       id={`hotspot-${h.id}`}
-                      title={<span>⌖ {h.label || "Hotspot"}</span>}
+                      title={<span>⌖ {h.label || "Hotspot"}{(h.states?.length ?? 0) > 0 ? ` 🔁${h.states!.length}` : ""}</span>}
                       titleClass="text-gold"
                       defaultOpen={selectedHotspot === h.id}
                       className={`border ${selectedHotspot === h.id ? "border-neon" : "border-noir-600"}`}
@@ -13386,6 +13731,246 @@ function StudioInner({
                             />
                           </Field>
                         </div>
+                      );
+                    })()}
+
+                    {/* ---- MULTI-STATE OBJECT: one marker that changes with the story ---- */}
+                    {(() => {
+                      const hsSetBase = (patch: Partial<Hotspot>) =>
+                        mutate((d) => {
+                          const s = d.scenes.find((x) => x.id === scene.id)!;
+                          Object.assign(s.hotspots!.find((x) => x.id === h.id)!, patch);
+                        });
+                      const states = h.states ?? [];
+                      const setStates = (next: Hotspot["states"]) =>
+                        hsSetBase({ states: next?.length ? next : undefined });
+                      const patchState = (idx: number, patch: Partial<HotspotState>) =>
+                        setStates(states.map((st, i) => (i === idx ? { ...st, ...patch } : st)));
+                      const addState = () =>
+                        setStates([
+                          ...states,
+                          {
+                            id: `st_${uid()}`,
+                            when: { requiresFlags: [] },
+                            label: "",
+                          },
+                        ]);
+                      const moveState = (idx: number, dir: -1 | 1) => {
+                        const j = idx + dir;
+                        if (j < 0 || j >= states.length) return;
+                        const next = [...states];
+                        [next[idx], next[j]] = [next[j], next[idx]];
+                        setStates(next);
+                      };
+                      return (
+                        <CollapsibleSection
+                          id={`hotspot-states-${h.id}`}
+                          title={<span>🔁 States {states.length ? `· ${states.length}` : ""}</span>}
+                          hint={states.length ? `${states.length} state${states.length > 1 ? "s" : ""}` : "one object, many faces"}
+                          titleClass="text-cyan-neon"
+                          className="border border-cyan-neon/30 bg-cyan-neon/5"
+                        >
+                          <p className="font-type text-[9px] leading-snug text-paper/45">
+                            ONE marker that changes with the story — a lever up/down, a drawer full/empty, a door
+                            locked/open — instead of stacking gated duplicate hotspots. States are checked in order and
+                            the <b>last one whose gate passes wins</b>: list the unconditional default <b>first</b>,
+                            then the specific ones. A state only overrides what you fill in (label / art / cursor /
+                            action / gate); the object's zone, verbs and accepted items are shared. Typical pair: the
+                            base object takes the thing and sets a flag; the flag-gated state re-skins the same marker
+                            as the aftermath ("the empty bench hook").
+                          </p>
+                          {states.map((st, idx) => (
+                            <div key={st.id} className="space-y-1 border border-noir-700/60 bg-noir-950/40 p-1.5">
+                              <div className="flex items-center gap-1">
+                                <span className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon/80">
+                                  {idx + 1} · {st.when?.requiresFlags?.length || st.when?.requiresItems?.length || st.when?.requiresMemories?.length ? `after ${st.when?.requiresFlags?.[0] ?? st.when?.requiresItems?.[0] ?? "…"}` : "default (always)"}
+                                </span>
+                                <span className="flex-1" />
+                                <button className="px-1 text-paper/50 hover:text-paper" title="Move up (earlier = less specific)" onClick={() => moveState(idx, -1)}>↑</button>
+                                <button className="px-1 text-paper/50 hover:text-paper" title="Move down (later = wins over the ones above)" onClick={() => moveState(idx, 1)}>↓</button>
+                                <button className="px-1 font-pulp text-[9px] text-crimson hover:underline" title="Remove this state" onClick={() => setStates(states.filter((_, i) => i !== idx))}>✕</button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-1">
+                                <Field label="Label (blank = keep the object's)">
+                                  <input
+                                    className={inputCls}
+                                    value={st.label ?? ""}
+                                    placeholder={h.label}
+                                    onChange={(e) => patchState(idx, { label: e.target.value || undefined })}
+                                  />
+                                </Field>
+                                <Field label="Cursor (blank = keep)">
+                                  <select
+                                    className={inputCls}
+                                    value={st.cursor ?? ""}
+                                    onChange={(e) => patchState(idx, { cursor: (e.target.value || undefined) as HotspotState["cursor"] })}
+                                  >
+                                    <option value="">— keep the object's —</option>
+                                    {VERB_IDS.map((c) => (
+                                      <option key={c} value={c}>{VERB_ICON[c]} {VERB_LABEL[c]}</option>
+                                    ))}
+                                  </select>
+                                </Field>
+                              </div>
+                              <Field label="Object image in this state (blank = keep · 'none' = no art)">
+                                <ImagePicker
+                                  value={st.image ?? ""}
+                                  onChange={(v) => patchState(idx, { image: v === undefined ? undefined : v || "" })}
+                                  storyId={story.id}
+                                  includeGradients={false}
+                                  placeholder="Pick the state's art…"
+                                />
+                                <div className="mt-1 flex gap-1">
+                                  {st.image ? (
+                                    <>
+                                      {st.image !== "" && (
+                                        <button
+                                          className="border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                                          onClick={() => patchState(idx, { image: "" })}
+                                        >
+                                          ◻ No art in this state
+                                        </button>
+                                      )}
+                                      <button
+                                        className="border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+                                        onClick={() => patchState(idx, { image: undefined })}
+                                      >
+                                        ✕ Keep the object's art
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </Field>
+                              <GatingEditor
+                                gating={st.when}
+                                onChange={(g) => patchState(idx, { when: g })}
+                                items={story.items}
+                                characters={story.characters}
+                                flags={allFlags}
+                                sectionId={`hsstate-when-${h.id}-${st.id}`}
+                              />
+                              {/* ---- the state's ACTION override ---- */}
+                              <div className="space-y-1 border border-gold/20 bg-gold/5 p-1.5">
+                                <div className="flex items-center gap-1">
+                                  <span className="font-pulp text-[9px] uppercase tracking-widest text-gold/80">⚙ Action in this state</span>
+                                  <span className="flex-1" />
+                                  {st.action ? (
+                                    <button
+                                      className="px-1 font-pulp text-[9px] text-crimson hover:underline"
+                                      onClick={() => patchState(idx, { action: undefined })}
+                                    >
+                                      ✕ keep the object's action
+                                    </button>
+                                  ) : null}
+                                </div>
+                                <select
+                                  className={inputCls}
+                                  value={st.action?.type ?? ""}
+                                  onChange={(e) => {
+                                    if (!e.target.value) { patchState(idx, { action: undefined }); return; }
+                                    const ty = e.target.value as HotspotAction["type"];
+                                    patchState(idx, {
+                                      action:
+                                        ty === "showText" ? { type: "showText", text: "" }
+                                        : ty === "giveItem" ? { type: "giveItem", itemGranted: undefined }
+                                        : ty === "goToScene" ? { type: "goToScene", targetSceneId: undefined }
+                                        : ty === "useItem" ? { type: "useItem", itemConsumed: undefined }
+                                        : ty === "setFlag" ? { type: "setFlag", flagSet: "" }
+                                        : { type: "showText", text: "" },
+                                    });
+                                  }}
+                                >
+                                  <option value="">— keep the object's action —</option>
+                                  <option value="showText">💬 Say a line</option>
+                                  <option value="giveItem">🎁 Give item</option>
+                                  <option value="goToScene">→ Go to scene</option>
+                                  <option value="useItem">🗝 Use item (consumes it)</option>
+                                  <option value="setFlag">🚩 Set flag</option>
+                                  <option value="startDialogue">🗣 Start conversation (stage)</option>
+                                </select>
+                                {st.action?.type === "showText" || st.action?.type === "useItem" ? (
+                                  <textarea
+                                    className={`${inputCls} h-14 font-type`}
+                                    placeholder="What it says in this state…"
+                                    value={st.action.text ?? ""}
+                                    onChange={(e) => patchState(idx, { action: { ...st.action!, text: e.target.value } })}
+                                  />
+                                ) : null}
+                                {st.action?.type === "giveItem" ? (
+                                  <select
+                                    className={inputCls}
+                                    value={st.action.itemGranted ?? ""}
+                                    onChange={(e) => patchState(idx, { action: { ...st.action!, itemGranted: e.target.value || undefined } })}
+                                  >
+                                    <option value="">— pick an item —</option>
+                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
+                                  </select>
+                                ) : null}
+                                {st.action?.type === "goToScene" ? (
+                                  <select
+                                    className={inputCls}
+                                    value={st.action.targetSceneId ?? ""}
+                                    onChange={(e) => patchState(idx, { action: { ...st.action!, targetSceneId: e.target.value || undefined } })}
+                                  >
+                                    <option value="">— pick a scene —</option>
+                                    {story.scenes.map((s) => (<option key={s.id} value={s.id}>{s.title}</option>))}
+                                  </select>
+                                ) : null}
+                                <FlagInput
+                                  value={st.action?.flagSet}
+                                  suggestions={allFlags}
+                                  onChange={(v) => st.action && patchState(idx, { action: { ...st.action, flagSet: v } })}
+                                />
+                                {(st.action?.type === "showText" || st.action?.type === "useItem") && (
+                                  <HotspotVoiceControls
+                                    story={story}
+                                    sceneId={scene.id}
+                                    assetKey={`${h.id}-state-${st.id}`}
+                                    line={st.action.text ?? ""}
+                                    value={st.action.audioUrl}
+                                    onChange={(url) => st.action && patchState(idx, { action: { ...st.action, audioUrl: url } })}
+                                  />
+                                )}
+                              </div>
+                              {/* ---- the state's GATE override (locked door → open door) ---- */}
+                              <div className="flex flex-wrap items-center gap-1 border border-crimson/20 bg-crimson/5 p-1.5">
+                                <span className="font-pulp text-[9px] uppercase tracking-widest text-crimson/80">🔒 Lock while in this state</span>
+                                <select
+                                  className={inputCls}
+                                  value={st.gating === null ? "open" : st.gating ? "replace" : "inherit"}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "inherit") patchState(idx, { gating: undefined });
+                                    else if (v === "open") patchState(idx, { gating: null });
+                                    else patchState(idx, { gating: st.gating ?? { requiresFlags: [] } });
+                                  }}
+                                >
+                                  <option value="inherit">inherit the object's gate</option>
+                                  <option value="open">always unlocked (e.g. the opened door)</option>
+                                  <option value="replace">use its own gate…</option>
+                                </select>
+                                {st.gating ? (
+                                  <div className="w-full">
+                                    <GatingEditor
+                                      gating={st.gating === null ? undefined : st.gating}
+                                      onChange={(g) => patchState(idx, { gating: g ?? null })}
+                                      items={story.items}
+                                      characters={story.characters}
+                                      flags={allFlags}
+                                      sectionId={`hsstate-gate-${h.id}-${st.id}`}
+                                    />
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                          <button
+                            onClick={addState}
+                            className="w-full border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                          >
+                            ＋ Add a state (e.g. "after it's been taken")
+                          </button>
+                        </CollapsibleSection>
                       );
                     })()}
                     {h.action.type === "patternPuzzle" && (

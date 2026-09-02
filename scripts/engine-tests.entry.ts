@@ -98,6 +98,11 @@ import {
   wrongVerbLine,
   VERB_IDS,
   CORE_VERB_IDS,
+  activeHotspotState,
+  resolveHotspot,
+  hotspotReachableActions,
+  activeStageObstacles,
+  sentenceLineText,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
@@ -110,6 +115,7 @@ import { FULL_THROTTLE } from "../src/data/fullThrottle";
 import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
 import { FULL_THROTTLE_ORIGINAL } from "../src/data/fullThrottleOriginal";
 import { THROTTLE_ASH } from "../src/data/throttleAsh";
+import { RAIN_SECTOR } from "../src/data/rainSector";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
 let passed = 0;
@@ -3474,6 +3480,320 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("spawn: a spawn dropped below the floor is pulled back", dropped[1].y === 95);
   check("spawn: a spawn dropped on the floor stays put", dropped[2].y === 80);
   check("spawn: the whole plate is reachable left to right", clampToFloor(-20, 80, floor).x === 1 && clampToFloor(140, 80, floor).x === 99);
+}
+
+/* ================================================================== */
+/*  MULTI-STATE OBJECTS (Hotspot.states)                               */
+/* ================================================================== */
+{
+  const base = (states: Hotspot["states"], extra: Partial<Hotspot> = {}): Hotspot => ({
+    id: "obj",
+    label: "the drawer",
+    bounds: { x: 10, y: 40, w: 20, h: 20 },
+    cursor: "look",
+    gating: { requiresFlags: ["lockpicked"] },
+    action: { type: "showText", text: "The drawer is jammed shut." },
+    ...extra,
+    states,
+  });
+  const st = (s: GlobalState): GlobalState => s;
+  const empty = st({ activeFlags: new Set(), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+  const withFlags = (...f: string[]) =>
+    st({ activeFlags: new Set(f), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+
+  /* ---- resolution semantics ---- */
+  {
+    const noStates = base(undefined);
+    check("states: no states = the hotspot itself", resolveHotspot(noStates, empty) === noStates);
+  }
+  check("states: none pass = base fields stand", resolveHotspot(base([{ id: "a", when: { requiresFlags: ["x"] }, label: "A" }]), empty).label === "the drawer");
+  check("states: last passing state wins", resolveHotspot(
+    base([
+      { id: "def", label: "default face" },
+      { id: "mid", when: { requiresFlags: ["m"] }, label: "mid face" },
+      { id: "last", when: { requiresFlags: ["l"] }, label: "last face" },
+    ]),
+    withFlags("m", "l")
+  ).label === "last face");
+  check("states: an earlier state stands when the later gate is shut", resolveHotspot(
+    base([
+      { id: "def", label: "default face" },
+      { id: "mid", when: { requiresFlags: ["m"] }, label: "mid face" },
+    ]),
+    withFlags("m")
+  ).label === "mid face");
+  check("states: partial overrides inherit the rest", (() => {
+    const r = resolveHotspot(base([{ id: "s", label: "the open drawer" }]), empty);
+    return r.label === "the open drawer" && r.action.text === "The drawer is jammed shut." && r.cursor === "look";
+  })());
+  check("states: image override swaps the art", resolveHotspot(base([{ id: "s", image: "/img/open.png" }]), empty).image === "/img/open.png");
+  check("states: an empty-string image CLEARS the art", resolveHotspot(base([{ id: "s", image: "" }], { image: "/img/closed.png" }), empty).image === undefined);
+  check("states: action override replaces the action", resolveHotspot(base([{ id: "s", action: { type: "showText", text: "It hangs open, empty." } }]), empty).action.text === "It hangs open, empty.");
+  check("states: a null gating override UNLOCKS the object", resolveHotspot(base([{ id: "s", gating: null }]), empty).gating === undefined);
+  check("states: a gating override replaces the gate", resolveHotspot(base([{ id: "s", gating: { requiresFlags: ["other"] } }]), empty).gating?.requiresFlags?.[0] === "other");
+  check("states: identity is never overridden", (() => {
+    const r = resolveHotspot(base([{ id: "s", label: "x", action: { type: "goToScene", targetSceneId: "e" } }]), empty);
+    return r.id === "obj" && JSON.stringify(r.bounds) === JSON.stringify({ x: 10, y: 40, w: 20, h: 20 });
+  })());
+  check("states: resolving is idempotent", (() => {
+    const once = resolveHotspot(base([{ id: "s", label: "x" }]), empty);
+    return resolveHotspot(once, empty) === once || resolveHotspot(once, empty).label === "x";
+  })());
+  check("states: activeHotspotState reports the winner", activeHotspotState(base([{ id: "a", label: "A" }, { id: "b", when: { requiresFlags: ["z"] }, label: "B" }]), withFlags("z"))?.id === "b");
+  check("states: hotspotReachableActions includes every state action", hotspotReachableActions(base([{ id: "s", action: { type: "goToScene", targetSceneId: "e" } }, { id: "t" }])).length === 2);
+
+  /* ---- the verb machinery reads the resolved view ---- */
+  check("states: verb answering follows the state cursor", (() => {
+    const r = resolveHotspot(base([{ id: "s", cursor: "take" }], { action: { type: "giveItem", itemGranted: "coin" } }), empty);
+    return resolveVerbAction(r, "take").ok && !resolveVerbAction(r, "look").ok;
+  })());
+
+  /* ---- validator + graph ---- */
+  {
+    const endScene = (id: string): SceneNode => ({
+      id,
+      title: id,
+      background: "",
+      prose: "",
+      isEnding: true,
+      endingData: { tier: "victory-gold", headline: "H", recap: "R" },
+    });
+    const sceneWith = (hotspots: Hotspot[]): SceneNode => ({
+      id: "s1",
+      title: "Room",
+      background: "",
+      prose: "text",
+      hotspots,
+      choices: [],
+    });
+    const storyOf = (scenes: SceneNode[], extra: Partial<Story> = {}): Story => ({
+      id: "ms",
+      title: "Multi-State",
+      tagline: "",
+      coverImage: "",
+      startSceneId: "s1",
+      scenes: [...scenes, endScene("e")],
+      items: [],
+      characters: [],
+      ...extra,
+    });
+    const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+    // An unconditional state listed after a gated one permanently shadows it.
+    const shadow = validateStory(storyOf([sceneWith([base([
+      { id: "a", when: { requiresFlags: ["open"] }, label: "A" },
+      { id: "def", label: "DEFAULT" },
+    ])])]));
+    check("states: unconditional-not-first is an error", has(shadow, /has no gate but isn't first/i), shadow.filter((i) => /state/i.test(i.message)));
+
+    // Duplicate state ids.
+    const dup = validateStory(storyOf([sceneWith([base([{ id: "a", label: "A" }, { id: "a", label: "A2" }])])]));
+    check("states: duplicate state ids are an error", has(dup, /states share the id "a"/i));
+
+    // A state that overrides nothing is dead weight.
+    const dead = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["open"] } }])])]));
+    check("states: a no-override state warns", has(dead, /overrides nothing/i));
+
+    // A state's go-to-scene without a target does nothing.
+    const noTarget = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["open"] }, action: { type: "goToScene" } }])])]));
+    check("states: a targetless state route warns", has(noTarget, /goes to a scene but no target/i));
+
+    // A `when` flag nothing ever sets is an impossible state (flag audit).
+    const impossible = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["never_set"] }, label: "A" }])])]));
+    check("states: a when-flag with no producer errors", has(impossible, /Flag "never_set" is required by a gate/i));
+
+    // A well-formed multi-state object raises none of those.
+    const clean = validateStory(storyOf([sceneWith([base([
+      { id: "open", when: { requiresFlags: ["lockpicked"] }, label: "the open drawer", gating: null, action: { type: "showText", text: "Empty." } },
+    ])])]));
+    check("states: a well-formed state list raises no state issues", !clean.some((i) => /states share|isn't first|overrides nothing|no target/i.test(i.message)), clean.filter((i) => /state/i.test(i.message)));
+
+    // The state's own flagSet makes its own gate reachable (producer counted).
+    const selfSustaining = validateStory(storyOf([sceneWith([base([
+      { id: "take", action: { type: "setFlag", flagSet: "full" } },
+    ], [{ id: "after", when: { requiresFlags: ["full"] }, label: "the emptied drawer" }])])]));
+    check("states: a state's action flagSet counts as a producer", !has(selfSustaining, /Flag "full" is required by a gate/i));
+
+    // Graph: a route that only exists in a later state is a real edge, and
+    // its destination must not be flagged unreachable.
+    const stateExit = sceneWith([
+      base([{ id: "later", when: { requiresFlags: ["open"] }, action: { type: "goToScene", targetSceneId: "e" } }], { action: { type: "showText", text: "locked" } }),
+    ]);
+    stateExit.prose = "text";
+    const edges = storyEdges(storyOf([stateExit]));
+    check("states: a state action contributes a scene edge", edges.some((x) => x.source === "s1" && x.target === "e" && /state/.test(x.label ?? "")), edges.map((x) => x.label));
+    const reach = validateStory(storyOf([stateExit]));
+    check("states: a state-only destination is reachable (no warning)", !has(reach, /unreachable from the start/i), reach.filter((i) => /unreachable/i.test(i.message)));
+
+    // Stage soft-lock: a door whose only exit lives in its "open" state is a
+    // legitimate way out.
+    const stageScene: SceneNode = {
+      id: "s1",
+      title: "Vault",
+      background: "",
+      prose: "",
+      nodeType: "stage",
+      stage: { playerImage: "emoji:🕵️", spawn: { x: 50, y: 86 }, floor: { top: 62, bottom: 94 } },
+      hotspots: [
+        {
+          id: "door",
+          label: "the vault door",
+          bounds: { x: 80, y: 60, w: 14, h: 30 },
+          cursor: "go",
+          isRepeatable: true,
+          action: { type: "showText", text: "Sealed. The mechanism needs the crane." },
+          states: [
+            { id: "open", when: { requiresFlags: ["craned"] }, action: { type: "goToScene", targetSceneId: "e" } },
+          ],
+        },
+      ],
+      choices: [],
+    };
+    const vault = validateStory(storyOf([stageScene]));
+    check("states: a stage exits through a state action (no soft-lock error)", !has(vault, /has no way out/i), vault.filter((i) => /way out/i.test(i.message)));
+  }
+
+  /* ---- the shipped demo is still a valid case ---- */
+  check("states: the Throttle & Ash workbench demo validates", (() => {
+    const bench = THROTTLE_ASH.scenes.find((s) => s.id === "adv_garage")!.hotspots!.find((h) => h.id === "advh_bench")!;
+    const s0 = resolveHotspot(bench, withFlags());
+    const s1 = resolveHotspot(bench, withFlags("adv_has_line"));
+    return bench.states?.length === 1 && s0.label === "the workbench" && s1.label === "the bare pegboard hook" && s1.action.text !== s0.action.text;
+  })());
+}
+
+/* ================================================================== */
+/*  DOORS — gate-aware barriers (StageObstacle.gating)                 */
+/* ================================================================== */
+{
+  const st = (flags: string[]): GlobalState => ({ activeFlags: new Set(flags), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+  const wall = { x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["open"] } };
+  const crate = { x: 20, y: 70, w: 10, h: 10 };
+  const list = [crate, wall];
+
+  check("doors: an ungated barrier always blocks", activeStageObstacles(list, st([])).length === 2);
+  check("doors: a gated barrier blocks while its gate is shut", activeStageObstacles(list, st([])).some((o) => o === wall));
+  check("doors: the barrier is GONE the moment the gate opens", !activeStageObstacles(list, st(["open"])).some((o) => o === wall));
+  check("doors: furniture survives the door opening", activeStageObstacles(list, st(["open"]))[0] === crate);
+  check("doors: an item gate opens to the item", (() => {
+    const badge = { x: 0, y: 0, w: 10, h: 10, gating: { requiresItems: ["badge"] } };
+    const held = { ...st([]), inventory: [{ id: "badge" } as never] };
+    return activeStageObstacles([badge], st([])).length === 1 && activeStageObstacles([badge], held).length === 0;
+  })());
+
+  // Spatial routing: a full-height wall genuinely seals the room; the same
+  // room with the door open routes straight through.
+  {
+    const floor = { top: 60, bottom: 94 };
+    const sealed = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, [wall], undefined, floor, 2, 100);
+    check("doors: a shut door walls off the far side", sealed.length === 0, sealed);
+    const passable = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, activeStageObstacles([wall], st(["open"])), undefined, floor, 2, 100);
+    check("doors: the open door routes through", passable.length > 0 && passable[passable.length - 1].x > 85, passable);
+  }
+
+  // Validator: a door that can never open is an authoring error.
+  {
+    const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+    const doorStory: Story = {
+      id: "doors", title: "Doors", tagline: "", coverImage: "", startSceneId: "s1",
+      scenes: [
+        { id: "s1", title: "Room", background: "", prose: "text", choices: [], stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, obstacles: [{ x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["never_open"] } }] } as never, hotspots: [{ id: "out", label: "Out", bounds: { x: 80, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } }] },
+        endScene,
+      ],
+      items: [], characters: [],
+    };
+    const issues = validateStory(doorStory);
+    check("doors: a barrier gate on an unproduced flag errors", issues.some((i) => i.severity === "error" && /Flag "never_open" is required by a gate/.test(i.message)), issues.filter((i) => /never_open/.test(i.message)));
+  }
+}
+
+/* ================================================================== */
+/*  SENTENCE LINE (the SCUMM strip's text)                             */
+/* ================================================================== */
+{
+  check("sentence: bare floor reads Walk to", sentenceLineText({ verb: null }) === "Walk to");
+  check("sentence: an armed verb with no target reads its label", sentenceLineText({ verb: "look" }) === "Look at");
+  check("sentence: an armed item with no target reads Use item", sentenceLineText({ verb: "use", heldItemName: "wrench" }) === "Use wrench");
+  check("sentence: verb + object", sentenceLineText({ verb: "look", target: { label: "the drop-safe", cursor: "take" } }) === "Look at the drop-safe");
+  check("sentence: item on object", sentenceLineText({ verb: "use", heldItemName: "wrench", target: { label: "the bike", cursor: "use" } }) === "Use wrench on the bike");
+  check("sentence: no coin - the object's own verb reads out", sentenceLineText({ verb: null, target: { label: "the coil", cursor: "take" } }) === "Pick up the coil");
+}
+
+/* ================================================================== */
+/*  INTERACTABLE NPCS (StageNpc.talkHotspotId) — validator             */
+/* ================================================================== */
+{
+  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+  const mk = (npcs: never[], hotspots: Hotspot[]): Story => ({
+    id: "npcs", title: "NPCs", tagline: "", coverImage: "", startSceneId: "s1",
+    scenes: [
+      {
+        id: "s1", title: "Room", background: "", prose: "text", choices: [],
+        stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, npcs } as never,
+        hotspots,
+      },
+      endScene,
+    ],
+    items: [], characters: [],
+  });
+  const talker: Hotspot = { id: "t1", label: "the sweeper", bounds: { x: 40, y: 60, w: 10, h: 30 }, cursor: "talk", isRepeatable: true, action: { type: "startDialogue" } };
+  const looker: Hotspot = { id: "l1", label: "the sign", bounds: { x: 60, y: 30, w: 10, h: 20 }, cursor: "look", action: { type: "showText", text: "x" } };
+  const out: Hotspot = { id: "out", label: "Out", bounds: { x: 84, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } };
+
+  const good = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "t1" } as never], [talker, out]));
+  check("npc link: a linked talker raises no issue", !good.some((i) => /NPC "n1"/.test(i.message)), good.filter((i) => /NPC/.test(i.message)));
+
+  const dangling = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "nope" } as never], [talker, out]));
+  check("npc link: a dangling link is an error", dangling.some((i) => i.severity === "error" && /NPC "n1" is linked to talk marker "nope"/.test(i.message)), dangling.map((i) => i.message));
+
+  const notalk = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "l1" } as never], [looker, out]));
+  check("npc link: linking a non-talker warns", notalk.some((i) => i.severity === "warning" && /isn't a 🗣 start-conversation/i.test(i.message)));
+}
+
+/* ================================================================== */
+/*  CREATOR-PASS regressions (found while authoring Rain Sector)       */
+/* ================================================================== */
+{
+  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+  const mk = (hotspots: Hotspot[]): Story => ({
+    id: "creator", title: "Creator", tagline: "", coverImage: "", startSceneId: "s1",
+    scenes: [{ id: "s1", title: "Room", background: "", prose: "text", choices: [], hotspots }, endScene],
+    items: [], characters: [],
+  });
+  const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+  // A useItem action carrying a targetSceneId is a way out (the Studio's own
+  // "locked door that swings open" pattern) — Rain Sector's mag-locked gate.
+  const useItemExit = validateStory(mk([
+    {
+      id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true,
+      gating: { requiresItems: ["card"] },
+      action: { type: "useItem", targetSceneId: "e", text: "The latch lets go." },
+    },
+  ]));
+  check("creator: a useItem exit counts as a way out (no soft-lock error)", !has(useItemExit, /has no way out/i), useItemExit.filter((i) => /way out/.test(i.message)));
+  check("creator: the useItem exit is a real edge", storyEdges(mk([
+    { id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true, action: { type: "useItem", targetSceneId: "e", text: "x" } },
+  ])).some((x) => x.source === "s1" && x.target === "e"));
+
+  // A VERB action can be the flag producer (kick the machine -> flag ->
+  // the machine's own take-gate opens). The audit must read verbs.
+  const verbProducer = validateStory(mk([
+    {
+      id: "vend", label: "the machine", bounds: { x: 30, y: 64, w: 12, h: 26 }, cursor: "look",
+      verbs: { kick: { type: "showText", text: "CLANG.", flagSet: "shaken" } },
+      gating: { requiresFlags: ["shaken"] },
+      action: { type: "giveItem", itemGranted: "card" },
+    },
+  ]));
+  check("creator: a verb action's flagSet counts as a producer", !has(verbProducer, /Flag "shaken" is required by a gate/i), verbProducer.filter((i) => /shaken/.test(i.message)));
+
+  // And the shipped case itself stays clean.
+  const rs = validateStory(RAIN_SECTOR);
+  check("rainsector: the shipped case validates with zero errors", rs.filter((i) => i.severity === "error").length === 0, rs.slice(0, 5));
+  check("rainsector: the walker sheet is the sliced magenta plate", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.playerSheet!.frameWidth === 293);
+  check("rainsector: an interactable NPC is linked to a talker", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.npcs?.some((n) => n.talkHotspotId === "rsh_ping"));
+  check("rainsector: the stair barrier is gate-aware", RAIN_SECTOR.scenes.find((x) => x.id === "rs_alley")!.stage!.obstacles?.some((o) => o.gating?.requiresFlags?.includes("rs_ping_told")));
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

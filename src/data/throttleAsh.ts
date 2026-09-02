@@ -359,6 +359,9 @@ export const THROTTLE_ASH: Story = {
       stage: {
         ...walker({ top: 68, bottom: 95 }, { x: 50, y: 92 }, [{ x: 20, y: 70, w: 26, h: 12 }]),
         enterCaption: "Dell's. The only door in town that opens for a man with an empty tank.",
+        // The SCUMM strip — hover readout ("Look at the workbench") plus
+        // right-click quick-look. See docs/adventure-mode.md.
+        sentenceLine: true,
       },
       hotspots: [
         {
@@ -384,6 +387,22 @@ export const THROTTLE_ASH: Story = {
             type: "showText",
             text: "Every tool Dell owns, hung in its own shadow. Somebody's been at the rubber line — there's a fresh coil, still tied with the shop's twine.",
           },
+          // MULTI-STATE OBJECT — the same marker, re-skinned by the story:
+          // while the coil's on the bench the base look stands (no state
+          // passes); once the fuel line is taken (adv_has_line) the very
+          // same marker reads as the aftermath. One hotspot, no gated
+          // duplicates, no vanishing act.
+          states: [
+            {
+              id: "st_bench_bare",
+              when: { requiresFlags: ["adv_has_line"] },
+              label: "the bare pegboard hook",
+              action: {
+                type: "showText",
+                text: "Where the coil hung there's nothing but a bright clean ring on the pegboard, and the shop twine cut clean through. Dell runs an honest bench.",
+              },
+            },
+          ],
         },
         {
           id: "advh_line",

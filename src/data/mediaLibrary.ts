@@ -429,7 +429,19 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     });
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
-    sc.hotspots?.forEach((h) => visit(h.image));
+    // Hotspot media: the object's image, its voice clips (base action, verb
+    // actions, per-item replies) and — for MULTI-STATE objects — every
+    // state's image and action clip.
+    sc.hotspots?.forEach((h) => {
+      visit(h.image);
+      visit(h.action.audioUrl);
+      Object.values(h.verbs ?? {}).forEach((a) => visit(a?.audioUrl));
+      Object.values(h.itemAudio ?? {}).forEach(visit);
+      (h.states ?? []).forEach((st) => {
+        visit(st.image);
+        visit(st.action?.audioUrl);
+      });
+    });
     sc.dialogueBeats?.forEach((b) => {
       visit(b.audioUrl);
       visit(b.background);
@@ -548,7 +560,16 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
     }
-    sc.hotspots?.forEach((h) => apply(h, "image"));
+    sc.hotspots?.forEach((h) => {
+      apply(h, "image");
+      apply(h.action, "audioUrl");
+      Object.values(h.verbs ?? {}).forEach((a) => a && apply(a, "audioUrl"));
+      if (h.itemAudio) h.itemAudio = Object.fromEntries(Object.entries(h.itemAudio).map(([k, v]) => [k, resolveMediaValue(v, map) ?? v]));
+      (h.states ?? []).forEach((st) => {
+        apply(st, "image");
+        if (st.action) apply(st.action, "audioUrl");
+      });
+    });
     sc.dialogueBeats?.forEach((b) => {
       apply(b, "audioUrl");
       apply(b, "background");
@@ -727,6 +748,17 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     }
     for (const h of sc.hotspots ?? []) {
       h.image = await compact(h.image, "image", h.label || sc.title);
+      h.action.audioUrl = await compact(h.action.audioUrl, "audio", `${h.label || sc.title} action`);
+      for (const a of Object.values(h.verbs ?? {})) if (a) a.audioUrl = await compact(a.audioUrl, "audio", `${h.label || sc.title} verb`);
+      if (h.itemAudio) {
+        for (const [id, clip] of Object.entries(h.itemAudio)) {
+          h.itemAudio[id] = (await compact(clip, "audio", `${h.label || sc.title} item ${id}`)) ?? clip;
+        }
+      }
+      for (const st of h.states ?? []) {
+        st.image = await compact(st.image, "image", `${h.label || sc.title} state ${st.id}`);
+        if (st.action) st.action.audioUrl = await compact(st.action.audioUrl, "audio", `${h.label || sc.title} state ${st.id}`);
+      }
     }
     if (sc.cinematic?.foregroundImage) {
       sc.cinematic.foregroundImage = (await compact(sc.cinematic.foregroundImage, "image", sc.title)) || undefined;
@@ -1026,6 +1058,17 @@ export async function bundleVoiceFileRefs(
     }
     for (const h of sc.hotspots ?? []) {
       h.image = await bundleValue(h.image);
+      h.action.audioUrl = await bundleValue(h.action.audioUrl);
+      for (const a of Object.values(h.verbs ?? {})) if (a) a.audioUrl = await bundleValue(a.audioUrl);
+      if (h.itemAudio) {
+        for (const [id, clip] of Object.entries(h.itemAudio)) {
+          h.itemAudio[id] = (await bundleValue(clip)) ?? clip;
+        }
+      }
+      for (const st of h.states ?? []) {
+        st.image = await bundleValue(st.image);
+        if (st.action) st.action.audioUrl = await bundleValue(st.action.audioUrl);
+      }
     }
     await applyCinematic(sc.cinematic);
     for (const b of sc.dialogueBeats ?? []) {
