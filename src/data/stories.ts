@@ -28,6 +28,7 @@ import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
 import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
 import { SCOOBY_RAVENSWOOD } from "./scoobyRavenswood";
 import { INSPECTOR_GADGET } from "./inspectorGadget";
+import { SOUTH_PARK } from "./southPark";
 
 /**
  * The playable catalogue.
@@ -73,6 +74,7 @@ import { INSPECTOR_GADGET } from "./inspectorGadget";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  SOUTH_PARK,
   RAIN_SECTOR,
   INSPECTOR_GADGET,
   SCOOBY_RAVENSWOOD,

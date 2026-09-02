@@ -107,6 +107,12 @@ import {
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
 import { coveragePercent, coverageReport, cutsceneStepKey, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { spriteSheetIssues, sheetAnim } from "../src/game/spriteSheet";
+import { resolveVerbAction, verbsForScene } from "../src/logic";
+import { SOUTH_PARK } from "../src/data/southPark";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
 import { openaiGenerationBody, openaiSizesForModel } from "../src/data/aiImages";
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
@@ -2943,6 +2949,64 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("coverage v2: entry and hotspot gaps name themselves apart", rv.missedCutsceneSteps.some((g) => g.text === "entry step 2") && rv.missedCutsceneSteps.some((g) => g.text === "Lever — step 1"), rv.missedCutsceneSteps);
   check("coverage v2: an unrecorded key reads as zero", (cov.cutscene["s1:h9#0"] ?? 0) === 0, cov.cutscene);
   check("coverage v2: recording a marker never mutates the input", (cov.markers["s1:h1"] ?? 0) === 1 && !("s1:h2" in cov.markers), cov.markers);
+}
+
+/* ================================================================== */
+/*  SOUTH PARK: THE RECESS WARS — the walkable-stage beta data         */
+/* ================================================================== */
+{
+  // The beta must pass the validator clean — it ships in the catalogue.
+  const spIssues = validateStory(SOUTH_PARK);
+  const spErrors = spIssues.filter((i) => i.severity === "error");
+  check("south park: the beta validates with no errors", spErrors.length === 0, spErrors.map((i) => i.message).join(" | "));
+
+  // Every sheet it references is on disk and well-formed, with walk+idle.
+  // The harness bundles to /tmp — resolve public/ from the npm cwd instead.
+  const spRoot = path.join(process.cwd(), "public");
+  const spSheets: [string, import("../src/game/spriteSheet").SpriteSheet][] = [
+    ["stan", SOUTH_PARK.playerSprite!.sheet!],
+    ["cartman walk", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
+    ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
+    ["kenny walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
+    ["cartman moods", SOUTH_PARK.scenes[3].hotspots![0].sheet!],
+  ];
+  for (const [label, sheet] of spSheets) {
+    check("south park: " + label + " sheet exists on disk", existsSync(path.join(spRoot, sheet.image)), sheet.image);
+    check("south park: " + label + " sheet is well-formed", spriteSheetIssues(sheet, label).length === 0, spriteSheetIssues(sheet, label).join(" | "));
+    check("south park: " + label + " sheet has a walk animation", !!sheetAnim(sheet, "walk"));
+  }
+  for (const sc of SOUTH_PARK.scenes) {
+    check("south park: background exists for " + sc.id, existsSync(path.join(spRoot, sc.background)), sc.background);
+  }
+
+  // Pure stage game: every non-ending scene is a walkable stage with the
+  // verb menu on and at least one verb answerable.
+  for (const sc of SOUTH_PARK.scenes) {
+    if (sc.isEnding) continue;
+    check("south park: " + sc.id + " is a verb-menu stage", sc.nodeType === "stage" && sc.stage?.verbCoin === true && verbsForScene(sc).length > 0, verbsForScene(sc).join(","));
+  }
+
+  // The USE puzzle: the locker answers the snowball (and only via USE with
+  // it armed); the sled is gated on the key the locker grants.
+  const spLocker = SOUTH_PARK.scenes[1].hotspots![0];
+  const spUse = resolveVerbAction(spLocker, "use", "sp_snowball");
+  check("south park: the locker answers USE + snowball", spUse.ok && spUse.action.type === "useItem" && spUse.action.itemGranted === "sp_key", spUse);
+  check("south park: the locker refuses an unaccepted item", !resolveVerbAction(spLocker, "use", "sp_sled").ok);
+  const spSled = SOUTH_PARK.scenes[2].hotspots![1];
+  check("south park: the sled is gated on the frozen key", JSON.stringify(spSled.gating) === JSON.stringify({ requiresItems: ["sp_key"] }), spSled.gating);
+  check("south park: taking the sled sets the pond flag", spSled.action.flagSet === "sp_got_sled");
+  const spPondEdge = SOUTH_PARK.scenes[2].stage!.exitEdges?.right;
+  check("south park: the pond edge opens only with the sled", spPondEdge?.gating?.requiresFlags?.[0] === "sp_got_sled");
+
+  // The pond cutscene walks Kenny onto the ice and speaks the two lines.
+  const spEnter = SOUTH_PARK.scenes[3].stage!.enterScript ?? [];
+  check("south park: the pond cutscene has the Kenny gag", spEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_kenny_npc") && spEnter.some((st) => st.do === "say" && /killed Kenny/.test(st.text)), spEnter.map((st) => st.do).join(","));
+
+  // The finale branches into two distinct ending cards.
+  const spChoices = SOUTH_PARK.scenes[3].choices ?? [];
+  check("south park: the confrontation offers two endings", spChoices.length === 2 && new Set(spChoices.map((c) => c.targetSceneId)).size === 2, spChoices.map((c) => c.targetSceneId).join(","));
+  const spEndings = SOUTH_PARK.scenes.filter((sc) => sc.isEnding);
+  check("south park: both endings carry ending cards", spEndings.length === 2 && spEndings.every((sc) => !!sc.endingData && sc.choices.length === 0));
 }
 
 /* ================================================================== */
