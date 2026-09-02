@@ -47,7 +47,7 @@ the Episodes tab's scene buttons reselect, and a fresh mount with
 | DOM smoke (`scripts/dom-smoke.mjs`) | PASSED |
 | Import/export roundtrip | PASSED |
 | Studio deep probe (`scripts/studio-deep-probe.mjs`) | **52 passed / 0 failed** |
-| **Studio beta (new, this pass)** | **65 passed / 0 failed** — run 4× consecutively on the final build |
+| **Studio beta (new, this pass)** | **74 passed / 0 failed** — run 4× consecutively on the final build; 8c re-run against the pre-fix build **fails as designed** (proves the check bites) |
 | `vite build` | 2.62 MB single-file / 704 KB gzip |
 
 `npm test` now runs the studio beta permanently (after the stage beta).
@@ -91,6 +91,18 @@ the Episodes tab's scene buttons reselect, and a fresh mount with
    lists (dropping episodes left empty, keeping the unlock/handoff graph
    consistent), scrubs stale entry-spawn keys and re-points acts. Probe 8b:
    after delete → 4 dangling classes flagged; after Repair → **0 errors**.
+
+5. **🛠 Repair "fixed" healthy stage rooms.** The validator counts a
+   walk-off edge exit (and after-beat routes, entry scripts, puzzle
+   branches) as a way out; Repair's guaranteed-exit check counted only
+   auto-advance/choices/hotspot targets. A structurally sound stage whose
+   only door was the edge arrow got a bogus `"Move on."` choice injected —
+   and a clean reel reported "Repaired 1 issue". **Fixed:** Repair's exit
+   accounting now mirrors the validator (multi-state hotspot actions and
+   script steps included). Probe 8c builds an edge-exit-only stage, runs
+   Repair, and asserts the reel comes back **byte-identical** — verified
+   against the pre-fix build, where 8c fails with the injected choice
+   visible in the output.
 
 ## 4. Traps that were NOT app bugs (recorded so the next probe doesn't bite)
 

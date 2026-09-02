@@ -572,6 +572,59 @@ async function main() {
     sweepProblems("deletion + repair");
   }
 
+  /* ================================================================
+   * Part 8c: Repair must NOT "fix" a healthy edge-exit-only stage.
+   * The validator counts a walk-off edge exit as a way out; if Repair's
+   * exit accounting disagrees, it injects a bogus "Move on." choice into
+   * a sound room and reports repairs on a structurally sound reel.
+   * ================================================================ */
+  {
+    byText(/＋ New Story/)?.click();
+    await sleep(700);
+    const case3 = events.created[events.created.length - 1];
+    byText(/🏁 End/)?.click(); await sleep(spacing); // END
+    byText(/🚶 Stage/)?.click(); await sleep(spacing); // STAGE (claims start)
+    let s3 = (await waitDraft(case3.id, (d) => d.scenes.length === 2 && d.scenes.some((x) => x.nodeType === "stage"), 8000))!;
+    const stage3 = s3.scenes.find((x) => x.nodeType === "stage")!;
+    const end3 = s3.scenes.find((x) => x.isEnding)!;
+    check("8c.1 stage-first authoring claims the start marker", !!s3 && s3.startSceneId === stage3.id, { start: s3?.startSceneId, stage: stage3?.id });
+
+    // drop the seeded exit hotspot — the edge arrow will be the ONLY way out
+    await tab("hotspots");
+    const delHs = q('button[title="Delete this hotspot"]')[0];
+    check("8c.2 seeded hotspot delete control present", !!delHs);
+    delHs?.click();
+    s3 = (await waitDraft(case3.id, (d) => (d.scenes.find((x) => x.id === stage3.id)!.hotspots ?? []).length === 0))!;
+    check("8c.3 seeded hotspot removed", !!s3 && (s3.scenes.find((x) => x.id === stage3.id)!.hotspots ?? []).length === 0);
+
+    // wire the left edge exit → END
+    await tab("stage");
+    byText(/➡ Entrances & exits/)?.click();
+    await sleep(400);
+    byText(/＋ Add left edge exit/)?.click();
+    await sleep(spacing);
+    const exitSel = selectWithTargets(end3.id);
+    check("8c.4 edge-exit target select present", !!exitSel);
+    exitSel && setSelect(exitSel, end3.id);
+    s3 = (await waitDraft(case3.id, (d) => d.scenes.find((x) => x.id === stage3.id)?.stage?.exitEdges?.left?.targetSceneId === end3.id))!;
+    check("8c.5 edge exit wired to the ending", !!s3);
+
+    const pre = draft(case3.id)!;
+    const preErrs3 = errorsOf(pre);
+    check("8c.6 edge-exit-only stage validates clean", preErrs3.length === 0, preErrs3.map((e) => e.message));
+
+    // Repair a sound reel: it must change NOTHING
+    byText(/🛠 Repair/)?.click();
+    await sleep(1800);
+    const post = draft(case3.id)!;
+    check("8c.7 repair left the sound reel byte-identical", JSON.stringify(post.scenes) === JSON.stringify(pre.scenes),
+      post.scenes.find((x) => x.id === stage3.id)?.choices ?? "no choices");
+    check("8c.8 no bogus choice injected into the stage", (post.scenes.find((x) => x.id === stage3.id)!.choices ?? []).length === 0,
+      post.scenes.find((x) => x.id === stage3.id)!.choices);
+    check("8c.9 still validates clean after repair", errorsOf(post).length === 0, errorsOf(post).map((e) => e.message));
+    sweepProblems("edge-exit repair no-op");
+  }
+
   /* ---------- Part 10: draft reload ---------- */
   {
     const lastId = win.localStorage.getItem("scarlet-studio-last-story");

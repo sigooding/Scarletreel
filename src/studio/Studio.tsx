@@ -7572,10 +7572,33 @@ function StudioInner({
       }
 
       if (!sc.isEnding) {
+        // Mirror the validator's exit accounting (storyEdges): edge exits,
+        // after-beat routes, entry scripts and puzzle branches are all ways
+        // out too. Counting only choices/hotspots would "repair" a healthy
+        // stage room whose door is a walk-off edge arrow by injecting a
+        // bogus choice into it.
         const exits = [
           ...(sc.autoAdvanceTargetSceneId ? [{ gated: false }] : []),
           ...(sc.choices ?? []).map((c) => ({ gated: !!effectiveChoiceGating(c) })),
-          ...(sc.hotspots ?? []).filter((h) => h.action.targetSceneId).map((h) => ({ gated: !!h.gating })),
+          ...(sc.hotspots ?? [])
+            .filter((h) =>
+              hotspotReachableActions(h).some(
+                (a) =>
+                  !!a.targetSceneId ||
+                  (!!a.patternPuzzle && (!!a.patternPuzzle.targetSceneId || !!a.patternPuzzle.wrongTargetSceneId)) ||
+                  (a.script ?? []).some((st) => st.do === "goToScene")
+              )
+            )
+            .map((h) => ({ gated: !!h.gating })),
+          ...(sc.dialogueBeats ?? [])
+            .filter((b) => b.afterBeatTargetSceneId)
+            .map((b) => ({ gated: !!b.conditionRule })),
+          ...Object.values(sc.stage?.exitEdges ?? {})
+            .filter((e) => e?.targetSceneId)
+            .map((e) => ({ gated: !!e.gating })),
+          ...(sc.stage?.enterScript ?? []).some((st) => st.do === "goToScene")
+            ? [{ gated: false }]
+            : [],
         ];
         const hasOpenExit = exits.some((e) => !e.gated);
         if (!hasOpenExit) {
