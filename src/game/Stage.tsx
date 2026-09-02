@@ -27,7 +27,7 @@ import {
 import type { VerbId } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
-import { SheetSprite } from "./SheetSprite";
+import { SheetSprite, preloadStageArt } from "./SheetSprite";
 import { sheetAnim, sheetDrawable } from "./spriteSheet";
 import { presetStyle } from "./animation";
 
@@ -748,6 +748,29 @@ export function Stage({
    *  single-screen room). Follows the walker with light smoothing; the world
    *  div is translated by -cam, so markers, props and the walker all pan
    *  together. */
+  // TALK ZOOM — while a conversation with an NPC plays, the camera punches
+  // in on the walker (origin at their chest) and eases back out when the
+  // room returns. Purely visual: input is inert during conversations and
+  // the transform rides the panning viewport, so world-% math is untouched.
+  const [talkZoom, setTalkZoom] = useState(1);
+  const talkZoomRef = useRef(1);
+  useEffect(() => {
+    const target = convoHotspotId != null ? 1.22 : 1;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      const z = talkZoomRef.current + (target - talkZoomRef.current) * Math.min(1, dt * 6);
+      const done = Math.abs(target - z) < 0.002;
+      talkZoomRef.current = done ? target : z;
+      setTalkZoom(done ? target : Math.round(z * 1000) / 1000);
+      if (!done) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [convoHotspotId]);
+
   const camRef = useRef(0);
   const [cam, setCam] = useState(0);
   /** The last rounded camera value pushed to state — the rAF loop outlives
@@ -1086,6 +1109,20 @@ export function Stage({
       camShownRef.current = startCam;
       setCam(startCam);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // SCENE-ENTRY WARM-UP — kick off loads for everything this room draws
+  // (player, cast, marker art, menu icon) the moment the scene mounts.
+  // SheetSprite's module image cache shares the results, so first frames
+  // render on arrival instead of popping in a beat later.
+  useEffect(() => {
+    preloadStageArt([
+      settings.playerSheet?.image,
+      ...(settings.npcs ?? []).flatMap((n) => [n.sheet?.image, n.image?.startsWith("emoji:") ? undefined : n.image]),
+      ...hotspots.flatMap((h) => [h.sheet?.image, h.image]),
+      settings.objectMenuIcon,
+    ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1662,10 +1699,15 @@ export function Stage({
           transform, exactly the old behaviour. */}
       <div
         className="absolute inset-y-0 left-0"
+        data-stage-world
         style={{
           width: "100%",
-          transform: `translateX(-${cam}%)`,
-          willChange: wide ? "transform" : undefined,
+          transform: `translateX(-${cam}%)${talkZoom > 1.001 ? ` scale(${talkZoom})` : ""}`,
+          transformOrigin:
+            talkZoom > 1.001
+              ? `${Math.min(86, Math.max(14, pos.x - cam))}% ${Math.min(82, Math.max(30, pos.y - 12))}%`
+              : undefined,
+          willChange: wide || talkZoom > 1.001 ? "transform" : undefined,
         }}
       >
         {/* the world's own background on wide worlds — spans the whole strip
@@ -1724,7 +1766,7 @@ export function Stage({
               {hs.image || sheetDrawable(hs.sheet) ? (
                 <div
                   className={`pointer-events-none absolute ${ok ? "" : "opacity-80 saturate-[0.7]"}`}
-                  style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: z }}
+                  style={{ left: `${m.x}%`, top: `${m.y}%`, width: `${hs.bounds.w}%`, maxWidth: "none", transform: "translate(-50%,-100%)", zIndex: hs.occludes ? 160 : z }}
                 >
                   {(() => {
                     const preset = presetStyle(hs.anim);
@@ -1767,7 +1809,7 @@ export function Stage({
                 data-hs-id={hs.id}
                 disabled={!active}
                 className={`stage-marker pointer-events-auto absolute ${ok ? "" : "stage-marker-locked"}${flashOn ? " stage-marker-flash" : ""}`}
-                style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: z + 1 }}
+                style={{ left: `${m.x}%`, top: `${m.y}%`, zIndex: hs.occludes ? 161 : z + 1 }}
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   if (!active) return;
@@ -1840,7 +1882,7 @@ export function Stage({
             expands to the inventory when the object accepts items. */}
         {(menu?.via === "context" || (objectMenu && !holdMode)) && menu && active ? (
           <div
-            className="pointer-events-auto absolute z-[78] -translate-x-1/2"
+            className="pointer-events-auto absolute z-[200] -translate-x-1/2"
             style={{ left: `${menu.x}%`, top: `${Math.max(8, menu.y - 8)}%`, transform: "translate(-50%,-100%)" }}
           >
             <div className="flex flex-col items-center gap-1.5 rounded border border-noir-700 bg-noir-950/92 p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.6)] backdrop-blur-sm">
@@ -1897,7 +1939,7 @@ export function Stage({
             the skull or outside to cancel. The pie never intercepts the
             pointer — the window-gesture computes hover geometrically. */}
         {holdMode && menu && active ? (
-          <div className="pointer-events-none fixed left-1/2 top-1/2 z-[95] -translate-x-1/2 -translate-y-1/2 select-none" aria-hidden>
+          <div className="pointer-events-none fixed left-1/2 top-1/2 z-[210] -translate-x-1/2 -translate-y-1/2 select-none" aria-hidden>
             <div className="relative h-[340px] w-[340px]">
               {pieRef.current.verbs.map((v, i) => {
                 const n = Math.max(1, pieRef.current.verbs.length);
@@ -2104,7 +2146,7 @@ export function Stage({
       {/* VERB COIN — bottom-left, the way a LucasArts room puts it. Pick a
           verb, then click the object; USE arms an inventory item first. */}
       {coinOn && active && !scriptOn ? (
-        <div className="pointer-events-auto absolute bottom-3 left-3 z-[76] flex flex-col items-start gap-1.5">
+        <div className="pointer-events-auto absolute bottom-3 left-3 z-[200] flex flex-col items-start gap-1.5">
           {verb === "use" && (inventory?.length ?? 0) > 0 ? (
             <div className="flex max-w-[min(70vw,640px)] flex-wrap gap-1 rounded border border-noir-700 bg-noir-950/90 p-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.5)] backdrop-blur-sm">
               <span className="self-center px-1 font-pulp text-[9px] uppercase tracking-[0.2em] text-gold/70">Use</span>

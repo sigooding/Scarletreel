@@ -213,6 +213,11 @@ export interface Hotspot {
    *  zone answers works at range. Ignored on classic (non-stage) scenes,
    *  where hotspots already fire on click. */
   remote?: boolean;
+  /** PROP OCCLUSION — stage scenes only: this marker's object art draws OVER
+   *  the walkers instead of depth-sorting under them, so a big foreground
+   *  prop (the crashed saucer) believably covers the character walking
+   *  behind it. Default false: object art sits under walkers as always. */
+  occludes?: boolean;
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release

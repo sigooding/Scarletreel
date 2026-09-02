@@ -514,6 +514,14 @@ Four player-facing conveniences, all stage-side, all opt-in-safe:
   choice lists keep their digits during conversations.
 - **N — nearest character.** With interactable NPCs in the room, N walks to
   and talks with the nearest one. No mouse, no chasing.
+- **Talk zoom.** While a conversation with a character plays, the camera
+  eases in on the walker (origin at their chest, ~1.22×) and eases back out
+  when the floor is handed back. Purely visual — input is inert during
+  conversations, so nothing about the coordinate math changes.
+- **Prop occlusion (`hotspot.occludes`).** Stage object art normally
+  depth-sorts *under* the walkers. Set `occludes: true` on a marker whose
+  art is a big foreground prop — the crashed saucer — and its art draws
+  OVER the characters, so they believably pass behind it. Default off.
 
 **Walls are honest everywhere (Rain Sector hardening).** Click-to-walk
 used to honour 🚧 barriers only when a route existed — the straight-line

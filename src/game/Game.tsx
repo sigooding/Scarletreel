@@ -6346,7 +6346,7 @@ function CasePlayer({
           everything, clicks pass straight through it. */}
       {cursor.animated && cursor.art?.sheet && pointer && !overlay ? (
         <div
-          className="pointer-events-none fixed z-[95] drop-shadow-[0_2px_6px_rgba(0,0,0,0.7)]"
+          className="pointer-events-none fixed z-[400] drop-shadow-[0_2px_6px_rgba(0,0,0,0.7)]"
           style={{ left: pointer.x - cursor.hx, top: pointer.y - cursor.hy }}
           aria-hidden
         >

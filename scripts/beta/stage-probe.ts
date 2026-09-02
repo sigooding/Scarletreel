@@ -720,6 +720,8 @@ async function parts2to4() {
     ok(await coinVerb("Talk to"), "arming the Talk to verb");
     marker("bsh_kid")!.click();
     await until("the conversation opens (markers sleep)", () => qa(".stage-marker[disabled]").length > 0, 12000);
+    // TALK ZOOM — the camera punches in on the walker while they talk…
+    await until("the camera punches in on the talk", () => (q<HTMLElement>("[data-stage-world]")?.style.transform ?? "").includes("scale(1.22)"), 4000);
     await until("the first beat plays as a subtitle", () => text().includes("KID-LINE-ONE"), 6000);
     ok(!(await coinVerb("Pick up")), "the coin rail hides while talking");
     // Space finishes a beat's typing AND advances it — press until the
@@ -738,6 +740,8 @@ async function parts2to4() {
     ok(!!stay, "the conversation's closing choice is clickable");
     stay?.click();
     await until("the conversation hands the floor back", () => qa(".stage-marker[disabled]").length === 0, 6000);
+    // …and eases back out once it's over.
+    await until("the camera eases back out after the talk", () => !(q<HTMLElement>("[data-stage-world]")?.style.transform ?? "").includes("scale(1.2"), 4000);
     const pAfter = playerPos();
     await holdKey("ArrowLeft", 300);
     const pAfter2 = playerPos();

@@ -648,6 +648,7 @@ export const SOUTH_PARK: Story = {
           bounds: { x: 142, y: 58, w: 26, h: 22 },
           cursor: "look",
           isRepeatable: true,
+          occludes: true,
           image: "assets/southpark/sp-obj-ship.png",
           action: { type: "showText", text: "A battered flying saucer, nose-down in a snowbank. The glovebox holds eleven unused portal guns and a magnet for a plumbing van that operates across dimensions." },
           verbs: {
