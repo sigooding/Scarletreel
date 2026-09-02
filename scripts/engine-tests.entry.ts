@@ -1051,9 +1051,10 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));
   check("stage: posReachesMarker misses far away", !posReachesMarker({ x: 10, y: 90 }, m, 4, 16 / 9));
 
-  // Caption hold scales with length and stays sane.
-  check("stage: a short caption holds ~3s", Math.abs(stageCaptionMs("Hi.") - 3000) < 1e-9, stageCaptionMs("Hi."));
-  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 9000 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+  // Caption hold scales with length and stays sane — and snappy (the old
+  // formula held a line for up to NINE seconds, glued over the character).
+  check("stage: a short caption holds ~2.5s", Math.abs(stageCaptionMs("Hi.") - 2500) < 1e-9, stageCaptionMs("Hi."));
+  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 5200 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
 
   // Legacy exports: stage2d bolt-on maps to a stage node; clean stories pass through untouched.
   const legacy: any = {

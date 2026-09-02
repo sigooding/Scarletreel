@@ -3,4 +3,6 @@ dist/
 dist_electron/
 .env
 scripts/.tmp-dom-smoke/
+scripts/.tmp-studio-probe/
+scripts/.tmp-caption-probe/
 scripts/.tmp-stage-beta/

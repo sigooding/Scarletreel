@@ -6313,11 +6313,14 @@ function CasePlayer({
       ) : null}
 
       {/* STAGE caption bar — showText / locked / entry lines play as a
-          subtitle over the floor instead of the centre exam card. */}
+          subtitle pinned to the TOP of the plate, well above the character:
+          the walker roams the bottom floor band, so a bottom-anchored bar
+          rendered right on top of them (and lingered for seconds) hid the
+          sprite mid-scene. */}
       {isStage && stageCaption && !overlay && (
         <div
           key={stageCaption.key}
-          className={`stage-caption pointer-events-none absolute inset-x-0 bottom-[16%] z-[74] flex justify-center px-6`}
+          className={`stage-caption pointer-events-none absolute inset-x-0 top-[13%] z-[74] flex justify-center px-6`}
           onClick={(e) => e.stopPropagation()}
         >
           <div

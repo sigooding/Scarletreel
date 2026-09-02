@@ -272,7 +272,8 @@ body,
   animation: stage-caption-in 0.3s ease-out both;
 }
 @keyframes stage-caption-in {
-  from { opacity: 0; transform: translateY(6px); }
+  /* The bar lives at the TOP of the plate now — it drops in from above. */
+  from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 

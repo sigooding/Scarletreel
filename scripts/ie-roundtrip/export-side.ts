@@ -225,6 +225,40 @@ story.map = {
   backgroundImage: await up("image", "map-bg", png("map-bg")),
   locations: [{ id: "rt-loc", label: "The Docks", targetSceneId: scene0.id, x: 50, y: 50 }],
 };
+// Story-wide presentation art (the 🎮 In-Game Theme tab): the inventory
+// container, the story-wide walker and two custom cursors. These used to be
+// MISSING from the media walk — uploaded art previews fine in the Studio but
+// arrived in the game as literal `asset:` refs and rendered nothing.
+story.inventoryDisplay = {
+  mode: "container",
+  image: await up("image", "inv-container", png("inv-container")),
+  sheet: {
+    image: await up("image", "inv-sheet", png("inv-sheet")),
+    frameWidth: 64,
+    frameHeight: 64,
+    animations: { loop: { frames: [0, 1], fps: 6 } },
+  },
+};
+story.playerSprite = {
+  image: await up("image", "walker", png("walker")),
+  sheet: {
+    image: await up("image", "walker-sheet", png("walker-sheet")),
+    frameWidth: 32,
+    frameHeight: 48,
+    animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 10 } },
+  },
+};
+story.cursorArt = {
+  look: { image: await up("image", "cursor-look", png("cursor-look")), size: 32 },
+  talk: {
+    sheet: {
+      image: await up("image", "cursor-talk-sheet", png("cursor-talk-sheet")),
+      frameWidth: 32,
+      frameHeight: 32,
+      animations: { loop: { frames: [0, 1, 2], fps: 8 } },
+    },
+  },
+};
 
 /* ------------------------------------------------------------------ */
 /*  2. compactStoryMedia: data URLs -> asset: refs (localStorage-safe) */
