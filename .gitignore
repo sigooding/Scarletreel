@@ -8,4 +8,5 @@ scripts/.tmp-caption-probe/
 scripts/.tmp-stage-beta/
 
 # South Park asset prep: raw chroma plates + job lists (scratch, regenerated)
-scripts/.tmp-sp-raw/
+scripts/.tmp-sp-*/
+scripts/.tmp-sp-patch*.py
