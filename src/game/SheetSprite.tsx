@@ -79,7 +79,12 @@ export function SheetSprite({
   const cols = sheetCols(sheet, dims.w);
   const rows = Math.max(1, Math.floor(dims.h / Math.max(1, sheet.frameHeight)));
   const elapsed = (performance.now() - startRef.current) / 1000;
-  const frame = frozen ? active.frames[0] : sheetFrameAt(active, elapsed);
+  // CLAMP the frame into the real grid: a frame index past cols*rows would
+  // background-position onto a phantom row and render nothing (the classic
+  // "character blinks out every few frames" bug on drift-trimmed sheets).
+  const maxFrame = Math.max(0, cols * rows - 1);
+  const rawFrame = frozen ? active.frames[0] : sheetFrameAt(active, elapsed);
+  const frame = Math.min(rawFrame, maxFrame);
   const { col, row } = sheetFramePos(frame, cols);
 
   const common: React.CSSProperties = {

@@ -77,7 +77,7 @@ const SP_KENNY_SHEET: SpriteSheet = {
 const SP_CARTMAN_MOODS: SpriteSheet = {
   image: "assets/southpark/sp-cartman-moods.png",
   frameWidth: 247,
-  frameHeight: 289,
+  frameHeight: 290,
   animations: {
     angry: { frames: [0, 1], fps: 1.5 },
     smug: { frames: [2] },
@@ -100,10 +100,10 @@ const talkSheet = (image: string, frameWidth: number, frameHeight: number): Spri
   },
 });
 
-const SP_STAN_TALK = talkSheet("assets/southpark/sp-stan-talk.png", 331, 440);
-const SP_KYLE_TALK = talkSheet("assets/southpark/sp-kyle-talk.png", 281, 392);
-const SP_CARTMAN_TALK = talkSheet("assets/southpark/sp-cartman-talk.png", 371, 397);
-const SP_KENNY_TALK = talkSheet("assets/southpark/sp-kenny-talk.png", 293, 371);
+const SP_STAN_TALK = talkSheet("assets/southpark/sp-stan-talk.png", 335, 441);
+const SP_KYLE_TALK = talkSheet("assets/southpark/sp-kyle-talk.png", 315, 396);
+const SP_CARTMAN_TALK = talkSheet("assets/southpark/sp-cartman-talk.png", 371, 398);
+const SP_KENNY_TALK = talkSheet("assets/southpark/sp-kenny-talk.png", 294, 371);
 
 /** Officer Barbrady — pass-2 patrol sheet + pass-3 talking sheet. */
 const SP_BARBRADY_SHEET: SpriteSheet = {

@@ -40,9 +40,18 @@ export interface SpriteSheet {
   pixelated?: boolean;
 }
 
-/** Columns in the sheet given the loaded image's natural width. */
+/** Columns in the sheet given the loaded image's natural width. Drift-
+ *  tolerant: a sheet whose width sits within 5% of a whole frame multiple
+ *  rounds UP to it (downscale pipelines can land 1-2px short per row of
+ *  frames); flooring there would drop the LAST column, whose frames then
+ *  wrap to a phantom row and render blank — characters flashing on/off
+ *  every animation cycle. Genuinely partial columns (>=5% short) still
+ *  floor, as before. */
 export function sheetCols(sheet: SpriteSheet, imageWidth: number): number {
-  return Math.max(1, Math.floor(imageWidth / Math.max(1, sheet.frameWidth)));
+  const fw = Math.max(1, sheet.frameWidth);
+  const n = imageWidth / fw;
+  const r = Math.round(n);
+  return Math.max(1, Math.abs(n - r) <= 0.05 * Math.max(1, r) ? r : Math.floor(n));
 }
 
 /** Resolve an animation by name with graceful fallbacks. */

@@ -246,15 +246,33 @@ function processSheet(name, cols, rows, opts = {}) {
   minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
   maxX = Math.min(cw - 1, maxX + pad); maxY = Math.min(ch - 1, maxY + pad);
   const fw = maxX - minX + 1, fh = maxY - minY + 1;
-  const packed = { data: new Uint8ClampedArray(fw * cols * fh * rows * 4), width: fw * cols, height: fh * rows };
+  // PER-CELL QUANTIZED PACKING — downscaling the packed STRIP rounds the
+  // sheet width independently of frame boundaries (1757 = 13.94 x 126), so
+  // sheetCols floors away the LAST column and its frames wrap to a phantom
+  // row that renders BLANK: the character flashes on/off every animation
+  // cycle. Scale each CELL to integer dims, then paste onto the exact grid.
+  const f = opts.scale ?? 0.5;
+  const fwQ = Math.max(1, Math.round(fw * f));
+  const fhQ = Math.max(1, Math.round(fh * f));
+  const packed = { data: new Uint8ClampedArray(fwQ * cols * fhQ * rows * 4), width: fwQ * cols, height: fhQ * rows };
   for (let c = 0; c < cols; c++) {
     for (let r = 0; r < rows; r++) {
+      const cellRaw = { data: new Uint8ClampedArray(fw * fh * 4), width: fw, height: fh };
       for (let y = 0; y < fh; y++) {
         for (let x = 0; x < fw; x++) {
-          const s = ((r * ch + minY + y) * W + (c * cw + minX + x)) * 4;
-          const o = ((r * fh + y) * packed.width + c * fw + x) * 4;
-          packed.data[o] = data[s]; packed.data[o + 1] = data[s + 1];
-          packed.data[o + 2] = data[s + 2]; packed.data[o + 3] = data[s + 3];
+          const sp = ((r * ch + minY + y) * W + (c * cw + minX + x)) * 4;
+          const op = (y * fw + x) * 4;
+          cellRaw.data[op] = data[sp]; cellRaw.data[op + 1] = data[sp + 1];
+          cellRaw.data[op + 2] = data[sp + 2]; cellRaw.data[op + 3] = data[sp + 3];
+        }
+      }
+      const cell = downscale(cellRaw, f);
+      for (let y = 0; y < fhQ; y++) {
+        for (let x = 0; x < fwQ; x++) {
+          const sp = (y * fwQ + x) * 4;
+          const o = ((r * fhQ + y) * packed.width + c * fwQ + x) * 4;
+          packed.data[o] = cell.data[sp]; packed.data[o + 1] = cell.data[sp + 1];
+          packed.data[o + 2] = cell.data[sp + 2]; packed.data[o + 3] = cell.data[sp + 3];
         }
       }
     }
@@ -278,9 +296,8 @@ function processSheet(name, cols, rows, opts = {}) {
     writeFileSync(path.join(OUT, name + ".png"), encodePng(fin));
     return { file: `assets/southpark/${name}.png`, width: fin.width, height: fin.height };
   }
-  const final = downscale(packed, opts.scale ?? 0.5);
-  writeFileSync(path.join(OUT, name + ".png"), encodePng(final));
-  return { file: `assets/southpark/${name}.png`, frameWidth: Math.round(fw * (opts.scale ?? 0.5)), frameHeight: Math.round(fh * (opts.scale ?? 0.5)), cols, rows };
+  writeFileSync(path.join(OUT, name + ".png"), encodePng(packed));
+  return { file: `assets/southpark/${name}.png`, frameWidth: fwQ, frameHeight: fhQ, cols, rows };
 }
 
 /** SPLIT BY GAPS — segment a raw plate into `parts` pieces at the widest
@@ -442,6 +459,15 @@ function processMerged(name, sources, opts = {}) {
       if (Math.abs(f - 1) > 0.02) cells[ci] = downscale(cells[ci], f);
     }
   }
+  // PER-CELL QUANTIZED output — same contract as processSheet: the packed
+  // strip's width must stay an exact frame multiple or the engine's cols
+  // floor drops the last column (blank frames -> flashing).
+  const fOut = opts.scale ?? 0.5;
+  cells.forEach((cell, i) => {
+    const wQ = Math.max(1, Math.round(cell.width * fOut));
+    const hQ = Math.max(1, Math.round(cell.height * fOut));
+    if (wQ !== cell.width || hQ !== cell.height) cells[i] = downscale(cell, wQ / cell.width);
+  });
   fw = Math.max(...cells.map((c) => c.width));
   fh = Math.max(...cells.map((c) => c.height));
   const total = cells.length;
@@ -458,9 +484,8 @@ function processMerged(name, sources, opts = {}) {
       }
     }
   });
-  const final = downscale(packed, opts.scale ?? 0.5);
-  writeFileSync(path.join(OUT, name + ".png"), encodePng(final));
-  return { file: `assets/southpark/${name}.png`, frameWidth: Math.round(fw * (opts.scale ?? 0.5)), frameHeight: Math.round(fh * (opts.scale ?? 0.5)), cols: total, rows: 1, merged: sources.map((x) => x.name) };
+  writeFileSync(path.join(OUT, name + ".png"), encodePng(packed));
+  return { file: `assets/southpark/${name}.png`, frameWidth: fw, frameHeight: fh, cols: total, rows: 1, merged: sources.map((x) => x.name) };
 }
 
 /** Backgrounds keep full resolution. */

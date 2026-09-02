@@ -7802,7 +7802,7 @@ function CasePlayer({
             className="hud-btn mb-3 w-full px-2 py-1.5"
             title="The pulp-paper halftone dots and grain over the art"
           >
-            📰 Pulp paper: {pulpOn ? "ON" : "OFF"}
+            Pulp paper: {pulpOn ? "ON" : "OFF"}
           </button>
 
           {musicTrack && (
