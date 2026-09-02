@@ -115,10 +115,41 @@ sprite tooling.
   creator pass and new wall-regression asserts), DOM smoke, roundtrip,
   build — all green.
 
+## Pass 2 — dressing the walking stage (art + foreground sprites)
+
+Second art pass (10 images), foreground sprite layer, exits as hotspots,
+1.7× cast. New notes:
+
+- **`HotspotState.image` exists but `imageFit` doesn't.** State art can't
+  set its fit — the hotspot-level `imageFit` isn't inherited. Harmless
+  here (contain is what I wanted anyway) but surprising.
+- **Prop sprites don't need the sheet machinery.** One-frame "sheets" from
+  `make-sprite-sheet.mjs --frames 1` key the magenta out and hand back a
+  transparent PNG that `foregroundExtras` takes directly. The 4-frame walk
+  plates (Ping, umbrella woman, the crossing pedestrian) slice clean — the
+  bridging/recovery in the slicer handled connected silhouettes (apron,
+  bubble umbrella) first try.
+- **The foreground editor layer is the cheapest set-dressing in the
+  engine**: `cinematic.foregroundExtras` on any scene — static props,
+  `anim` presets (flicker neon, drifting steam), walk-behind `occludes`,
+  and full motion paths for a pedestrian who crosses the near plane every
+  half minute. On stage scenes the occluders respect the walker's feet.
+- **Exits as hotspots** (go back the way you came): a repeatable
+  `goToScene` marker costs nothing, the validator is happy, and it
+  composes with the walk-off-screen edge (both routes work). This should
+  be the documented default for every authored transition.
+- **Cast size** is one number (`stage.playerScale`, NPCs get `scale`) —
+  clamped 0.15–4, so 1.7× was trivial.
+- Positioning art blind (no vision on generated plates) means the
+  foreground extras are placed by marker-map reasoning, not by eye —
+  expect to nudge x/y in Studio's foreground editor. The plates
+  themselves (magenta cutouts) keyed perfectly.
+
 ## Ranked wants for the Studio, from the creator's chair
 1. Per-verb gating (or a warning when a gate swallows its own key verb).
 2. A leave button on linear stage conversations.
-3. The real `AttitudeTag` list surfaced in the choice editor.
-4. Visible "typing" state on not-yet-enabled choice buttons.
-5. A Studio lint for spawns/entry-spawns inside barriers (the engine
+3. Visible "typing" state on not-yet-enabled choice buttons.
+4. A Studio lint for spawns/entry-spawns inside barriers (the engine
    rescues it now, but the rescue walk looks like a bug to players).
+5. `imageFit` (and `imageAnchor`) on multi-state art, matching the
+   hotspot-level controls.

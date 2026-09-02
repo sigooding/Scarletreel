@@ -40,6 +40,43 @@ const RS_WALK: SpriteSheet = {
   pixelated: true,
 };
 
+/** Old Ping's patrol — four frames from plates/rs-ping-walk.png. */
+const RS_PING_SHEET: SpriteSheet = {
+  image: "/assets/sprites/rs-ping-walk.png",
+  frameWidth: 100,
+  frameHeight: 190,
+  animations: {
+    idle: { frames: [0] },
+    walk: { frames: [0, 1, 2, 3], fps: 8 },
+  },
+  pixelated: true,
+};
+
+/** The umbrella woman — taller, slower cadence, from plates/rs-umbrella-walk.png. */
+const RS_UMBRELLA_SHEET: SpriteSheet = {
+  image: "/assets/sprites/rs-umbrella-walk.png",
+  frameWidth: 118,
+  frameHeight: 230,
+  animations: {
+    idle: { frames: [0] },
+    walk: { frames: [0, 1, 2, 3], fps: 7 },
+  },
+  pixelated: true,
+};
+
+/** Police spinner on a lazy sweep — the flyby cycles even at "rest":
+ *  idle is the same 4-frame loop (beacons, exhaust flicker) at half pace. */
+const RS_SPINNER_SHEET: SpriteSheet = {
+  image: "/assets/sprites/rs-spinner-fly.png",
+  frameWidth: 123,
+  frameHeight: 120,
+  animations: {
+    idle: { frames: [0, 1, 2, 3], fps: 4 },
+    walk: { frames: [0, 1, 2, 3], fps: 9 },
+  },
+  pixelated: true,
+};
+
 const walker = (
   floor: { top: number; bottom: number },
   spawn: { x: number; y: number },
@@ -48,9 +85,10 @@ const walker = (
 ) => ({
   verbCoin: true,
   sentenceLine: true,
+  // Cast at 1.7x — the lane reads better with people big enough to see.
   playerImage: "emoji:🕵️", // fallback if the sheet ever fails to load
   playerSheet: RS_WALK,
-  playerScale: 1,
+  playerScale: 1.7,
   playerNearScale: 1.15,
   playerFarScale: 0.62,
   keyboard: true,
@@ -182,6 +220,15 @@ export const RAIN_SECTOR: Story = {
       id: "rs_brief",
       title: "The Kael File",
       background: "/img/rs-brief.jpg",
+      cinematic: {
+        foregroundExtras: [
+          {
+            // The desk the file sits on — pushed into the player's lap.
+            image: "/assets/sprites/rs-fg-desk.png",
+            x: 50, y: 98, scale: 1.05, depth: 0.9,
+          },
+        ],
+      },
       ambientAudio: "rain",
       prose:
         "Captain Ostrander's office, ninety floors over the rain. The file on his desk is thin the way files are thin when a corporation wants a thing done quietly. IRIS KAEL. VEIL-6 medical adjunct. Alleged: the retirement of her handler on the annex's loading level. He slides it across with two fingers, like it might bite.",
@@ -238,7 +285,9 @@ export const RAIN_SECTOR: Story = {
         npcs: [
           {
             id: "rs_npc_ping",
-            image: "emoji:🧑‍🍳",
+            image: "emoji:🧑‍🍳", // fallback
+            sheet: RS_PING_SHEET,
+            scale: 1.7,
             x: 14,
             y: 88,
             speed: 12,
@@ -250,7 +299,9 @@ export const RAIN_SECTOR: Story = {
           },
           {
             id: "rs_npc_umbrella",
-            image: "emoji:🌂",
+            image: "emoji:🌂", // fallback
+            sheet: RS_UMBRELLA_SHEET,
+            scale: 1.7,
             x: 62,
             y: 78,
             speed: 9,
@@ -259,12 +310,87 @@ export const RAIN_SECTOR: Story = {
               { x: 58, y: 84, pause: 1.5 },
             ],
           },
+          {
+            // SET DRESSING with a searchlight attitude: a police spinner
+            // sweeping the skyline above the billboards. No talk link — it
+            // is very far away and very uninterested in the street.
+            id: "rs_npc_spinner",
+            sheet: RS_SPINNER_SHEET,
+            x: 4,
+            y: 14,
+            scale: 0.85,
+            speed: 14,
+            patrol: [
+              { x: 104, y: 11, scale: 0.6 },
+              { x: 2, y: 17, scale: 0.9 },
+            ],
+            patrolMode: "pingpong",
+          },
         ],
         entrySpawns: {
           rs_alley: { x: 88, y: 90 },
         },
         enterCaption:
           "Kowloon Lane. Rain like static on a dead channel. Steam off Ping's woks, neon off everything else. Somewhere above the billboards, a spinner's searchlight drags the sky.",
+      },
+      cinematic: {
+        foregroundExtras: [
+          // FOREGROUND SPRITES (Studio's foreground editor layer) — the
+          // street dresses itself: weather, signage, life.
+          {
+            // Laundry strung between the blocks, high and out of the way.
+            image: "/assets/sprites/rs-fg-laundry.png",
+            x: 24, y: 8, scale: 0.9, depth: 0.3,
+            anim: { preset: "sway", intensity: 0.5 },
+          },
+          {
+            // A flickering blade sign over the middle of the lane.
+            image: "/assets/sprites/rs-fg-neon.png",
+            x: 47, y: 30, scale: 0.7, depth: 0.35,
+            anim: { preset: "flicker", intensity: 0.8 },
+          },
+          {
+            // Two strangers sharing an umbrella, mid-distance.
+            image: "/assets/sprites/rs-fg-crowd.png",
+            x: 58, y: 66, scale: 0.5, depth: 0.55,
+            occludes: true,
+          },
+          {
+            // Curb steam vent, amber-lit.
+            image: "/assets/sprites/rs-fg-vent.png",
+            x: 78, y: 82, scale: 0.5, depth: 0.6,
+            anim: { preset: "drift", intensity: 0.7 },
+            occludes: true,
+          },
+          {
+            // The lane's real supervisor.
+            image: "/assets/sprites/rs-fg-cat.png",
+            x: 4, y: 68, scale: 0.42, depth: 0.62,
+            anim: { preset: "breathe", intensity: 0.4, speed: 0.7 },
+          },
+          {
+            // A passerby crossing the NEAR plane — walks the bottom of the
+            // plate on a slow loop, facing the way they travel.
+            image: "/assets/sprites/rs-fg-pedestrian.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-pedestrian.png",
+              frameWidth: 118,
+              frameHeight: 230,
+              animations: { loop: { frames: [0, 1, 2, 3], fps: 6 } },
+              pixelated: true,
+            },
+            x: -15, y: 97, scale: 1.3, depth: 0.95,
+            motion: {
+              points: [
+                { x: -15, y: 97 },
+                { x: 115, y: 97 },
+              ],
+              duration: 28,
+              faceTravel: true,
+              holdSeconds: 6,
+            },
+          },
+        ],
       },
       hotspots: [
         {
@@ -303,6 +429,7 @@ export const RAIN_SECTOR: Story = {
               id: "st_vend_tray",
               when: { requiresFlags: ["rs_key_dropped"] },
               label: "the key card in the tray",
+              image: "/assets/sprites/rs-vend-tray.png",
               cursor: "take",
               action: { type: "giveItem", itemGranted: "rs_keycard" },
             },
@@ -397,6 +524,21 @@ export const RAIN_SECTOR: Story = {
         enterCaption:
           "Behind the lane. Steam off the vents, rust off the lockers, rain off everything. The stair gate stands in its chain-link like a verdict.",
       },
+      cinematic: {
+        foregroundExtras: [
+          {
+            // Wet crates boxing in the service entrance.
+            image: "/assets/sprites/rs-fg-crates.png",
+            x: 34, y: 78, scale: 0.8, depth: 0.6,
+            occludes: true,
+          },
+          {
+            // A downspout down the right wall, above the stair gate.
+            image: "/assets/sprites/rs-fg-pipe.png",
+            x: 98, y: 42, scale: 0.8, depth: 0.35,
+          },
+        ],
+      },
       hotspots: [
         {
           id: "rsh_reader",
@@ -444,6 +586,21 @@ export const RAIN_SECTOR: Story = {
           action: { type: "giveItem", itemGranted: "rs_tin" },
         },
         {
+          // ENTRANCE AS HOTSPOT — the way you came in, clickable. The left
+          // walk-off-screen edge also works, but a labeled marker means you
+          // can always find the way back.
+          id: "rsh_mouth",
+          label: "the mouth of the alley",
+          bounds: { x: 2, y: 52, w: 8, h: 42 },
+          cursor: "go",
+          isRepeatable: true,
+          action: {
+            type: "goToScene",
+            targetSceneId: "rs_street",
+            text: "You duck back under the chain-link and into the noise of the lane.",
+          },
+        },
+        {
           id: "rsh_stairs",
           label: "the stair gate",
           bounds: { x: 78, y: 58, w: 10, h: 32 },
@@ -464,8 +621,35 @@ export const RAIN_SECTOR: Story = {
       title: "The K-Wesson Test",
       background: "/img/rs-room.jpg",
       ambientAudio: "tension",
+      cinematic: {
+        foregroundExtras: [
+          {
+            // The machine between you and her, close enough to hear.
+            image: "/assets/sprites/rs-fg-kampff.png",
+            x: 78, y: 88, scale: 0.85, depth: 0.85,
+            anim: { preset: "pulse", intensity: 0.25, speed: 0.6 },
+          },
+        ],
+      },
       prose:
         "Top of the stairs, a back room over the noodle steam: two chairs, one cone of white light, a window doing its best to hold the neon out. Iris Kael sits like the word 'composed' was assigned to her at manufacture. You set the K-Wesson between you. Its paper strip waits to draw the shape of her answers.",
+      hotspots: [
+        {
+          // EXIT AS HOTSPOT — the stairs you came up. Open until the test
+          // concludes (rs_caught); after that the endings carry you off.
+          id: "rsh_down",
+          label: "back down the stairs",
+          bounds: { x: 4, y: 58, w: 14, h: 36 },
+          cursor: "go",
+          isRepeatable: true,
+          gating: { excludesFlags: ["rs_caught"] },
+          action: {
+            type: "goToScene",
+            targetSceneId: "rs_alley",
+            text: "You leave the cone of light and the composed woman in it. The stairs take you back down into the steam.",
+          },
+        },
+      ],
       dialogueBeats: [
         {
           id: "rsr_1",
@@ -539,7 +723,6 @@ export const RAIN_SECTOR: Story = {
           attitudeTag: "Neutral",
         },
       ],
-      hotspots: [],
     },
 
     /* ───────────────────────────── ENDINGS ────────────────────────── */
@@ -547,7 +730,7 @@ export const RAIN_SECTOR: Story = {
       id: "rs_end_free",
       title: "Flat Line, Open Sky",
       isEnding: true,
-      background: "/img/rs-cover.jpg",
+      background: "/img/rs-end-free.jpg",
       prose:
         "The freighter lifts at 04:40 with the rain going sideways and one passenger unlisted, and Iris Kael rides it out of the sector wearing a coat you never saw. Your report says TEST INCONCLUSIVE — SUBJECT AT LARGE, which is eleven words away from a lie. Ostrander reads it twice and puts it in the drawer where the department keeps its quiet. The K-Wesson said flat. The photograph said 02:14. Somewhere over the pacific the two of them are still arguing, and you have stopped being the judge. The rain keeps falling. You let it.",
       endingData: {
@@ -563,7 +746,7 @@ export const RAIN_SECTOR: Story = {
       id: "rs_end_retire",
       title: "Clean Paper, Dirty Rain",
       isEnding: true,
-      background: "/img/rs-room.jpg",
+      background: "/img/rs-end-retire.jpg",
       prose:
         "The paper says CONFIRMED. The spinner takes her at 05:00 without its running lights, the way the division prefers. Ostrander shakes your hand with all four fingers of his and Echelon's annex gets its quiet by Friday. On the way down Kowloon Lane, Ping's woks are steaming for the morning shift and he doesn't look up when you pass. The test came back flat and you filed it rogue, and the rain — which has been filing reports on this city since before either of you were manufactured — says nothing at all.",
       endingData: {
