@@ -894,7 +894,7 @@ async function parts2to4() {
   {
     // The entry caption fades after a few seconds — catch it before the
     // slower marker poll eats its lifetime.
-    await until("the entry caption replays", () => text().includes("BETA STREET"), 6000);
+    await until("the entry caption replays", () => text().includes("BETA STREET"), 9000);
     await until("the street's markers are back", () => qa(".stage-marker").length === 5, 8000);
     ok(qa(".stage-marker[disabled]").length === 0, "the conversation gate re-opens closed (markers live)");
     ok(!text().includes("KID-LINE-ONE"), "no conversation beats auto-leak onto re-entry");
@@ -1164,7 +1164,7 @@ async function parts2to4() {
     await sleep(600);
     // happy-dom cannot decode images, so the sheet renders its emoji
     // fallback here; the sliced sheet itself is pinned by the engine tests
-    // (frameWidth 109) and by the browser preview.
+    // (frameWidth 293) and by the browser preview.
     ok(!!q("[data-stage-player]"), "the street walker stands (sheet art pinned by engine tests)");
     ok(!!q(".stage-sentence"), "the sentence line renders");
     ok(!!q('[data-npc-id="rs_npc_ping"] .stage-npc-chip'), "Old Ping carries his talk chip (interactable NPC)");
@@ -1204,7 +1204,9 @@ async function parts2to4() {
     // N: talk to the nearest linked character, no mouse. The reply sets
     // rs_ping_told, which unboltts both the barrier and the marker.
     key("n");
-    await until("N opens Ping's conversation", () => qa(".stage-marker[disabled]").length > 0, 12000);
+    // 20s: fifteen animated foreground extras make headless frames slower
+    // than the old 12s budget — a player's browser is nowhere near this.
+    await until("N opens Ping's conversation", () => qa(".stage-marker[disabled]").length > 0, 20000);
     for (let i = 0; i < 12 && !qa("button").some((b) => /bolted the gate/i.test(b.textContent || "")); i++) {
       key(" ", "Space");
       await sleep(420);

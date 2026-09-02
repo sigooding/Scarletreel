@@ -145,6 +145,31 @@ Second art pass (10 images), foreground sprite layer, exits as hotspots,
   expect to nudge x/y in Studio's foreground editor. The plates
   themselves (magenta cutouts) keyed perfectly.
 
+## Pass 3 — everything moves (final art pass)
+
+- **Animated props need either a preset or real frames.** Transform
+  presets (bob/shake/flicker) dress a static prop for free; the things
+  that READ as alive (steam billowing, ripples, electric arcs, a
+  spinning fan, a scurrying rat) need multi-frame plates and an
+  `animations.loop` sheet on the extra. Both work on the same
+  `foregroundExtras` entry; a motion path rides on top for crossings
+  (the rat, and a one-shot "ghost" of the suspect who crosses the alley
+  once a minute and dissolves — `loop:"once", fadeTo:0`).
+- **Keying strength vs. art**: re-keyed every sprite at tolerance 130 /
+  softness 18 (was 90/12) — the magenta fringing reported around soft
+  edges went with it. Thin bright art (rain streaks) still survives the
+  stronger key; very faint semi-transparent art would not.
+- **High-res reprocessing is free**: the plates are ~1400×700, so the
+  first pass's 190–230px frames were my downscale, not the model's.
+  Re-slicing at 85–95% of source (walker 293×560, props up to 1300×700)
+  cost no image budget — only the sheet `frameWidth/Height` numbers
+  (and the engine test that pins them) changed.
+- **Headless load is a test-budget problem, not an engine one.** Fifteen
+  animated extras slow happy-dom's rAF enough to blow a 12s walk
+  timeout intermittently — the fix was budget (20s), not code. Worth
+  remembering when a suite grows: flakes clustered around *new
+  animation* are usually frame-budget flakes.
+
 ## Ranked wants for the Studio, from the creator's chair
 1. Per-verb gating (or a warning when a gate swallows its own key verb).
 2. A leave button on linear stage conversations.

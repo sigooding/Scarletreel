@@ -31,8 +31,8 @@ import type { SpriteSheet } from "../game/spriteSheet";
  *  (plates/rs-mara-walk.png → public/assets/sprites/rs-mara-walk.png). */
 const RS_WALK: SpriteSheet = {
   image: "/assets/sprites/rs-mara-walk.png",
-  frameWidth: 109,
-  frameHeight: 208,
+  frameWidth: 293,
+  frameHeight: 560,
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3], fps: 8 },
@@ -43,8 +43,8 @@ const RS_WALK: SpriteSheet = {
 /** Old Ping's patrol — four frames from plates/rs-ping-walk.png. */
 const RS_PING_SHEET: SpriteSheet = {
   image: "/assets/sprites/rs-ping-walk.png",
-  frameWidth: 100,
-  frameHeight: 190,
+  frameWidth: 285,
+  frameHeight: 540,
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3], fps: 8 },
@@ -55,8 +55,8 @@ const RS_PING_SHEET: SpriteSheet = {
 /** The umbrella woman — taller, slower cadence, from plates/rs-umbrella-walk.png. */
 const RS_UMBRELLA_SHEET: SpriteSheet = {
   image: "/assets/sprites/rs-umbrella-walk.png",
-  frameWidth: 118,
-  frameHeight: 230,
+  frameWidth: 321,
+  frameHeight: 600,
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3], fps: 7 },
@@ -68,8 +68,8 @@ const RS_UMBRELLA_SHEET: SpriteSheet = {
  *  idle is the same 4-frame loop (beacons, exhaust flicker) at half pace. */
 const RS_SPINNER_SHEET: SpriteSheet = {
   image: "/assets/sprites/rs-spinner-fly.png",
-  frameWidth: 123,
-  frameHeight: 120,
+  frameWidth: 306,
+  frameHeight: 300,
   animations: {
     idle: { frames: [0, 1, 2, 3], fps: 4 },
     walk: { frames: [0, 1, 2, 3], fps: 9 },
@@ -223,9 +223,11 @@ export const RAIN_SECTOR: Story = {
       cinematic: {
         foregroundExtras: [
           {
-            // The desk the file sits on — pushed into the player's lap.
+            // The desk the file sits on — pushed into the player's lap,
+            // the lamp's glow unsteady.
             image: "/assets/sprites/rs-fg-desk.png",
             x: 50, y: 98, scale: 1.05, depth: 0.9,
+            anim: { preset: "flicker", intensity: 0.25, speed: 0.5 },
           },
         ],
       },
@@ -353,6 +355,7 @@ export const RAIN_SECTOR: Story = {
             // Two strangers sharing an umbrella, mid-distance.
             image: "/assets/sprites/rs-fg-crowd.png",
             x: 58, y: 66, scale: 0.5, depth: 0.55,
+            anim: { preset: "bob", intensity: 0.5, speed: 0.7 },
             occludes: true,
           },
           {
@@ -369,13 +372,88 @@ export const RAIN_SECTOR: Story = {
             anim: { preset: "breathe", intensity: 0.4, speed: 0.7 },
           },
           {
+            // Wok steam over Ping's stall — three real billow phases.
+            image: "/assets/sprites/rs-fg-steam-wok.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-steam-wok.png",
+              frameWidth: 516,
+              frameHeight: 600,
+              animations: { loop: { frames: [0, 1, 2], fps: 3 } },
+              pixelated: true,
+            },
+            x: 14, y: 44, scale: 0.8, depth: 0.4,
+          },
+          {
+            // A puddle working through its ripple rings where the awning drips.
+            image: "/assets/sprites/rs-fg-puddle.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-puddle.png",
+              frameWidth: 704,
+              frameHeight: 560,
+              animations: { loop: { frames: [0, 1, 2], fps: 2.5 } },
+              pixelated: true,
+            },
+            x: 40, y: 95, scale: 0.85, depth: 0.7,
+          },
+          {
+            // The hologram ad above the billboards, glitching through her
+            // broadcast — solid, banded, half-faded, forever.
+            image: "/assets/sprites/rs-fg-hologram.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-hologram.png",
+              frameWidth: 277,
+              frameHeight: 600,
+              animations: { loop: { frames: [0, 1, 2], fps: 4 } },
+              pixelated: true,
+            },
+            x: 88, y: 12, scale: 0.38, depth: 0.3,
+          },
+          {
+            // Two splash bursts where the rain hits hard — same sheet, two
+            // placements, out of phase via the anim delay.
+            image: "/assets/sprites/rs-fg-splash.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-splash.png",
+              frameWidth: 628,
+              frameHeight: 380,
+              animations: { loop: { frames: [0, 1, 2], fps: 5 } },
+              pixelated: true,
+            },
+            x: 64, y: 93, scale: 0.3, depth: 0.85,
+          },
+          {
+            image: "/assets/sprites/rs-fg-splash.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-splash.png",
+              frameWidth: 628,
+              frameHeight: 380,
+              animations: { loop: { frames: [2, 0, 1], fps: 4 } },
+              pixelated: true,
+            },
+            x: 90, y: 96, scale: 0.26, depth: 0.8,
+          },
+          {
+            // The rain itself — a two-phase streak field laid over the
+            // whole plate, flickering between passes.
+            image: "/assets/sprites/rs-fg-rain.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-rain.png",
+              frameWidth: 685,
+              frameHeight: 700,
+              animations: { loop: { frames: [0, 1], fps: 6 } },
+              pixelated: true,
+            },
+            fit: "cover",
+            x: 50, y: 50, scale: 1.05, depth: 0.97,
+          },
+          {
             // A passerby crossing the NEAR plane — walks the bottom of the
             // plate on a slow loop, facing the way they travel.
             image: "/assets/sprites/rs-fg-pedestrian.png",
             sheet: {
               image: "/assets/sprites/rs-fg-pedestrian.png",
-              frameWidth: 118,
-              frameHeight: 230,
+              frameWidth: 307,
+              frameHeight: 600,
               animations: { loop: { frames: [0, 1, 2, 3], fps: 6 } },
               pixelated: true,
             },
@@ -527,15 +605,101 @@ export const RAIN_SECTOR: Story = {
       cinematic: {
         foregroundExtras: [
           {
-            // Wet crates boxing in the service entrance.
+            // Wet crates boxing in the service entrance — the rain
+            // drums on them (a barely-there rattle).
             image: "/assets/sprites/rs-fg-crates.png",
             x: 34, y: 78, scale: 0.8, depth: 0.6,
+            anim: { preset: "shake", intensity: 0.15, speed: 0.35 },
             occludes: true,
           },
           {
-            // A downspout down the right wall, above the stair gate.
+            // A downspout down the right wall, above the stair gate —
+            // wind rattles it, faintly.
             image: "/assets/sprites/rs-fg-pipe.png",
             x: 98, y: 42, scale: 0.8, depth: 0.35,
+            anim: { preset: "shake", intensity: 0.1, speed: 0.25 },
+          },
+          {
+            // …and the joint DRIPS, on a three-frame loop.
+            image: "/assets/sprites/rs-fg-drip.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-drip.png",
+              frameWidth: 494,
+              frameHeight: 400,
+              animations: { loop: { frames: [0, 1, 2], fps: 3 } },
+              pixelated: true,
+            },
+            x: 96, y: 64, scale: 0.4, depth: 0.5,
+          },
+          {
+            // A transformer that crackles when it feels like it.
+            image: "/assets/sprites/rs-fg-transformer.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-transformer.png",
+              frameWidth: 404,
+              frameHeight: 520,
+              animations: { loop: { frames: [0, 0, 1, 0, 2], fps: 6 } },
+              pixelated: true,
+            },
+            x: 9, y: 38, scale: 0.42, depth: 0.4,
+          },
+          {
+            // A wall fan spinning behind its grille.
+            image: "/assets/sprites/rs-fg-fan.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-fan.png",
+              frameWidth: 503,
+              frameHeight: 520,
+              animations: { loop: { frames: [0, 1, 2], fps: 8 } },
+              pixelated: true,
+            },
+            x: 45, y: 34, scale: 0.36, depth: 0.35,
+          },
+          {
+            // The rat. There is always a rat.
+            image: "/assets/sprites/rs-fg-rat.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-rat.png",
+              frameWidth: 746,
+              frameHeight: 300,
+              animations: { loop: { frames: [0, 1, 2, 3], fps: 12 } },
+              pixelated: true,
+            },
+            x: 64, y: 92, scale: 0.35, depth: 0.75,
+            motion: {
+              points: [
+                { x: 64, y: 92 },
+                { x: 4, y: 95 },
+              ],
+              duration: 7,
+              faceTravel: true,
+              holdSeconds: 14,
+            },
+          },
+          {
+            // THE GHOST BEAT: a woman in a pale coat crosses the far end of
+            // the alley exactly once a minute, and dissolves before the
+            // stairs. You are meant to doubt her.
+            image: "/assets/sprites/rs-fg-iris.png",
+            sheet: {
+              image: "/assets/sprites/rs-fg-iris.png",
+              frameWidth: 433,
+              frameHeight: 580,
+              animations: { loop: { frames: [0, 1, 2, 3], fps: 10 } },
+              pixelated: true,
+            },
+            x: 62, y: 68, scale: 0.5, depth: 0.5,
+            motion: {
+              points: [
+                { x: 62, y: 68 },
+                { x: 94, y: 64 },
+              ],
+              duration: 3.4,
+              loop: "once",
+              fadeTo: 0,
+              faceTravel: true,
+              delay: 50,
+            },
           },
         ],
       },
