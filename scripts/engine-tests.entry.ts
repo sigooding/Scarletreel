@@ -2967,11 +2967,11 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     ["stan", SOUTH_PARK.playerSprite!.sheet!],
     ["cartman walk", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
     ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
-    ["kenny walk", SOUTH_PARK.scenes[4].stage!.npcs![0].sheet!],
+    ["kenny walk", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
     ["barbrady walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
     ["tweek walk", SOUTH_PARK.scenes[3].stage!.npcs![1].sheet!],
     ["barbrady talk", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")!.talkingSheet!],
-    ["cartman moods", SOUTH_PARK.scenes[4].hotspots![0].sheet!],
+    ["cartman moods", SOUTH_PARK.scenes[5].hotspots![0].sheet!],
   ];
   for (const [label, sheet] of spSheets) {
     check("south park: " + label + " sheet exists on disk", existsSync(path.join(spRoot, sheet.image)), sheet.image);
@@ -3002,11 +3002,11 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("south park: the pond edge opens only with the sled", spPondEdge?.gating?.requiresFlags?.[0] === "sp_got_sled");
 
   // The pond cutscene walks Kenny onto the ice and speaks the two lines.
-  const spEnter = SOUTH_PARK.scenes[4].stage!.enterScript ?? [];
+  const spEnter = SOUTH_PARK.scenes[5].stage!.enterScript ?? [];
   check("south park: the pond cutscene has the Kenny gag", spEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_kenny_npc") && spEnter.some((st) => st.do === "say" && /killed Kenny/.test(st.text)), spEnter.map((st) => st.do).join(","));
 
   // The finale branches into two distinct ending cards.
-  const spChoices = SOUTH_PARK.scenes[4].choices ?? [];
+  const spChoices = SOUTH_PARK.scenes[5].choices ?? [];
   check("south park: the confrontation offers two endings", spChoices.length === 2 && new Set(spChoices.map((c) => c.targetSceneId)).size === 2, spChoices.map((c) => c.targetSceneId).join(","));
   const spEndings = SOUTH_PARK.scenes.filter((sc) => sc.isEnding);
   check("south park: both endings carry ending cards", spEndings.length === 2 && spEndings.every((sc) => !!sc.endingData && sc.choices.length === 0));
@@ -3028,7 +3028,7 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     ["stan", SOUTH_PARK.playerSprite!.sheet!],
     ["kyle", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
     ["cartman", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
-    ["kenny", SOUTH_PARK.scenes[4].stage!.npcs![0].sheet!],
+    ["kenny", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
   ] as const) {
     check("south park: " + who + " walks away from camera (walk-up)", !!sheet.animations["walk-up"] && sheet.animations["walk-up"].frames.length === 6, sheet.image);
   }
@@ -3049,6 +3049,21 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("south park: the verb-wheel snowflake exists", !!SOUTH_PARK.verbMenuIcon && existsSync(path.join(spRoot, SOUTH_PARK.verbMenuIcon)), SOUTH_PARK.verbMenuIcon);
   check("south park: object-first verb menus are on", SOUTH_PARK.scenes[0].stage!.objectVerbMenu === true);
   check("south park: barbrady talks with his own sheet", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")?.talkingSheet?.animations.talk != null);
+
+  // The wrong-cartoon cameo: a wide reel, the gag cutscene, the portal loop.
+  const spCrash = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_crash")!;
+  check("south park: the cameo is THE wide reel (worldWidth 200)", spCrash.nodeType === "stage" && spCrash.stage!.worldWidth === 200, spCrash.stage!.worldWidth);
+  const spCrashEnter = spCrash.stage!.enterScript ?? [];
+  check("south park: the cameo cutscene says the line", spCrashEnter.some((st) => st.do === "say" && /wrong CARTOON/.test(st.text)) && spCrashEnter.some((st) => st.do === "say" && /Wrong scene\. Wrong cartoon\. Bye/.test(st.text)), spCrashEnter.map((st) => st.do).join(","));
+  check("south park: the cameo walks both visitors on cue", spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_rick_cameo") && spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_morty_cameo"));
+  for (const [who, npcId] of [["rick", "sp_rick_cameo"], ["morty", "sp_morty_cameo"]] as const) {
+    const npc = spCrash.stage!.npcs!.find((n) => n.id === npcId)!;
+    check("south park: " + who + " sheet exists and is well-formed", existsSync(path.join(spRoot, npc.sheet!.image)) && spriteSheetIssues(npc.sheet!, who).length === 0, npc.sheet!.image);
+  }
+  check("south park: cameo characters stay stage-only (no cutouts)", SOUTH_PARK.characters.filter((c) => ["sp_rick", "sp_morty"].includes(c.id)).every((c) => !c.talkingSheet));
+  const spPortal = spCrash.hotspots!.find((h) => h.id === "sp_crash_portal")!;
+  check("south park: the portal opens after the talk and loops home", spPortal.gating?.requiresFlags?.[0] === "sp_cameo_talked" && spPortal.action.targetSceneId === "sp_cafe");
+  check("south park: the cafe's right edge leads to the crash", SOUTH_PARK.scenes[3].stage!.exitEdges?.right?.targetSceneId === "sp_crash");
 }
 
 /* ================================================================== */
