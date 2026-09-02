@@ -40,6 +40,7 @@ The full gate, run after every pass:
 | Stage beta (`scripts/beta/stage-harness.mjs`, `--max-old-space-size=4096`) | **150 passed / 0 failed** — run twice consecutively on the final build; Part 6 is a full creator playthrough of this case (kick→take→gate→refusal→edge-walk→N-talk→both replies→gate→stairs→lie→endings) |
 | DOM smoke (`scripts/dom-smoke.mjs`) | PASSED (7 stories incl. the Corville regression trap) |
 | Import/export roundtrip | PASSED |
+| `node scripts/preflight.mjs` | PASSED on the 2026-09-02 double-check (see §7) |
 | `vite build` | 2.58 MB single-file / 690 KB gzip |
 
 ## 3. Bugs & traps found while building (the actual beta findings)
@@ -114,3 +115,30 @@ node scripts/dom-smoke.mjs && node scripts/ie-roundtrip/run.mjs && npm run build
 In the app: newsstand → **Rain Sector — The Kael File**. Walking rooms:
 arrows/WASD or click, H reveals markers, N talks to the nearest character,
 1–9 pick coin verbs, double-click jogs.
+
+---
+
+## 7. Double-check pass (2026-09-02) — preflight fixed, spinner clamped
+
+Re-audit of the merged beta results found one real gap and one off-plate NPC,
+both now fixed.
+
+1. **`node scripts/preflight.mjs` was failing on this story.** `no ending
+   reachable (stuck at rs_street)` — the deep-walker never got past Kowloon
+   Lane. Root cause: the preflight walker simulated only top-level hotspot
+   actions (giveItem / setFlag / meter on `h.action`), so it never KICKED the
+   vending machine (an extended-verb effect), never took the card from the
+   multi-state tray, never answered Ping's linear conversation, and treated
+   the repeatable alley door as a one-shot — so the `rs_keycard` gate could
+   never open. **Fixed in `scripts/preflight.mjs`:** the walker now also
+   applies verb-coin effects and multi-state object actions in its scenery
+   fixpoint, lands in-place conversation replies before walking out, and
+   treats repeatable room exits as re-crossable while preferring an exit into
+   an unvisited scene (so "up the stairs" beats "back to the street" when
+   both are open). `npm run preflight` now passes all 30 stories.
+2. **Validator warning: `rs_npc_spinner` patrol stop 1 at (104, 11) — off
+   the plate.** Kowloon Lane is a 100%-wide room (`worldWidth` unset), so the
+   spinner's right-hand waypoint was outside every coordinate the camera can
+   show. **Fixed in `src/data/rainSector.ts`:** the stop is now (98, 11) —
+   it still sweeps the full skyline and ping-pongs back, but stays on-plate.
+   This story is now validator-clean (0 warnings) as well as playable.

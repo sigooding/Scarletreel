@@ -323,7 +323,7 @@ export const RAIN_SECTOR: Story = {
             scale: 0.85,
             speed: 14,
             patrol: [
-              { x: 104, y: 11, scale: 0.6 },
+              { x: 98, y: 11, scale: 0.6 },
               { x: 2, y: 17, scale: 0.9 },
             ],
             patrolMode: "pingpong",
