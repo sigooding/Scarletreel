@@ -413,6 +413,7 @@ export function Stage({
   scriptRequest,
   enterScript,
   onScriptEffect,
+  onScriptStep,
   activeObstacles,
 }: {
   settings: StageSettings;
@@ -458,8 +459,9 @@ export function Stage({
   /** Fired when a one-shot pose's loop completes — Game clears the pose. */
   onPoseEnd?: () => void;
   /** SCRIPTED SEQUENCE ordered by a hotspot (`runScript` action): play these
-   *  steps now. `key` dedupes — same request object, run once. */
-  scriptRequest?: { steps: StageScriptStep[]; key: number } | null;
+   *  steps now. `key` dedupes — same request object, run once. `coverageTag`
+   *  (a hotspot id) lets playtest coverage attribute the steps that ran. */
+  scriptRequest?: { steps: StageScriptStep[]; key: number; coverageTag?: string } | null;
   /** SCRIPTED SEQUENCE played once when the scene mounts (the SCUMM
    *  room-entry script). Game handles the run-once flag latch. */
   enterScript?: StageScriptStep[];
@@ -471,6 +473,10 @@ export function Stage({
       | { type: "goToScene"; targetSceneId: string }
       | { type: "pose"; pose?: string },
   ) => void;
+  /** Playtest coverage: one cutscene STEP actually started running. `tag`
+   *  is the hotspot id (or "enter" for the room-entry script); Game turns
+   *  it into the stored coverage key. */
+  onScriptStep?: (info: { tag: string; index: number; total: number }) => void;
   /** DOORS — the barriers that are SOLID right now, resolved against world
    *  state by Game (a gated barrier blocks only while its gate is shut).
    *  Defaults to the scene's full list (ungated = always solid). */
@@ -1067,6 +1073,9 @@ export function Stage({
   }, []);
   const scriptEffectRef = useRef(onScriptEffect);
   scriptEffectRef.current = onScriptEffect;
+  /** Coverage tap — Game records that this step genuinely started running. */
+  const scriptStepRef = useRef(onScriptStep);
+  scriptStepRef.current = onScriptStep;
   /** False once unmounted — a running script checks it between steps. */
   const scriptAliveRef = useRef(true);
   useEffect(() => {
@@ -1110,8 +1119,9 @@ export function Stage({
     });
 
   /** Play a script. Locks input, drops the letterbox, runs steps in order,
-   *  then releases everything (even on a mid-script scene exit). */
-  const runScript = async (steps: StageScriptStep[]) => {
+   *  then releases everything (even on a mid-script scene exit). `tag`
+   *  attributes the run for playtest coverage ("enter" or a hotspot id). */
+  const runScript = async (steps: StageScriptStep[], tag = "enter") => {
     if (scriptOnRef.current || !steps.length) return;
     scriptOnRef.current = true;
     setScriptOn(true);
@@ -1121,8 +1131,9 @@ export function Stage({
     setMenu(null);
     setMenuUse(null);
     try {
-      for (const step of steps) {
+      for (const [index, step] of steps.entries()) {
         if (!scriptAliveRef.current) return;
+        scriptStepRef.current?.({ tag, index, total: steps.length });
         switch (step.do) {
           case "walkTo":
             await scriptWalkPlayer(step.x, step.y);
@@ -1183,7 +1194,7 @@ export function Stage({
   useEffect(() => {
     if (!scriptRequest || scriptRequest.key === scriptKeyRef.current) return;
     scriptKeyRef.current = scriptRequest.key;
-    void runScript(scriptRequest.steps);
+    void runScript(scriptRequest.steps, scriptRequest.coverageTag ?? "enter");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scriptRequest?.key]);
 
@@ -1199,7 +1210,7 @@ export function Stage({
     const t = window.setTimeout(() => {
       if (enterRanRef.current) return;
       enterRanRef.current = true;
-      void runScript(enterScript);
+      void runScript(enterScript, "enter");
     }, 450);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

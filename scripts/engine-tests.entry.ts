@@ -106,7 +106,7 @@ import {
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
-import { coveragePercent, coverageReport, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { coveragePercent, coverageReport, cutsceneStepKey, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
 import { openaiGenerationBody, openaiSizesForModel } from "../src/data/aiImages";
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
@@ -2887,6 +2887,62 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("coverage: percent of a covered story is 100", coveragePercent(3, 3) === 100);
   check("coverage: percent is rounded", coveragePercent(1, 3) === 33, coveragePercent(1, 3));
   check("coverage: an empty story is 0, not NaN", coveragePercent(0, 0) === 0);
+}
+
+/* ================================================================== */
+/*  Playtest coverage v2 — stage markers + cutscene steps              */
+/* ================================================================== */
+{
+  const stageStory: Story = {
+    id: "cov-stage",
+    title: "Stage coverage",
+    tagline: "",
+    startSceneId: "s1",
+    characters: [],
+    items: [],
+    scenes: [
+      {
+        id: "s1",
+        title: "Dock",
+        background: "/img/d.jpg",
+        nodeType: "stage",
+        dialogueBeats: [],
+        choices: [],
+        hotspots: [
+          { id: "h1", label: "Crate", bounds: { x: 10, y: 40, w: 20, h: 20 }, action: { type: "showText", text: "A crate." } },
+          { id: "h2", label: "Lever", bounds: { x: 40, y: 40, w: 20, h: 20 }, action: { type: "runScript", script: [{ do: "say", text: "Clunk." }, { do: "setFlag", flag: "lever" }] } },
+        ],
+        stage: {
+          floor: { top: 60, bottom: 95 },
+          spawn: { x: 50, y: 90 },
+          enterScript: [{ do: "wait", seconds: 1 }, { do: "face", dir: "left" }],
+        },
+      },
+    ],
+  };
+
+  const blank = coverageReport(stageStory, null);
+  check("coverage v2: a stage story tallies its markers and steps", blank.markerTotal === 2 && blank.cutsceneTotal === 4, blank);
+  check("coverage v2: an empty tally misses every marker and step", blank.missedMarkers.length === 2 && blank.missedCutsceneSteps.length === 4, blank);
+  check("coverage v2: classic scenes contribute no stage tallies", coverageReport({ ...stageStory, scenes: [{ id: "c1", title: "C", background: "/img/c.jpg", hotspots: [], dialogueBeats: [], choices: [] }] }, null).markerTotal === 0);
+
+  // The recorder/report key contract: one shared function, so the two sides
+  // can never drift. Entry script = empty hotspot tag; runScript = its id.
+  check("coverage v2: entry-script keys use an empty hotspot tag", cutsceneStepKey("s1", undefined, 0) === "s1:#0" && cutsceneStepKey("s1", undefined, 1) === "s1:#1");
+  check("coverage v2: hotspot step keys carry the hotspot id", cutsceneStepKey("s1", "h2", 1) === "s1:h2#1");
+
+  let cov = emptyCoverage("cov-stage");
+  cov = recordVisit(cov, "marker", "s1:h1");
+  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", undefined, 0));
+  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", "h2", 1));
+  const rv = coverageReport(stageStory, cov);
+  check("coverage v2: fired markers are counted", rv.markerFired === 1 && rv.markerTotal === 2, rv.markerFired);
+  check("coverage v2: the unfired marker is reported with its label", rv.missedMarkers.length === 1 && rv.missedMarkers[0].hotspotId === "h2" && rv.missedMarkers[0].text === "Lever", rv.missedMarkers);
+  check("coverage v2: played steps are counted", rv.cutsceneRun === 2 && rv.cutsceneTotal === 4, rv.cutsceneRun);
+  check("coverage v2: unplayed steps are reported", rv.missedCutsceneSteps.length === 2, rv.missedCutsceneSteps);
+  check("coverage v2: entry and hotspot gaps name themselves apart", rv.missedCutsceneSteps.some((g) => g.text === "entry step 2") && rv.missedCutsceneSteps.some((g) => g.text === "Lever — step 1"), rv.missedCutsceneSteps);
+  check("coverage v2: an unrecorded key reads as zero", (cov.cutscene["s1:h9#0"] ?? 0) === 0, cov.cutscene);
+  check("coverage v2: recording a marker never mutates the input", (cov.markers["s1:h1"] ?? 0) === 1 && !("s1:h2" in cov.markers), cov.markers);
 }
 
 /* ================================================================== */

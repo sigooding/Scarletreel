@@ -317,6 +317,9 @@ function StageFloorEditor({
   floorPoints,
   onFloorPoints,
   onResizeProp,
+  pickPoint,
+  onPickPoint,
+  onCancelPick,
 }: {
   background: string;
   media: (v?: string) => string | undefined;
@@ -379,6 +382,11 @@ function StageFloorEditor({
    *  path instead of a flat band. */
   floorPoints?: { x: number; y: number }[];
   onFloorPoints?: (pts: { x: number; y: number }[]) => void;
+  /** 🎬 CUTSCENE RECORDER — armed by a walkTo/npcWalkTo step row: the next
+   *  plain click on the plate becomes that step's x/y instead of dragging. */
+  pickPoint?: { npc: boolean } | null;
+  onPickPoint?: (p: { x: number; y: number }) => void;
+  onCancelPick?: () => void;
   /** ↕↔ RESIZE A PROP — drag the ↔ handle on an NPC/prop's corner to scale it
    *  live (feet stay planted on the marker). Writes the hotspot's zone width,
    *  with x recentred so the marker doesn't drift. */
@@ -442,6 +450,12 @@ function StageFloorEditor({
   const [obstacleMode, setObstacleMode] = useState(false);
   const [draftOb, setDraftOb] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const draftObStart = useRef<{ x: number; y: number } | null>(null);
+
+  // 🖌 PAINT THE PATH — click points onto the plate to lay the walk polygon
+  // vertex by vertex (the drag handles then fine-tune it). Each click appends
+  // a vertex in click order; from the third point the polygon is live and the
+  // walker routes through it. "Clear" drops back to the flat floor band.
+  const [drawing, setDrawing] = useState(false);
 
   // ▶ WALK-CYCLE PREVIEW — play the walker's walk animation on the plate so
   // the author sees the frames/fps without a playtest. Sheets play their
@@ -639,6 +653,23 @@ function StageFloorEditor({
         if (!kind && walkTest) {
           const p = pct(e);
           routeWalker({ x: p.x / scale, y: p.y });
+          e.preventDefault();
+          return;
+        }
+        // 🎬 Cutscene recorder: an armed pick consumes this click as a plain
+        // point (no drag) — highest precedence on empty plate.
+        if (!kind && pickPoint && onPickPoint) {
+          const p = pct(e);
+          onPickPoint({ x: round1(Math.min(worldW, Math.max(0, p.x / scale))), y: round1(p.y) });
+          e.preventDefault();
+          return;
+        }
+        // 🖌 Paint path: a click on empty plate appends a polygon vertex
+        // (walk test keeps precedence — you can route-test while armed).
+        if (!kind && drawing) {
+          const p = pct(e);
+          const next = [...(floorPoints ?? []), { x: round1(Math.min(worldW, Math.max(0, p.x / scale))), y: round1(p.y) }];
+          onFloorPoints?.(next);
           e.preventDefault();
           return;
         }
@@ -982,6 +1013,26 @@ function StageFloorEditor({
           style={{ left: `${draftOb.x * scale}%`, top: `${draftOb.y}%`, width: `${draftOb.w * scale}%`, height: `${draftOb.h}%` }}
         />
       ) : null}
+      {/* 🖌 paint-path hint — live vertex count while arming clicks */}
+      {drawing ? (
+        <span className="pointer-events-none absolute left-1/2 top-1 z-[60] -translate-x-1/2 whitespace-nowrap rounded border border-neon/60 bg-noir-950/90 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon">
+          Paint path — click to add points{(floorPoints ?? []).length < 3 ? ` (${(floorPoints ?? []).length}/3)` : ""}, tool button to finish
+        </span>
+      ) : null}
+      {/* 🎬 recorder banner — armed pick, with cancel */}
+      {pickPoint ? (
+        <span className="absolute left-1/2 top-1 z-[60] flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded border border-neon/60 bg-noir-950/90 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon">
+          Pick {pickPoint.npc ? "NPC" : "player"} walk target — click the plate
+          <button
+            className="ml-1 border border-neon/50 px-1 text-[9px] leading-none hover:bg-neon/20"
+            title="Cancel without setting the target"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onCancelPick?.(); }}
+          >
+            ✕
+          </button>
+        </span>
+      ) : null}
       {/* markers — one per hotspot, at its zone base (world-scaled on wide
           worlds). When the hotspot carries object art (image / sheet), the
           NPC/prop itself is drawn on the plate — feet planted on the marker,
@@ -1195,7 +1246,7 @@ function StageFloorEditor({
     <button
       onClick={() => {
         setObstacleMode((v) => !v);
-        if (!obstacleMode) onObstacleSelect?.(null);
+        if (!obstacleMode) { onObstacleSelect?.(null); setDrawing(false); }
       }}
       className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
         obstacleMode ? "border-crimson bg-crimson/20 text-crimson" : "border-crimson/40 bg-noir-900 text-crimson/80 hover:bg-crimson/10"
@@ -1230,6 +1281,27 @@ function StageFloorEditor({
       title={pathMode ? "Back to a flat floor band" : "Turn the walkable zone into an editable path — stretch its points into any shape"}
     >
       🧭 {pathMode ? "Path (on)" : "Make path"}
+    </button>
+  );
+
+  // 🖌 Paint mode: click vertices straight onto the plate. Complements the
+  // seeded rectangle (pathToolBtn) and the draggable/midpoint handles.
+  const drawPtsBtn = (
+    <button
+      onClick={() => {
+        const next = !drawing;
+        setDrawing(next);
+        if (next) {
+          setObstacleMode(false);
+          onObstacleSelect?.(null);
+        }
+      }}
+      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+        drawing ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
+      }`}
+      title="Click points on the plate to paint the walk polygon vertex by vertex — from the third point it's live"
+    >
+      {drawing ? "Paint path (on)" : "Paint path"}
     </button>
   );
 
@@ -1293,6 +1365,7 @@ function StageFloorEditor({
                 drag floor edges · spawn · markers · <b className="text-cyan-neon">↕</b> resize · <b className="text-neon">🧭</b> path · <b className="text-crimson">🚧</b> obstacles · <b className="text-gold">▶</b> walk
               </span>
               {pathToolBtn}
+              {drawPtsBtn}
               {obstacleToolBtn}
               {walkToolBtn}
               {walkTestBtn}
@@ -1313,6 +1386,7 @@ function StageFloorEditor({
             <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/40">Stage plate</span>
             <div className="flex items-center gap-1.5">
               {pathToolBtn}
+              {drawPtsBtn}
               {obstacleToolBtn}
               {walkToolBtn}
               {walkTestBtn}
@@ -1842,12 +1916,19 @@ function ScriptEditor({
   onChange,
   npcIds,
   scenes,
+  onPickPoint,
+  picking,
 }: {
   steps: StageScriptStep[];
   onChange: (next: StageScriptStep[]) => void;
   /** Ambient NPC ids in this scene (for the NPC step targets). */
   npcIds: string[];
   scenes: { id: string; title: string }[];
+  /** Armed from a row: the next plate click becomes that step's x/y
+   *  (the cutscene recorder — no hand-typed coordinates). */
+  onPickPoint?: (index: number, npc: boolean) => void;
+  /** Which row is currently waiting for its plate click. */
+  picking?: { index: number; npc: boolean } | null;
 }) {
   const upd = (i: number, patch: Record<string, unknown>) =>
     onChange(steps.map((s, si) => (si === i ? ({ ...s, ...patch } as StageScriptStep) : s)));
@@ -1896,9 +1977,19 @@ function ScriptEditor({
             )}
             {(st.do === "walkTo" || st.do === "npcWalkTo") && (
               <>
-                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x %" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
-                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y %" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
-                <span className="text-[9px] text-paper/40">x / y (scene %)</span>
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x % of the walkable world" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y % of the stage floor" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
+                {onPickPoint ? (
+                  <button
+                    onClick={() => onPickPoint(i, st.do === "npcWalkTo")}
+                    className={`flex-none border px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
+                      picking?.index === i ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
+                    }`}
+                    title={picking?.index === i ? "Waiting for a plate click — pick again to cancel" : "Click the stage plate to set this target visually"}
+                  >
+                    {picking?.index === i ? "Picking…" : "Pick on plate"}
+                  </button>
+                ) : null}
               </>
             )}
             {st.do === "face" && (
@@ -6543,6 +6634,11 @@ function StudioInner({
   /** Hotspots tab: drawing hotspots, or drawing 🚧 no-go barriers. */
   const [zoneMode, setZoneMode] = useState<"hotspot" | "barrier" | "spawn">("hotspot");
   const [selectedBarrier, setSelectedBarrier] = useState<number | null>(null);
+  // Cutscene recorder: the walkTo/npcWalkTo step row waiting for a plate
+  // click. `origin` routes the picked point back to the right script (the
+  // stage tab's room-entry script or a hotspot's runScript); arming from a
+  // hotspot row jumps to the stage tab so the plate is on screen.
+  const [scriptPick, setScriptPick] = useState<{ index: number; npc: boolean; origin: "enter" | "hotspot"; hotspotId?: string } | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
   // Which single beat is maximised in the Beats tab. Beats default to
@@ -11028,10 +11124,13 @@ function StudioInner({
                           handle on the character's head resizes it live; the <b className="text-neon">↔</b> on a prop/NPC's
                           corner scales that object (feet stay planted). <b className="text-gold">▶ Walk</b> previews the
                           walker's walk cycle. <b className="text-neon">🧭 Make path</b> turns the walkable zone into a
-                          polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding path. Arm{" "}
+                          polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding path, or arm{" "}
+                          <b className="text-neon">Paint path</b> and click points straight onto the plate. Arm{" "}
                           <b className="text-crimson">🚧 Draw obstacle</b> and drag a box to fence off furniture. Markers sit
                           where the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
-                          narrative is the caption below + 💬 show-text markers.
+                          narrative is the caption below + 💬 show-text markers. A{" "}
+                          <b className="text-neon">Pick on plate</b> button on a script step (below) waits for a click here
+                          and writes the coordinates for you.
                         </p>
                         <StageFloorEditor
                           background={scene.background}
@@ -11082,7 +11181,10 @@ function StudioInner({
                           floorPoints={scene.stage.floorPoints ?? []}
                           onFloorPoints={(pts) =>
                             updateScene(scene.id, {
-                              stage: { ...scene.stage!, floorPoints: pts.length >= 3 ? pts : undefined },
+                              // Keep 1-2 point drafts too — paint mode adds
+                              // vertices one click at a time; the game and
+                              // the polygon UI only engage at >= 3 points.
+                              stage: { ...scene.stage!, floorPoints: pts.length ? pts : undefined },
                             })
                           }
                           entrySpawns={scene.stage.entrySpawns}
@@ -11110,6 +11212,29 @@ function StudioInner({
                               hotspots: (scene.hotspots ?? []).map((h) => (h.id === hsId ? { ...h, bounds } : h)),
                             })
                           }
+                          pickPoint={scriptPick ? { npc: scriptPick.npc } : null}
+                          onPickPoint={(p) => {
+                            // Cutscene recorder: land the picked point on the
+                            // step that armed it, then hop back to the tab the
+                            // row lives on so the numbers are visible.
+                            if (!scriptPick) return;
+                            const { index, origin, hotspotId } = scriptPick;
+                            setScriptPick(null);
+                            const patchStep = (s: StageScriptStep): StageScriptStep =>
+                              s.do === "walkTo" || s.do === "npcWalkTo" ? { ...s, x: p.x, y: p.y } : s;
+                            if (origin === "enter") {
+                              const next = (scene.stage?.enterScript ?? []).map((s, si) => (si === index ? patchStep(s) : s));
+                              updateScene(scene.id, { stage: { ...scene.stage!, enterScript: next } });
+                            } else if (hotspotId) {
+                              mutate((d) => {
+                                const s = d.scenes.find((x) => x.id === scene.id)!;
+                                const arr = s.hotspots!.find((x) => x.id === hotspotId)!.action.script ?? [];
+                                if (arr[index]) arr[index] = patchStep(arr[index]);
+                              });
+                            }
+                            if (origin === "hotspot") setTab("hotspots");
+                          }}
+                          onCancelPick={() => setScriptPick(null)}
                         />
                         <Field label="World width — how many screens the room spans (100 = one, the classic plate)">
                           <div className="flex items-center gap-2">
@@ -11352,6 +11477,8 @@ function StudioInner({
                             }
                             npcIds={(scene.stage.npcs ?? []).map((n) => n.id)}
                             scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
+                            onPickPoint={(index, npc) => setScriptPick((cur) => (cur?.origin === "enter" && cur.index === index ? null : { index, npc, origin: "enter" }))}
+                            picking={scriptPick?.origin === "enter" ? scriptPick : null}
                           />
                           {(scene.stage.enterScript?.length ?? 0) > 0 ? (
                             <input
@@ -14155,6 +14282,13 @@ function StudioInner({
                           }
                           npcIds={(scene.stage?.npcs ?? []).map((n) => n.id)}
                           scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
+                          onPickPoint={(index, npc) => {
+                            // Jump to the stage tab so the plate is on screen;
+                            // after the click the editor hops back here.
+                            setScriptPick({ index, npc, origin: "hotspot", hotspotId: h.id });
+                            setTab("stage");
+                          }}
+                          picking={scriptPick?.origin === "hotspot" && scriptPick.hotspotId === h.id ? scriptPick : null}
                         />
                       </div>
                     )}

@@ -3218,7 +3218,7 @@ function CasePlayer({
   /** SCRIPTED SEQUENCE ordered by a `runScript` hotspot on a 🚶 stage —
    *  handed to Stage keyed (same shape of contract as dropRequest). Classic
    *  graphic-novel scenes never see this: the action is stage-only. */
-  const [scriptRequest, setScriptRequest] = useState<{ steps: StageScriptStep[]; key: number } | null>(null);
+  const [scriptRequest, setScriptRequest] = useState<{ steps: StageScriptStep[]; key: number; coverageTag?: string } | null>(null);
   /** Room-entry script for the CURRENT stage scene, with its run-once flag
    *  latch applied: undefined when there's no script or the flag says it
    *  already played. Stage captures it at mount (scene-keyed remount). */
@@ -3869,7 +3869,7 @@ function CasePlayer({
     coverageRef.current = readCoverage(story.id) ?? emptyCoverage(story.id);
   }, [story.id]);
   const markCoverage = useCallback(
-    (kind: "scene" | "choice", id: string) => {
+    (kind: "scene" | "choice" | "marker" | "cutscene", id: string) => {
       if (!id) return;
       const next = recordVisit(coverageRef.current ?? emptyCoverage(story.id), kind, id);
       coverageRef.current = next;
@@ -5443,6 +5443,9 @@ function CasePlayer({
         if (soundOnRef.current && autoNarrate) audio.speak(failText);
         return;
       }
+      // Playtest coverage: this STAGE marker actually fired (the gate passed
+      // and the verb resolved — a refusal above never counts).
+      if (stageMode) markCoverage("marker", `${sceneId}:${hs.id}`);
       switch (act.type) {
         case "showText": {
           audio.click();
@@ -5531,7 +5534,7 @@ function CasePlayer({
           }
           if (act.script && act.script.length > 0) {
             audio.click();
-            setScriptRequest({ steps: act.script, key: Date.now() });
+            setScriptRequest({ steps: act.script, key: Date.now(), coverageTag: hs.id });
           }
           // flagSet/meterChange on the action still apply (and the marker is
           // consumed unless the hotspot is repeatable, like any other).
@@ -6254,6 +6257,12 @@ function CasePlayer({
                 setPlayerPose(eff.pose ?? null);
                 setPlayerPoseOnce(false);
               }
+            }}
+            onScriptStep={({ tag, index }) => {
+              // Playtest coverage: this cutscene step actually ran. The
+              // entry script stores under an empty hotspot tag; a runScript
+              // hotspot under its own id (mirrored by the coverage report).
+              markCoverage("cutscene", `${sceneId}:${tag === "enter" ? "" : tag}#${index}`);
             }}
             verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene({ ...scene, hotspots: visibleHotspots }) : undefined}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}

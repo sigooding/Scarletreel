@@ -124,6 +124,8 @@ const TAB_RE = {
   media: /Media Tools/,
   ai: /AI Images/,
   map: /Map/,
+  stage: /Stage/,
+  test: /Test/,
 };
 const tab = async (name) => {
   const b = q("button").find((el) => TAB_RE[name] && TAB_RE[name].test((el.textContent || "").trim()));
@@ -214,6 +216,86 @@ await tab("ai");
     "starter=" + !!starter + " spriteOn=" + /Sprite mode ON/.test(st) + " text=" + st.match(/Sprite sheet starters.{0,120}/)?.[0]
   );
   reportProblems("ai tab");
+}
+
+/* ============ 5c. Stage plate: paint path + cutscene recorder ============ */
+{
+  // Make a fresh stage scene: add one, switch Node Layout Type (the
+  // stageNoHud branch seeds stage settings, then plain stage drops the flag).
+  const addScene = q("button").find((b) => /^\s*[＋+]/.test((b.textContent || "")) && /scene/i.test(b.textContent || ""));
+  if (addScene) { addScene.click(); await sleep(450); }
+  await tab("scene");
+  const nodeSel = q("select").find((s) => [...s.querySelectorAll("option")].some((o) => /Walkable Stage/.test(o.textContent || "")));
+  check("5c: node layout select exists", !!nodeSel);
+  if (nodeSel) {
+    const setSel = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, "value").set;
+    setSel.call(nodeSel, "stageNoHud"); nodeSel.dispatchEvent(new win.Event("change", { bubbles: true })); await sleep(350);
+    setSel.call(nodeSel, "stage"); nodeSel.dispatchEvent(new win.Event("change", { bubbles: true })); await sleep(350);
+  }
+  const stageTabBtn = byText(/^🚶 Stage$/);
+  check("5c: stage tab appears for a stage scene", !!stageTabBtn);
+  reportProblems("5c switch to stage");
+  if (stageTabBtn) {
+    stageTabBtn.click(); await sleep(600);
+    const tools = snap();
+    check("5c: plate tools render", tools.includes("Make path") && tools.includes("Paint path") && tools.includes("Draw obstacle") && /walk/i.test(tools), tools.slice(0, 200));
+
+    // The plate: the only touch-none select-none aspect-video box on the tab.
+    const plate = q("div").find((d) => {
+      const c = String(d.className || "");
+      return c.includes("touch-none") && c.includes("select-none") && c.includes("aspect-video");
+    });
+    check("5c: plate element found", !!plate);
+    if (plate) {
+      // happy-dom does no layout — stub the rect so the % math has numbers.
+      plate.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 450, right: 800, bottom: 450, x: 0, y: 0, toJSON() {} });
+    }
+
+    // --- paint the path: arm, click a vertex, count it, disarm ---
+    const paintBtn = byText(/^Paint path$/);
+    check("5c: paint path button (idle) exists", !!paintBtn);
+    if (paintBtn) { paintBtn.click(); await sleep(300); }
+    check("5c: paint hint shows 0/3 while armed", snap().includes("Paint path — click to add points (0/3)"), snap().match(/Paint path — click[^,]{0,50}/)?.[0]);
+    if (plate) {
+      plate.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 320, clientY: 180, button: 0, pointerId: 1 }));
+      await sleep(300);
+    }
+    check("5c: plate click paints a vertex (1/3)", snap().includes("Paint path — click to add points (1/3)"), snap().match(/Paint path — click[^,]{0,50}/)?.[0]);
+    const paintOn = q("button").find((b) => (b.textContent || "").includes("Paint path (on)"));
+    if (paintOn) { paintOn.click(); await sleep(250); }
+    check("5c: paint disarms", !snap().includes("Paint path — click to add points"));
+    reportProblems("5c paint");
+
+    // --- cutscene recorder: add a walkTo step, pick its target on the plate ---
+    const opening = byText(/Scene opening/);
+    if (opening) { opening.click(); await sleep(350); }
+    const addStep = byText(/^\s*＋ add step$/);
+    check("5c: enter-script add-step exists", !!addStep);
+    if (addStep) { addStep.click(); await sleep(300); }
+    const pickBtn = byText(/Pick on plate/);
+    check("5c: pick-on-plate button on the walkTo row", !!pickBtn);
+    if (pickBtn) {
+      const row = pickBtn.closest("div");
+      pickBtn.click(); await sleep(300);
+      check("5c: recorder banner arms", snap().includes("Pick player walk target — click the plate"));
+      if (plate) {
+        plate.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 240, clientY: 135, button: 0, pointerId: 2 }));
+        await sleep(300);
+      }
+      check("5c: banner clears after the pick", !snap().includes("Pick player walk target"));
+      const vals = row ? [...row.querySelectorAll('input[type="number"]')].map((i) => i.value) : [];
+      check("5c: step x/y picked up the click (30/30)", vals[0] === "30" && vals[1] === "30", vals.join("/"));
+    }
+    reportProblems("5c recorder");
+  }
+}
+
+/* ============ 5d. Test tab: stage coverage panel copy ============ */
+{
+  await tab("test");
+  const t = snap();
+  check("5d: coverage panel mentions stage markers + cutscene steps", t.includes("stage marker") && t.includes("cutscene step"), t.match(/playtest coverage.{0,160}/i)?.[0]);
+  reportProblems("5d test tab");
 }
 
 /* ============ 6. acts: add two acts ============ */
