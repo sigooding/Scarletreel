@@ -6926,6 +6926,11 @@ function StudioInner({
   const addScene = (fx: number, fy: number) => {
     const id = `scene_${uid()}`;
     const isFirstScene = story.scenes.length === 0;
+    // An author who sketches the ENDINGS first (🏁 End before any playable
+    // scene) still needs a start: the first playable scene claims the start
+    // marker whenever the story has none ("" only before one exists or after
+    // the last scene was deleted — deleteScene already re-points it).
+    const needsStart = !story.startSceneId;
     // 🧭 Mode switch: in an ADVENTURE case a new room is a walkable stage
     // (🚶 node) by default, not a prose plate — that IS the mode.
     const adv = story.gameKind === "adventure";
@@ -6959,11 +6964,11 @@ function StudioInner({
         dialogueBeats: [],
       });
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
-      if (isFirstScene) d.startSceneId = id;
+      if (isFirstScene || needsStart) d.startSceneId = id;
     });
     setSelectedId(id);
     setTab(adv ? "stage" : "scene");
-    if (isFirstScene && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
+    if ((isFirstScene || needsStart) && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
     if (adv) say("Room created as a 🚶 walkable stage. Put a plate on it, draw 🚧 obstacles, then hang 👁 look / ✋ take / 💬 talk / ➜ go hotspots on it.");
     audio.pickup();
   };
@@ -7076,6 +7081,9 @@ function StudioInner({
         dialogueBeats: [],
       });
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
+      // First playable scene claims the start marker even when the author
+      // sketched 🏁 endings first (same rule as addScene).
+      if (!d.startSceneId) d.startSceneId = id;
     });
     setSelectedId(id);
     setTab("stage");
@@ -7564,10 +7572,33 @@ function StudioInner({
       }
 
       if (!sc.isEnding) {
+        // Mirror the validator's exit accounting (storyEdges): edge exits,
+        // after-beat routes, entry scripts and puzzle branches are all ways
+        // out too. Counting only choices/hotspots would "repair" a healthy
+        // stage room whose door is a walk-off edge arrow by injecting a
+        // bogus choice into it.
         const exits = [
           ...(sc.autoAdvanceTargetSceneId ? [{ gated: false }] : []),
           ...(sc.choices ?? []).map((c) => ({ gated: !!effectiveChoiceGating(c) })),
-          ...(sc.hotspots ?? []).filter((h) => h.action.targetSceneId).map((h) => ({ gated: !!h.gating })),
+          ...(sc.hotspots ?? [])
+            .filter((h) =>
+              hotspotReachableActions(h).some(
+                (a) =>
+                  !!a.targetSceneId ||
+                  (!!a.patternPuzzle && (!!a.patternPuzzle.targetSceneId || !!a.patternPuzzle.wrongTargetSceneId)) ||
+                  (a.script ?? []).some((st) => st.do === "goToScene")
+              )
+            )
+            .map((h) => ({ gated: !!h.gating })),
+          ...(sc.dialogueBeats ?? [])
+            .filter((b) => b.afterBeatTargetSceneId)
+            .map((b) => ({ gated: !!b.conditionRule })),
+          ...Object.values(sc.stage?.exitEdges ?? {})
+            .filter((e) => e?.targetSceneId)
+            .map((e) => ({ gated: !!e.gating })),
+          ...(sc.stage?.enterScript ?? []).some((st) => st.do === "goToScene")
+            ? [{ gated: false }]
+            : [],
         ];
         const hasOpenExit = exits.some((e) => !e.gated);
         if (!hasOpenExit) {
@@ -7590,6 +7621,83 @@ function StudioInner({
           delete item.combinableWith;
           fixes.push(`removed broken recipe on "${item.name}"`);
         }
+      }
+    });
+
+    /* ---- scene links that live OUTSIDE the scene list ---- */
+    // Stage rooms: walk-off edge exits, entry-script/run-script goToScene
+    // steps, and entry spawns keyed by the incoming scene.
+    next.scenes.forEach((sc) => {
+      if (!sc.stage) return;
+      for (const edge of ["left", "right"] as const) {
+        const ex = sc.stage.exitEdges?.[edge];
+        if (ex?.targetSceneId && !sceneIds.has(ex.targetSceneId)) {
+          ex.targetSceneId = start;
+          fixes.push(`re-pointed ${edge} edge exit in "${sc.title}"`);
+        }
+      }
+      const fixScript = (steps: StageScriptStep[] | undefined, label: string) => {
+        (steps ?? []).forEach((st) => {
+          if (st.do === "goToScene" && !sceneIds.has(st.targetSceneId)) {
+            st.targetSceneId = start;
+            fixes.push(`re-pointed ${label} step in "${sc.title}"`);
+          }
+        });
+      };
+      fixScript(sc.stage.enterScript, "entry script");
+      sc.hotspots?.forEach((h) => fixScript(h.action.script, `"${h.label}" script`));
+      if (sc.stage.entrySpawns) {
+        for (const fromId of Object.keys(sc.stage.entrySpawns)) {
+          if (!sceneIds.has(fromId)) {
+            delete sc.stage.entrySpawns[fromId];
+            fixes.push(`removed stale entry spawn in "${sc.title}"`);
+          }
+        }
+      }
+    });
+    // Travel map: a pin on a deleted scene re-lands on the start scene.
+    (next.map?.locations ?? []).forEach((loc) => {
+      if (!sceneIds.has(loc.targetSceneId)) {
+        loc.targetSceneId = start;
+        fixes.push(`re-pointed map location "${loc.label || loc.id}"`);
+      }
+    });
+    // Episodes: drop deleted scenes from chapter lists; a chapter left with
+    // no scenes can never finish, so it goes too (its siblings renumber).
+    if (next.episodes?.length) {
+      next.episodes.forEach((ep) => {
+        const before = ep.sceneIds.length;
+        ep.sceneIds = ep.sceneIds.filter((id) => sceneIds.has(id));
+        if (ep.sceneIds.length !== before) fixes.push(`removed deleted scene(s) from episode "${ep.title}"`);
+        if (ep.startSceneId && !sceneIds.has(ep.startSceneId)) {
+          ep.startSceneId = ep.sceneIds[0] ?? "";
+          fixes.push(`reset opening scene of episode "${ep.title}"`);
+        } else if (!ep.startSceneId && ep.sceneIds.length) {
+          ep.startSceneId = ep.sceneIds[0];
+          fixes.push(`set opening scene of episode "${ep.title}"`);
+        }
+      });
+      const empty = next.episodes.filter((ep) => !ep.sceneIds.length);
+      if (empty.length) {
+        next.episodes = next.episodes.filter((ep) => ep.sceneIds.length);
+        // keep the unlock/handoff graph consistent with the new episode list
+        const kept = new Set(next.episodes.map((e) => e.id));
+        next.episodes.forEach((ep) => {
+          ep.unlockAfter = ep.unlockAfter?.filter((u) => kept.has(u.episodeId));
+          if (ep.nextEpisodeByEnding) {
+            for (const k of Object.keys(ep.nextEpisodeByEnding)) {
+              if (!kept.has(ep.nextEpisodeByEnding![k])) delete ep.nextEpisodeByEnding![k];
+            }
+          }
+        });
+        fixes.push(`removed emptied episode(s): ${empty.map((e) => e.title).join(", ")}`);
+      }
+    }
+    // Acts: a title card that opens on a deleted scene opens on the start.
+    (next.acts ?? []).forEach((act) => {
+      if (act.startSceneId && !sceneIds.has(act.startSceneId)) {
+        act.startSceneId = start;
+        fixes.push(`re-pointed act "${act.label || act.title}"`);
       }
     });
 
@@ -7706,6 +7814,10 @@ function StudioInner({
       sceneIdMap.set(s.id, `${s.id}_copy_${uid().slice(0, 5)}`);
     });
     const remap = (id?: string) => (id ? sceneIdMap.get(id) ?? id : id);
+    // Stage scripts (enter scripts, hotspot runScripts) can navigate with
+    // goToScene steps — those targets are scene references too.
+    const remapScript = (steps: StageScriptStep[] | undefined): StageScriptStep[] | undefined =>
+      steps?.map((st) => (st.do === "goToScene" ? { ...st, targetSceneId: remap(st.targetSceneId) ?? st.targetSceneId } : st));
 
     const copy: Story = {
       ...src,
@@ -7734,6 +7846,7 @@ function StudioInner({
           action: {
             ...h.action,
             targetSceneId: remap(h.action.targetSceneId),
+            script: remapScript(h.action.script),
             patternPuzzle: h.action.patternPuzzle
               ? {
                   ...h.action.patternPuzzle,
@@ -7749,7 +7862,32 @@ function StudioInner({
           afterBeatTargetSceneId: remap(b.afterBeatTargetSceneId),
         })),
         onEnterActions: s.onEnterActions,
+        stage: s.stage
+          ? {
+              ...s.stage,
+              // Walk-off edge exits lead into other rooms — point the copy's
+              // arrows at the copy's rooms, not the original's.
+              exitEdges: Object.fromEntries(
+                Object.entries(s.stage.exitEdges ?? {}).map(([edge, ex]) => [
+                  edge,
+                  ex ? { ...ex, targetSceneId: remap(ex.targetSceneId) ?? ex.targetSceneId } : ex,
+                ])
+              ) as typeof s.stage.exitEdges,
+              // Entry spawns are keyed by the INCOMING scene's id.
+              entrySpawns: Object.fromEntries(
+                Object.entries(s.stage.entrySpawns ?? {}).map(([fromId, p]) => [remap(fromId) ?? fromId, p])
+              ),
+              enterScript: remapScript(s.stage.enterScript),
+            }
+          : s.stage,
       })),
+      // Travel-map pins land on scenes — remap them like every other link.
+      map: src.map
+        ? {
+            ...src.map,
+            locations: src.map.locations.map((l) => ({ ...l, targetSceneId: remap(l.targetSceneId) ?? l.targetSceneId })),
+          }
+        : src.map,
       acts: src.acts?.map((a) => ({ ...a, id: `act_${uid()}`, startSceneId: remap(a.startSceneId) ?? a.startSceneId })),
       // Episodes are rebuilt with new ids below where the episode-id map exists.
       episodes: src.episodes?.map((e) => ({
@@ -7988,6 +8126,11 @@ function StudioInner({
   };
 
   const importJson = async (file: File) => {
+    // Snapshot the story being edited when the import started. Reading the
+    // file + compacting its media is async (IndexedDB round-trips); anything
+    // the author does in between (add a scene, switch story, ＋ New Story)
+    // must NOT be silently clobbered by the late import commit.
+    const storyAtStart = storyRef.current;
     try {
       const text = await file.text();
       const storyBundle: Story = JSON.parse(text);
@@ -8000,7 +8143,15 @@ function StudioInner({
       const { assets, ...cleanedStory } = storyBundle;
       // Old exports carried the bolt-on `stage2d` layer; imports map it to the
       // stage NODE so those cases keep walking.
-      commit(await compactStoryMedia(normalizeLegacyStory(cleanedStory)));
+      const compacted = await compactStoryMedia(normalizeLegacyStory(cleanedStory));
+      if (storyAtStart !== storyRef.current) {
+        // The reel moved on while the file was reading — importing now would
+        // throw away the newer edits. Cancel loudly instead of losing work.
+        say("The case changed while the file was reading — import cancelled. Try again.");
+        audio.fail();
+        return;
+      }
+      commit(compacted);
       say(`Imported "${cleanedStory.title}" with ${assets?.length ?? 0} assets.`);
     } catch {
       say("That file isn't a valid reel. Tragic.");
