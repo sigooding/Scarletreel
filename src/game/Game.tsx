@@ -6265,6 +6265,7 @@ function CasePlayer({
               markCoverage("cutscene", `${sceneId}:${tag === "enter" ? "" : tag}#${index}`);
             }}
             verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene({ ...scene, hotspots: visibleHotspots }) : undefined}
+            convoOpen={stageConvo === "open"}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}
             onEdgeExit={(edge) => {

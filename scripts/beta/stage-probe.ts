@@ -788,12 +788,26 @@ async function parts2to4() {
     ok(!!sweeper && /the street sweeper/i.test(sweeper.textContent || ""), "the sweeper carries their own talk chip");
     sweeper!.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
     await until("clicking the moving NPC starts the conversation", () => qa(".stage-marker[disabled]").length > 0, 12000);
+    // CONVERSATION FREEZE — a linked NPC holds their patrol while the talk
+    // plays (they've been addressed), then resumes when the floor is back.
+    const npcLeft = () => parseFloat((q<HTMLElement>('[data-npc-id="bs_npc_sweeper"]')?.style.left || "0"));
+    const f1 = npcLeft();
+    await sleep(500);
+    const f2 = npcLeft();
+    ok(Math.abs(f2 - f1) < 0.6, "the NPC freezes mid-patrol while the conversation plays", `${f1} -> ${f2}`);
     for (let i = 0; i < 10 && !qa("button").some((b) => /keep walking/i.test(b.textContent || "")); i++) {
       key(" ", "Space");
       await sleep(400);
     }
     qa<HTMLButtonElement>("button").find((b) => /keep walking/i.test(b.textContent || ""))?.click();
     await until("the sweeper conversation hands the floor back", () => qa(".stage-marker[disabled]").length === 0, 8000);
+    let resumed = false;
+    const r0 = npcLeft();
+    for (let i = 0; i < 9 && !resumed; i++) {
+      await sleep(250);
+      resumed = Math.abs(npcLeft() - r0) > 0.5;
+    }
+    ok(resumed, "the NPC resumes patrolling after the conversation", `from ${r0}`);
 
     // N — walk to + talk with the NEAREST linked character, no mouse at all.
     key("n");
@@ -804,6 +818,20 @@ async function parts2to4() {
     }
     qa<HTMLButtonElement>("button").find((b) => /keep walking/i.test(b.textContent || ""))?.click();
     await until("the N-key conversation hands the floor back", () => qa(".stage-marker[disabled]").length === 0, 8000);
+
+    // RIGHT-CLICK — the object-first verb pie opens on any marker (coin
+    // rooms included); right-clicking the same object again closes it.
+    {
+      const poster = marker("bsh_poster")!;
+      poster.dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      await sleep(220);
+      const pieLook = qa<HTMLButtonElement>("button[aria-label='Look at']").filter((b) => b.getAttribute("aria-pressed") === null);
+      ok(pieLook.length === 1 && text().includes("the poster"), "right-click opens the object-first verb pie on the marker", `pie buttons=${pieLook.length}`);
+      poster.dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      await sleep(220);
+      const pieAfter = qa<HTMLButtonElement>("button[aria-label='Look at']").filter((b) => b.getAttribute("aria-pressed") === null);
+      ok(pieAfter.length === 0, "right-clicking the same object again closes its pie", `pie buttons=${pieAfter.length}`);
+    }
   }
 
   // F — leave through the door; the classic novel must be pristine.

@@ -107,8 +107,11 @@ function StageNpcActor({
   register,
   linkedHotspot,
   onPress,
+  onContext,
   onPos,
   flash,
+  frozen,
+  faceX,
 }: {
   npc: StageNpc;
   floor: { top: number; bottom: number };
@@ -121,10 +124,17 @@ function StageNpcActor({
   linkedHotspot?: Hotspot;
   /** Pressed (click/tap) — Stage routes the walker over and talks. */
   onPress?: (npc: StageNpc) => void;
+  /** RIGHT-CLICKED — Stage opens the linked hotspot's object-first verb menu. */
+  onContext?: (npc: StageNpc) => void;
   /** Live position reports for pursuit + the N key (world %). */
   onPos?: (id: string, pos: { x: number; y: number }) => void;
   /** The hint-key pulse, shared with markers. */
   flash?: boolean;
+  /** CONVERSATION OPEN — the patrol suspends (the actor stands, drops its
+   *  ambient chatter and faces the walker) until the talk is over. */
+  frozen?: boolean;
+  /** The walker's live x (world %) — which way to face while frozen. */
+  faceX?: number;
 }) {
   const [pos, setPos] = useState({ x: npc.x, y: npc.y });
   const [facing, setFacing] = useState<"left" | "right">(npc.facing ?? "right");
@@ -156,6 +166,17 @@ function StageNpcActor({
    *  the actor there (resolve fires on arrival), then it holds in place
    *  until the script releases it. */
   const overrideRef = useRef<{ target?: { x: number; y: number }; resolve?: () => void } | null>(null);
+  /** CONVERSATION FREEZE — mirrors the `frozen` prop for the rAF loop; on
+   *  the rising edge the actor turns to face the walker (they've been
+   *  addressed, after all). */
+  const frozenRef = useRef(frozen ?? false);
+  const faceXRef = useRef(faceX);
+  faceXRef.current = faceX;
+  useEffect(() => {
+    const was = frozenRef.current;
+    frozenRef.current = frozen ?? false;
+    if (!was && frozen) setFacing((faceXRef.current ?? posRef.current.x) >= posRef.current.x ? "right" : "left");
+  }, [frozen]);
 
   const hasSheet = sheetDrawable(npc.sheet);
 
@@ -278,6 +299,13 @@ function StageNpcActor({
         raf = requestAnimationFrame(step);
         return;
       }
+      // CONVERSATION — hold the feet, drop the chatter, face the walker.
+      if (frozenRef.current) {
+        setWalking(false);
+        setMotion(null);
+        raf = requestAnimationFrame(step);
+        return;
+      }
       // AUTHORED PATROL — nothing to drive without one (or once finished).
       if (!waypoints || routeDone) {
         setWalking(false);
@@ -331,6 +359,16 @@ function StageNpcActor({
           ? (e) => {
               e.stopPropagation();
               onPress?.(npc);
+            }
+          : undefined
+      }
+      onContextMenu={
+        linkedHotspot
+          ? (e) => {
+              // RIGHT-CLICK on a character = their object-first verb menu.
+              e.preventDefault();
+              e.stopPropagation();
+              onContext?.(npc);
             }
           : undefined
       }
@@ -398,6 +436,7 @@ export function Stage({
   onInteract,
   active,
   verbs,
+  convoOpen,
   inventory,
   onPosChange,
   dropRequest,
@@ -428,6 +467,9 @@ export function Stage({
   /** VERB COIN: the verbs this room offers. Undefined/empty = no coin, and
    *  the room behaves exactly as it always has. */
   verbs?: VerbId[];
+  /** A stage conversation is open (startDialogue beats playing) — linked
+   *  NPCs hold their patrol and face the walker until it closes. */
+  convoOpen?: boolean;
   /** Carried inventory, listed under the coin when USE is selected. */
   inventory?: CoinItem[];
   /** The walker's feet (scene %), reported whenever they move — Game uses it
@@ -634,7 +676,7 @@ export function Stage({
   // small pie menu of the verbs it answers pops up next to it. `menu` holds the
   // open object + its marker point; `menuUse` is the object whose USE was
   // picked and is waiting for an inventory item to arm.
-  const [menu, setMenu] = useState<{ hs: Hotspot; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ hs: Hotspot; x: number; y: number; via: "object" | "context" } | null>(null);
   const [menuUse, setMenuUse] = useState<Hotspot | null>(null);
   // HOLD-TO-OPEN (stage.objectMenuHold): press and hold an object and the
   // big skull pie opens in the MIDDLE of the screen; release over a verb to
@@ -1318,7 +1360,7 @@ export function Stage({
     tapJog(live?.x ?? npc.x, live?.y ?? npc.y);
     audio.click();
     if (objectMenu && !coinOn) {
-      setMenu({ hs, x: live?.x ?? npc.x, y: live?.y ?? npc.y });
+      setMenu({ hs, x: live?.x ?? npc.x, y: live?.y ?? npc.y, via: "object" });
       setMenuUse(null);
       return;
     }
@@ -1329,6 +1371,18 @@ export function Stage({
     // NPC-link check enforces exactly that).
     if (walkToMarker(hs, { verb: "talk" })) pursueRef.current = { hotspotId: hs.id };
   };
+  /** RIGHT-CLICK on a character — open the linked hotspot's object-first
+   *  verb menu at the actor's live position (no walking implied). */
+  const openNpcMenu = (npc: StageNpc) => {
+    if (!active || scriptOnRef.current) return;
+    const hs = hotspots.find((h) => h.id === npc.talkHotspotId);
+    if (!hs) return;
+    const live = npcPosRef.current[npc.id];
+    audio.click();
+    setMenu({ hs, x: live?.x ?? npc.x, y: live?.y ?? npc.y, via: "context" });
+    setMenuUse(null);
+  };
+
   /** N KEY — walk to + talk with the NEAREST linked character (cycling
    *  through them is what the map is for; nearest is what the hands want). */
   const nearestNpc = () => {
@@ -1380,7 +1434,7 @@ export function Stage({
       pie.cx = window.innerWidth / 2;
       pie.cy = window.innerHeight / 2;
       pie.verbs = vs;
-      setMenu({ hs: g.hs, x: 50, y: 50 });
+      setMenu({ hs: g.hs, x: 50, y: 50, via: "object" });
       setMenuUse(null);
       setPieHover(null);
     }, PIE_HOLD_MS);
@@ -1571,7 +1625,7 @@ export function Stage({
         if (hit) {
           if (objectMenu && !coinOn) {
             const m = markerPoint(hit);
-            setMenu({ hs: hit, x: m.x, y: m.y });
+            setMenu({ hs: hit, x: m.x, y: m.y, via: "object" });
           } else {
             walkToMarker(hit);
           }
@@ -1726,7 +1780,7 @@ export function Stage({
                   } else if (objectMenu && !coinOn) {
                     // OBJECT-FIRST, CLICK-TO-OPEN: the object → a small pie
                     // menu of its verbs pops up next to it (FT's "skull").
-                    setMenu({ hs, x: m.x, y: m.y });
+                    setMenu({ hs, x: m.x, y: m.y, via: "object" });
                     setMenuUse(null);
                   } else {
                     walkToMarker(hs);
@@ -1745,13 +1799,26 @@ export function Stage({
                   setHoverObj({ label: hs.label, cursor: hs.cursor });
                 }}
                 onMouseLeave={() => setHoverObj((cur) => (cur?.label === hs.label ? null : cur))}
-                // SENTENCE LINE rooms: RIGHT-CLICK is a quick Look, exactly
-                // like picking look off the coin - SCUMM muscle memory.
+                // RIGHT-CLICK: a quick Look in sentence-line rooms (SCUMM
+                // muscle memory); everywhere else it opens the OBJECT-FIRST
+                // verb menu for this object — the fastest route to "kick the
+                // black ice" without switching modes or hunting the coin.
                 onContextMenu={(e) => {
-                  if (!sentenceOn) return; // the browser menu stays elsewhere
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (active && !scriptOnRef.current) pickVerb(hs, "look");
+                  if (!active || scriptOnRef.current) return;
+                  if (sentenceOn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    pickVerb(hs, "look");
+                  } else if (verbMode && menuVerbs(hs).length) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // right-click again on the open object closes its pie
+                    if (menu?.via === "context" && menu.hs.id === hs.id) setMenu(null);
+                    else {
+                      setMenu({ hs, x: m.x, y: m.y, via: "context" });
+                      setMenuUse(null);
+                    }
+                  }
                 }}
               >
                 <span className={`stage-marker-label ${near ? "stage-marker-label-on" : ""}`}>
@@ -1768,7 +1835,7 @@ export function Stage({
         {/* OBJECT-FIRST VERB MENU — a small pie of the verbs THIS object
             answers, popped up at the object (Full Throttle's "skull"). USE
             expands to the inventory when the object accepts items. */}
-        {objectMenu && !holdMode && menu && active ? (
+        {(menu?.via === "context" || (objectMenu && !holdMode)) && menu && active ? (
           <div
             className="pointer-events-auto absolute z-[78] -translate-x-1/2"
             style={{ left: `${menu.x}%`, top: `${Math.max(8, menu.y - 8)}%`, transform: "translate(-50%,-100%)" }}
@@ -1973,10 +2040,13 @@ export function Stage({
             register={registerNpc}
             linkedHotspot={npc.talkHotspotId ? hotspots.find((h) => h.id === npc.talkHotspotId) : undefined}
             onPress={pressNpc}
+            onContext={openNpcMenu}
             onPos={(id, pos) => {
               npcPosRef.current[id] = pos;
             }}
             flash={flashOn}
+            frozen={convoOpen}
+            faceX={posRef.current?.x}
           />
         ))}
       </div>

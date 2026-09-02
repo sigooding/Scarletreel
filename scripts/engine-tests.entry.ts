@@ -2967,8 +2967,9 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     ["stan", SOUTH_PARK.playerSprite!.sheet!],
     ["cartman walk", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
     ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
-    ["kenny walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
-    ["cartman moods", SOUTH_PARK.scenes[3].hotspots![0].sheet!],
+    ["kenny walk", SOUTH_PARK.scenes[4].stage!.npcs![0].sheet!],
+    ["barbrady walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
+    ["cartman moods", SOUTH_PARK.scenes[4].hotspots![0].sheet!],
   ];
   for (const [label, sheet] of spSheets) {
     check("south park: " + label + " sheet exists on disk", existsSync(path.join(spRoot, sheet.image)), sheet.image);
@@ -2999,14 +3000,27 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("south park: the pond edge opens only with the sled", spPondEdge?.gating?.requiresFlags?.[0] === "sp_got_sled");
 
   // The pond cutscene walks Kenny onto the ice and speaks the two lines.
-  const spEnter = SOUTH_PARK.scenes[3].stage!.enterScript ?? [];
+  const spEnter = SOUTH_PARK.scenes[4].stage!.enterScript ?? [];
   check("south park: the pond cutscene has the Kenny gag", spEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_kenny_npc") && spEnter.some((st) => st.do === "say" && /killed Kenny/.test(st.text)), spEnter.map((st) => st.do).join(","));
 
   // The finale branches into two distinct ending cards.
-  const spChoices = SOUTH_PARK.scenes[3].choices ?? [];
+  const spChoices = SOUTH_PARK.scenes[4].choices ?? [];
   check("south park: the confrontation offers two endings", spChoices.length === 2 && new Set(spChoices.map((c) => c.targetSceneId)).size === 2, spChoices.map((c) => c.targetSceneId).join(","));
   const spEndings = SOUTH_PARK.scenes.filter((sc) => sc.isEnding);
   check("south park: both endings carry ending cards", spEndings.length === 2 && spEndings.every((sc) => !!sc.endingData && sc.choices.length === 0));
+
+  // Pass-2: 1.5x cast, talking sheets, item icons, title cover, the cafe.
+  check("south park: the cast plays at 1.5x", SOUTH_PARK.scenes[0].stage!.playerScale === 1.5 && SOUTH_PARK.scenes[0].stage!.npcs!.every((n) => n.scale === 1.5) && SOUTH_PARK.scenes[3].stage!.npcs!.every((n) => n.scale === 1.5));
+  const spTalkers = SOUTH_PARK.characters.filter((c) => c.talkingSheet);
+  check("south park: all four kids carry talking sheets", spTalkers.length === 4 && spTalkers.every((c) => !!c.talkingSheet!.animations.talk && !!c.talkingSheet!.animations.rest), spTalkers.map((c) => c.id).join(","));
+  check("south park: every talking sheet exists on disk", spTalkers.every((c) => existsSync(path.join(spRoot, c.talkingSheet!.image))), spTalkers.map((c) => c.talkingSheet!.image).join(","));
+  const spItems = SOUTH_PARK.items.filter((i) => i.iconUrl);
+  check("south park: item icons exist on disk", spItems.length === 3 && spItems.every((i) => existsSync(path.join(spRoot, i.iconUrl!))), spItems.map((i) => i.iconUrl).join(","));
+  check("south park: the cover is the title card", SOUTH_PARK.coverImage.endsWith("sp-title.png") && existsSync(path.join(spRoot, SOUTH_PARK.coverImage)));
+  const spCafe = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_cafe")!;
+  check("south park: the cafe is a verb-menu stage with Barbrady", spCafe.nodeType === "stage" && spCafe.stage!.verbCoin === true && spCafe.stage!.npcs![0].talkHotspotId === "sp_cafe_barbrady");
+  check("south park: the hall links to the cafe and back", SOUTH_PARK.scenes[1].stage!.exitEdges?.right?.targetSceneId === "sp_cafe" && spCafe.stage!.exitEdges?.left?.targetSceneId === "sp_hall");
+  check("south park: stan's merged sheet has directional walk", !!SOUTH_PARK.playerSprite!.sheet!.animations["walk-up"] && SOUTH_PARK.playerSprite!.sheet!.image.endsWith("sp-stan-all.png"));
 }
 
 /* ================================================================== */

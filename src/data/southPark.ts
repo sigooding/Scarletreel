@@ -20,14 +20,19 @@ import type { SpriteSheet } from "../game/spriteSheet";
  * point-smug, laugh) is drawn ON his pond marker as object art.
  */
 
-/** Stan — the walker. 6-frame side-view walk strip; idle = standing frame. */
+/** Stan — the walker. ONE merged sheet (scripts/southpark-prep.mjs packs
+ *  three strips into a uniform 14-frame grid): side walk 0-5, BACK walk
+ *  6-11 ("walk-up" — walking away reads correctly instead of a mirrored
+ *  profile), front idle blink 12-13. Left is the side sprite mirrored;
+ *  walk-toward falls back to the side walk (the classic look). */
 const SP_STAN_SHEET: SpriteSheet = {
-  image: "assets/southpark/sp-stan-walk.png",
-  frameWidth: 115,
+  image: "assets/southpark/sp-stan-all.png",
+  frameWidth: 125,
   frameHeight: 222,
   animations: {
-    idle: { frames: [0] },
+    idle: { frames: [12, 13], fps: 1.2 },
     walk: { frames: [0, 1, 2, 3, 4, 5], fps: 8 },
+    "walk-up": { frames: [6, 7, 8, 9, 10, 11], fps: 8 },
   },
 };
 
@@ -77,17 +82,39 @@ const SP_CARTMAN_MOODS: SpriteSheet = {
   },
 };
 
-/** Spare pass-1 sheet: Stan's idle blink (2 frames) — polished player idle. */
-export const SP_STAN_IDLE_SHEET: SpriteSheet = {
-  image: "assets/southpark/sp-stan-idle.png",
-  frameWidth: 241,
-  frameHeight: 427,
+
+
+/** A TALKING sheet — waist-up front-view mouth cycle ("talk"), standing
+ *  first frame ("rest"). While a character speaks a beat, the engine cycles
+ *  "talk" (fallbacks rest/idle); everyone else holds "rest". */
+const talkSheet = (image: string, frameWidth: number, frameHeight: number): SpriteSheet => ({
+  image,
+  frameWidth,
+  frameHeight,
   animations: {
-    idle: { frames: [0, 1], fps: 1.2 },
+    talk: { frames: [0, 1, 2, 3], fps: 7 },
+    rest: { frames: [0] },
+  },
+});
+
+const SP_STAN_TALK = talkSheet("assets/southpark/sp-stan-talk.png", 331, 440);
+const SP_KYLE_TALK = talkSheet("assets/southpark/sp-kyle-talk.png", 281, 392);
+const SP_CARTMAN_TALK = talkSheet("assets/southpark/sp-cartman-talk.png", 371, 397);
+const SP_KENNY_TALK = talkSheet("assets/southpark/sp-kenny-talk.png", 293, 371);
+
+/** Officer Barbrady — pass-2 patrol sheet (faces right natively). */
+const SP_BARBRADY_SHEET: SpriteSheet = {
+  image: "assets/southpark/sp-barbrady-walk.png",
+  frameWidth: 159,
+  frameHeight: 268,
+  animations: {
+    idle: { frames: [0] },
+    walk: { frames: [0, 1, 2, 3, 4, 5], fps: 7 },
   },
 };
 
-/** Shared stage tuning: snow town floor band, brisk fourth-grade walk. */
+/** Shared stage tuning: snow town floor band, brisk fourth-grade walk.
+ *  playerScale 1.5 — the beta's cast plays bigger on the plate. */
 const stageBase = {
   speed: 20,
   reach: 4,
@@ -97,6 +124,7 @@ const stageBase = {
   hints: "proximity" as const,
   verbCoin: true,
   extendedVerbs: true,
+  playerScale: 1.5,
 };
 
 export const SOUTH_PARK: Story = {
@@ -104,20 +132,21 @@ export const SOUTH_PARK: Story = {
   title: "South Park: The Recess Wars",
   tagline: "Cartman repoed the sled. The fourth grade will burn. Language may occur.",
   startSceneId: "sp_bus",
-  coverImage: "assets/southpark/sp-bg-busstop.png",
+  coverImage: "assets/southpark/sp-title.png",
   verbMenuEnabled: true,
   playerSprite: { sheet: SP_STAN_SHEET },
   characters: [
-    { id: "sp_stan", name: "Stan", role: "Fourth grader with a sled grudge", avatarUrl: "emoji:🧢", trustMeter: 0 },
-    { id: "sp_kyle", name: "Kyle", role: "The sane one (barely)", avatarUrl: "emoji:🧒", trustMeter: 0 },
-    { id: "sp_cartman", name: "Cartman", role: "King of Recess (self-declared)", avatarUrl: "emoji:🤬", trustMeter: 0 },
-    { id: "sp_kenny", name: "Kenny", role: "Mmph mmph", avatarUrl: "emoji:🥶", trustMeter: 0 },
+    { id: "sp_stan", name: "Stan", role: "Fourth grader with a sled grudge", avatarUrl: "emoji:🧢", trustMeter: 0, talkingSheet: SP_STAN_TALK, talkingX: 35, talkingY: 0, talkingScale: 0.6 },
+    { id: "sp_kyle", name: "Kyle", role: "The sane one (barely)", avatarUrl: "emoji:🧒", trustMeter: 0, talkingSheet: SP_KYLE_TALK, talkingX: 65, talkingY: 0, talkingScale: 0.6 },
+    { id: "sp_cartman", name: "Cartman", role: "King of Recess (self-declared)", avatarUrl: "emoji:🤬", trustMeter: 0, talkingSheet: SP_CARTMAN_TALK, talkingX: 52, talkingY: 0, talkingScale: 0.62 },
+    { id: "sp_kenny", name: "Kenny", role: "Mmph mmph", avatarUrl: "emoji:🥶", trustMeter: 0, talkingSheet: SP_KENNY_TALK, talkingX: 46, talkingY: 0, talkingScale: 0.58 },
   ],
   items: [
     {
       id: "sp_snowball",
       name: "A Perfect Snowball",
       icon: "❄️",
+      iconUrl: "assets/southpark/sp-item-snowball.png",
       description: "Hand-packed at the bus stop. Legally a weapon inside South Park city limits.",
       flavorText: "It's the good snow. The packing kind.",
     },
@@ -125,6 +154,7 @@ export const SOUTH_PARK: Story = {
       id: "sp_key",
       name: "Frozen Locker Key",
       icon: "🗝️",
+      iconUrl: "assets/southpark/sp-item-key.png",
       description: "Cartman's sled key, pulled out of locker 27's vent solid as a puck.",
       flavorText: "Cold as a dump in January.",
     },
@@ -132,6 +162,7 @@ export const SOUTH_PARK: Story = {
       id: "sp_sled",
       name: "Lightning Muscle 3000",
       icon: "🛷",
+      iconUrl: "assets/southpark/sp-item-sled.png",
       description: "The fastest sled on the fourth-grade black market. Repossessed by right of conquest.",
       flavorText: "'FOR OFFICIAL KING DUTIES ONLY' — fat magic marker, Cartman's handwriting.",
     },
@@ -161,6 +192,7 @@ export const SOUTH_PARK: Story = {
             sheet: SP_CARTMAN_SHEET,
             x: 32,
             y: 86,
+            scale: 1.5,
             speed: 6,
             talkHotspotId: "sp_bus_cartman",
             patrol: [
@@ -174,6 +206,7 @@ export const SOUTH_PARK: Story = {
             sheet: SP_KYLE_SHEET,
             x: 72,
             y: 91,
+            scale: 1.5,
             speed: 6,
             facing: "left",
             patrol: [
@@ -240,8 +273,11 @@ export const SOUTH_PARK: Story = {
         ...stageBase,
         spawn: { x: 12, y: 88 },
         enterCaption: "Twenty years of government-issue floor wax. Somewhere in here: locker 27, Cartman's starving vault.",
-        entrySpawns: { sp_bus: { x: 10, y: 88 }, sp_basement: { x: 55, y: 88 } },
-        exitEdges: { left: { targetSceneId: "sp_bus", label: "back to the bus stop" } },
+        entrySpawns: { sp_bus: { x: 10, y: 88 }, sp_basement: { x: 55, y: 88 }, sp_cafe: { x: 80, y: 88 } },
+        exitEdges: {
+          left: { targetSceneId: "sp_bus", label: "back to the bus stop" },
+          right: { targetSceneId: "sp_cafe", label: "Tweek's coffee" },
+        },
       },
       prose: "",
       dialogueBeats: [],
@@ -321,6 +357,7 @@ export const SOUTH_PARK: Story = {
             sheet: SP_CARTMAN_SHEET,
             x: 62,
             y: 84,
+            scale: 1.5,
             speed: 4,
             talkHotspotId: "sp_base_cartman",
             patrol: [{ x: 62, y: 84, pause: 5, say: "It's not a basement, it's a LAIR, you poor piece of shit." }],
@@ -373,6 +410,86 @@ export const SOUTH_PARK: Story = {
       choices: [],
     },
 
+    /* ── SCENE 3b — TWEEK BROS. COFFEE ────────────────────────────── */
+    {
+      id: "sp_cafe",
+      title: "Tweek Bros. Coffee",
+      note:
+        "BETA SCENE 3b (pass-2 room). Officer Barbrady patrols the floor as an interactable NPC — try the right-click " +
+        "verb menu on him, or just talk (N). The espresso machine and the community board are look gags.",
+      background: "assets/southpark/sp-bg-cafe.png",
+      nodeType: "stage",
+      stage: {
+        ...stageBase,
+        spawn: { x: 12, y: 88 },
+        enterCaption: "Tweek Bros. Coffee: where the whole town self-medicates. Officer Barbrady is 'on patrol' by the pastries.",
+        entrySpawns: { sp_hall: { x: 8, y: 88 } },
+        exitEdges: { left: { targetSceneId: "sp_hall", label: "back to school" } },
+        npcs: [
+          {
+            id: "sp_barbrady_npc",
+            sheet: SP_BARBRADY_SHEET,
+            x: 40,
+            y: 88,
+            scale: 1.5,
+            speed: 5,
+            talkHotspotId: "sp_cafe_barbrady",
+            patrol: [
+              { x: 40, y: 88, pause: 3, say: "Nothing to see here. Official police business. Mm, donuts." },
+              { x: 74, y: 92, pause: 3, say: "I am SO on top of this sled thing. Top. Of. It." },
+            ],
+          },
+        ],
+      },
+      prose: "",
+      dialogueBeats: [
+        { id: "sp_b_cafe1", characterId: "sp_cartman", text: "Officer, this man is harassing a king. Sled-related treason. I'd like to file a report, a complaint, and a croissant." },
+        { id: "sp_b_cafe2", characterId: "sp_stan", text: "He STOLE our sled, officer. In front of everybody. There's even a black market manifest." },
+        { id: "sp_b_cafe3", characterId: "sp_kyle", text: "The 'manifest' is a crayon drawing of a sled with 'MINE' written on it forty times." },
+        { id: "sp_b_cafe4", characterId: "sp_cartman", text: "It's NOTARIZED." },
+        { id: "sp_b_cafe5", characterId: "sp_stan", text: "Unbelievable. This town's police force is one guy and he's eating the evidence." },
+      ],
+      hotspots: [
+        {
+          id: "sp_cafe_barbrady",
+          label: "Officer Barbrady (on patrol, technically)",
+          bounds: { x: 34, y: 54, w: 20, h: 28 },
+          cursor: "talk",
+          isRepeatable: true,
+          action: { type: "startDialogue" },
+          verbs: {
+            look: { type: "showText", text: "Officer Barbrady. The law, at a comfortable simmer. His badge says 'protect and snack'." },
+            punch: { type: "showText", text: "Assaulting an officer is illegal, baby! ...He reads the statute out loud. He reads it wrong. Twice." },
+            use: { type: "showText", text: "You can't USE a police officer. He's not jurisdictionally an object." },
+          },
+        },
+        {
+          id: "sp_cafe_machine",
+          label: "The espresso machine",
+          bounds: { x: 16, y: 48, w: 12, h: 16 },
+          cursor: "look",
+          isRepeatable: true,
+          action: { type: "showText", text: "The machine cost more than the police budget. It hisses like Tweek asked a question." },
+          verbs: {
+            use: { type: "showText", text: "One sip. Your eye twitches for an hour. Worth it." },
+            kick: { type: "showText", text: "You do NOT kick the espresso machine. Tweek would die. Again." },
+          },
+        },
+        {
+          id: "sp_cafe_board",
+          label: "The community board",
+          bounds: { x: 66, y: 44, w: 14, h: 16 },
+          cursor: "look",
+          isRepeatable: true,
+          action: { type: "showText", text: "Flyers: 'MISSING: ONE SLED (reward: nothing)', 'BAND PRACTICE CANCELLED FOREVER', and a crayon notice of royal decree. Cartman's been busy." },
+          verbs: {
+            take: { type: "showText", text: "You pocket the royal decree. It's not evidence if it's art." },
+          },
+        },
+      ],
+      choices: [],
+    },
+
     /* ── SCENE 4 — STARK'S POND ───────────────────────────────────── */
     {
       id: "sp_pond",
@@ -406,6 +523,7 @@ export const SOUTH_PARK: Story = {
             sheet: SP_KENNY_SHEET,
             x: 55,
             y: 80,
+            scale: 1.5,
             speed: 5,
             patrol: [
               { x: 55, y: 80, pause: 3 },
@@ -467,7 +585,7 @@ export const SOUTH_PARK: Story = {
       id: "sp_end_fight",
       title: "The Playground Purge",
       note: "BETA ENDING A (silver): you chose violence. Correctly.",
-      background: "assets/southpark/sp-bg-pond.png",
+      background: "assets/southpark/sp-bg-playground.png",
       nodeType: "stage",
       stage: {
         ...stageBase,

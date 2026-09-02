@@ -201,11 +201,27 @@ function downscale(img, factor) {
   return { data: out, width: nw, height: nh };
 }
 
+/** Mirror an image horizontally (engine sprites natively face RIGHT; the
+ *  walker flips via scaleX for left — left-facing art reads back-to-front). */
+function flipH(img) {
+  const { data, width: w, height: h } = img;
+  const out = new Uint8ClampedArray(data.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const s = (y * w + x) * 4;
+      const o = (y * w + (w - 1 - x)) * 4;
+      out[o] = data[s]; out[o + 1] = data[s + 1]; out[o + 2] = data[s + 2]; out[o + 3] = data[s + 3];
+    }
+  }
+  return { data: out, width: w, height: h };
+}
+
 /** Slice a keyed sheet into a cols×rows grid, crop all cells to the union
  *  content box (+pad), repack tightly, half-size, save. Returns frame size. */
 function processSheet(name, cols, rows, opts = {}) {
-  const buf = readFileSync(path.join(RAW, name + ".png"));
-  let img = keyGreen(decodePng(buf));
+  const buf = readFileSync(path.join(RAW, (opts.src ?? name) + ".png"));
+  const decoded = decodePng(buf);
+  let img = keyGreen(opts.flip ? flipH(decoded) : decoded);
   const { width: W, height: H, data } = img;
   const cw = Math.floor(W / cols), ch = Math.floor(H / rows);
   // union content box across cells (keeps every frame aligned)
@@ -242,9 +258,176 @@ function processSheet(name, cols, rows, opts = {}) {
       }
     }
   }
+  // single-cell crop (item icons): publish just one cell of the grid
+  if (opts.cell != null) {
+    const ci = opts.cell | 0;
+    const c0 = ci % cols, r0 = Math.floor(ci / cols);
+    // clamp the union frame box to THIS cell (neighbouring items bleed
+    // otherwise — the union box can be wider than a single cell)
+    const w1 = Math.min(fw, cw - minX), h1 = Math.min(fh, ch - minY);
+    const one = { data: new Uint8ClampedArray(w1 * h1 * 4), width: w1, height: h1 };
+    for (let y = 0; y < h1; y++) {
+      for (let x = 0; x < w1; x++) {
+        const sp = ((r0 * ch + minY + y) * W + (c0 * cw + minX + x)) * 4;
+        const op = (y * fw + x) * 4;
+        one.data[op] = data[sp]; one.data[op + 1] = data[sp + 1]; one.data[op + 2] = data[sp + 2]; one.data[op + 3] = data[sp + 3];
+      }
+    }
+    const fin = downscale(one, opts.scale ?? 0.5);
+    writeFileSync(path.join(OUT, name + ".png"), encodePng(fin));
+    return { file: `assets/southpark/${name}.png`, width: fin.width, height: fin.height };
+  }
   const final = downscale(packed, opts.scale ?? 0.5);
   writeFileSync(path.join(OUT, name + ".png"), encodePng(final));
   return { file: `assets/southpark/${name}.png`, frameWidth: Math.round(fw * (opts.scale ?? 0.5)), frameHeight: Math.round(fh * (opts.scale ?? 0.5)), cols, rows };
+}
+
+/** SPLIT BY GAPS — segment a raw plate into `parts` pieces at the widest
+ *  runs of empty columns (AI item rows never align to exact thirds). */
+function splitByGaps(img, parts) {
+  const { data, width: w, height: h } = img;
+  const filled = new Array(w).fill(false);
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      if (data[(y * w + x) * 4 + 3] > 24) { filled[x] = true; break; }
+    }
+  }
+  // runs of empty columns
+  const gaps = [];
+  let run = null;
+  for (let x = 0; x < w; x++) {
+    if (!filled[x]) { run = run ?? { x0: x }; run.x1 = x; }
+    else if (run) { gaps.push(run); run = null; }
+  }
+  if (run) gaps.push(run);
+  gaps.sort((a, b) => b.x1 - b.x0 - (a.x1 - a.x0));
+  const cuts = gaps.slice(0, Math.max(0, parts - 1)).map((g) => Math.floor((g.x0 + g.x1) / 2)).sort((a, b) => a - b);
+  const segs = [];
+  let prev = -1;
+  for (const cut of [...cuts, w - 1]) {
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let x = prev + 1; x <= cut; x++) {
+      for (let y = 0; y < h; y++) {
+        if (data[(y * w + x) * 4 + 3] > 24) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX >= 0) {
+      const cell = { data: new Uint8ClampedArray((maxX - minX + 1) * (maxY - minY + 1) * 4), width: maxX - minX + 1, height: maxY - minY + 1 };
+      for (let y = 0; y < cell.height; y++) {
+        for (let x = 0; x < cell.width; x++) {
+          const sp = ((minY + y) * w + minX + x) * 4;
+          const op = (y * cell.width + x) * 4;
+          cell.data[op] = data[sp]; cell.data[op + 1] = data[sp + 1]; cell.data[op + 2] = data[sp + 2]; cell.data[op + 3] = data[sp + 3];
+        }
+      }
+      segs.push(cell);
+    }
+    prev = cut;
+  }
+  return segs;
+}
+
+/** ITEM ICONS — split a raw plate by gaps, save each piece (indexed). */
+function processSplit(name, src, parts, opts = {}) {
+  const buf = readFileSync(path.join(RAW, src + ".png"));
+  const img = keyGreen(opts.flip ? flipH(decodePng(buf)) : decodePng(buf));
+  const segs = splitByGaps(img, parts);
+  const out = {};
+  segs.forEach((seg, i) => {
+    const fin = downscale(seg, opts.scale ?? 0.6);
+    const file = opts.names?.[i] ?? (parts === 1 ? name : `${name}-${i}`);
+    writeFileSync(path.join(OUT, file + ".png"), encodePng(fin));
+    out[file] = { file: `assets/southpark/${file}.png`, width: fin.width, height: fin.height };
+  });
+  return out;
+}
+
+/** MERGED SHEET — pack several raw strips into ONE uniform frame grid so a
+ *  single SpriteSheet can hold directional animation (side walk + back walk
+ *  + idle blinks): every cell is cropped to its own strip's union box, then
+ *  pasted bottom-centred into the largest frame box, feet on the ground. */
+function processMerged(name, sources, opts = {}) {
+  const cells = [];
+  let fw = 0, fh = 0;
+  // Per-strip mean content height, for normalisation: raw renders differ in
+  // scale, and the walker switches animations in place — a 2x taller idle
+  // would read as a size pop. Everything is scaled toward the SMALLEST strip
+  // (down only — box-filter shrinking keeps the paper edges crisp).
+  const stripHeights = [];
+  for (const src of sources) stripHeights.push({ n: src.cols * src.rows, h: 0 });
+  for (const src of sources) {
+    const buf = readFileSync(path.join(RAW, src.name + ".png"));
+    const img = keyGreen(opts.flip ? flipH(decodePng(buf)) : decodePng(buf));
+    const { width: W, height: H, data } = img;
+    const cw = Math.floor(W / src.cols), ch = Math.floor(H / src.rows);
+    let minX = cw, minY = ch, maxX = -1, maxY = -1;
+    for (let c = 0; c < src.cols; c++) {
+      for (let r = 0; r < src.rows; r++) {
+        for (let y = 0; y < ch; y++) {
+          for (let x = 0; x < cw; x++) {
+            if (data[((r * ch + y) * W + c * cw + x) * 4 + 3] > 24) {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+      }
+    }
+    if (maxX < 0) throw new Error(src.name + ": nothing left after keying");
+    minX = Math.max(0, minX - 4); minY = Math.max(0, minY - 4);
+    maxX = Math.min(cw - 1, maxX + 4); maxY = Math.min(ch - 1, maxY + 4);
+    const w = maxX - minX + 1, h = maxY - minY + 1;
+    stripHeights[stripHeights.findIndex((x) => x.n === src.cols * src.rows && x.h === 0)].h = h;
+    for (let c = 0; c < src.cols; c++) {
+      for (let r = 0; r < src.rows; r++) {
+        const cell = { data: new Uint8ClampedArray(w * h * 4), width: w, height: h };
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const sp = ((r * ch + minY + y) * W + (c * cw + minX + x)) * 4;
+            const op = (y * w + x) * 4;
+            cell.data[op] = data[sp]; cell.data[op + 1] = data[sp + 1]; cell.data[op + 2] = data[sp + 2]; cell.data[op + 3] = data[sp + 3];
+          }
+        }
+        cells.push(cell);
+      }
+    }
+  }
+  // NORMALISE — scale every strip toward the shortest (feet stay planted;
+  // each cell keeps its own aspect).
+  const target = Math.min(...stripHeights.filter((x) => x.h > 0).map((x) => x.h));
+  let ci = 0;
+  for (const strip of stripHeights) {
+    const f = target / strip.h;
+    for (let k = 0; k < strip.n; k++, ci++) {
+      if (Math.abs(f - 1) > 0.02) cells[ci] = downscale(cells[ci], f);
+    }
+  }
+  fw = Math.max(...cells.map((c) => c.width));
+  fh = Math.max(...cells.map((c) => c.height));
+  const total = cells.length;
+  const packed = { data: new Uint8ClampedArray(fw * total * fh * 4), width: fw * total, height: fh };
+  cells.forEach((cell, i) => {
+    const ox = i * fw + Math.floor((fw - cell.width) / 2);
+    const oy = fh - cell.height; // feet on the ground line
+    for (let y = 0; y < cell.height; y++) {
+      for (let x = 0; x < cell.width; x++) {
+        const sp = (y * cell.width + x) * 4;
+        const op = ((oy + y) * packed.width + ox + x) * 4;
+        packed.data[op] = cell.data[sp]; packed.data[op + 1] = cell.data[sp + 1];
+        packed.data[op + 2] = cell.data[sp + 2]; packed.data[op + 3] = cell.data[sp + 3];
+      }
+    }
+  });
+  const final = downscale(packed, opts.scale ?? 0.5);
+  writeFileSync(path.join(OUT, name + ".png"), encodePng(final));
+  return { file: `assets/southpark/${name}.png`, frameWidth: Math.round(fw * (opts.scale ?? 0.5)), frameHeight: Math.round(fh * (opts.scale ?? 0.5)), cols: total, rows: 1, merged: sources.map((x) => x.name) };
 }
 
 /** Backgrounds keep full resolution. */
@@ -256,7 +439,11 @@ function processBg(name) {
 
 const jobs = JSON.parse(readFileSync(path.join(RAW, "jobs.json"), "utf8"));
 const report = {};
-for (const j of jobs.sheets) report[j.name] = processSheet(j.name, j.cols, j.rows, j.opts ?? {});
+for (const j of jobs.sheets) {
+  if (j.merge) report[j.name] = processMerged(j.name, j.merge, j.opts ?? {});
+  else if (j.split) Object.assign(report, processSplit(j.name, j.split, j.parts, j.opts ?? {}));
+  else report[j.name] = processSheet(j.name, j.cols, j.rows, j.opts ?? {});
+}
 for (const b of jobs.bgs ?? []) report[b] = processBg(b);
 writeFileSync(path.join(RAW, "manifest.json"), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
