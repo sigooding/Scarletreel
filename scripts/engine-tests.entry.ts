@@ -2969,6 +2969,8 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
     ["kenny walk", SOUTH_PARK.scenes[4].stage!.npcs![0].sheet!],
     ["barbrady walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
+    ["tweek walk", SOUTH_PARK.scenes[3].stage!.npcs![1].sheet!],
+    ["barbrady talk", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")!.talkingSheet!],
     ["cartman moods", SOUTH_PARK.scenes[4].hotspots![0].sheet!],
   ];
   for (const [label, sheet] of spSheets) {
@@ -3012,7 +3014,7 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   // Pass-2: 1.5x cast, talking sheets, item icons, title cover, the cafe.
   check("south park: the cast plays at 1.5x", SOUTH_PARK.scenes[0].stage!.playerScale === 1.5 && SOUTH_PARK.scenes[0].stage!.npcs!.every((n) => n.scale === 1.5) && SOUTH_PARK.scenes[3].stage!.npcs!.every((n) => n.scale === 1.5));
   const spTalkers = SOUTH_PARK.characters.filter((c) => c.talkingSheet);
-  check("south park: all four kids carry talking sheets", spTalkers.length === 4 && spTalkers.every((c) => !!c.talkingSheet!.animations.talk && !!c.talkingSheet!.animations.rest), spTalkers.map((c) => c.id).join(","));
+  check("south park: the whole cast carries talking sheets", spTalkers.length === 5 && spTalkers.every((c) => !!c.talkingSheet!.animations.talk && !!c.talkingSheet!.animations.rest), spTalkers.map((c) => c.id).join(","));
   check("south park: every talking sheet exists on disk", spTalkers.every((c) => existsSync(path.join(spRoot, c.talkingSheet!.image))), spTalkers.map((c) => c.talkingSheet!.image).join(","));
   const spItems = SOUTH_PARK.items.filter((i) => i.iconUrl);
   check("south park: item icons exist on disk", spItems.length === 3 && spItems.every((i) => existsSync(path.join(spRoot, i.iconUrl!))), spItems.map((i) => i.iconUrl).join(","));
@@ -3020,7 +3022,33 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   const spCafe = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_cafe")!;
   check("south park: the cafe is a verb-menu stage with Barbrady", spCafe.nodeType === "stage" && spCafe.stage!.verbCoin === true && spCafe.stage!.npcs![0].talkHotspotId === "sp_cafe_barbrady");
   check("south park: the hall links to the cafe and back", SOUTH_PARK.scenes[1].stage!.exitEdges?.right?.targetSceneId === "sp_cafe" && spCafe.stage!.exitEdges?.left?.targetSceneId === "sp_hall");
-  check("south park: stan's merged sheet has directional walk", !!SOUTH_PARK.playerSprite!.sheet!.animations["walk-up"] && SOUTH_PARK.playerSprite!.sheet!.image.endsWith("sp-stan-all.png"));
+  // Pass 3: directional walks for the whole cast, object art on markers,
+  // the verb-wheel sprite, and object-first menus on.
+  for (const [who, sheet] of [
+    ["stan", SOUTH_PARK.playerSprite!.sheet!],
+    ["kyle", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
+    ["cartman", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
+    ["kenny", SOUTH_PARK.scenes[4].stage!.npcs![0].sheet!],
+  ] as const) {
+    check("south park: " + who + " walks away from camera (walk-up)", !!sheet.animations["walk-up"] && sheet.animations["walk-up"].frames.length === 6, sheet.image);
+  }
+  const spObjArt: [string, string][] = [
+    ["snow pile", "sp_bus_snow"],
+    ["black ice", "sp_bus_ice"],
+    ["locker 27", "sp_hall_locker"],
+    ["trophy case", "sp_hall_trophy"],
+    ["the sled", "sp_base_sled"],
+    ["toy chest", "sp_base_chest"],
+    ["pond sign", "sp_pond_sign"],
+    ["espresso machine", "sp_cafe_machine"],
+  ];
+  for (const [label, hsId] of spObjArt) {
+    const hs = SOUTH_PARK.scenes.flatMap((sc) => sc.hotspots ?? []).find((h) => h.id === hsId)!;
+    check("south park: " + label + " carries object art on disk", !!hs.image && existsSync(path.join(spRoot, hs.image)), hs.image);
+  }
+  check("south park: the verb-wheel snowflake exists", !!SOUTH_PARK.verbMenuIcon && existsSync(path.join(spRoot, SOUTH_PARK.verbMenuIcon)), SOUTH_PARK.verbMenuIcon);
+  check("south park: object-first verb menus are on", SOUTH_PARK.scenes[0].stage!.objectVerbMenu === true);
+  check("south park: barbrady talks with his own sheet", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")?.talkingSheet?.animations.talk != null);
 }
 
 /* ================================================================== */

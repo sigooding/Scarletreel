@@ -155,10 +155,11 @@ export function encodePng(img) {
  *  around #00FF00), then a feathered applyKey against the corner colour. */
 function keyGreen(img) {
   const { data, width: w, height: h } = img;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i], g = data[i + 1], b = data[i + 2];
-    if (g > 80 && g > r * 1.32 && g > b * 1.32) data[i + 3] = 0;
-  }
+  // DISTANCE-ONLY keying against the sampled corner colour (no green-
+  // dominance pre-pass: that ate legitimate greens — Kyle's hat, the teal
+  // locker). The AI backdrop is a consistent bright paper green, so a
+  // radius 60 (+40 feather) keys the backdrop while mid-greens (distance
+  //  ~110+) stay outside the band.
   const keyed = applyKey(img, sampleCorners(data, w, h), 60, 40);
   // de-spill: any surviving strongly-green pixel gets its green pulled in
   for (let i = 0; i < keyed.data.length; i += 4) {
@@ -300,11 +301,43 @@ function splitByGaps(img, parts) {
     else if (run) { gaps.push(run); run = null; }
   }
   if (run) gaps.push(run);
-  gaps.sort((a, b) => b.x1 - b.x0 - (a.x1 - a.x0));
-  const cuts = gaps.slice(0, Math.max(0, parts - 1)).map((g) => Math.floor((g.x0 + g.x1) / 2)).sort((a, b) => a - b);
+  // INTERIOR GAPS ONLY — the empty margins at the plate's ends are not
+  // separators (the widest "gap" is usually the left margin; cutting there
+  // yields an empty side and one merged piece). Content bounds first.
+  let fx0 = -1, fx1 = -1;
+  for (let x = 0; x < w; x++) if (filled[x]) { fx0 = x; break; }
+  for (let x = w - 1; x >= 0; x--) if (filled[x]) { fx1 = x; break; }
+  const inner = fx0 >= 0 ? gaps.filter((g) => g.x0 > fx0 && g.x1 < fx1) : [];
+  inner.sort((a, b) => b.x1 - b.x0 - (a.x1 - a.x0));
+  const cuts = inner.slice(0, Math.max(0, parts - 1)).map((g) => Math.floor((g.x0 + g.x1) / 2)).sort((a, b) => a - b);
+  // FALLBACK — objects can touch (no fully-empty column between them). Split
+  // the widest span at its lowest-density column until we have enough cuts.
+  const colFill = (x) => {
+    let n = 0;
+    for (let y = 0; y < h; y++) if (data[(y * w + x) * 4 + 3] > 24) n++;
+    return n;
+  };
+  while (cuts.length < parts - 1) {
+    const edges = [fx0 - 1, ...cuts, fx1 + 1];
+    let best = null;
+    for (let i = 0; i < edges.length - 1; i++) {
+      const a = edges[i], b = edges[i + 1];
+      const span = b - a;
+      if (span > 8 && (!best || span > best.span)) best = { a, b, span };
+    }
+    if (!best) break;
+    let argmin = Math.floor((best.a + best.b) / 2);
+    let min = Infinity;
+    for (let x = Math.max(fx0, best.a + 1); x <= Math.min(fx1, best.b - 1); x++) {
+      const n = colFill(x);
+      if (n < min) { min = n; argmin = x; }
+    }
+    cuts.push(argmin);
+    cuts.sort((a, b) => a - b);
+  }
   const segs = [];
-  let prev = -1;
-  for (const cut of [...cuts, w - 1]) {
+  let prev = fx0 - 1;
+  for (const cut of [...cuts, fx1 + 1]) {
     let minX = w, minY = h, maxX = -1, maxY = -1;
     for (let x = prev + 1; x <= cut; x++) {
       for (let y = 0; y < h; y++) {

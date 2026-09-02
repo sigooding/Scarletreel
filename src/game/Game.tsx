@@ -2864,6 +2864,9 @@ function CasePlayer({
    *   done   — the conversation finished; back to walking
    * Choices on a stage node ONLY ever show during "open". */
   const [stageConvo, setStageConvo] = useState<"closed" | "open" | "done">("closed");
+  /** Which hotspot's conversation is playing — Stage freezes ONLY the NPC
+   *  linked to this marker (everyone else keeps patrolling). */
+  const [convoHotspotId, setConvoHotspotId] = useState<string | null>(null);
   /* TOPIC-LIST DIALOGUE (opt-in). When a startDialogue marker carries
    * `action.topics`, the conversation is a HUB of askable topics instead of
    * the scene's linear beats. `topicConvo` holds the active hub (null = not in
@@ -2888,6 +2891,27 @@ function CasePlayer({
    * the cinematic overlay style was pulled from the menu (it towers over the
    * art). Kept as a constant so the render branches below keep their shape. */
   const classicSubtitles = true;
+  /* PULP PAPER — the halftone-dot + grain overlay. An option now: some
+   * rooms read cleaner without it. Remembered per player. */
+  const [pulpOn, setPulpOn] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-pulp") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const togglePulp = () => {
+    setPulpOn((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("scarlet-reel-pulp", next ? "1" : "0");
+      } catch {
+        /* session-only */
+      }
+      return next;
+    });
+    audio.click();
+  };
   useEffect(() => {
     try {
       localStorage.setItem("scarlet-reel-subtitles", "classic");
@@ -3514,6 +3538,7 @@ function CasePlayer({
     // mid-conversation save re-opens it at its saved beat below), and the
     // entry caption plays once — the stage's opening narration.
     if (scene.nodeType === "stage") {
+      setConvoHotspotId(null);
       setStageConvo(restoring && restoring.beatIdx > 0 ? "open" : "closed");
       setStageCaption(null);
       setPlayerPose(null); // a fresh scene starts in its own default pose
@@ -4461,6 +4486,7 @@ function CasePlayer({
   const leaveTopic = useCallback(() => {
     audio.click();
     audio.stopSpeech();
+    setConvoHotspotId(null);
     setStageConvo("done");
     setTopicConvo(null);
     setTopicBeats(null);
@@ -4626,6 +4652,7 @@ function CasePlayer({
     // hub (no beats, no choices) must not auto-close the conversation.
     if (topicConvo) return;
     if (!inBeats && !hasUsableChoice) {
+      setConvoHotspotId(null);
       setStageConvo("done");
       audio.stopSpeech();
     }
@@ -5495,12 +5522,14 @@ function CasePlayer({
             setBeatIdx(0);
             setBeatDone(false);
             setChoiceFocus(0);
+            setConvoHotspotId(hs.id);
             setStageConvo("open");
             completeHotspot(hs, undefined, act, markUsed);
           } else if ((sceneById(story, sceneId)?.dialogueBeats?.length ?? 0) > 0) {
             setBeatIdx(0);
             setBeatDone(false);
             setChoiceFocus(0);
+            setConvoHotspotId(hs.id);
             setStageConvo("open");
             completeHotspot(hs, undefined, act, markUsed);
           }
@@ -5967,7 +5996,10 @@ function CasePlayer({
   );
   const activeSpeakerId = inBeats && !beatIsVo && currentBeat ? currentBeat.characterId : null;
   const animateActive = !!activeSpeakerId && currentBeat?.useCharacterAnimation !== false;
-  const showStage = proseAcknowledged && !overlay && !scene.isEnding && onStage.length > 0;
+  // STAGE nodes never overlay talking cutouts: the conversation plays as
+  // captions while the (frozen, facing-you) NPC on the plate is the speaker
+  // — portraits under the walkers read as glitchy double-vision.
+  const showStage = proseAcknowledged && !overlay && !scene.isEnding && scene.nodeType !== "stage" && onStage.length > 0;
   const particleKind = scene.particles ?? (scene.ambientAudio === "rain" ? "rain" : scene.ambientAudio === "tension" ? "smoke" : "none");
   // A credits node can carry a montage of stills that cross-dissolve behind the
   // titles, replacing the single background plate for the length of the intro.
@@ -6158,7 +6190,7 @@ function CasePlayer({
         </div>
       )}
 
-      <div className="fx-halftone absolute inset-0" aria-hidden />
+      {pulpOn && <div className="fx-halftone absolute inset-0" aria-hidden />}
       {particleKind !== "none" && <Particles kind={particleKind as "rain" | "smoke" | "storm"} soundOn={soundOn} />}
 
       {/* Scene entry transition (fade / fade-black / cut) */}
@@ -6265,7 +6297,7 @@ function CasePlayer({
               markCoverage("cutscene", `${sceneId}:${tag === "enter" ? "" : tag}#${index}`);
             }}
             verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene({ ...scene, hotspots: visibleHotspots }) : undefined}
-            convoOpen={stageConvo === "open"}
+            convoHotspotId={stageConvo === "open" ? convoHotspotId : null}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}
             onEdgeExit={(edge) => {
@@ -6470,7 +6502,7 @@ function CasePlayer({
               visitedCount={visitedScenes.size}
             />
           )}
-          {!scene.hideSceneTitle && (
+          {!scene.hideSceneTitle && scene.nodeType !== "stage" && (
             <div
               key={`scene-title-${sceneId}-${entrySeq}`}
               className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
@@ -6494,7 +6526,7 @@ function CasePlayer({
       )}
 
       {/* A visible action list keeps point-and-click interactions discoverable. */}
-      {proseAcknowledged && !scene.isEnding && !hudHidden && (
+      {proseAcknowledged && !scene.isEnding && !hudHidden && scene.nodeType !== "stage" && (
         <aside
           className={`hud-frame absolute right-3 top-24 z-50 w-64 p-2.5 ${
             investigateNudge ? "hud-frame-gold animate-pulse" : ""
@@ -7763,6 +7795,16 @@ function CasePlayer({
             </button>
           </div>
 
+          <button
+            onClick={togglePulp}
+            data-active={pulpOn || undefined}
+            data-color={pulpOn ? "cyan" : undefined}
+            className="hud-btn mb-3 w-full px-2 py-1.5"
+            title="The pulp-paper halftone dots and grain over the art"
+          >
+            📰 Pulp paper: {pulpOn ? "ON" : "OFF"}
+          </button>
+
           {musicTrack && (
             <button
               onClick={() => {
@@ -8062,7 +8104,7 @@ function CasePlayer({
                     title={item.description}
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center border border-paper/30 bg-noir-950 text-2xl">
-                      {item.iconUrl ? <img src={assetUrl(item.iconUrl)} alt="" className="h-full w-full object-cover" /> : item.icon}
+                      {item.iconUrl ? <img src={assetUrl(item.iconUrl)} alt="" className="h-full w-full object-contain p-0.5" /> : item.icon}
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate font-pulp text-[11px] uppercase tracking-wide text-paper/90">{item.name}</span>

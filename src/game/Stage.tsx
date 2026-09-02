@@ -409,10 +409,12 @@ function StageNpcActor({
       ) : (
         <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.5)]">🚶</span>
       )}
-      {/* ground shadow (not mirrored) */}
+      {/* ground shadow — pinned to the FEET line (the container anchor is
+          translate(-50%,-92%), so 92% down is where the character stands;
+          an in-flow shadow below the sprite box read as floating). */}
       <span
-        className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]"
-        style={{ transform: `scaleX(${flip})` }}
+        className="pointer-events-none absolute left-1/2 top-[92%] block h-2 w-10 -translate-x-1/2 rounded-[100%] bg-black/40 blur-[2px]"
+        style={{ transform: `translate(-50%, -50%) scaleX(${flip})` }}
       />
       {/* INTERACTABLE: the talk chip — this actor IS that marker. Counter-
           flipped like the say line so it never mirrors with the sprite. */}
@@ -436,7 +438,7 @@ export function Stage({
   onInteract,
   active,
   verbs,
-  convoOpen,
+  convoHotspotId,
   inventory,
   onPosChange,
   dropRequest,
@@ -467,9 +469,10 @@ export function Stage({
   /** VERB COIN: the verbs this room offers. Undefined/empty = no coin, and
    *  the room behaves exactly as it always has. */
   verbs?: VerbId[];
-  /** A stage conversation is open (startDialogue beats playing) — linked
-   *  NPCs hold their patrol and face the walker until it closes. */
-  convoOpen?: boolean;
+  /** The hotspot id whose conversation is playing (startDialogue) — ONLY
+   *  the linked NPC holds their patrol and faces the walker; everyone else
+   *  carries on living. Null = nobody is talking. */
+  convoHotspotId?: string | null;
   /** Carried inventory, listed under the coin when USE is selected. */
   inventory?: CoinItem[];
   /** The walker's feet (scene %), reported whenever they move — Game uses it
@@ -2005,8 +2008,12 @@ export function Stage({
                 ) : (
                   <span className="block text-5xl leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.6)]">{emoji}</span>
                 )}
-                {/* ground shadow (not mirrored or bobbed) */}
-                <span className="mx-auto mt-1 block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]" style={{ transform: `scaleX(${flip})` }} />
+                {/* ground shadow — pinned to the feet line, not floated
+                    below the sprite box (same anchor as the NPC actors). */}
+                <span
+                  className="pointer-events-none absolute left-1/2 top-[92%] block h-2 w-10 rounded-[100%] bg-black/40 blur-[2px]"
+                  style={{ transform: `translate(-50%, -50%) scaleX(${flip})` }}
+                />
               </div>
               {/* CUTSCENE SAY LINE — the player's floating speech during a
                   scripted sequence. Counter-flipped so the text never mirrors
@@ -2045,7 +2052,7 @@ export function Stage({
               npcPosRef.current[id] = pos;
             }}
             flash={flashOn}
-            frozen={convoOpen}
+            frozen={convoHotspotId != null && npc.talkHotspotId === convoHotspotId}
             faceX={posRef.current?.x}
           />
         ))}

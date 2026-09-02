@@ -27,7 +27,7 @@ import type { SpriteSheet } from "../game/spriteSheet";
  *  walk-toward falls back to the side walk (the classic look). */
 const SP_STAN_SHEET: SpriteSheet = {
   image: "assets/southpark/sp-stan-all.png",
-  frameWidth: 125,
+  frameWidth: 126,
   frameHeight: 222,
   animations: {
     idle: { frames: [12, 13], fps: 1.2 },
@@ -36,36 +36,39 @@ const SP_STAN_SHEET: SpriteSheet = {
   },
 };
 
-/** Cartman — the waddle. 6 frames facing RIGHT (the walker mirrors left). */
+/** Cartman — the waddle, merged: side walk 0-5, back waddle 6-11. */
 const SP_CARTMAN_SHEET: SpriteSheet = {
-  image: "assets/southpark/sp-cartman-walk.png",
-  frameWidth: 156,
-  frameHeight: 211,
+  image: "assets/southpark/sp-cartman-all.png",
+  frameWidth: 176,
+  frameHeight: 179,
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3, 4, 5], fps: 7 },
+    "walk-up": { frames: [6, 7, 8, 9, 10, 11], fps: 7 },
   },
 };
 
-/** Kyle — 3x2 grid, 6 frames facing LEFT. */
+/** Kyle — merged: side walk 0-5, back walk 6-11. */
 const SP_KYLE_SHEET: SpriteSheet = {
-  image: "assets/southpark/sp-kyle-walk.png",
-  frameWidth: 175,
-  frameHeight: 185,
+  image: "assets/southpark/sp-kyle-all.png",
+  frameWidth: 176,
+  frameHeight: 238,
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3, 4, 5], fps: 8 },
+    "walk-up": { frames: [6, 7, 8, 9, 10, 11], fps: 8 },
   },
 };
 
-/** Kenny — muffled orange burrito, 6 frames facing LEFT. */
+/** Kenny — the burrito, merged: side walk 0-5, back walk 6-11. */
 const SP_KENNY_SHEET: SpriteSheet = {
-  image: "assets/southpark/sp-kenny-walk.png",
-  frameWidth: 132,
+  image: "assets/southpark/sp-kenny-all.png",
+  frameWidth: 150,
   frameHeight: 210,
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3, 4, 5], fps: 8 },
+    "walk-up": { frames: [6, 7, 8, 9, 10, 11], fps: 8 },
   },
 };
 
@@ -102,7 +105,7 @@ const SP_KYLE_TALK = talkSheet("assets/southpark/sp-kyle-talk.png", 281, 392);
 const SP_CARTMAN_TALK = talkSheet("assets/southpark/sp-cartman-talk.png", 371, 397);
 const SP_KENNY_TALK = talkSheet("assets/southpark/sp-kenny-talk.png", 293, 371);
 
-/** Officer Barbrady — pass-2 patrol sheet (faces right natively). */
+/** Officer Barbrady — pass-2 patrol sheet + pass-3 talking sheet. */
 const SP_BARBRADY_SHEET: SpriteSheet = {
   image: "assets/southpark/sp-barbrady-walk.png",
   frameWidth: 159,
@@ -110,6 +113,18 @@ const SP_BARBRADY_SHEET: SpriteSheet = {
   animations: {
     idle: { frames: [0] },
     walk: { frames: [0, 1, 2, 3, 4, 5], fps: 7 },
+  },
+};
+const SP_BARBRADY_TALK = talkSheet("assets/southpark/sp-barbrady-talk.png", 371, 447);
+
+/** Tweek — jittery pass-3 patrol sheet (faces right natively). */
+const SP_TWEEK_SHEET: SpriteSheet = {
+  image: "assets/southpark/sp-tweek-walk.png",
+  frameWidth: 147,
+  frameHeight: 260,
+  animations: {
+    idle: { frames: [0] },
+    walk: { frames: [0, 1, 2, 3, 4, 5], fps: 9 },
   },
 };
 
@@ -124,6 +139,9 @@ const stageBase = {
   hints: "proximity" as const,
   verbCoin: true,
   extendedVerbs: true,
+  // OBJECT-FIRST verb wheel: click an object (or right-click) and the pie
+  // of its verbs pops up under the story's snowflake icon.
+  objectVerbMenu: true,
   playerScale: 1.5,
 };
 
@@ -133,6 +151,8 @@ export const SOUTH_PARK: Story = {
   tagline: "Cartman repoed the sled. The fourth grade will burn. Language may occur.",
   startSceneId: "sp_bus",
   coverImage: "assets/southpark/sp-title.png",
+  // the verb-wheel centrepiece: the paper snowflake
+  verbMenuIcon: "assets/southpark/sp-verbicon.png",
   verbMenuEnabled: true,
   playerSprite: { sheet: SP_STAN_SHEET },
   characters: [
@@ -140,6 +160,7 @@ export const SOUTH_PARK: Story = {
     { id: "sp_kyle", name: "Kyle", role: "The sane one (barely)", avatarUrl: "emoji:🧒", trustMeter: 0, talkingSheet: SP_KYLE_TALK, talkingX: 65, talkingY: 0, talkingScale: 0.6 },
     { id: "sp_cartman", name: "Cartman", role: "King of Recess (self-declared)", avatarUrl: "emoji:🤬", trustMeter: 0, talkingSheet: SP_CARTMAN_TALK, talkingX: 52, talkingY: 0, talkingScale: 0.62 },
     { id: "sp_kenny", name: "Kenny", role: "Mmph mmph", avatarUrl: "emoji:🥶", trustMeter: 0, talkingSheet: SP_KENNY_TALK, talkingX: 46, talkingY: 0, talkingScale: 0.58 },
+    { id: "sp_barbrady", name: "Officer Barbrady", role: "The law, at a simmer", avatarUrl: "emoji:👮", trustMeter: 0, talkingSheet: SP_BARBRADY_TALK, talkingX: 24, talkingY: 0, talkingScale: 0.6 },
   ],
   items: [
     {
@@ -236,6 +257,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_bus_snow",
           label: "A pile of perfect packing snow",
+          image: "assets/southpark/sp-obj-snow.png",
           bounds: { x: 12, y: 66, w: 12, h: 14 },
           cursor: "take",
           isRepeatable: false,
@@ -245,6 +267,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_bus_ice",
           label: "A sheet of black ice",
+          image: "assets/southpark/sp-obj-ice.png",
           bounds: { x: 58, y: 74, w: 14, h: 10 },
           cursor: "look",
           isRepeatable: true,
@@ -285,6 +308,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_hall_locker",
           label: "Locker 27 (the one with the fat face drawn on it)",
+          image: "assets/southpark/sp-obj-locker.png",
           bounds: { x: 30, y: 48, w: 14, h: 22 },
           cursor: "use",
           isRepeatable: true,
@@ -306,6 +330,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_hall_trophy",
           label: "The trophy case",
+          image: "assets/southpark/sp-obj-trophy.png",
           bounds: { x: 62, y: 46, w: 14, h: 18 },
           cursor: "look",
           isRepeatable: true,
@@ -383,6 +408,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_base_sled",
           label: "The Lightning Muscle 3000 (HIS, allegedly)",
+          image: "assets/southpark/sp-obj-sled.png",
           bounds: { x: 18, y: 66, w: 18, h: 16 },
           cursor: "take",
           isRepeatable: false,
@@ -398,6 +424,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_base_chest",
           label: "A toy chest marked PROPERTY OF MANKIND",
+          image: "assets/southpark/sp-obj-chest.png",
           bounds: { x: 76, y: 62, w: 12, h: 14 },
           cursor: "look",
           isRepeatable: true,
@@ -439,6 +466,19 @@ export const SOUTH_PARK: Story = {
               { x: 74, y: 92, pause: 3, say: "I am SO on top of this sled thing. Top. Of. It." },
             ],
           },
+          {
+            id: "sp_tweek_npc",
+            sheet: SP_TWEEK_SHEET,
+            x: 58,
+            y: 78,
+            scale: 1.5,
+            speed: 7,
+            facing: "left",
+            patrol: [
+              { x: 58, y: 78, pause: 2, say: "NGGH! Too much pressure! Sleds are heavy, man!" },
+              { x: 30, y: 82, pause: 2, say: "I don't even KNOW what a notary IS!" },
+            ],
+          },
         ],
       },
       prose: "",
@@ -447,7 +487,9 @@ export const SOUTH_PARK: Story = {
         { id: "sp_b_cafe2", characterId: "sp_stan", text: "He STOLE our sled, officer. In front of everybody. There's even a black market manifest." },
         { id: "sp_b_cafe3", characterId: "sp_kyle", text: "The 'manifest' is a crayon drawing of a sled with 'MINE' written on it forty times." },
         { id: "sp_b_cafe4", characterId: "sp_cartman", text: "It's NOTARIZED." },
-        { id: "sp_b_cafe5", characterId: "sp_stan", text: "Unbelievable. This town's police force is one guy and he's eating the evidence." },
+        { id: "sp_b_cafe5", characterId: "sp_barbrady", text: "Now hold on, everyone. I saw the whole thing. I'm going to need... one of those donuts first. Police business takes energy." },
+        { id: "sp_b_cafe6", characterId: "sp_barbrady", text: "Okay! Reviewing the crayon document... yep, that's a legally binding notarized sled. This is what the forefathers wanted. Case closed, everybody out." },
+        { id: "sp_b_cafe7", characterId: "sp_stan", text: "Unbelievable. This town's police force is one guy and he's eating the evidence." },
       ],
       hotspots: [
         {
@@ -466,6 +508,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_cafe_machine",
           label: "The espresso machine",
+          image: "assets/southpark/sp-obj-espresso.png",
           bounds: { x: 16, y: 48, w: 12, h: 16 },
           cursor: "look",
           isRepeatable: true,
@@ -557,6 +600,7 @@ export const SOUTH_PARK: Story = {
         {
           id: "sp_pond_sign",
           label: "The Stark's Pond sign",
+          image: "assets/southpark/sp-obj-sign.png",
           bounds: { x: 6, y: 54, w: 10, h: 14 },
           cursor: "look",
           isRepeatable: true,
