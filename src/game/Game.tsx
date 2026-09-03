@@ -4604,11 +4604,14 @@ function CasePlayer({
 
   const speakLine = useCallback(
     (beat: { text: string; characterId: string; audioUrl?: string; silent?: boolean }, textOverride?: string) => {
-      if (beat.silent) return; // no narration at all
+      // Recorded cues are sound effects as often as they are spoken lines.
+      // Play the clip even when the authored beat is marked silent so a
+      // silent text beat can still fire a gunshot, door slam, or other cue.
       if (beat.audioUrl) {
         audio.playClip(beat.audioUrl);
         return;
       }
+      if (beat.silent) return; // no narration at all
       const ch = story.characters.find((c) => c.id === beat.characterId);
       audio.speak(textOverride ?? beat.text, beat.characterId, ch?.voice);
     },
@@ -4616,7 +4619,10 @@ function CasePlayer({
   );
 
   useEffect(() => {
-    if (autoNarrate && currentBeat && currentBeatText) {
+    // Audio beats are intentional sound design and must not depend on the
+    // player's Web Speech narration toggle. This also lets a textless beat
+    // trigger a recorded cue as it enters the queue.
+    if (currentBeat?.audioUrl || (autoNarrate && currentBeat && currentBeatText)) {
       const t = window.setTimeout(() => speakLine(currentBeat, currentBeatText), 220);
       return () => window.clearTimeout(t);
     }

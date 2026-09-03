@@ -1,72 +1,111 @@
 # Nobody's Witness (Draft 3)
 
-*A nonlinear, pulp crime-fiction screenplay for Scarlet Reel*
+*A nonlinear pulp-crime graphic novel / movie script for Scarlet Reel*
 
-## Format
+## Format and delivery
 
-This is a **graphic-novel / movie script**, not a walking-stage adventure. The registered story uses composed plates, close-up inserts, chapter cards, dialogue replies, and evidence choices. It contains no `stage` nodes, no free-roam rooms, and no walk-to-exit gameplay.
+This is a composed **graphic-novel / movie script**, not a walking-stage adventure. The registered story uses scene plates, chapter cards, inserts, close-ups, dialogue beats, evidence hotspots, and branching end choices. It has no `stage` nodes, no free-roam rooms, and no walk-to-exit gameplay.
 
-The playable script is [`src/data/nobodysWitnessDraft3.ts`](../src/data/nobodysWitnessDraft3.ts). The story uses a hard-cut, conversational crime-film grammar: ordinary details carry menace, people talk around what matters, a joke can sit beside a threat, and the violence arrives before the room has finished discussing coffee.
+The executable source is [`src/data/nobodysWitnessDraft3.ts`](../src/data/nobodysWitnessDraft3.ts). The scene route is:
 
-Jack never gives Vera a speech about his feelings. His attachment is visible in what he does: he moves the chair so Solomon's car cannot see her face, keeps her receipt, goes to the killing anyway, takes her coat, puts his own name under her debt, gives her his car, and does not wave when she leaves.
+```text
+nw3_coldopen → nw3_titles → nw3_diner → nw3_folder → nw3_solomon
+→ nw3_vera → nw3_bluecue → nw3_david → nw3_confession → nw3_kill
+→ nw3_empty → nw3_rosa → nw3_solomon_final
+→ nw3_end_truth / nw3_end_debt / nw3_end_alibi / nw3_end_empty / nw3_end_refusal
+```
 
-## The story ledger
+Jack Morrow narrates in first person. He never gives Vera a direct declaration of what he feels. The relationship is carried by practical choices: moving a chair so a car cannot see her face, keeping the receipt, going to the killing anyway, taking her coat, putting his name under her debt, giving her his car, and not waving when she leaves.
 
-1. **Vera owes Solomon personally.** She borrowed $23,000 to buy the Blue Hour Diner's lease and kitchen. The principal barely moved while the interest did. Solomon can take her business and apartment if she misses Friday's payment. She is not pretending to be afraid of him.
-2. **David has been stealing for six years.** He skims the last dollar from cash-route envelopes and hides the withdrawals as weather damage, corrections, and rounding errors. The total is $211,406.17. He is Solomon's collector, and the harm he does to debtors is shown rather than explained with a label.
-3. **Vera finds the pattern in the accounts.** She is the only person besides David who has discovered it and can prove it. Solomon only knows that money is missing; he has not caught David.
-4. **Vera secretly pays Moe.** Her regular debt meetings put her inside Solomon's orbit. She pays Moe $8,000 in cash to make David quiet. Solomon did not order the killing.
-5. **Vera's plan is practical and ugly.** David dies, she takes the hidden money, clears her Blue Hour note, and leaves Blackwood. Jack is hired as insurance: if the killing draws police, his dated missing-husband file makes her look like a wife who was searching before the body appeared.
-6. **David catches her, but Vera does not know.** He sees her looking through the accounts and moves every dollar. Jack learns that from David. David dies before he gives the location. After the shot, nobody alive knows where the money is.
-7. **The relationship ends in choices, not a declaration.** Jack keeps choosing Vera in ways that cost him something. Vera refuses to turn those choices into another debt. She leaves; Jack does not ask the door to wait.
+## Opening cue sheet
+
+The pre-intro is deliberately spare and does not disclose the crime mechanics:
+
+1. **Black pre-intro.** The exact prose line is:
+
+   > straight, you draw a straight line and everyone stands in it
+
+2. **Straight-line music cue.** The closest verified repository asset is `/nobodys-witness.mp3`; no exact `straight.mp3` is present. It starts as the pre-intro's track and continues into the credits.
+3. **Gunshot cue.** The verified repository gunshot is `/nwt-gunshot.wav`; no exact `gunsho.mp3` is present. It plays from a textless, silent beat so it is a sound cue rather than spoken narration.
+4. **Black hold.** The gunshot beat keeps the replacement background black and uses `afterBeatMode: "auto"` with `afterBeatDelaySeconds: 1` before routing to `nw3_titles`.
+5. **Credits.** The credits card follows the black hold, then routes to the diner at 11:47 p.m.
+
+The game reader was adjusted so an `audioUrl` beat plays even when `silent: true`, and a textless recorded beat can fire when it enters the queue. That preserves the sound-design sequence without turning the gunshot into dialogue.
+
+## Story ledger — production spoilers
+
+These facts are intentionally withheld from the opening and the briefing. They are here for the author, QA, and screenplay sync.
+
+1. **Vera's debt is her own.** She borrowed $23,000 to buy the Blue Hour Diner lease and half the kitchen. She has paid interest for five years while the principal barely moved. If she misses Friday, Solomon can take the lease, equipment, and the room above the kitchen where she sleeps. She is genuinely frightened of Solomon.
+2. **David is Solomon's collector.** He is meticulous with figures and careless with people. His cruelty is shown in practical acts: reading a warranty while Moe removes a debtor's front door, and checking the time before he hurts someone. He does not describe himself as a monster.
+3. **David has skimmed the accounts for six years.** The withdrawals are small adjustments buried in cash routes, not a suitcase of movie money. Vera finds the pattern in the accounts and is the only person, besides David, who has found it and can prove it at the start of the story.
+4. **Vera secretly pays Moe.** Her regular debt meetings place her inside Solomon's orbit. She pays Moe $8,000 in cash to kill David. Solomon did not order it.
+5. **Vera's plan is practical and ugly.** She intends to let David die, take the hidden money, clear her own Blue Hour debt, and leave Blackwood. She hires Jack as insurance: if the killing attracts attention, his dated missing-husband file makes her look like a wife who was searching before the body appeared.
+6. **David notices Vera in the accounts.** Vera does not know he noticed. He moves the money before she can take it. Jack learns that from David, but David dies before giving the hiding place. Nobody alive knows where the money is after the shot.
+7. **The ending is heartbreaking, not romantic wish fulfilment.** Jack keeps choosing costly, protective actions. Vera does not turn those actions into a new obligation. She leaves Blackwood; Jack does not ask her to wait.
+
+## Character direction
+
+- **Jack Morrow:** A private detective who survives on small searches and keeps his promises to himself. He notices costs, dates, chairs, receipts, and who is watching the door. His restraint is behavior, not a speech.
+- **Vera Voss:** Runs the Blue Hour. She counts the till, leaves one chair upside down, arranges sugar packets, and presses her thumb into paper when afraid. She is frightened, calculating, guilty, and still capable of noticing whether somebody has eaten.
+- **David Voss:** A collector who understands systems and excuses cruelty as work. He keeps the door chain on, uses an unwashed chipped diner mug, jokes about coffee, and knows the difference between being clever and being safe.
+- **Solomon Reyes:** A lender and landlord who treats overdue money like scheduling. He uses route sheets, filing tabs, payment dates, and property collateral; he rarely needs to raise his voice.
+- **Moe:** A paid collector who knows when a job has crossed from work into something else. He cares about invoices because a clear job is safer than a second, unpaid obligation.
+- **Desh:** A collector who talks more freely once a bill is paid. He remembers the screwdriver in David's coat and the exact routine of David's cruelty, then watches Jack's pen instead of his face.
+- **Rosa Delgado:** A police detective and Jack's oldest friend. She checks dates and evidence handling before she offers sympathy. She understands that Jack's private file can become evidence against him.
 
 ---
 
 # SCREENPLAY
 
-## COLD OPEN — THE ROOM AFTER
+## PRE-INTRO — THE STRAIGHT LINE
 
-### EXT. SERVICE ROAD BEHIND A RENTAL HOUSE — NIGHT
+### BLACK
 
-Rain on grass. Red and blue light on a chain-link fence. An upstairs window has gone dark. A phone buzzes on the kitchen floor, trying a number that no longer belongs to anybody.
-
-**JACK (V.O.)**
-
-At 2:16 in the morning, the front door stood open. That was the first bad decision made by somebody else. Inside, the house had been stripped down to facts.
-
-A body on the kitchen tile. An empty safe. A clean rectangle in the dust.
+The `/nobodys-witness.mp3` music cue begins.
 
 **JACK (V.O.)**
 
-The body belonged to David Voss. The empty rectangle belonged to two hundred and eleven thousand, four hundred and six dollars and seventeen cents. The seventeen cents were the joke.
+straight, you draw a straight line and everyone stands in it
 
-The phone buzzes again. Jack lets it.
-
-**JACK (V.O.)**
-
-You learn things by refusing to answer them.
-
-A gunshot from somewhere behind the fence.
-
-CUT TO BLACK.
-
-## TITLE CARD
-
-**NOBODY'S WITNESS**
-
-**DRAFT 3 · A BLACKWOOD REEL**
-
-Three nights earlier.
+The screen remains black. A textless sound beat fires `/nwt-gunshot.wav`. The replacement image stays black. The scene holds for one second after the sound, then cuts to credits.
 
 ---
 
-## ACT ONE — THE RECEIPT
+## CREDITS — NOBODY'S WITNESS
+
+### TITLE CARD
+
+**NOBODY'S WITNESS**
+**DRAFT 3 · A BLACKWOOD REEL**
+
+The credit cards identify a Gaslight Reelworks production; Jack Morrow; Vera Voss; David Voss, Solomon Reyes, and Moe; then **Act One — The Line**.
+
+The visual prose reads:
+
+> NOBODY'S WITNESS
+>
+> DRAFT 3
+>
+> A graphic novel in three acts
+>
+> Blackwood. A town that keeps receipts.
+
+The continue card reads: **Blackwood Diner. 11:47 p.m.**
+
+---
+
+# ACT ONE — THE LINE
+
+## CHAPTER ONE — THE WOMAN WITH THE FOLDER
 
 ### INT. BLACKWOOD DINER — NIGHT
 
-11:47. The coffee is burnt in a way that suggests intent. JACK MORROW sits in the back booth, reading the same page of a magazine for the fourth time.
+Eleven forty-seven. The coffee has been on the burner too long. Jack Morrow is in the back booth, reading the same page of a magazine for the fourth time.
 
-The bell gives two sick little rings when VERA VOSS comes in. One is the bell. The other is the door catching on a warped mat. Vera does not scan the room; she goes straight to Jack as if the route was decided before she left home.
+**JACK (V.O.)**
+
+The bell gave two sick little rings when Vera came in. One was the bell. The other was the door catching on a warped mat.
 
 **VERA**
 
@@ -76,11 +115,11 @@ They said you were the only detective in Blackwood who doesn't work for Solomon 
 
 It is mostly a labor statistic.
 
-She sits. She arranges four sugar packets into a line and puts a folder beside them.
+Vera sits and arranges sugar packets into a line.
 
 **VERA**
 
-My husband is missing. The police used the word voluntary, which is a very polite word for a man who left his razor in the sink.
+My husband is missing. The police asked if he had left before. I said no. They wrote down yes and went to lunch.
 
 **JACK**
 
@@ -88,103 +127,105 @@ What does he do?
 
 **VERA**
 
-He collects for Solomon. Money, signatures, occasionally the part of a person that makes them answer the door. David Voss.
+He collects on Solomon's loans. He knows who has cash and who is lying about it. David Voss.
 
-**JACK**
+**JACK (V.O.)**
 
-I know David. Everybody knows David. That is not the same as knowing where he sleeps.
-
-**VERA**
-
-I brought his photograph. His accounts. The places he goes when he wants to pretend he has hobbies.
-
-**JACK**
-
-You want him found, or you want the town to see you looking?
-
-Vera looks at the folder, not at Jack.
+I know David. He collects for Solomon. He is careful about being seen doing it.
 
 **VERA**
 
-I want to know where he is. What I feel about it after that is my own business.
+I brought a photograph, some account pages, and the address where he rents a room. I do not know which one will help.
 
-The player may ask who sent Vera, what David collects, why she avoids the police, or why she chose a detective outside Solomon's orbit. The answers expose the shape of the insurance arrangement without handing over the entire mechanism.
+**JACK**
 
-When Jack takes the folder, Vera leaves a carbon receipt beneath the sugar packets. When he refuses, she takes the folder back without arguing. The refusal cuts directly to the early **NO INSURANCE** ending.
+You want him found, or you want a record that you asked?
+
+The player may ask who sent Vera, what David collects, why she avoids the police, or why she chose a detective outside Solomon's orbit. Her answers keep the second purpose of the hire off the table.
+
+Vera's face stays on the folder. The folder contains a photograph, account pages, and a carefully stripped-down trail. The phone at Jack's elbow is face-down: four missed calls from people wanting a favor and three from people wanting to sell one.
+
+Jack can take the folder and the case, or slide it back. Refusing the folder routes directly to **NO INSURANCE**.
 
 ---
 
+## CHAPTER TWO — THE SMALL NUMBERS
+
 ### INT. JACK'S OFFICE — LATER
 
-One lamp, two chairs, one folder with enough pages to need a third chair. It sits there like it hired Jack. Bank pages. David's photograph. A blue pencil circle repeated on six sheets.
+One lamp. Two chairs. The folder has enough pages to need a third chair, and it sits there like it hired Jack.
 
 **JACK (V.O.)**
 
 Vera put the case in my hands. I called it a job so I would not have to call it a favor.
 
-Jack follows the adjustment codes across different cash routes: weather damage, correction, wet count. Each one is small. Six years of withdrawals make a fortune, but not one withdrawal is large enough to make a witness. Together they make a second bookkeeping system.
+David's name sits beside small cash-route adjustments. Each is easy to dismiss. Weather damage. Wet count. Correction. The same code repeats in different months. Four digits are underlined in blue; the underline stops before it becomes an accusation.
 
 **JACK (V.O.)**
 
-You can steal a fortune one stupid coin at a time. The trick is making the coins look as if they were born stupid.
+The first rule of an account is not to decide what a number means before you know who benefits from it.
 
-David's initials sit in the margin. The total is not yet written in red.
+David collects late payments for Solomon and knows which doorbell to press twice. The pages do not yet say whether he is thief or witness. They say somebody wants Jack to choose quickly.
 
-**JACK (V.O.)**
+The account hotspot adds one restrained clue:
 
-David Voss was not a phantom. He collected late payments for Solomon and knew which doorbell to press twice. The account pages were the first thing I had ever seen that made him look small.
+> A blue pencil mark circles the same four digits on six different pages. Whoever made it stopped before adding an explanation.
 
-Jack takes David's name upstairs.
+Jack takes David's name to Solomon.
 
 ---
+
+## CHAPTER THREE — THE MAN WHO OWNS THE HINGES
 
 ### INT. SOLOMON'S OFFICE ABOVE THE FEED STORE — NIGHT
 
-Two cups. One space heater. A filing cabinet labeled by people rather than debts. Solomon Reyes waits in a cardigan.
+The heater ticks. Solomon has put out two cups. He only expects one of them to be used.
 
 **SOLOMON**
 
-David Voss is missing. You are asking about him. I dislike a mystery that brings a second mystery through the same door.
+Mr. Morrow. David Voss is missing. His route sheet says he should have knocked on three doors tonight. He knocked on none.
 
 **JACK**
 
-I was hired to find a husband. I did not bring him in my pocket.
+You checked the route sheet before you called the police.
 
 **SOLOMON**
 
-Money has been leaving my accounts for six years. Small amounts. The kind a clerk calls a correction and a thief calls a habit.
-
-**JACK**
-
-You have not caught anybody.
-
-**SOLOMON**
-
-If I had, we would not be having this conversation. David works for me. He collects money, signatures, and the occasional apology. Bring him back before the forty-eight hours run out.
-
-Solomon lets a silence do a little work.
-
-**SOLOMON**
-
-Vera Voss has a payment due Friday. I mention it because her name tends to become anxious around that day.
+I check what keeps the business moving. The police check what makes paperwork.
 
 **JACK (V.O.)**
 
-He said her name like he was sliding a plate across a table. No threat. No raised voice. A man who had already figured out the part I would do for him.
+You want him found.
 
-Solomon still suspects a hole in the accounts; he does not know David is the thief. He gives Jack forty-eight hours.
+**SOLOMON**
+
+I want my collection route back on schedule. If David walked, he can explain where. If he did not, someone can explain why. Bring him back before the forty-eight hours run out.
+
+**SOLOMON**
+
+Vera Voss has a payment due Friday. Her account is separate. Do not confuse a late payment with a missing man.
+
+**JACK (V.O.)**
+
+He says Vera's name without checking the file. He knows the fact. The performance is for me.
+
+Optional questions make Solomon specify that Vera's note is for the Blue Hour lease and kitchen, that Friday is when the building becomes part of the debt, and that David being overdue is a business fact rather than a murder theory. His filing cabinet has tabs for people, not debts. The heater kicks once, then stops; Solomon looks at it as if it has missed a payment.
+
+Jack leaves with forty-eight hours and Vera's name.
 
 ---
 
-## ACT TWO — THE ROUNDING ERROR
+# ACT TWO — THE MISSING HOURS
+
+## CHAPTER FOUR — THE BLUE HOUR NOTE
 
 ### INT. THE BLUE HOUR DINER — AFTER CLOSING
 
-Vera owns the place on paper and rents it from Solomon in every way that counts. A black sedan is parked across the street with its lights off.
+Vera has counted the till twice and left one chair upside down. A black sedan has been parked opposite the window with its lights off.
 
 **JACK (V.O.)**
 
-The car had been there long enough to become part of the weather.
+The car has been there at least twenty minutes. I know because the diner clock is four minutes slow.
 
 **VERA**
 
@@ -192,55 +233,65 @@ Do not look at it.
 
 **JACK**
 
-I was looking at the window. The window is making a suspicious shape.
+I am looking at the clock.
 
 **VERA**
 
-Solomon likes the shape. He does not send people to threaten me. He sends a note, then waits to see if I can do the threatening for him. If I call the cops, he hears it as an invitation. Fuck that.
-
-She unfolds the Blue Hour note.
-
-**VERA**
-
-Twenty-three thousand. I borrowed it to buy the lease and the kitchen when the old owner vanished into a tax problem. I paid interest for five years. The principal has moved three inches.
+He likes to sit where he can see the door. He never comes in. The note arrives, I open the till, and I choose which bill stays unpaid. If I call the cops, he hears it as an invitation. Fuck that.
 
 **JACK**
 
-And Friday?
+What is the note?
 
 **VERA**
 
-If I miss Friday, he takes the lease, the equipment, and the room above the kitchen where I sleep. That is my debt. Not David's. Mine.
-
-She presses her thumb against the paper until it leaves a crescent.
+Mine. I borrowed twenty-three thousand to buy the Blue Hour lease and half the kitchen. The old owner left before he explained the boiler. I paid interest for five years. The principal has moved three inches.
 
 **VERA**
 
-I am frightened of him. He never has to put his hand on me. He owns the door, the lease, and enough people to make a closed diner feel crowded.
+If I miss Friday, Solomon takes the lease, the equipment, and the room I sleep in above the kitchen. That is my debt. Not David's. Mine.
 
-Jack moves the chair so the sedan cannot see her face. Vera notices. She pretends not to.
+**JACK (V.O.)**
+
+She does not say she is scared. Her thumb has already said it three times against the edge of the paper.
+
+**VERA**
+
+I am frightened of him. There. You can write it down. He never has to put his hand on me. He owns the door, the lease, and enough people to make a closed diner feel crowded.
+
+**JACK**
+
+You keep the diner open anyway.
 
 **VERA**
 
 People still need coffee. Fear does not excuse a bad breakfast.
 
-The player can ask what David left in the books, offer to leave, or tell Vera to leave town. Her replies show that she has access to Solomon's meetings because of the debt, but she keeps the account discovery and the payment to Moe behind her teeth.
+**JACK (V.O.)**
 
-Jack goes to the Blue Cue.
+I moved the chair so the sedan could not see her face. She noticed. She pretended not to.
+
+The player may ask what David left in the books, offer to leave, or tell Vera to leave town. She says David handles Solomon's paperwork but does not know what he does after he leaves. If Jack offers to stay, she says he should not sit beside her but she is glad he did; that is not permission to promise anything. If he tells her to leave, she recalls a bus driver who knew Solomon's name before she gave hers.
+
+The Blue Hour loan notice is available as evidence. The window hotspot confirms that the sedan is holding its place across from Vera's door.
+
+Jack asks around about David's associates.
 
 ---
 
+## CHAPTER FIVE — THE WRONG KIND OF REGULARS
+
 ### INT. THE BLUE CUE — NIGHT
 
-The jukebox is playing a song about consequences too fast. A television shows a horse race from last week. MOE and DESH sit beneath it.
+The jukebox has chosen a song about consequences and is playing it too fast. Moe and Desh sit beneath a television showing a horse race from last week.
 
 **JACK (V.O.)**
 
-David's friends were not friends. They were men who knew where he had left his coat.
+Moe kept his coat over the chair. Desh had a newspaper folded to the race results. Neither man looked at the door when I came in.
 
 **DESH**
 
-David used to say a locked door was an invitation with better manners.
+David used to say a locked door was an invitation with better manners. He said it while he was checking whether the lock was expensive.
 
 **MOE**
 
@@ -252,21 +303,23 @@ I need the room to stop pretending it did not hear David Voss.
 
 **DESH**
 
-He took a woman's house over two late payments. Sat at her table and read the fine print while Moe removed the front door.
+He took a woman's house over two late payments. Sat at her table and read the lease while Moe removed the front door. She kept asking what was happening, like the right answer would put the hinges back.
 
 **MOE**
 
 The door was already bad.
 
+**JACK**
+
+And David?
+
 **DESH**
 
-David brought a screwdriver. The bastard liked being prepared.
+He kept a screwdriver in his coat. Said a door was cheaper to replace than an argument.
 
 **JACK (V.O.)**
 
-There are men who carry a screwdriver because something is broken. David carried one because he liked to decide what broke next.
-
-Moe studies Jack.
+I wrote down the address. Desh watched my pen, not my face. Moe watched the door.
 
 **MOE**
 
@@ -280,15 +333,27 @@ His wife says he is missing.
 
 His wife says a lot?
 
-Moe does not ask Vera's name. The pause does it for him.
+**JACK (V.O.)**
 
-Desh gives Jack the rental address. Moe does not mention the envelope Vera has already put in his hand.
+Moe did not ask Vera's name. The pause did it for him.
+
+If Jack asks what David did when nobody was watching, Desh says:
+
+> He did not hit people because he lost his temper. He did it after checking the time. That was the part that bothered me.
+
+If Jack asks who saw David last, Moe gives the rental address and says David took the service road. If Jack identifies Moe as Solomon's employee, Moe says he works Fridays and answers questions Mondays; tonight is neither, so the question should be short.
+
+The jukebox keeps failing to leave. One side of Moe's jacket hangs wrong; a gun, a bad shoulder, or a secret could all pull it that way.
+
+Jack takes the rental address.
 
 ---
 
-### INT. DAVID'S RENTAL HOUSE — NIGHT
+## CHAPTER SIX — THE MAN WHO COUNTED DUST
 
-The chain opens before Jack knocks. David holds a chipped mug printed with **WORLD'S BEST UNCLE**. Nothing in the room supports the claim.
+### INT. A RENTAL HOUSE WITH NO NAME ON THE DOOR — NIGHT
+
+David opens the chain before Jack knocks. He is holding a chipped Blue Hour mug, the sort Vera gives regulars who stop paying attention to the logo.
 
 **JACK**
 
@@ -296,45 +361,47 @@ David Voss. Your wife hired me to find you.
 
 **DAVID**
 
-No. Vera hired you to be found near me later. Different job.
+No. Vera hired you to ask where I went. That is not the same as asking why.
 
-David lets him in.
+**JACK (V.O.)**
+
+The photograph was taken from below.
 
 **DAVID**
 
-She found the pages. Put her coffee cup on page twenty-seven. A ring around the bottom. People leave fingerprints when they think they are careful.
+Makes me look taller. Vera marks pages with coffee rings. I used to think it was accidental.
 
 **JACK**
 
-How long?
+How long have you been working for Solomon?
 
 **DAVID**
 
-Six years. I took the last dollar from an envelope and called it a wet count. I took a dollar from the next envelope and called it a correction. Solomon owns the routes. He does not own the decimals.
+Six years. Long enough to know which numbers do not get checked.
 
 **JACK**
 
-Two hundred and eleven thousand dollars is a hell of a lot of decimals.
+You have been taking from Solomon.
 
 **DAVID**
 
-Not when you teach the decimals to travel in different cars.
-
-David sits. His pistol is close enough to make the mug look decorative.
+I have been taking care of myself. The accounts are a different argument.
 
 **DAVID**
 
-Vera saw the shape. She did not see me see her. I moved the money that night. Every dollar. New place, no paper, no spare key, no address for a detective to circle in red.
+She saw a shape. She did not see me see her. That is the part you should keep to yourself.
 
 **JACK**
 
-Where?
+What did you do with what she found?
 
 **DAVID**
 
-If I gave you an address, it would become your address. I prefer it as a rumor.
+I made sure what I took was no longer her problem. That is as generous as I get.
 
-Jack asks what David does to people who cannot pay.
+**JACK**
+
+You collect for Solomon. What happens when a debtor cannot pay?
 
 **DAVID**
 
@@ -348,19 +415,37 @@ You say that like it is an achievement.
 
 It is an achievement. The refrigerator still works.
 
-David's joke is not a defense. It is the closest thing he has to a fingerprint.
+**JACK (V.O.)**
 
-Jack leaves with the fact Vera does not know: David noticed her in the accounts and moved the money. David will not give him the location.
+He kept the chain on while he made the joke. David was afraid of somebody. It was not me.
+
+The mug hotspot finds old coffee baked into the rim; David uses it as if nobody ever taught him to wash a dish. A rectangular dust-mark says something heavy sat in the room recently, but not where it went.
+
+Depending on Jack's question, David later admits:
+
+> I moved what I took after I saw Vera in the accounts. It is not here. She does not know I saw her, and she has no idea where to look. I will die before I give you the rest of that sentence.
+
+Or:
+
+> Then she learned how much a mistake costs. You are the man she hired to make her search look ordinary.
+
+Or:
+
+> Good. Go tell Vera I was here. She will ask whether I looked tired. Tell her yes.
+
+Jack leaves David with the locked door. The money-moved state is set on exit, not on entry.
 
 ---
 
+## CHAPTER SEVEN — THE UNPAID QUESTION
+
 ### INT. VERA'S APARTMENT — NIGHT
 
-Vera has taken off her coat but not her shoes. On the table: the Blue Hour note, a glass of water, and the carbon receipt.
+Vera has taken off her coat but not her shoes. On the table: the Blue Hour note, a glass of water, and a carbon receipt that has not yet decided whether it is evidence.
 
 **JACK (V.O.)**
 
-David told me about the money. He did not give me the address. He told me something else, and it was the piece Vera did not know.
+David told me about the money. He did not give me the address. He told me something else, and it is the piece you do not know.
 
 **VERA**
 
@@ -384,29 +469,23 @@ Then the plan dies with the money. I do not have another plan.
 
 **JACK (V.O.)**
 
-I did not tell her he had seen her. The sentence stayed behind my teeth. It was not mercy. It was the last fact in the room that belonged to me.
-
-Vera places the receipt between them.
+I did not tell her he moved the money. The sentence stayed behind my teeth. It was not mercy. It was the last fact in the room that belonged to me.
 
 **VERA**
 
-I paid Moe. Eight thousand. Cash. Privately. Solomon's man, but not Solomon's order. I used the Friday payment meeting to get him in a room without Desh asking why.
+I paid Moe cash. He works Solomon's route. Friday payments put us in the same room, and nobody asked why I stayed after I handed him the envelope.
 
 **JACK**
 
-What did you buy?
+How much?
 
 **VERA**
 
-Quiet.
-
-**JACK**
-
-And after that?
+Eight thousand. He said he would make David quiet. Moe is a man who can turn quiet into a service.
 
 **VERA**
 
-David dies. I take the hidden money. I clear the Blue Hour note. I leave Blackwood before Solomon has a reason to say my name twice.
+David dies. I take what he hid. I pay off the Blue Hour note. I leave Blackwood before Solomon has a reason to say my name twice. That was the plan.
 
 **JACK**
 
@@ -414,43 +493,53 @@ And the folder?
 
 **VERA**
 
-Insurance. If the killing got loud, the police would find a detective's file dated before the body. A frightened wife looking for a missing husband. You were a clean fact with a receipt.
+Insurance. If the killing got loud, the police would find a detective's file dated before the body. A frightened wife looking for a missing husband. You were supposed to be a clean fact with a receipt.
 
 **JACK (V.O.)**
 
-She had not hired a savior. She had hired a timestamp.
-
-Jack puts the receipt in his inside pocket. He does not touch her hand.
+You hired me to make the search look real.
 
 **VERA**
 
-You keep coming back after the useful part is over.
+I hired you because you were outside Solomon's reach. I did not know you would keep coming back after the useful part was over.
 
 **JACK**
 
-The useful part is never where people point.
+You could have told me to stop.
 
-The appointment is set. Jack goes to the rental house.
+**VERA**
+
+Would you?
+
+**JACK**
+
+No.
+
+She puts the receipt between them. Jack puts his hand over it, not hers. The distinction is getting harder to maintain.
+
+Jack can take the receipt and ask when Moe arrives, put it in his pocket and say nothing useful, or ask for the appointment time. Each route sends him to the killing.
 
 ---
 
+## CHAPTER EIGHT — THE APPOINTMENT
+
 ### EXT. DAVID'S RENTAL HOUSE — LATER
 
-The upstairs light goes out. Jack reaches the service road as David and Moe argue about motel coffee.
+Jack arrives at the service road. Upstairs, somebody is arguing about coffee. The scene is a cutscene. The verified gunshot cue is used again for the shot.
 
 **JACK (V.O.)**
 
-I went because Vera gave me the time. I went because the receipt was in my pocket. I went because I had already moved the chair once and the next thing was apparently going to cost more.
+I went because Vera gave me the time. I went because I had a receipt in my pocket. I went because the door was already in my head before I reached it.
 
-**DAVID (O.S.)**
+**DAVID**
 
 Coffee is not supposed to taste like a tire fire.
 
-**MOE (O.S.)**
+**MOE**
 
 Then stop drinking motel coffee.
 
-**DAVID (O.S.)**
+**DAVID**
 
 That is not an answer. That is a surrender with a lid on it.
 
@@ -464,23 +553,23 @@ Morrow. Vera send you to check whether I am still breathing?
 
 **JACK**
 
-She sent me to find you. The rest is between you and the room.
-
-Moe appears behind Jack.
-
-**MOE**
-
-Nobody sent him. He came by himself.
+She sent me to find you. The rest is a matter between you and the room.
 
 **DAVID**
 
-Solomon does not know you are here.
+She found the numbers. I saw her find them. I moved the money. You can tell her that part if you want to make her night worse.
 
 **MOE**
 
-Solomon does not need to know everything.
+Vera paid me for one job. I am not adding a second one for free.
 
-David looks at Jack through the chain.
+**DAVID**
+
+Vera paid you to shoot a man and you are worried about the invoice?
+
+**JACK**
+
+Moe, do not make this easy for him.
 
 **DAVID**
 
@@ -494,27 +583,23 @@ You do not get to make the last line funny.
 
 Everybody gets to make the last line funny. That is what the last line is for.
 
-Jack steps into the doorway.
-
-**JACK**
-
-Moe, do not make this easy for him.
-
-One shot. The door opens into black.
+One shot. The door opens into black. `/nwt-gunshot.wav` fires.
 
 **MOE**
 
-She paid me. Cash. Solomon did not send me. If he asks, I saw a problem and solved it.
-
-Moe leaves. Jack takes the shell casing before the rain can carry it away.
+She paid me for one job. Solomon did not send me. Do not make me remember whether you were here.
 
 **JACK (V.O.)**
 
-The gun was not the part I took. I took the small piece of metal that could make Vera's name arrive before the police did.
+Moe leaves. I pick up the casing and put it in the receipt envelope. It is the only thing in the room I can label. Then I wait for Vera.
+
+Jack enters the room after the shot.
 
 ---
 
-## ACT THREE — THE EMPTY ROOM
+# ACT THREE — THE EMPTY ROOM
+
+## CHAPTER NINE — THE MONEY IS NOT THERE
 
 ### INT. DAVID'S RENTAL HOUSE — AFTER
 
@@ -532,11 +617,9 @@ The safe is empty.
 
 I did not ask about the safe. There was a bag. There was a second drawer. He kept cash where he could hear it being nervous.
 
-Jack sees the clean dust-mark.
-
 **JACK (V.O.)**
 
-I knew David had moved the money before tonight. Vera only knew that the room had lost it.
+The dust had a rectangle in it. I knew what had occupied the rectangle. I did not tell her who moved it or when.
 
 **VERA**
 
@@ -548,57 +631,53 @@ I do not know where it went.
 
 **VERA**
 
-You know something.
+You know enough to say that without looking.
 
 **JACK**
 
-I know the room is empty. That is enough for now.
-
-Vera looks at the body.
+I know you are not going to find it in this room.
 
 **VERA**
 
-Moe did it.
+The money was the exit. The money was the part that made the rest of this arithmetic instead of murder.
+
+If Jack tells Vera the money is gone, he says:
 
 **JACK**
 
-Moe said your name.
+I moved the chair once. I am not moving the whole room for you.
 
 **VERA**
 
-I paid him. I know what I did. I thought David would die, the money would be here, Solomon would get his note, and I would be gone before anybody had a question worth asking.
+You keep making small decisions like they are not decisions.
 
-**JACK**
-
-You hired me to be the question that arrived first.
+If Jack covers the money, he leaves the safe out of the first version of the report. If he tells the truth, he does not let Vera search alone. Either way:
 
 **VERA**
 
-I hired you to be a person the police could point at without pointing at me.
+I paid for an ending. I got an empty room.
 
-Jack takes off his coat and puts it around her shoulders. She tries to hand it back. He holds the collar closed until she stops trying.
+**JACK (V.O.)**
 
-**VERA**
+The body was David. The empty safe was the part Vera had been waiting for. The room had kept the outline and lost the answer.
 
-Do not make this kind by doing something kind now.
-
-**JACK**
-
-I am trying to keep you warm until the next bad decision.
-
-She does not thank him. He does not ask her to.
-
-Jack tells her the money is gone or hides the empty safe from the first report. Either route takes him to Rosa.
+They leave for Rosa and the file.
 
 ---
 
+## CHAPTER TEN — THE FILE IS A LOADED QUESTION
+
 ### INT. ROSA'S PARKED CAR — DAWN
 
-ROSA DELGADO has the folder on her lap. Jack has dried rain on his sleeves and David's casing in his pocket.
+Rosa has the folder on her lap and a stack of blank forms clipped to the wheel. Jack has dried rain on his sleeves and David's shell casing in his pocket.
+
+**JACK (V.O.)**
+
+Rosa read the first page twice. She did not look at me until she had checked the date.
 
 **ROSA**
 
-This file starts before the body. Dates, calls, places. Vera wanted a detective's name in the room before the room needed one.
+This file starts before the body. I checked the dates, the calls, and the places. Vera wanted a record that she had been looking for him.
 
 **JACK**
 
@@ -610,11 +689,11 @@ Against the police?
 
 **JACK**
 
-Against them seeing the murder before they saw the search.
+A private detective's file. If the murder drew attention, it made me a possible suspect before it made her one.
 
 **ROSA**
 
-Then it is not an alibi. It is a question with your handwriting on it.
+That can be useful. It can also be perjury.
 
 **JACK**
 
@@ -622,35 +701,35 @@ She is afraid of Solomon. She is also the person who paid for David to be killed
 
 **ROSA**
 
-Those facts can share a room. People are annoyingly large inside.
+Then the receipt is evidence. Who else has touched it?
 
 **JACK**
 
-Moe did it. Private cash. Solomon did not order it.
+Moe. Me. Vera, before me.
 
 **ROSA**
 
-And the money?
+And David?
 
 **JACK**
 
-Gone. David moved it before Vera knew he had seen her in the books. He died with the only address.
+David touched the reason for it.
 
-**ROSA**
+Rosa checks the casing label and the dates before offering Jack the next move. Jack can give Rosa the receipt and the off-book payment, or keep the receipt for one more conversation with Solomon.
 
-You keep putting your body between Vera and the sentence. That is not detective work.
+The folder hotspot reads:
 
-**JACK**
+> Every page says Vera was looking. No page says she had already bought the silence.
 
-It is today.
-
-Rosa offers Jack one honest choice: give her the private receipt, or keep it for the last conversation with Solomon. She will not erase facts for him. She will give him time to decide which facts he can survive.
+The windshield is covered in rain. Rosa looks forward. Jack looks at the folder. Both know which direction Vera went.
 
 ---
 
+## CHAPTER ELEVEN — THE PRICE OF A CLEAN NAME
+
 ### INT. SOLOMON'S OFFICE — MORNING
 
-Three folders on the desk: **DAVID**, **VERA**, **JACK**. The heater has stopped ticking.
+Three folders lie on the desk: DAVID, VERA, JACK. Solomon opens Vera's file to the page marked Friday. The heater is silent for once. He does not need to ask which debt he is holding.
 
 **SOLOMON**
 
@@ -658,23 +737,23 @@ David Voss is dead. Moe has become difficult to locate. Two hundred and eleven t
 
 **JACK**
 
-David did the collecting. David did the arithmetic. David also had a talent for making a room regret having a door.
+David collected. The pages show he also kept two sets of numbers. He was careful with figures and careless with people.
 
 **SOLOMON**
 
-You defend him by describing him.
+You are defending him by making him legible.
 
 **JACK**
 
-I am keeping the facts from getting lazy.
+I am keeping the facts separate.
 
 **SOLOMON**
 
-Vera's payment is due Friday. Her diner is collateral. Her apartment is collateral. Her fear is not collateral, though it behaves as if it is.
+Vera's payment is due Friday. The diner and apartment secure it. If she misses, I take both.
 
 **JACK**
 
-Moe took private money from her.
+Moe takes cash jobs from whoever can find him.
 
 **SOLOMON**
 
@@ -684,13 +763,15 @@ Moe takes private money from everybody. The question is whether he was paid to d
 
 He was paid to make David quiet. The money David stole is gone. Nobody alive knows where it is.
 
-Solomon studies the folder with Jack's name on it.
+**SOLOMON**
+
+Then Vera has a problem, you have a problem, and I have a missing number that refuses to die.
+
+Jack puts his car keys on top of Vera's folder. Solomon sees the move and does not ask what it means.
 
 **SOLOMON**
 
 You are going to offer me something. People only put keys on paper when they are about to offer something.
-
-Jack puts his car keys on top of Vera's folder. He does not look at her name.
 
 **JACK**
 
@@ -698,25 +779,25 @@ Leave her name out of the first report. Take mine instead.
 
 **SOLOMON**
 
-That is not a noble offer, Mr. Morrow. It is an expensive one.
+That is collateral, Mr. Morrow. It is expensive because it is yours.
 
 **JACK**
 
-Good. You charge for cheap things twice.
+You charge for everything eventually.
 
 **SOLOMON**
 
 The money is gone. Vera's note is not. Your file is not. Which one of you should I believe when the police ask what happened in that room?
 
-Jack chooses the receipt, the debt, the alibi, or the plain fact that the money is gone.
+The three folders are arranged like a sentence with three possible subjects. The player chooses what Jack puts his name on.
 
 ---
 
 # ENDINGS
 
-## THE RECEIPT READS
+## THE RECEIPT READS — victory silver
 
-Jack gives Rosa the receipt and gives Solomon the confession. Vera is taken in. Jack places his car keys where the police can see them and gets her coat closed around her before he steps away.
+Jack gives Rosa the receipt before going upstairs, then gives Solomon the confession. Vera does not look at him while they take her coat and ask her to sit down.
 
 **VERA**
 
@@ -742,11 +823,45 @@ That is not what I asked.
 
 I know.
 
-He does not ask her to forgive him. He does not ask her to wait. The money remains missing. Vera is alive, and the clean version of her story is gone.
+**VERA**
 
-## THE NOTE CHANGES HANDS
+You kept coming back after the useful part was over.
 
-Jack puts the Blue Hour note, his license, and his file on Solomon's desk. Vera's diner and apartment are released. Jack stays in Solomon's orbit. Vera leaves on the six o'clock bus with the keys to a car that is no longer his to give.
+**JACK**
+
+The useful part was never the part I was looking at.
+
+**VERA**
+
+Do not make a monument out of a bad decision.
+
+**JACK (V.O.)**
+
+I moved the chair. I put the coat around her. I handed over the paper. Those were the only monuments I had.
+
+Vera is alive. David is dead. The money remains missing. The goodbye does not happen in a place built for goodbyes.
+
+---
+
+## THE NOTE CHANGES HANDS — victory gold
+
+Jack puts the Blue Hour note, his license, and his clean file on Solomon's desk. Vera's diner and apartment are released. Jack stays in Solomon's orbit. Vera leaves with a bus ticket and no obligation to come back for the man who bought it.
+
+**SOLOMON**
+
+Vera Voss owes me nothing. Jack Morrow owes me his working life. The money remains missing.
+
+**JACK**
+
+Give her the keys.
+
+**SOLOMON**
+
+You put them on the file yourself.
+
+**JACK**
+
+I know where they are.
 
 **VERA**
 
@@ -754,7 +869,7 @@ You did not ask me to leave.
 
 **JACK**
 
-The bus is less patient than I am.
+The six o'clock bus is less patient than I am.
 
 **VERA**
 
@@ -762,17 +877,21 @@ You put his hand on my door and called it an exit.
 
 **JACK**
 
-I put your name somewhere he could not reach.
+I put your name on a debt he could collect from me instead.
 
 **VERA**
 
 You put yours there instead.
 
-The bus door folds shut. Jack does not lift a hand. If she looks back, she will have to decide what to do with him, and he has already made too many decisions for one morning.
+**JACK (V.O.)**
 
-## THE FILE HOLDS
+The bus door folded shut. I did not lift a hand. If she looked back, she would have had to decide what to do with me, and I had already made too many decisions for one morning.
 
-Jack writes that Vera hired him to find her missing husband. It is true. He leaves out the part where she had already chosen the ending. He gives her his car and keeps the receipt in the drawer beside his old badge.
+---
+
+## THE FILE HOLDS — victory silver
+
+Jack writes that Vera Voss hired him to find her missing husband. That is true. He leaves out the part where she had already chosen the ending. The file holds long enough for her to leave; Solomon keeps the debt open, and Jack keeps the receipt beside his old badge.
 
 **VERA**
 
@@ -792,17 +911,33 @@ It was parked.
 
 **VERA**
 
+You put the receipt in the drawer.
+
+**JACK**
+
+It was not doing anything useful on the table.
+
+**VERA**
+
 You keep making jokes when you want to say something else.
 
 **JACK**
 
 The jokes are cheaper.
 
-She takes the car and the clean report. The money never turns up. Solomon keeps the debt open. Jack lets the road take her without asking it to bring her back.
+**VERA**
 
-## THE MONEY STAYS MISSING
+If the money turns up, do not find me.
 
-Jack refuses every trade and tells Solomon the money is gone. Vera disappears before morning. Solomon keeps the Blue Hour note open. The police keep the file. Nobody alive knows where David put the money.
+**JACK (V.O.)**
+
+She took the car and the clean report. I kept Solomon's deadline, the empty safe, and every sentence I had not said. The city got smaller behind her. I did not make it follow.
+
+---
+
+## THE MONEY STAYS MISSING — game over
+
+Jack refuses every trade and tells Solomon the money is gone. Vera disappears before morning. Solomon keeps the debt open, the police keep the file, and nobody alive knows where David put the money. Jack keeps the sentence that would have changed the ending to himself.
 
 **SOLOMON**
 
@@ -820,15 +955,23 @@ A grave does not accrue interest.
 
 Give it time.
 
-Vera's keys are left on the Blue Hour counter. The diner lights are still on for a place she will not see again.
+**JACK (V.O.)**
+
+Vera was gone when I got back to the Blue Hour. Her keys were on the counter. The diner was unlocked. She had left the lights on for a place she did not intend to see again.
+
+**VERA (V.O. — REMEMBERED)**
+
+Do not make promises you cannot pay.
 
 **JACK (V.O.)**
 
-I had not promised anything. I had only moved a chair, taken a coat, put my name where hers had been, and watched the door close without asking it to wait.
+I had not promised anything. That was the problem. I had only moved a chair, taken a coat, put my name where hers had been, and watched the door close without asking it to wait.
 
-## EARLY REFUSAL — NO INSURANCE
+---
 
-Jack refuses the folder before he knows what is inside the second purpose.
+## NO INSURANCE — game over
+
+Jack refuses Vera's folder before he knows what is inside its second purpose. David still dies, the money still vanishes, and the police never get a file proving Vera looked for him first.
 
 **VERA**
 
@@ -838,10 +981,10 @@ Thank you for being honest.
 
 It is a low bar.
 
-Three nights later David Voss is dead. The morning paper calls it domestic uncertainty. Vera has no detective's file proving she looked for him first. Solomon's name still fits the room.
-
 **JACK (V.O.)**
 
-I kept the coffee receipt from that night. Not because it meant anything. Because I had been there, and sometimes a man keeps the wrong proof.
+Three nights later, David Voss was dead and the morning paper used the phrase *domestic uncertainty*. Vera had no detective's file, no witness she had purchased in advance, and Solomon's name still fit the room.
 
-**FADE OUT.**
+**JACK (V.O. — FINAL)**
+
+I kept the coffee receipt from that night. Not because it meant anything. Because I had been there, and sometimes a man keeps the wrong proof.

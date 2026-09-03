@@ -13,8 +13,8 @@ import type { Choice, DialogueBeat, Story } from "../types";
  *     not a secret wish to be rescued; it is a practical exit with a body in
  *     the middle of it.
  *  3. David's theft is an accounting trick, not a suitcase of movie money.
- *     He sees Vera find the trick, moves the money, and dies before the place
- *     exists as knowledge for anyone else.
+ *     He sees Vera find the trick, moves the money, and dies before its new
+ *     hiding place becomes anybody else's knowledge.
  */
 
 const beat = (
@@ -41,7 +41,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
   id: "nobodys-witness-draft-3",
   title: "Nobody's Witness (Draft 3)",
   tagline:
-    "A missing ledger, a dead collector, and a woman who hires a detective to make murder look like research.",
+    "A missing collector, a careful wife, and a file that wants to be believed.",
   coverImage: "/img/cover-nobodys-witness.jpg",
   gameKind: "noir-rail",
   startSceneId: "nw3_coldopen",
@@ -57,33 +57,33 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
   },
   briefing: {
     objective:
-      "Find David Voss before Solomon Reyes closes the town around him, then decide what Jack is willing to put his name on for Vera.",
+      "Find David Voss before his absence becomes somebody else's paperwork, then decide what Jack is willing to put his name on.",
     winConditions: [
-      "Read the bookkeeping trick instead of waiting for a confession in a suitcase.",
-      "Understand Vera's debt, her fear, and the private arrangement she made with Moe.",
-      "Reach the room where David dies before the story turns into a clean police report.",
-      "Choose whether Jack's name becomes evidence, collateral, or an alibi.",
+      "Read the pages closely enough to tell an error from a habit.",
+      "Work out why Vera keeps watching the front window.",
+      "Find David before the town decides what happened for you.",
+      "Choose what Jack's name is worth when the file changes hands.",
     ],
     loseConditions: [
-      "Let the case become a story about an innocent wife and a bad dead husband.",
-      "Treat Solomon's suspicion as proof before you understand who can actually prove the theft.",
-      "Assume an empty safe is a clue to a location instead of the end of a trail.",
+      "Accept the first tidy version of a missing person's story.",
+      "Treat Solomon's confidence as proof before you have something you can use.",
+      "Mistake an empty room for an answer.",
     ],
   },
   acts: [
     {
       id: "nw3_act1",
       label: "Act One",
-      title: "The Receipt",
-      tagline: "A body is a fact. A file is an argument.",
+      title: "The Line",
+      tagline: "A missing man leaves a line of ordinary questions.",
       startSceneId: "nw3_coldopen",
       titleCardImage: "/img/style/nw2-signature-a-neon80s.jpg",
     },
     {
       id: "nw3_act2",
       label: "Act Two",
-      title: "The Rounding Error",
-      tagline: "Everybody counts. Nobody counts the same thing.",
+      title: "The Missing Hours",
+      tagline: "The useful answers arrive after people stop performing.",
       startSceneId: "nw3_vera",
       titleCardImage: "/img/nw2/bg-folder.jpg",
     },
@@ -91,7 +91,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       id: "nw3_act3",
       label: "Act Three",
       title: "The Empty Room",
-      tagline: "David took the address with him. Jack keeps the rest.",
+      tagline: "A room gets quiet. A name gets expensive.",
       startSceneId: "nw3_empty",
       titleCardImage: "/img/nw2/bg-final-street.jpg",
     },
@@ -120,7 +120,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "jack",
       name: "Jack Morrow",
-      role: "Private detective and narrator; he notices what people put back.",
+      role: "Private detective and narrator; lives on small searches and keeps promises to himself.",
       avatarUrl: "/img/ch-jack-morrow.jpg",
       trustMeter: 0,
       voice: { pitch: 0.72, rate: 0.9 },
@@ -128,7 +128,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "vera",
       name: "Vera Voss",
-      role: "Blue Hour Diner operator, David's wife, and Solomon's debtor.",
+      role: "Runs the Blue Hour Diner; practical, exhausted, and careful about who sees her worry.",
       avatarUrl: "/img/ch-vera-voss.jpg",
       trustMeter: 0,
       voice: { pitch: 1.12, rate: 0.92 },
@@ -136,7 +136,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "david",
       name: "David Voss",
-      role: "Solomon's collector and a six-year architect of invisible withdrawals.",
+      role: "Solomon's collector; meticulous with figures and careless with people.",
       avatarUrl: "/img/ch-david-voss.jpg",
       trustMeter: 0,
       voice: { pitch: 0.82, rate: 0.92 },
@@ -144,7 +144,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "solomon",
       name: "Solomon Reyes",
-      role: "Lender, landlord, and owner of the town's useful silences.",
+      role: "Lender and landlord; treats overdue money like a scheduling problem.",
       avatarUrl: "/img/ch-solomon-reyes.jpg",
       trustMeter: 0,
       voice: { pitch: 0.62, rate: 0.86 },
@@ -152,7 +152,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "moe",
       name: "Moe",
-      role: "Solomon's collector; he does private work when the envelope is right.",
+      role: "Solomon's collector; knows when a job has crossed from work into something else.",
       avatarUrl: "/img/ch-moe.jpg",
       trustMeter: 0,
       voice: { pitch: 0.78, rate: 0.9 },
@@ -160,7 +160,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "desh",
       name: "Desh",
-      role: "Solomon's collector; remembers the unpleasant details for free.",
+      role: "Solomon's collector; talks more freely when the bill is already paid.",
       avatarUrl: "/img/ch-desh.jpg",
       trustMeter: 0,
       voice: { pitch: 1.02, rate: 1.02 },
@@ -168,7 +168,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "rosa",
       name: "Rosa Delgado",
-      role: "Detective and Jack's oldest friend; she does not confuse mercy with erasing facts.",
+      role: "Police detective and Jack's oldest friend; requires facts she can use in court.",
       avatarUrl: "/img/ch-rosa.jpg",
       trustMeter: 0,
       voice: { pitch: 0.96, rate: 0.94 },
@@ -180,7 +180,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       name: "Vera's Folder",
       icon: "🗂",
       description:
-        "A timeline, a photograph, and six years of account pages arranged to look like a worried wife's work.",
+        "A timeline, a photograph, and account pages arranged to make a missing husband look easy to find.",
       flavorText: "The order of the pages is doing as much talking as the pages themselves.",
       isClue: true,
     },
@@ -190,7 +190,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       icon: "📄",
       description:
         "Cash-route sheets with tiny adjustment codes repeated at the edges of David's clean totals.",
-      flavorText: "A rounding error is just a theft wearing office clothes.",
+      flavorText: "A small number can be a door. Check who keeps walking through it.",
       isClue: true,
     },
     {
@@ -272,11 +272,11 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     nw3_photo_seen:
       "Jack has seen David's photograph and knows the face attached to the collection routes.",
     nw3_solomon_suspicious:
-      "Solomon knows money is missing, but he has not caught David stealing it.",
+      "Solomon knows David is off his route; he has not tied that absence to the account irregularities.",
     nw3_debt_revealed:
       "The Blue Hour loan is Vera's own debt. Solomon can take the diner and the lease if she stops paying.",
     nw3_david_seen:
-      "Jack found David alive in the rental house and heard the shape of his confession.",
+      "Jack found David alive in the rental house and left with the sense he was hiding more than a location.",
     nw3_david_bad:
       "David's cruelty is recorded in what he did to debtors, not in a label he would accept.",
     nw3_money_moved:
@@ -312,62 +312,43 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
   },
   scenes: [
     /* ================================================================ */
-    /* ACT ONE — THE AFTERMATH                                          */
+    /* PRE-INTRO + CREDITS                                             */
     /* ================================================================ */
     {
       id: "nw3_coldopen",
-      title: "Cold Open — The Room After",
+      title: "Pre-Intro — The Straight Line",
       nodeType: "cutscene",
-      background: "/img/nw2/bg-yard-night.jpg",
-      ambientAudio: "rain",
-      particles: "storm",
-      musicMode: "none",
-      transition: "fade-black",
-      transitionSpeed: 1.4,
+      background: "gradient:linear-gradient(#000,#000)",
+      musicMode: "track",
+      musicUrl: "/nobodys-witness.mp3",
+      musicLevel: 0.5,
+      musicFadeSeconds: 0,
+      transition: "cut",
+      transitionSpeed: 0,
       letterbox: true,
-      choiceDelaySeconds: 3,
-      cinematic: {
-        mode: "static",
-        dimAmount: 0.46,
-        lights: [
-          { x: 76, y: 30, color: "#2a6cff", intensity: 0.26, size: 40, pulseSeconds: 1.9, pulseAmount: 1 },
-          { x: 84, y: 34, color: "#ff2e3c", intensity: 0.24, size: 38, pulseSeconds: 2.3, pulseAmount: 1 },
-        ],
-      },
-      prose:
-        "EXT. A SERVICE ROAD BEHIND A RENTAL HOUSE — NIGHT. Rain on the grass. The upstairs window is dark. A phone buzzes on the floor inside, calling a number that no longer belongs to anybody.",
+      noTypewriter: true,
+      autoNarrate: false,
+      choiceDelaySeconds: 1,
+      prose: "straight, you draw a straight line and everyone stands in it",
       dialogueBeats: [
         beat(
-          "nw3_co_j1",
+          "nw3_pi_s1",
           "jack",
-          "At 2:16 in the morning, the front door stood open. That was the first bad decision made by somebody else. Inside, the house had been stripped down to facts."
-        ),
-        beat(
-          "nw3_co_j2",
-          "jack",
-          "There was a body on the kitchen tile. There was a safe with a clean rectangle in the dust. There was a phone that kept trying to make the dead answer.",
-          { expression: "V.O. — dry, not sentimental" }
-        ),
-        beat(
-          "nw3_co_j3",
-          "jack",
-          "The body belonged to David Voss. The empty rectangle belonged to two hundred and eleven thousand, four hundred and six dollars and seventeen cents. The seventeen cents were the joke.",
-          { expression: "V.O. — the first piece of the ledger" }
-        ),
-        beat(
-          "nw3_co_s1",
-          "jack",
-          "The phone buzzed again. I let it. You learn things by refusing to answer them.",
+          "",
           {
-            expression: "the phone in the dark",
+            expression: "one second of black",
             silent: true,
             audioUrl: "/nwt-gunshot.wav",
+            background: "gradient:linear-gradient(#000,#000)",
+            backgroundTransition: "cut",
+            backgroundTransitionSpeed: 0,
+            afterBeatTargetSceneId: "nw3_titles",
+            afterBeatMode: "auto",
+            afterBeatDelaySeconds: 1,
           }
         ),
       ],
-      choices: [
-        nav("nw3_co_go", "Three nights earlier.", "nw3_titles", { attitudeTag: "Neutral" }),
-      ],
+      choices: [],
       hotspots: [],
     },
     {
@@ -409,11 +390,11 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           { role: "Featuring", name: "Jack Morrow" },
           { role: "Featuring", name: "Vera Voss" },
           { role: "With", name: "David Voss · Solomon Reyes · Moe" },
-          { role: "Act One", name: "The Receipt" },
+          { role: "Act One", name: "The Line" },
         ],
       },
       prose:
-        "NOBODY'S WITNESS\n\nDRAFT 3\n\nA graphic novel in three acts\n\nBlackwood. Three nights before the phone stopped being useful.",
+        "NOBODY'S WITNESS\n\nDRAFT 3\n\nA graphic novel in three acts\n\nBlackwood. A town that keeps receipts.",
       choices: [
         nav("nw3_title_go", "Blackwood Diner. 11:47 p.m.", "nw3_diner", { attitudeTag: "Neutral" }),
       ],
@@ -450,7 +431,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         ],
       },
       prose:
-        "INT. BLACKWOOD DINER — NIGHT. Eleven forty-seven. The coffee is burnt in a way that suggests intent. Jack Morrow is in the back booth, reading the same page of a magazine for the fourth time.",
+        "INT. BLACKWOOD DINER — NIGHT. Eleven forty-seven. The coffee has been on the burner too long. Jack Morrow is in the back booth, reading the same page of a magazine for the fourth time.",
       dialogueBeats: [
         beat(
           "nw3_d_j1",
@@ -468,7 +449,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_d_v2",
           "vera",
-          "My husband is missing. The police used the word voluntary, which is a very polite word for a man who left his razor in the sink.",
+          "My husband is missing. The police asked if he had left before. I said no. They wrote down yes and went to lunch.",
           { expression: "sitting, arranging sugar packets into a line" }
         ),
         beat(
@@ -480,31 +461,31 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_d_v3",
           "vera",
-          "He collects for Solomon. Money, signatures, occasionally the part of a person that makes them answer the door. David Voss.",
+          "He collects on Solomon's loans. He knows who has cash and who is lying about it. David Voss.",
           { expression: "the name lands without drama" }
         ),
         beat(
           "nw3_d_j4",
           "jack",
-          "I know David. Everybody knows David. That is not the same as knowing where he sleeps.",
+          "I know David. He collects for Solomon. He is careful about being seen doing it.",
           { expression: "V.O." }
         ),
         beat(
           "nw3_d_v4",
           "vera",
-          "I brought his photograph. His accounts. The places he goes when he wants to pretend he is a man with hobbies.",
+          "I brought a photograph, some account pages, and the address where he rents a room. I do not know which one will help.",
           { expression: "sliding the folder across" }
         ),
         beat(
           "nw3_d_j5",
           "jack",
-          "You want him found, or you want the town to see you looking?",
+          "You want him found, or you want a record that you asked?",
           { expression: "quiet" }
         ),
-        beat("nw3_d_r_source", "vera", "A woman at the courthouse gave me your name. She said you were the only detective in town who could read a crooked story without asking Solomon how it ended.", { conditionRule: { requiresFlags: ["nw3_asked_source"] }, expression: "guarded" }),
-        beat("nw3_d_r_work", "vera", "David collects money, signatures, and the useful bits of a person's courage. He is good at making a number feel like a threat.", { conditionRule: { requiresFlags: ["nw3_asked_work"] }, expression: "careful" }),
-        beat("nw3_d_r_police", "vera", "The police ask Solomon before they ask me. If I call them, he hears it as an invitation.", { conditionRule: { requiresFlags: ["nw3_asked_police"] }, expression: "the brightness gone" }),
-        beat("nw3_d_r_why", "vera", "Because your name is clean. If David turns up dead, a detective's file gives the police a reason to believe I was looking first.", { conditionRule: { requiresFlags: ["nw3_asked_why"] }, expression: "too honest" }),
+        beat("nw3_d_r_source", "vera", "A woman at the courthouse gave me your name. She said you can find someone without making the whole street watch you look.", { conditionRule: { requiresFlags: ["nw3_asked_source"] }, expression: "guarded" }),
+        beat("nw3_d_r_work", "vera", "He handles collections for Solomon. He has a route, a schedule, and a habit of turning his phone off when I need him.", { conditionRule: { requiresFlags: ["nw3_asked_work"] }, expression: "careful" }),
+        beat("nw3_d_r_police", "vera", "The police will call it a domestic matter until Solomon decides it is his matter. I want a private search first.", { conditionRule: { requiresFlags: ["nw3_asked_police"] }, expression: "the brightness gone" }),
+        beat("nw3_d_r_why", "vera", "Because you ask questions before you decide what the answers cost. I need that kind of stubbornness, not a friend who will tell me what I want to hear.", { conditionRule: { requiresFlags: ["nw3_asked_why"] }, expression: "too honest" }),
       ],
       choices: [
         reply("nw3_d_q_source", "Who told you to come to me?", {
@@ -575,7 +556,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     },
     {
       id: "nw3_folder",
-      title: "Chapter Two — The Rounding Error",
+      title: "Chapter Two — The Small Numbers",
       background: "/img/nw2/bg-folder.jpg",
       ambientAudio: "rain",
       musicMode: "none",
@@ -602,25 +583,25 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_f_j2",
           "jack",
-          "David's name sat beside six years of cash-route adjustments. Not missing money. Not yet. Just the kind of arithmetic that asks you not to look twice.",
+          "David's name sat beside a handful of cash-route adjustments. Each one was small enough to dismiss. That was why I kept reading.",
           { expression: "V.O. — reading the pages" }
         ),
         beat(
           "nw3_f_j3",
           "jack",
-          "Every route had a little weather in it. A damaged envelope. A wet count. A delivery short by ninety-three cents and corrected by a dollar. Six years of withdrawals, enough to make a fortune and not one large enough to make a witness. Then the same code appeared three pages later, in a different hand, with David's initials hiding in the margin.",
+          "Weather damage. Wet count. Correction. The same code repeated in different months, and somebody had underlined four digits in blue. The underline stopped before it became an accusation.",
           { expression: "V.O. — the pattern arriving" }
         ),
         beat(
           "nw3_f_j4",
           "jack",
-          "You can steal a fortune one stupid coin at a time. The trick is making the coins look like they were born stupid.",
+          "The first rule of an account is not to decide what a number means before you know who benefits from it.",
           { expression: "V.O." }
         ),
         beat(
           "nw3_f_j5",
           "jack",
-          "David Voss was not a phantom. He was a man who collected late payments for Solomon and knew which doorbell to press twice. The account pages were the first thing I had ever seen that made him look small.",
+          "David Voss collected late payments for Solomon and knew which doorbell to press twice. The pages did not tell me whether he was thief or witness. They told me somebody wanted me to choose quickly.",
           { expression: "V.O." }
         ),
       ],
@@ -656,7 +637,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           isRepeatable: true,
           action: {
             type: "showText",
-            text: "A blue pencil mark circles the same four digits on six different pages. Whoever made it stopped before writing the word theft.",
+            text: "A blue pencil mark circles the same four digits on six different pages. Whoever made it stopped before adding an explanation.",
           },
         },
       ],
@@ -690,39 +671,39 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_s_s1",
           "solomon",
-          "Mr. Morrow. David Voss is missing. You are asking about him. I dislike a mystery that brings a second mystery through the same door."
+          "Mr. Morrow. David Voss is missing. His route sheet says he should have knocked on three doors tonight. He knocked on none."
         ),
-        beat("nw3_s_j1", "jack", "I was hired to find a husband. I did not bring him in my pocket."),
+        beat("nw3_s_j1", "jack", "You checked the route sheet before you called the police."),
         beat(
           "nw3_s_s2",
           "solomon",
-          "Money has been leaving my accounts for six years. Small amounts. The kind a clerk calls a correction and a thief calls a habit."
+          "I check what keeps the business moving. The police check what makes paperwork."
         ),
         beat(
           "nw3_s_j2",
           "jack",
-          "You have not caught anybody.",
+          "You want him found.",
           { expression: "V.O." }
         ),
         beat(
           "nw3_s_s3",
           "solomon",
-          "If I had caught somebody, we would not be having this conversation. David works for me. He collects money, signatures, and the occasional apology. Bring him back before the forty-eight hours run out."
+          "I want my collection route back on schedule. If David walked, he can explain where. If he did not, someone can explain why. Bring him back before the forty-eight hours run out."
         ),
         beat(
           "nw3_s_s4",
           "solomon",
-          "And Vera Voss has a payment due on Friday. I mention it because her name tends to become anxious around that day."
+          "Vera Voss has a payment due Friday. Her account is separate. Do not confuse a late payment with a missing man."
         ),
         beat(
           "nw3_s_j3",
           "jack",
-          "He says Vera's name like he is sliding a plate across a table. No threat. No raised voice. A man who has already figured out the part you will do for him.",
+          "He says Vera's name without checking the file. He knows the fact. The performance is for me.",
           { expression: "V.O." }
         ),
-        beat("nw3_s_r_client", "solomon", "Of course I know. Vera's payment makes her easy to notice. I wanted to know whether you were easy to buy.", { conditionRule: { requiresFlags: ["nw3_named_vera"] }, expression: "pleasant" }),
-        beat("nw3_s_r_debt", "solomon", "The note is hers. Twenty-three thousand for the lease and kitchen. She has paid enough interest to purchase a second diner by now.", { conditionRule: { requiresFlags: ["nw3_asked_debt"] }, expression: "administrative" }),
-        beat("nw3_s_r_david", "solomon", "I think David is capable of many things. Thinking is not catching. I prefer a fact I can put in a drawer.", { conditionRule: { requiresFlags: ["nw3_asked_david"] }, expression: "a slight pause" }),
+        beat("nw3_s_r_client", "solomon", "I know who Vera is. She pays on time when she can. I want to know if you can keep a client from making a bad situation worse.", { conditionRule: { requiresFlags: ["nw3_named_vera"] }, expression: "pleasant" }),
+        beat("nw3_s_r_debt", "solomon", "Her note is for the Blue Hour lease and kitchen. The number is between her and me. Friday is when it becomes between her and the building.", { conditionRule: { requiresFlags: ["nw3_asked_debt"] }, expression: "administrative" }),
+        beat("nw3_s_r_david", "solomon", "I think David is overdue. That is a business fact, not a murder theory. Bring me facts I can put in a drawer.", { conditionRule: { requiresFlags: ["nw3_asked_david"] }, expression: "a slight pause" }),
       ],
       choices: [
         reply("nw3_s_q_client", "You already know Vera hired me.", {
@@ -755,7 +736,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           isRepeatable: true,
           action: {
             type: "showText",
-            text: "The cabinet is labeled by person, not by debt. Solomon keeps the paper where it can watch the people.",
+            text: "The cabinet has tabs for every person who owes him. The dates are in pencil; the names are in ink.",
           },
         },
         {
@@ -764,7 +745,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           bounds: { x: 8, y: 54, w: 24, h: 28 },
           cursor: "look",
           isRepeatable: true,
-          action: { type: "showText", text: "Tick. Tick. The room has a metronome and Solomon has a deadline." },
+          action: { type: "showText", text: "The heater kicks once, then stops. Solomon looks at it, annoyed, as if it has missed a payment." },
         },
       ],
     },
@@ -775,7 +756,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     {
       id: "nw3_vera",
       title: "Chapter Four — The Blue Hour Note",
-      partBreak: "Act Two — The Rounding Error",
+      partBreak: "Act Two — The Missing Hours",
       background: "/img/nw2/bg-vera-booth.jpg",
       ambientAudio: "rain",
       particles: "rain",
@@ -795,27 +776,27 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       },
       onEnterActions: [{ consequences: { setFlags: ["nw3_debt_revealed"] } }],
       prose:
-        "INT. THE BLUE HOUR DINER — AFTER CLOSING. Vera owns the place on paper and rents it from Solomon in every way that counts. A black sedan is parked opposite the window with its lights off.",
+        "INT. THE BLUE HOUR DINER — AFTER CLOSING. Vera has counted the till twice and left one chair upside down. A black sedan has been parked opposite the window with its lights off.",
       dialogueBeats: [
         beat(
           "nw3_v_j1",
           "jack",
-          "The car outside has been there long enough to become part of the weather.",
+          "The car has been there at least twenty minutes. I know because the diner clock is four minutes slow.",
           { expression: "V.O." }
         ),
         beat("nw3_v_v1", "vera", "Do not look at it."),
-        beat("nw3_v_j2", "jack", "I was looking at the window. The window is making a suspicious shape."),
+        beat("nw3_v_j2", "jack", "I am looking at the clock."),
         beat(
           "nw3_v_v2",
           "vera",
-          "Solomon likes the shape. He does not send people to threaten me. He sends a note, then waits to see if I can do the threatening for him. If I call the cops, he hears it as an invitation. Fuck that.",
+          "He likes to sit where he can see the door. He never comes in. The note arrives, I open the till, and I choose which bill stays unpaid. If I call the cops, he hears it as an invitation. Fuck that.",
           { expression: "hands folded too tightly" }
         ),
         beat("nw3_v_j3", "jack", "What is the note?"),
         beat(
           "nw3_v_v3",
           "vera",
-          "Mine. The Blue Hour is mine. I borrowed twenty-three thousand to buy the lease and the kitchen when the old owner vanished into a tax problem. I paid interest for five years. The principal has moved three inches.",
+          "Mine. I borrowed twenty-three thousand to buy the Blue Hour lease and half the kitchen. The old owner left before he explained the boiler. I paid interest for five years. The principal has moved three inches.",
           { expression: "taking the folded notice from her purse" }
         ),
         beat(
@@ -853,9 +834,9 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           "I moved the chair so the sedan could not see her face. She noticed. She pretended not to.",
           { expression: "V.O." }
         ),
-        beat("nw3_v_r_books", "vera", "He kept records for Solomon. That is all I can say without making the room smaller. David notices when a story gets too specific.", { conditionRule: { requiresFlags: ["nw3_asked_vera_books"] }, expression: "careful" }),
+        beat("nw3_v_r_books", "vera", "He handles Solomon's paperwork. I do not know what he does after he leaves here, and I stopped asking because the answers make breakfast harder to serve.", { conditionRule: { requiresFlags: ["nw3_asked_vera_books"] }, expression: "careful" }),
         beat("nw3_v_r_silence", "vera", "You should not sit beside me. But I am glad you did. That is not permission to promise anything.", { conditionRule: { requiresFlags: ["nw3_offered_silence"] }, expression: "a little less afraid" }),
-        beat("nw3_v_r_leave", "vera", "I have tried leaving. Solomon's paper followed me to the bus station. I am not afraid of the city. I am afraid of what owns my name.", { conditionRule: { requiresFlags: ["nw3_asked_vera_leave"] }, expression: "a tired smile" }),
+        beat("nw3_v_r_leave", "vera", "I tried a bus once. The driver knew Solomon's name before I gave mine. I am not afraid of the city. I am afraid of what owns my name.", { conditionRule: { requiresFlags: ["nw3_asked_vera_leave"] }, expression: "a tired smile" }),
       ],
       choices: [
         reply("nw3_v_q_books", "What did David leave in the books?", {
@@ -932,22 +913,22 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       prose:
         "INT. THE BLUE CUE — NIGHT. The jukebox has chosen a song about consequences and is playing it too fast. Moe and Desh sit beneath a television showing a horse race from last week.",
       dialogueBeats: [
-        beat("nw3_b_j1", "jack", "David's friends were not friends. They were men who knew where he had left his coat.", { expression: "V.O." }),
-        beat("nw3_b_d1", "desh", "David used to say a locked door was an invitation with better manners."),
+        beat("nw3_b_j1", "jack", "Moe kept his coat over the chair. Desh had a newspaper folded to the race results. Neither man looked at the door when I came in.", { expression: "V.O." }),
+        beat("nw3_b_d1", "desh", "David used to say a locked door was an invitation with better manners. He said it while he was checking whether the lock was expensive."),
         beat("nw3_b_m1", "moe", "David used to say many things. Most of them cost somebody a window."),
         beat("nw3_b_j2", "jack", "I need the room to stop pretending it did not hear David Voss."),
-        beat("nw3_b_d2", "desh", "He took a woman's house over two late payments. Sat at her table and read the fine print while Moe removed the front door."),
+        beat("nw3_b_d2", "desh", "He took a woman's house over two late payments. Sat at her table and read the lease while Moe removed the front door. She kept asking what was happening, like the right answer would put the hinges back."),
         beat("nw3_b_m2", "moe", "The door was already bad."),
         beat("nw3_b_j3", "jack", "And David?"),
-        beat("nw3_b_d3", "desh", "David brought a screwdriver. The bastard liked being prepared."),
-        beat("nw3_b_j4", "jack", "There are men who carry a screwdriver because something is broken. David carried one because he liked to decide what broke next.", { expression: "V.O." }),
+        beat("nw3_b_d3", "desh", "He kept a screwdriver in his coat. Said a door was cheaper to replace than an argument."),
+        beat("nw3_b_j4", "jack", "I wrote down the address. Desh watched my pen, not my face. Moe watched the door.", { expression: "V.O." }),
         beat("nw3_b_m3", "moe", "Why are you looking for him?"),
         beat("nw3_b_j5", "jack", "His wife says he is missing."),
         beat("nw3_b_m4", "moe", "His wife says a lot?"),
         beat("nw3_b_j6", "jack", "Moe did not ask Vera's name. The pause did it for him.", { expression: "V.O." }),
-        beat("nw3_b_r_bad", "desh", "The kind who smiled when the door locked. If you are looking for a decent reason he vanished, do not use David's name to find one.", { conditionRule: { requiresFlags: ["nw3_david_bad"] }, expression: "uncomfortable" }),
-        beat("nw3_b_r_last", "moe", "He left through the service road. No bag. No driver. He told me he was done being found.", { conditionRule: { requiresFlags: ["nw3_asked_last_seen"] }, expression: "measuring the answer" }),
-        beat("nw3_b_r_moe", "moe", "I work for Solomon. That means you can ask me a question. It does not mean you will enjoy the answer.", { conditionRule: { requiresFlags: ["nw3_clocked_moe"] }, expression: "a warning" }),
+        beat("nw3_b_r_bad", "desh", "He did not hit people because he lost his temper. He did it after checking the time. That was the part that bothered me.", { conditionRule: { requiresFlags: ["nw3_david_bad"] }, expression: "uncomfortable" }),
+        beat("nw3_b_r_last", "moe", "He left the pool hall at nine. Took the service road instead of the main street. If he is hiding, he is hiding at the rental.", { conditionRule: { requiresFlags: ["nw3_asked_last_seen"] }, expression: "measuring the answer" }),
+        beat("nw3_b_r_moe", "moe", "I work for Solomon. He pays on Fridays and asks questions on Mondays. Tonight is neither, so keep your question short.", { conditionRule: { requiresFlags: ["nw3_clocked_moe"] }, expression: "a warning" }),
       ],
       choices: [
         reply("nw3_b_q_bad", "What did David do when nobody was watching?", {
@@ -1009,29 +990,29 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         dimAmount: 0.28,
         lights: [{ x: 30, y: 38, color: "#ffb761", intensity: 0.28, size: 40, pulseSeconds: 3.8, pulseAmount: 0.55 }],
       },
-      onEnterActions: [{ consequences: { setFlags: ["nw3_david_seen", "nw3_money_moved"] } }],
+      onEnterActions: [{ consequences: { setFlags: ["nw3_david_seen"] } }],
       prose:
-        "INT. A RENTAL HOUSE WITH NO NAME ON THE DOOR — NIGHT. David opens the chain before Jack knocks. He is holding a coffee mug that says WORLD'S BEST UNCLE. Nothing in the room supports the claim.",
+        "INT. A RENTAL HOUSE WITH NO NAME ON THE DOOR — NIGHT. David opens the chain before Jack knocks. He is holding a chipped Blue Hour mug, the sort Vera gives regulars who stop paying attention to the logo.",
       dialogueBeats: [
         beat("nw3_dv_j1", "jack", "David Voss. Your wife hired me to find you."),
-        beat("nw3_dv_d1", "david", "No. Vera hired you to be found near me later. That is a different job."),
-        beat("nw3_dv_j2", "jack", "The photograph made you look taller.", { expression: "V.O." }),
-        beat("nw3_dv_d2", "david", "Vera found the pages, then. She put her coffee cup on page twenty-seven. A ring around the bottom. People leave fingerprints when they think they are being careful."),
-        beat("nw3_dv_j3", "jack", "How long?"),
-        beat("nw3_dv_d3", "david", "Six years. I took the last dollar from an envelope and called it a wet count. I took a dollar from the next envelope and called it a correction. Solomon owns the routes. He does not own the decimals."),
-        beat("nw3_dv_j4", "jack", "Two hundred and eleven thousand dollars is a hell of a lot of decimals."),
-        beat("nw3_dv_d4", "david", "Not when you teach the decimals to travel in different cars."),
-        beat("nw3_dv_d5", "david", "Vera saw the shape. She did not see me see her. I moved the money that night. Every dollar. New place, no paper, no spare key, no address for a detective to circle in red."),
-        beat("nw3_dv_j5", "jack", "Where?"),
-        beat("nw3_dv_d6", "david", "If I tell you, the money becomes a story with a location. I prefer it as a rumor."),
+        beat("nw3_dv_d1", "david", "No. Vera hired you to ask where I went. That is not the same as asking why."),
+        beat("nw3_dv_j2", "jack", "The photograph was taken from below.", { expression: "V.O." }),
+        beat("nw3_dv_d2", "david", "Makes me look taller. Vera marks pages with coffee rings. I used to think it was accidental."),
+        beat("nw3_dv_j3", "jack", "How long have you been working for Solomon?"),
+        beat("nw3_dv_d3", "david", "Six years. Long enough to know which numbers do not get checked."),
+        beat("nw3_dv_j4", "jack", "You have been taking from Solomon."),
+        beat("nw3_dv_d4", "david", "I have been taking care of myself. The accounts are a different argument."),
+        beat("nw3_dv_d5", "david", "She saw a shape. She did not see me see her. That is the part you should keep to yourself."),
+        beat("nw3_dv_j5", "jack", "What did you do with what she found?"),
+        beat("nw3_dv_d6", "david", "I made sure what I took was no longer her problem. That is as generous as I get."),
         beat("nw3_dv_j6", "jack", "You collect for Solomon. What happens when a debtor cannot pay?"),
         beat("nw3_dv_d7", "david", "Last month a man missed two payments. I read him the warranty on his refrigerator while Moe took his front door off. The man remembers the warranty. That is the part people never expect."),
         beat("nw3_dv_j7", "jack", "You say that like it is an achievement."),
         beat("nw3_dv_d8", "david", "It is an achievement. The refrigerator still works."),
-        beat("nw3_dv_j8", "jack", "David had made cruelty sound like an office skill. The joke was the part he thought made him human.", { expression: "V.O." }),
-        beat("nw3_dv_r_money", "david", "If I gave you an address, it would become your address. I moved it because I noticed her. I will die before I give you the rest of that sentence.", { conditionRule: { requiresFlags: ["nw3_asked_money"] }, expression: "smiling at the locked door" }),
-        beat("nw3_dv_r_vera", "david", "Then she finally learned arithmetic. A debt, a payment, a body. You are the receipt she hopes the police read first.", { conditionRule: { requiresFlags: ["nw3_told_david_killer"] }, expression: "a flash of real fear" }),
-        beat("nw3_dv_r_leave", "david", "Good. Go tell Vera you saw a man who never asked to be forgiven. It will make her feel safer for almost a minute.", { conditionRule: { requiresFlags: ["nw3_left_david"] }, expression: "dismissive" }),
+        beat("nw3_dv_j8", "jack", "He kept the chain on while he made the joke. David was afraid of somebody. It was not me.", { expression: "V.O." }),
+        beat("nw3_dv_r_money", "david", "I moved what I took after I saw Vera in the accounts. It is not here. She does not know I saw her, and she has no idea where to look. I will die before I give you the rest of that sentence.", { conditionRule: { requiresFlags: ["nw3_asked_money"] }, expression: "smiling at the locked door" }),
+        beat("nw3_dv_r_vera", "david", "Then she learned how much a mistake costs. You are the man she hired to make her search look ordinary.", { conditionRule: { requiresFlags: ["nw3_told_david_killer"] }, expression: "a flash of real fear" }),
+        beat("nw3_dv_r_leave", "david", "Good. Go tell Vera I was here. She will ask whether I looked tired. Tell her yes.", { conditionRule: { requiresFlags: ["nw3_left_david"] }, expression: "dismissive" }),
       ],
       choices: [
         reply("nw3_dv_q_money", "Where did you put it?", {
@@ -1053,6 +1034,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           hidden: true,
           attitudeTag: "Neutral",
           gating: { requiresFlags: ["nw3_asked_money", "nw3_told_david_killer", "nw3_left_david"], requiresAll: false },
+          consequences: { setFlags: ["nw3_money_moved"] },
         }),
       ],
       hotspots: [
@@ -1066,11 +1048,11 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         },
         {
           id: "nw3_dv_mug",
-          label: "The World's Best Uncle mug",
+          label: "The chipped coffee mug",
           bounds: { x: 56, y: 58, w: 18, h: 18 },
           cursor: "look",
           isRepeatable: true,
-          action: { type: "showText", text: "The mug is chipped. David is not an uncle. The lie is cheap and therefore probably his favorite thing in the room." },
+          action: { type: "showText", text: "The mug is chipped, with old coffee baked into the rim. David uses it as if nobody ever taught him to wash a dish." },
         },
       ],
     },
@@ -1080,7 +1062,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     /* ================================================================ */
     {
       id: "nw3_confession",
-      title: "Chapter Seven — The Woman Who Bought a Witness",
+      title: "Chapter Seven — The Unpaid Question",
       background: "/img/bg-vera-window.jpg",
       ambientAudio: "rain",
       musicMode: "none",
@@ -1146,7 +1128,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_c_v4",
           "vera",
-          "I paid Moe. Cash. Privately. Solomon's man, but not Solomon's order. I used the Friday payment meeting to get him in a room without Desh asking why.",
+          "I paid Moe cash. He works Solomon's route. Friday payments put us in the same room, and nobody asked why I stayed after I handed him the envelope.",
           { expression: "matter-of-fact, which is how panic survives" }
         ),
         beat(
@@ -1163,7 +1145,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_c_v6",
           "vera",
-          "David dies. I take the hidden money. I clear the Blue Hour note. I leave Blackwood before Solomon has a reason to say my name twice. That was the plan.",
+          "David dies. I take what he hid. I pay off the Blue Hour note. I leave Blackwood before Solomon has a reason to say my name twice. That was the plan.",
           { expression: "the plan laid out like a shopping list" }
         ),
         beat(
@@ -1181,7 +1163,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_c_j7",
           "jack",
-          "You hired me to leave fingerprints on the right part of the story.",
+          "You hired me to make the search look real.",
           { expression: "V.O." }
         ),
         beat(
@@ -1190,12 +1172,10 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           "I hired you because you were outside Solomon's reach. I did not know you would keep coming back after the useful part was over.",
           { expression: "almost a smile" }
         ),
-        beat(
-          "nw3_c_j8",
-          "jack",
-          "She put the receipt between us. I put my hand over it, not hers. That is the sort of distinction people make when they are trying not to become a story.",
-          { expression: "V.O." }
-        ),
+        beat("nw3_c_j8", "jack", "You could have told me to stop.", { expression: "quiet" }),
+        beat("nw3_c_v9", "vera", "Would you?"),
+        beat("nw3_c_j9", "jack", "No."),
+        beat("nw3_c_j10", "jack", "She put the receipt between us. I put my hand over it, not hers. The distinction was getting harder to maintain.", { expression: "V.O." }),
       ],
       choices: [
         nav("nw3_c_receipt", "Take the receipt and ask when Moe arrives.", "nw3_kill", {
@@ -1237,7 +1217,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
     /* ================================================================ */
     {
       id: "nw3_kill",
-      title: "Chapter Eight — Moe Does Private Work",
+      title: "Chapter Eight — The Appointment",
       nodeType: "cutscene",
       background: "/img/nw2/bg-yard-night.jpg",
       ambientAudio: "rain",
@@ -1273,15 +1253,15 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat("nw3_k_d3", "david", "Morrow. Vera send you to check whether I am still breathing?"),
         beat("nw3_k_j3", "jack", "She sent me to find you. The rest is a matter between you and the room."),
         beat("nw3_k_d4", "david", "She found the numbers. I saw her find them. I moved the money. You can tell her that part if you want to make her night worse."),
-        beat("nw3_k_m2", "moe", "Vera did not pay me to discuss accounting."),
-        beat("nw3_k_d5", "david", "Vera paid you to shoot a man and you are worried about the agenda?"),
+        beat("nw3_k_m2", "moe", "Vera paid me for one job. I am not adding a second one for free."),
+        beat("nw3_k_d5", "david", "Vera paid you to shoot a man and you are worried about the invoice?"),
         beat("nw3_k_j4", "jack", "Moe, do not make this easy for him."),
         beat("nw3_k_d6", "david", "The money is gone. I put it somewhere with no address and no witness. Nobody else alive knows where it is. When I am dead, that sentence gets shorter.", { expression: "to Jack" }),
         beat("nw3_k_j5", "jack", "You do not get to make the last line funny."),
         beat("nw3_k_d7", "david", "Everybody gets to make the last line funny. That is what the last line is for."),
         beat("nw3_k_s1", "jack", "One shot. The door opened into black.", { silent: true, audioUrl: "/nwt-gunshot.wav", background: "gradient:linear-gradient(#090b12,#000)", backgroundTransition: "cut" }),
-        beat("nw3_k_m3", "moe", "She paid me. Cash. Solomon did not send me. If he asks, I saw a problem and solved it."),
-        beat("nw3_k_j6", "jack", "Moe left. I took the shell casing before the rain could wash the small truth away. Then I waited for Vera to arrive.", { expression: "V.O. — action, not confession" }),
+        beat("nw3_k_m3", "moe", "She paid me for one job. Solomon did not send me. Do not make me remember whether you were here."),
+        beat("nw3_k_j6", "jack", "Moe left. I picked up the casing and put it in the receipt envelope. It was the only thing in the room I could label. Then I waited for Vera.", { expression: "V.O. — action, not confession" }),
       ],
       choices: [
         nav("nw3_k_enter", "Enter the room after the shot.", "nw3_empty", {
@@ -1329,6 +1309,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat("nw3_e_v5", "vera", "No. It is not enough. The money was the exit. The money was the part that made the rest of this arithmetic instead of murder."),
         beat("nw3_e_j5", "jack", "Moe said your name."),
         beat("nw3_e_v6", "vera", "I paid him. I know what I did."),
+        beat("nw3_e_v6b", "vera", "David was a bastard. He was still my husband. I did not plan for the room to look like this."),
         beat("nw3_e_v7", "vera", "I thought David would die, the money would be here, Solomon would get his note, and I would be gone by the time anybody had a question worth asking."),
         beat("nw3_e_j6", "jack", "You hired me to be the question that arrived first."),
         beat("nw3_e_v8", "vera", "I hired you to be a person the police could point at without pointing at me."),
@@ -1390,21 +1371,21 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         ],
       },
       prose:
-        "INT. ROSA'S PARKED CAR — DAWN. Rosa has the folder on her lap. Jack has dried rain on his sleeves and David's shell casing in his pocket.",
+        "INT. ROSA'S PARKED CAR — DAWN. Rosa has the folder on her lap and a stack of blank forms clipped to the wheel. Jack has dried rain on his sleeves and David's shell casing in his pocket.",
       dialogueBeats: [
-        beat("nw3_r_j1", "jack", "Rosa could hear a lie's staples popping before the paper opened.", { expression: "V.O." }),
-        beat("nw3_r_r1", "rosa", "This file starts before the body. Dates. Calls. Places. Vera wanted a detective's name in the room before the room needed one."),
+        beat("nw3_r_j1", "jack", "Rosa read the first page twice. She did not look at me until she had checked the date.", { expression: "V.O." }),
+        beat("nw3_r_r1", "rosa", "This file starts before the body. I checked the dates, the calls, and the places. Vera wanted a record that she had been looking for him."),
         beat("nw3_r_j2", "jack", "She wanted insurance."),
         beat("nw3_r_r2", "rosa", "Against the police?"),
-        beat("nw3_r_j3", "jack", "Against them seeing the murder before they saw the search."),
-        beat("nw3_r_r3", "rosa", "Then it is not an alibi. It is a question with your handwriting on it."),
+        beat("nw3_r_j3", "jack", "A private detective's file. If the murder drew attention, it made me a possible suspect before it made her one."),
+        beat("nw3_r_r3", "rosa", "That can be useful. It can also be perjury."),
         beat("nw3_r_j4", "jack", "She is afraid of Solomon. She is also the person who paid for David to be killed."),
-        beat("nw3_r_r4", "rosa", "Those facts can share a room. People are annoyingly large inside."),
+        beat("nw3_r_r4", "rosa", "Those facts do not cancel each other. They make two separate charges."),
         beat("nw3_r_j5", "jack", "Moe did it. Private cash. Solomon did not order it."),
-        beat("nw3_r_r5", "rosa", "And the money?"),
+        beat("nw3_r_r5", "rosa", "Then the receipt is evidence. Who else has touched it?"),
         beat("nw3_r_j6", "jack", "Gone. David moved it before Vera knew he had seen her in the books. He died with the only address.", { expression: "V.O." }),
-        beat("nw3_r_r6", "rosa", "You keep putting your body between Vera and the sentence. That is not detective work."),
-        beat("nw3_r_j7", "jack", "It is today.", { expression: "quiet" }),
+        beat("nw3_r_r6", "rosa", "You are not protecting her. You are making yourself part of the evidence."),
+        beat("nw3_r_j7", "jack", "I know.", { expression: "quiet" }),
       ],
       choices: [
         nav("nw3_r_share", "Give Rosa the off-book receipt.", "nw3_solomon_final", {
@@ -1464,22 +1445,22 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         ],
       },
       prose:
-        "INT. SOLOMON'S OFFICE — MORNING. Three folders lie on the desk: DAVID, VERA, JACK. The heater has stopped ticking. It has either died or learned manners.",
+        "INT. SOLOMON'S OFFICE — MORNING. Three folders lie on the desk: DAVID, VERA, JACK. Solomon opens Vera's file to the page marked Friday. The heater is silent for once. He does not need to ask which debt he is holding.",
       dialogueBeats: [
         beat("nw3_sf_s1", "solomon", "David Voss is dead. Moe has become difficult to locate. Two hundred and eleven thousand dollars is missing from my accounts."),
-        beat("nw3_sf_j1", "jack", "David did the collecting. David did the arithmetic. David also had a talent for making a room regret having a door."),
-        beat("nw3_sf_s2", "solomon", "You defend him by describing him."),
-        beat("nw3_sf_j2", "jack", "I am not defending him. I am keeping the facts from getting lazy."),
-        beat("nw3_sf_s3", "solomon", "Vera's payment is due Friday. Her diner is collateral. Her apartment is collateral. Her fear is not collateral, though it behaves as if it is."),
-        beat("nw3_sf_j3", "jack", "Moe took private money from her."),
+        beat("nw3_sf_j1", "jack", "David collected. The pages show he also kept two sets of numbers. He was careful with figures and careless with people."),
+        beat("nw3_sf_s2", "solomon", "You are defending him by making him legible."),
+        beat("nw3_sf_j2", "jack", "I am keeping the facts separate."),
+        beat("nw3_sf_s3", "solomon", "Vera's payment is due Friday. The diner and apartment secure it. If she misses, I take both."),
+        beat("nw3_sf_j3", "jack", "Moe takes cash jobs from whoever can find him."),
         beat("nw3_sf_s4", "solomon", "Moe takes private money from everybody. The question is whether he was paid to do a job or paid to become a witness."),
         beat("nw3_sf_j4", "jack", "He was paid to make David quiet. The money David stole is gone. Nobody alive knows where it is."),
         beat("nw3_sf_s5", "solomon", "Then Vera has a problem, you have a problem, and I have a missing number that refuses to die."),
         beat("nw3_sf_j5", "jack", "Solomon put the three folders in a row. I put my car keys on top of Vera's. He saw the move. He did not ask what it meant.", { expression: "V.O." }),
         beat("nw3_sf_s6", "solomon", "You are going to offer me something. People only put keys on paper when they are about to offer something."),
         beat("nw3_sf_j6", "jack", "Leave her name out of the first report. Take mine instead."),
-        beat("nw3_sf_s7", "solomon", "That is not a noble offer, Mr. Morrow. It is an expensive one."),
-        beat("nw3_sf_j7", "jack", "Good. You charge for cheap things twice."),
+        beat("nw3_sf_s7", "solomon", "That is collateral, Mr. Morrow. It is expensive because it is yours."),
+        beat("nw3_sf_j7", "jack", "You charge for everything eventually."),
         beat("nw3_sf_s8", "solomon", "The money is gone. Vera's note is not. Your file is not. Which one of you should I believe when the police ask what happened in that room?"),
       ],
       choices: [
@@ -1588,7 +1569,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat("nw3_es_v1", "vera", "You did not ask me to leave."),
         beat("nw3_es_j3", "jack", "The six o'clock bus is less patient than I am.", { expression: "at the station" }),
         beat("nw3_es_v2", "vera", "You put his hand on my door and called it an exit."),
-        beat("nw3_es_j4", "jack", "I put your name somewhere he could not reach."),
+        beat("nw3_es_j4", "jack", "I put your name on a debt he could collect from me instead."),
         beat("nw3_es_v3", "vera", "You put yours there instead."),
         beat("nw3_es_j5", "jack", "The bus door folded shut. I did not lift a hand. If she looked back, she would have had to decide what to do with me, and I had already made too many decisions for one morning.", { expression: "V.O. — final" }),
       ],
