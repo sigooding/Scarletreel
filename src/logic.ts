@@ -3270,6 +3270,9 @@ export function validateStory(story: Story): ValidationIssue[] {
         out.add(id);
         if (sc.isEnding) continue;
         if (sc.autoAdvanceTargetSceneId) queue.push(sc.autoAdvanceTargetSceneId);
+        for (const b of sc.dialogueBeats ?? []) {
+          if (b.afterBeatTargetSceneId) queue.push(b.afterBeatTargetSceneId);
+        }
         for (const c of sc.choices ?? []) {
           if (c.targetSceneId) queue.push(c.targetSceneId);
           if (c.timedOutTargetSceneId) queue.push(c.timedOutTargetSceneId);

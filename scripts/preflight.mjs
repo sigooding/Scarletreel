@@ -208,6 +208,17 @@ function walk(story, avoidEndings = true) {
         if (lie.contradictedConsequences) state = applyConsequences(story, lie.contradictedConsequences, state);
       }
     }
+    // A final dialogue beat can perform a cinematic cut without a dummy
+    // choice. The runtime routes from the last visible beat after its
+    // authored hold, before the scene's choices become interactive; the
+    // walker must give that edge the same priority.
+    const beatRoute = (sc.dialogueBeats ?? [])
+      .filter((b) => b.afterBeatTargetSceneId && (!b.conditionRule || meetsGating(b.conditionRule, state)))
+      .at(-1);
+    if (beatRoute?.afterBeatTargetSceneId) {
+      cur = beatRoute.afterBeatTargetSceneId;
+      continue;
+    }
     const usable = (sc.choices ?? []).filter((c) =>
       !used.has(`${sc.id}:${c.id}`) &&
       !(c.hidden && !meetsGating(gateOf(c), state)) &&
