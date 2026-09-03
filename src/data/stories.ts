@@ -1,7 +1,4 @@
 import type { Story } from "../types";
-import { FULL_THROTTLE } from "./fullThrottle";
-import { FULL_THROTTLE_CORVILLE } from "./fullThrottleCorville";
-import { FULL_THROTTLE_ORIGINAL } from "./fullThrottleOriginal";
 import { NOBODYS_WITNESS_FLAGSHIP } from "./nobodysWitnessFlagship";
 import { LAST_CALL_ON_PIER_7 } from "./lastCallOnPier7";
 import { QTE_DEMO } from "./qteDemo";
@@ -9,7 +6,6 @@ import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
 import { TINTIN_MERIDIAN } from "./tintinMeridian";
-import { THROTTLE_ASH } from "./throttleAsh";
 import { RAIN_SECTOR } from "./rainSector";
 import { KINGFISHER_JOB } from "./kingfisherJob";
 import { BUMPY_NIGHT } from "./allAboutEve";
@@ -79,10 +75,6 @@ export const STORIES: Story[] = [
   RAIN_SECTOR,
   INSPECTOR_GADGET,
   SCOOBY_RAVENSWOOD,
-  FULL_THROTTLE_CORVILLE,
-  FULL_THROTTLE,
-  FULL_THROTTLE_ORIGINAL,
-  THROTTLE_ASH,
   NOBODYS_WITNESS_TRUE,
   NOBODYS_WITNESS_DRAFT_3,
   NOBODYS_WITNESS_FINAL,

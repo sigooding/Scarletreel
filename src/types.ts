@@ -328,7 +328,7 @@ export interface Choice {
    * Default false — you flash it, you keep it. The choice being one-shot
    * already prevents showing the same item twice for two reactions. */
   consumePresentedItem?: boolean;
-  /** OPT-IN playable ride minigame (Full Throttle's road sequence). Picking
+  /** OPT-IN playable ride minigame (a road sequence). Picking
    *  this choice launches a steering game instead of navigating at once: the
    *  player weaves through oncoming traffic for the ride's duration — survive
    *  to `targetSceneId` (the choice's `consequences` apply on the win), crash
@@ -336,7 +336,7 @@ export interface Choice {
   ride?: RideConfig;
 }
 
-/** A playable vehicle-ride minigame (Full Throttle's highway chase): steer
+/** A playable vehicle-ride minigame (a highway chase): steer
  *  left/right across lanes, dodging oncoming traffic. Reaching the end wins
  *  the ride; a crash routes to the choice's `timedOutTargetSceneId`. */
 export interface RideConfig {
@@ -1128,14 +1128,14 @@ export interface StageSettings {
    *  the extra verbs a per-ROOM choice, so a visual novel or a classic case
    *  never sees them unless it asks. See docs/adventure-mode.md. */
   extendedVerbs?: boolean;
-  /** OPT-IN — OBJECT-FIRST verb menu (Full Throttle's "skull"): instead of
+  /** OPT-IN — OBJECT-FIRST verb menu (the "skull pie"): instead of
    *  picking a verb from the bottom coin and then the object, the player
    *  CLICKS an object first and a small pie-style menu of the verbs THAT
    *  object answers pops up next to it; pick a verb to act. USE expands to
    *  the inventory when the object accepts items. Off (default): the classic
    *  flow (and the verb-first coin) is unchanged. See docs/adventure-mode.md. */
   objectVerbMenu?: boolean;
-  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (Full Throttle's
+  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (the
    *  classic skull pie): instead of opening the pie the instant you click an
    *  object, the player PRESSES AND HOLDS the object and a BIG circular menu
    *  opens in the middle of the screen — the story's `verbMenuIcon` sprite
@@ -1147,7 +1147,7 @@ export interface StageSettings {
   /** The sprite at the CENTRE of the object-first skull pie menu (see
    *  `objectVerbMenu` / `objectMenuHold`) — an image url / `asset:` token or
    *  an `emoji:` glyph, rendered BIG in the middle of the ring of verbs so
-   *  the menu wears the game's own art (Full Throttle's flaming skull).
+   *  the menu wears the game's own art.
    *  Default: a skull emoji. Normally set story-wide on the 🎮 In-game theme
    *  tab (Story.verbMenuIcon); a stage value overrides it. */
   objectMenuIcon?: string;
@@ -1656,7 +1656,7 @@ export interface StoryMap {
  *    reading-forward, one decision at a time.
  *  - "adventure": a point-and-click room game — walkable rooms (STAGE nodes),
  *    verb cursors (look / take / talk / use / go), inventory puzzles, NPCs
- *    with idle animation. Prototype: src/data/throttleAsh.ts.
+ *    with idle animation. See docs/adventure-mode.md.
  *  - "vn": a visual novel — full-screen portraits, minimal UI, dialogue-led.
  *
  *  Today this is a DECLARATION (Studio shows it, the validator reads it, and
@@ -1699,7 +1699,7 @@ export interface Story {
    *  tab. See CursorArt. */
   cursorArt?: Partial<Record<import("./types").CursorKind | "default", CursorArt>>;
   /** The sprite at the CENTRE of the object-first skull pie menu (Full
-   *  Throttle's skull — see StageSettings.objectVerbMenu / objectMenuHold).
+   *  the skull pie — see StageSettings.objectVerbMenu / objectMenuHold).
    *  An image url / `asset:` token or an `emoji:` glyph; rendered BIG in the
    *  middle of the ring of verbs whenever the pie opens. Purely additive:
    *  unset keeps the default skull emoji and every non-opt-in game is
@@ -1708,7 +1708,7 @@ export interface Story {
   /** OPT-IN master switch for the object-first verb menu (the skull pie).
    *  The menu is already per-scene opt-in (StageSettings.objectVerbMenu);
    *  this is the STORY-wide kill-switch. Default undefined = "on" (scenes
-   *  that opt in keep their menu, so existing stories like Full Throttle are
+   *  that opt in keep their menu, so existing opt-in stories are
    *  untouched). Set `false` to disable the pie everywhere — every scene's
    *  objectVerbMenu / objectMenuHold is ignored — so a game that never uses
    *  it never shows it. Authored on the 🎮 In-game theme tab. */

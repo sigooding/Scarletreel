@@ -665,7 +665,7 @@ export function Stage({
   const heldRef = useRef<string | null>(null);
   verbRef.current = verb;
   heldRef.current = heldItem;
-  // OBJECT-FIRST verb menu (Full Throttle's "skull"): click an object and a
+  // OBJECT-FIRST verb menu (the "skull pie"): click an object and a
   // small pie menu of the verbs it answers pops up next to it. `menu` holds the
   // open object + its marker point; `menuUse` is the object whose USE was
   // picked and is waiting for an inventory item to arm.
@@ -853,7 +853,7 @@ export function Stage({
           exitCbRef.current?.(exiting);
         }
       } else {
-        // STANDING IN A SOLID — a spawn inside the furniture (the Corville
+        // STANDING IN A SOLID — a spawn inside the furniture (an earlier shipped
         // alley drops Ben inside the dumpster he climbed out of), or an
         // obstacle that appeared on top of the walker when a state changed.
         // Walls bind from the OUTSIDE: while inside, every step would test
@@ -1582,7 +1582,7 @@ export function Stage({
 
   // The skull-pie centrepiece: the story's verbMenuIcon sprite (In-game
   // theme) resolved through Game, or a stage override — big in the middle of
-  // the ring of verbs, exactly like Full Throttle's flaming skull.
+  // the ring of verbs — the classic skull-pie presentation.
   const menuIcon = settings.objectMenuIcon;
   const menuIconEl =
     menuIcon?.startsWith("emoji:") ? (
@@ -1828,7 +1828,7 @@ export function Stage({
           })}
 
         {/* OBJECT-FIRST VERB MENU — a small pie of the verbs THIS object
-            answers, popped up at the object (Full Throttle's "skull"). USE
+            answers, popped up at the object (the "skull pie"). USE
             expands to the inventory when the object accepts items. */}
         {(menu?.via === "context" || (objectMenu && !holdMode)) && menu && active ? (
           <div

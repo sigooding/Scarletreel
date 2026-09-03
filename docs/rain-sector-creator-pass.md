@@ -49,7 +49,7 @@ you stand** (the gate's caption plays — which is also better storytelling
 than a silent wall-hug).
 
 ### 5. A spawn inside furniture broke the router — via a sealed pocket (FIXED)
-The Corville alley (a *shipped* demo story) drops Ben inside the dumpster
+An earlier shipped alley dropped the biker inside the dumpster
 obstacle, which only worked because of #4's ghosting. The real fix
 uncovered a deeper router flaw: `nearestFreePoly` snapped a start in a
 solid to the nearest free cell — which could be a **sealed sliver** between

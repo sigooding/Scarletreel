@@ -5,7 +5,7 @@ import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
 
 /**
- * RideGame — a playable vehicle-ride minigame (Full Throttle's highway chase).
+ * RideGame — a playable vehicle-ride minigame (a highway chase).
  *
  * The player steers a vehicle across a few lanes, dodging oncoming traffic
  * that scrolls toward them. Survive the ride's duration and you run the

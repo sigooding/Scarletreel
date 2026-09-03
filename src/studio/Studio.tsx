@@ -225,7 +225,7 @@ function bgStyle(bg: string): React.CSSProperties {
 }
 
 /**
- * VerbMenuPiePreview — the object-first verb menu (Full Throttle's skull pie)
+ * VerbMenuPiePreview — the object-first verb menu (the skull pie)
  * rendered at editor scale, so authors can tune it without a playtest: the
  * ring of verb chips + the centrepiece `verbMenuIcon` sprite. Same geometry
  * as Stage.tsx, shrunk.
@@ -9365,7 +9365,7 @@ function StudioInner({
                           </label>
                         </div>
                         <p className="font-type text-[9px] leading-snug text-paper/45">
-                          The object-first verb menu — Full Throttle's skull pie. <b>Opt-in</b>: it only appears on a
+                          The object-first verb menu — the skull pie. <b>Opt-in</b>: it only appears on a
                           Walkable Stage whose <b>Object-first verb menu</b> is on (see that panel). This switch is the
                           story-wide kill-switch: off = it never shows, in any scene. The sprite below sits at the
                           centre of the ring.
@@ -11332,7 +11332,7 @@ function StudioInner({
                             // Resolve exactly as the game does (Game.tsx): a
                             // scene's own sprite/image wins, otherwise the
                             // story-wide Player character (In-game theme) —
-                            // so Full Throttle's Ben walk sheet shows here.
+                            // so a story-wide player sheet shows here.
                             image: scene.stage.playerImage ?? story.playerSprite?.image,
                             sheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
                           }}
@@ -12175,7 +12175,7 @@ function StudioInner({
                                   onChange={(e) => updateScene(scene.id, { stage: { ...st, objectVerbMenu: e.target.checked || undefined } })}
                                 />
                                 <span>
-                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (Full Throttle's skull)</span>
+                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (the skull pie)</span>
                                   <br />
                                   Click the OBJECT first, then pick a verb from a small pie menu that pops up next to it
                                   (USE expands to your inventory). Off (default): the bottom-left verb coin, and classic
@@ -14486,7 +14486,7 @@ function StudioInner({
                         <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">💬 Topic-list conversation (opt-in)</div>
                         <p className="font-type text-[9px] leading-snug text-paper/45">
                           Instead of playing this scene's Beats straight through, the talk opens as a HUB of questions
-                          the player can ask (Full Throttle's "ask the bartender…"). Pick a topic, its lines play, then
+                          the player can ask ("ask the bartender…"). Pick a topic, its lines play, then
                           it returns to the hub; <b>leave</b> ends the conversation. Leave empty to keep the classic
                           linear conversation.
                         </p>
@@ -15163,7 +15163,7 @@ function StudioInner({
                         </div>
                       </div>
                     )}
-                    {/* ---- Ride minigame (Full Throttle road chase) ---- */}
+                    {/* ---- Ride minigame (road chase) ---- */}
                     <label className="flex items-center gap-2 border border-emerald-500/25 bg-emerald-500/5 p-1.5 text-[9px] text-paper/70">
                       <input
                         type="checkbox"
@@ -15190,7 +15190,7 @@ function StudioInner({
                         <Field label="Big on-screen prompt (defaults to 'RIDE')">
                           <input
                             className={inputCls}
-                            placeholder="OUTRUN THE ROTTWHEELER"
+                            placeholder="OUTRUN THE MIDNIGHT PACK"
                             value={c.ride.prompt ?? ""}
                             onChange={(e) =>
                               mutate((d) => {

@@ -20,8 +20,9 @@ Toolbar (next to the title field): **🕵 Noir Rail · 🚶 Adventure · 🎭 Vi
 * **Visual Novel** — reserved; build around portraits and dialogue beats for
   now (the pieces are all there, no dedicated tooling yet).
 
-`src/data/throttleAsh.ts` (**Throttle & Ash — The Long Way Down**) is the
-reference case: `gameKind: "adventure"`, five rooms, three endings.
+`src/data/rainSector.ts` (**Rain Sector**) is the reference case in the
+catalogue: `gameKind: "adventure"`, verb coin, multi-state hotspots and
+walk-off-screen edge exits.
 
 ## The anatomy of a room
 
@@ -50,17 +51,17 @@ stays the classic five regardless of what the hotspots answer, so a visual
 novel or a classic case never sees them. Listing them explicitly in
 `stage.verbs` also works. Hotspots answer them like any other verb: `cursor:
 "kick"` sets the default and the marker icon, and `verbs: { kick: … }` adds
-per-verb flavour. `src/data/fullThrottle.ts` is the reference case.
+per-verb flavour. `src/data/southPark.ts` is the reference case.
 
-### Object-first verb menu (Full Throttle's "skull")
+### Object-first verb menu (the "skull pie")
 
 Opt-in per room: `stage.objectVerbMenu: true` (Studio: 💀 **Object-first verb
 menu** on the 🎛 Verb-coin panel). Instead of the bottom-left coin (pick a verb,
 then click), the player **clicks the object first** and a small pie-style menu
-of the verbs *that object* answers pops up next to it — Full Throttle's
-flaming-skull gesture. USE expands to the inventory when the object accepts
-items. Off (default) the coin and the classic click-to-activate flow are
-unchanged. `fullThrottle.ts` turns it on for every room.
+of the verbs *that object* answers pops up next to it. USE expands to the
+inventory when the object accepts items. Off (default) the coin and the
+classic click-to-activate flow are unchanged. `southPark.ts` opts its stage
+scene in.
 
 For the authentic feel, pair it with **hold-to-open** (`stage.objectMenuHold:
 true`, Studio: ⏱ **Hold to open**): press **and hold** an object and a *big*
@@ -70,8 +71,8 @@ skull or outside to cancel; a quick tap just walks to the object. The pie's
 centrepiece is the story's `verbMenuIcon` sprite (Studio: 🎮 In-game theme →
 💀 **Verb menu icon**): an image / `asset:` / `emoji:` rendered large in the
 middle of the ring (default: a skull emoji), so the menu wears the game's own
-art — Full Throttle uses its flaming skull. Either way the same verbs are
-offered; only the gesture and the presentation change.
+art. Either way the same verbs are offered; only the gesture and the
+presentation change.
 
 ### The protagonist, defined once
 
@@ -79,9 +80,9 @@ A story can set its walker **story-wide** via `story.playerSprite` (Studio:
 🎮 In-game theme → 🚶 **Player character**): an `image` (emoji / url) and/or a
 `sprite sheet`. Every 🚶 stage scene uses it as the default; a scene that sets
 its own `stage.playerSheet` / `playerImage` overrides it. Purely additive —
-stories that never set it behave exactly as before. `fullThrottle.ts` defines
-Ben here (a four-frame walk sheet sliced from a magenta plate by
-`scripts/make-sprite-sheet.mjs`), so he's set once for the whole case.
+stories that never set it behave exactly as before. (Sheets are cut in
+Studio's ⚡ auto-build / Media Tools ▸ ✂ Sprite Cutout Lab, or sliced from a
+magenta plate by `scripts/make-sprite-sheet.mjs`.)
 
 **USE arms an item:** pick ⚙ use and the satchel opens in a rail above the
 coin; click an item to arm it, then click what you want to use it on.
@@ -432,8 +433,8 @@ The machinery reasons about states everywhere the base object goes:
 Studio: the hotspot's inspector has a **🔁 States** section — add states,
 reorder them (↑/↓; order = specificity), and edit each state's label, art,
 cursor, action, `when` gate and lock override. The hotspot's canvas card
-shows a `🔁n` badge. `throttleAsh.ts` (`adv_garage` → `advh_bench`) ships the
-reference case, and `npm run test:stage` plays a full locked → opened →
+shows a `🔁n` badge. `rainSector.ts` ships reference cases, and
+`npm run test:stage` plays a full locked → opened →
 emptied safe puzzle through the real UI.
 
 ### Doors as real doors (gate-aware barriers)
@@ -554,10 +555,7 @@ them works too. The validator flags dangling links (error) and links to
 non-conversation markers (warning); Studio's NPC row has a **talk marker**
 picker. Ambient NPCs without a link are untouched set-dressing.
 
-## What the prototype is missing (ranked)
-
-Built on purpose: every gap below shows up as a compromise in
-`throttleAsh.ts` rather than as a surprise later.
+## What the mode is missing (ranked)
 
 1. **No drag-to-world inertia.** Dropping works, but the items don't have
    weight: no "you can't reach that from here", no throwing, no giving an item
@@ -566,10 +564,9 @@ Built on purpose: every gap below shows up as a compromise in
    follows the walker across a strip wider than the viewport) and
    `stage.exitEdges` (walk-off-screen exits with red/yellow edge arrows) are
    in, with Studio authoring for both (see **Wide worlds** and
-   **Walk-off-screen exits** above). `fullThrottle.ts` uses both: the alley
-   is a 200%-wide scrolling strip and the bar's left edge walks out.
-3. **Linear conversations.** NPC talk is beats + replies; Full Throttle's
-   topic *list* (ask about X, ask about Y, leave) needs a
+   **Walk-off-screen exits** above) — `rainSector.ts` uses both.
+3. **Linear conversations.** NPC talk is beats + replies; a topic *list*
+   (ask about X, ask about Y, leave) needs a
    `dialogue.topics[]` model with per-topic gates and exhausted states.
 4. **Static NPCs.** Only the player has a walk cycle / idle animation. NPCs
    need `schedules` (room + position per flag) and their own sheets.
@@ -586,10 +583,8 @@ Built on purpose: every gap below shows up as a compromise in
 ## Testing it
 
 ```
-npm run test:engine     # 978 checks — includes a "point-and-click prototype"
-                        # block that walks every exit, item, flag and ending
-                        # cross-reference in throttleAsh.ts, plus the
-                        # multi-state resolver/validator/graph checks
+npm run test:engine     # engine checks — includes the stage/adventure math
+                        # and the multi-state resolver/validator/graph checks
 npm run test:stage      # the walking stage's own beta harness — engine math,
                         # a full stage↔novel play-through, and a live
                         # multi-state safe puzzle in the real UI
