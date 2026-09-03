@@ -802,7 +802,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_v_v4",
           "vera",
-          "If I miss Friday, Solomon takes the lease, the equipment, and the room I sleep in above the kitchen. That is my debt. Not David's. Mine.",
+          "If I miss Friday, Solomon takes the lease, the equipment, and the room I sleep in above the kitchen. The room is written into the same lease. That is my debt. Not David's. Mine.",
           { expression: "fear finally using its own voice" }
         ),
         beat(
