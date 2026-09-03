@@ -61,13 +61,6 @@ import { presetStyle } from "./animation";
  * plays or an overlay is open: movement stops and the markers hide.
  */
 
-/** An SVG path string for a walk polygon (world-%). Used for the subtle
- *  walkable-path tint on path rooms. */
-function polyPathD(poly: { x: number; y: number }[]): string {
-  if (!poly.length) return "";
-  return `M ${poly.map((p) => `${p.x} ${p.y}`).join(" L ")} Z`;
-}
-
 const HINT_RADIUS = 16; // scene-width % — labels fade in within this of a marker
 
 /** HOLD-TO-OPEN skull pie (stage.objectMenuHold): press an object this long
@@ -536,9 +529,6 @@ export function Stage({
   // sprite scale / speed read it, so band rooms are pixel-identical to before.
   const poly = stageWalkPoly(settings, worldW);
   const floor = stageWalkDepth(poly);
-  // A scene with an authored path polygon walks THAT path instead of a flat
-  // band; band rooms keep the exact old rendering.
-  const usingPath = (settings.floorPoints?.length ?? 0) >= 3;
   const spawn = clampToWalkPoly(settings.spawn?.x ?? 50, settings.spawn?.y ?? floor.bottom - 2, poly, worldW);
   const speed = settings.speed ?? STAGE2D_DEFAULT_SPEED;
   const reach = settings.reach ?? STAGE2D_DEFAULT_REACH;
@@ -1692,22 +1682,10 @@ export function Stage({
           />
         ) : null}
 
-        {/* the floor — NO darkening outside the walkable area: authors said
-            the off-band dim robbed the backdrop art. A path-polygon room
-            keeps only its thin dashed outline so the winding route still
-            reads; band rooms need nothing at all (proximity labels and the
-            marker reticles already say where the floor is). */}
-        {usingPath ? (
-          <svg
-            className="pointer-events-none absolute inset-y-0 left-0 h-full"
-            style={{ width: `${worldW}%` }}
-            viewBox={`0 0 ${worldW} 100`}
-            preserveAspectRatio="none"
-            aria-hidden
-          >
-            <path d={polyPathD(poly)} fill="rgba(42,217,217,0.07)" stroke="rgba(42,217,217,0.30)" strokeWidth={0.6} strokeDasharray="2.5 2" />
-          </svg>
-        ) : null}
+        {/* the walk path is an AUTHORING aid — painted and previewed in the
+            Studio plate, but never drawn in the game. No off-band dim, no
+            dashed outline: the floor reads from the room's art itself, and
+            the marker reticles/proximity labels say where the player can go. */}
 
         {/* walk target ripple */}
         {ripple && active && (

@@ -4720,7 +4720,21 @@ function CasePlayer({
   // and qteShakyCam is on, we override to SHAKY CAM regardless of whether the
   // scene already has a base cinematic (otherwise the swap does nothing on a
   // scene with no cinematic configured).
-  const bgCinematic = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+  const bgCinematicBase = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+  /* STAGE rooms: the walker, interaction markers and the painted walk path
+   * are anchored to the PLATE BOX, so the room art must sit perfectly still.
+   * Any cinematic that moves the plate — the default pan push-in (zoom to
+   * 1.22 while drifting), zoom-hold, dolly, shake, pointer parallax — slides
+   * the art out from under the authored path (the Studio plate previews the
+   * same room STATIC, which is why the painted path lined up there but not
+   * in play). Pin stage backgrounds to static and strip parallax; colour
+   * grade, lights, dim and letterbox still apply (they don't move pixels).
+   * Talk-zoom stays aligned separately — the stage world wrapper shares the
+   * plate's transform. */
+  const bgCinematic: CinematicSettings | undefined =
+    scene?.nodeType === "stage"
+      ? { ...(bgCinematicBase ?? {}), mode: "static", parallaxDepth: undefined, parallaxLayers: undefined }
+      : bgCinematicBase;
   // Parallax follows the pointer across the stage; enabled when the plate or
   // the currently showing insert-shot beat carries depth settings.
   const beatCinematic = inBeats ? currentBeat?.cinematic : undefined;
@@ -6059,7 +6073,9 @@ function CasePlayer({
     // Examine zoom: magnify the plate toward the examined hotspot's centre.
     // It's applied to a WRAPPER (not the plate itself) because the plate's
     // cinematic animation already owns its own `transform` property.
-    const b = examining?.hs.bounds;
+    // Stages skip it: only the plate would zoom while the walker/markers
+    // stayed put, sliding the art out from under the painted walk path.
+    const b = scene?.nodeType === "stage" ? undefined : examining?.hs.bounds;
     const examineStyle: React.CSSProperties = {
       transform: b ? `scale(${examineZoom(b)})` : "scale(1)",
       transformOrigin: b ? `${b.x + b.w / 2}% ${b.y + b.h / 2}%` : "50% 50%",
