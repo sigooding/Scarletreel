@@ -479,7 +479,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_d_j5",
           "jack",
-          "You want him found, or you want a record that you asked?",
+          "You want him found, or you want a record that you asked? I can call Rosa and make it official.",
           { expression: "quiet" }
         ),
         beat("nw3_d_r_source", "vera", "A woman at the courthouse gave me your name. She said you can find someone without making the whole street watch you look.", { conditionRule: { requiresFlags: ["nw3_asked_source"] }, expression: "guarded" }),

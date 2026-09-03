@@ -139,7 +139,7 @@ I brought a photograph, some account pages, and the address where he rents a roo
 
 **JACK**
 
-You want him found, or you want a record that you asked?
+You want him found, or you want a record that you asked? I can call Rosa and make it official.
 
 The player may ask who sent Vera, what David collects, why she avoids the police, or why she chose a detective outside Solomon's orbit. Her answers keep the second purpose of the hire off the table.
 
