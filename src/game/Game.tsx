@@ -6606,8 +6606,9 @@ function CasePlayer({
               </button>
             </div>
           )}
-          <div className="hud-kicker hud-kicker-left mb-1.5">Current lead</div>
-          <p className="font-type mb-1 text-[11px] leading-snug text-paper/70">{objective}</p>
+          {/* hud-lead: the Minimal HUD theme setting fades these until hover. */}
+          <div className="hud-kicker hud-kicker-left hud-lead mb-1.5">Current lead</div>
+          <p className="hud-lead font-type mb-1 text-[11px] leading-snug text-paper/70">{objective}</p>
           {isSoftlocked && (
             <div className="mb-1.5 border border-crimson/30 bg-crimson/[0.08] p-1.5">
               <p className="font-type text-[10px] text-crimson">Dead end detected — nothing here is reachable.</p>
@@ -6683,7 +6684,7 @@ function CasePlayer({
       {!hudHidden && (
         <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-col items-start gap-1">
           {(autoAdvance || skipMode || hintActive) && (
-            <div className="hud-frame flex items-center gap-1.5 px-2 py-1">
+            <div className="hud-chrome hud-frame flex items-center gap-1.5 px-2 py-1">
               {autoAdvance && (
                 <span className="hud-chip" data-kind="good">⏩ Auto</span>
               )}
@@ -7622,7 +7623,7 @@ function CasePlayer({
               cinematic cut. (Continue mode keeps its single button above.) */}
 
           {interactive && !scene.isEnding && !hasUsableChoice && hasValidAutoAdvance && !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0 && (
-            <div className="mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
+            <div className="hud-chrome mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
               <p className="font-pulp text-[10px] uppercase tracking-widest text-gold">
                 ⏱ Next scene in {autoAdvanceRemaining}s
               </p>

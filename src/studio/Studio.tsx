@@ -6509,6 +6509,39 @@ function HotspotVoiceControls({
   );
 }
 
+/** Guard rails for the In-game theme's custom accent/danger ink: these two
+ *  colours take over --color-gold / --color-crimson EVERYWHERE (nameplates,
+ *  choice focus, gate badges), so a too-dark or near-identical pick makes UI
+ *  states look broken or invisible in play. Returns readable warnings; the
+ *  colours still save — it's advice, not a block. */
+function themeColorWarnings(accent?: string, danger?: string): string[] {
+  const rgb = (hex?: string) => {
+    if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+    return { r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16) };
+  };
+  /** relative luminance — the frame is near-black, so ink needs lum to read. */
+  const lum = (c: { r: number; g: number; b: number }) => {
+    const f = (v: number) => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const out: string[] = [];
+  const a = rgb(accent);
+  const d = rgb(danger);
+  // Built-in gold lum ≈ 0.5, built-in crimson ≈ 0.2 — warn well below those.
+  if (a && lum(a) < 0.15) out.push("The custom accent is very dark — highlights, nameplates and the choice focus ring will be hard to see on the noir frame.");
+  if (d && lum(d) < 0.08) out.push("The custom danger colour is nearly black — fail gates and HEAT warnings will be invisible.");
+  if (a && d) {
+    const dist = Math.sqrt((a.r - d.r) ** 2 + (a.g - d.g) ** 2 + (a.b - d.b) ** 2);
+    // Built-in gold↔crimson separation ≈ 120 — anything much closer blurs
+    // the good/bad distinction the player relies on.
+    if (dist < 60) out.push("Accent and danger are nearly the same colour — bad gates and HEAT will look like normal UI.");
+  }
+  return out;
+}
+
 function StudioInner({
   baseStories,
   initialStoryId,
@@ -9283,6 +9316,9 @@ function StudioInner({
                           onChange={(e) => setBox({ dangerColor: e.target.value })} />
                       </Field>
                     </div>
+                    {themeColorWarnings(dbox.accentColor, dbox.dangerColor).map((w, i) => (
+                      <p key={i} className="font-type text-[9px] leading-snug text-amber-400/90">⚠ {w}</p>
+                    ))}
                     {(dbox.accentColor || dbox.dangerColor) && (
                       <button
                         className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
