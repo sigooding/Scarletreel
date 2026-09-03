@@ -38,7 +38,7 @@ The full gate, run after every pass:
 | `tsc --noEmit` | clean |
 | Engine tests (`scripts/engine-tests.mjs`) | **1002 passed / 0 failed** (includes Rain Sector validator regressions + sheet-dim pin) |
 | Stage beta (`scripts/beta/stage-harness.mjs`, `--max-old-space-size=4096`) | **150 passed / 0 failed** — run twice consecutively on the final build; Part 6 is a full creator playthrough of this case (kick→take→gate→refusal→edge-walk→N-talk→both replies→gate→stairs→lie→endings) |
-| DOM smoke (`scripts/dom-smoke.mjs`) | PASSED (7 stories incl. the Corville regression trap) |
+| DOM smoke (`scripts/dom-smoke.mjs`) | PASSED (walkable-stage stories incl. the spawn-in-obstacle regression trap) |
 | Import/export roundtrip | PASSED |
 | `node scripts/preflight.mjs` | PASSED on the 2026-09-02 double-check (see §7) |
 | `vite build` | 2.58 MB single-file / 690 KB gzip |
@@ -54,9 +54,9 @@ All fixed unless marked otherwise:
    arrow keys, and a marker walled behind a **shut gate refuses from wherever
    the player stands** (the gate caption plays — better feedback than a
    wall-hug). Regression asserts added to the beta.
-2. **A spawn inside furniture broke the router via a sealed pocket.** The
-   shipped Corville alley spawns Ben inside the dumpster obstacle — legal
-   only under the old ghosting. The honest-collision fix exposed
+2. **A spawn inside furniture broke the router via a sealed pocket.** An
+   earlier shipped alley spawned the biker inside the dumpster obstacle —
+   legal only under the old ghosting. The honest-collision fix exposed
    `stageRoutePoly` snapping starts into the sealed sliver between the
    dumpster and the world edge. Fixed with component flood-fills: a start
    inside furniture escapes the side that can actually reach the goal; a free

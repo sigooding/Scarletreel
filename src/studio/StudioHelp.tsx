@@ -393,7 +393,7 @@ export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void
               Walking onto a hotspot zone fires it <b>through the same hotspot action</b> — give-item pickups, show-text, exits
               and gating all behave identically; it's only the input that changes from click-the-zone to walk-to-the-zone.
               Set the spawn point, walk speed, reach distance and sprite (image / <code>emoji:…</code>). Put hotspots where the
-              player should walk to something. The 💀 <b>object-first verb menu</b> (Full Throttle's skull) can open on
+              player should walk to something. The 💀 <b>object-first verb menu</b> can open on
               click, or <b>hold-to-open</b> as a big circular pie in the middle of the screen — its centrepiece sprite
               is set on the 🎮 <b>In-game theme</b> tab. Try the office in <b>Demo Lab: Press the Lie</b>.
             </p>

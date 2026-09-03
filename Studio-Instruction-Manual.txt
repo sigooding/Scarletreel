@@ -943,10 +943,9 @@
    (Item.combinableWith), then USE the result on a hotspot. Replies carrying
    presentItem: "..." are the "lay it on the bar" verb.
 
-   Worked example: THROTTLE & ASH — THE LONG WAY DOWN (a full five-room case in
-   the catalogue: street, garage, diner, roadhouse, edge of town; three endings).
-   Full write-up, including the eight things the mode still lacks:
-   docs/adventure-mode.md
+   Worked example: RAIN SECTOR (an adventure case in the catalogue — verb coin,
+   multi-state hotspots, walk-off-screen edge exits). Full write-up, including
+   the things the mode still lacks: docs/adventure-mode.md
 
 
 

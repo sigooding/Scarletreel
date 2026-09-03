@@ -2232,7 +2232,7 @@ body,
 }
 
 /* ---------------------------------------------------------------------
-   RIDE MINIGAME (Full Throttle highway chase) — the scrolling road,
+   RIDE MINIGAME (highway chase) — the scrolling road,
    the oncoming traffic and the rider's bike are styled here so the
    RideGame component can stay lean. All motion is CSS/RAF-driven.
    --------------------------------------------------------------------- */

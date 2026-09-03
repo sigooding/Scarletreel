@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CAPTION PROBE — boots the real <App/>, plays the walking-stage story
- * (Throttle & Ash), clicks a LOOK marker, and asserts the stage caption bar:
+ * (South Park: The Recess Wars), clicks a LOOK marker, and asserts the stage caption bar:
  *   1. it renders pinned to the TOP of the plate (above the walker), not
  *      at bottom-[16%] where the character roams;
  *   2. it is GONE again within stageCaptionMs's new snappy budget
@@ -97,9 +97,9 @@ const ok = (name, cond, extra) => {
   if (!cond) failed = true;
 };
 
-// Boot Throttle & Ash (a stage story with LOOK show-text markers).
+// Boot South Park: The Recess Wars (starts on a stage with LOOK show-text markers).
 const q = (sel) => [...container.querySelectorAll(sel)];
-const card = q('[role="button"], button').find((b) => /Throttle & Ash/i.test(b.textContent || ""));
+const card = q('[role="button"], button').find((b) => /South Park/i.test(b.textContent || ""));
 ok("story card found", !!card);
 if (!card) process.exit(1);
 card.click(); await sleep(3500);
@@ -118,7 +118,7 @@ const markers = q("button").filter((b) => /stage-marker/i.test(b.className || ""
 ok("stage markers rendered", markers.length > 0, markers.length);
 
 // Click a LOOK marker that fires a show-text caption from where we stand.
-const look = markers.find((b) => /look|bike|sign/i.test(b.getAttribute("aria-label") || "") ) ?? markers[0];
+const look = markers.find((b) => /look|sign|vend/i.test(b.getAttribute("aria-label") || "") ) ?? markers[0];
 const plate = container.querySelector(".fx-grain") || container.firstElementChild;
 look.click();
 

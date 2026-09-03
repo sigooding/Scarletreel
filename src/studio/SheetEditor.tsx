@@ -1,8 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { assetUrl } from "../assetPath";
 import { uploadDataUrlAsset, useResolvedMedia } from "../data/mediaLibrary";
 import { ImagePicker } from "./ImagePicker";
-import { FORGE_SIZES, FORGE_STRENGTHS, forgeSpriteSheet, type ForgeKind } from "./spriteForge";
+import {
+  FORGE_SIZES,
+  applyKey,
+  evenFrameRuns,
+  fileToImageData,
+  forgeSpriteSheet,
+  frameRuns,
+  parseHex,
+  sampleCorners,
+  softnessForStrength,
+  toHex,
+  type ForgeKind,
+} from "./spriteForge";
 import { sheetCols, sheetFramePos, spriteSheetIssues, type SpriteSheet, type SpriteSheetAnimation } from "../game/spriteSheet";
 
 /* ------------------------------------------------------------------ */
@@ -14,6 +26,15 @@ import { sheetCols, sheetFramePos, spriteSheetIssues, type SpriteSheet, type Spr
 
 const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
+
+/** Transparency checkerboard for the auto-build preview. */
+const CHECKER = {
+  backgroundImage:
+    "linear-gradient(45deg, #333 25%, transparent 25%), linear-gradient(-45deg, #333 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #333 75%), linear-gradient(-45deg, transparent 75%, #333 75%)",
+  backgroundSize: "16px 16px",
+  backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0",
+  backgroundColor: "#1a1a1f",
+};
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -194,31 +215,155 @@ export function SpriteSheetControls({
   const issues = useMemo(() => (value ? spriteSheetIssues(value, "sheet", preset.suggested) : []), [value, preset]);
   const missingSuggested = value ? preset.suggested.filter((n) => !value.animations[n]) : [];
 
-  // ⚡ Auto-build from an upload: key out the flat backdrop, slice frames by
-  // the transparent gaps, build the sheet, save it to the library, and fill
-  // this editor in — the whole job in one click.
+  // ⚡ Auto-build from an upload — now a LOOK-BEFORE-YOU-APPLY flow: pick the
+  // file FIRST, then tune the backdrop-removal strength on a live preview
+  // (slider, not gentle/normal/strong presets), see how many sprites the
+  // gap-detector found, override the count when it's wrong (two figures
+  // touching merge into one run), and only then build + save the sheet.
   const [forging, setForging] = useState(false);
   const [forgeMsg, setForgeMsg] = useState<string | null>(null);
-  const [keyStrength, setKeyStrength] = useState("normal");
   const [outSize, setOutSize] = useState("standard");
-  const autoBuild = async (file: File) => {
+  /** The uploaded art, decoded once — every slider tick re-keys THESE pixels. */
+  const [draft, setDraft] = useState<{ data: ImageData; url: string; name: string } | null>(null);
+  const [draftImg, setDraftImg] = useState<HTMLImageElement | null>(null);
+  /** Backdrop removal strength = colour-distance tolerance, 5–160 (~gentle…strong). */
+  const [strength, setStrength] = useState(60);
+  const [keyHex, setKeyHex] = useState("#ffffff");
+  /** Sprite count: starts at the auto-detected number; editing it switches
+   *  the slicer to even bands and shows them on the preview before applying. */
+  const [frames, setFrames] = useState(1);
+  const [detected, setDetected] = useState(0);
+  const [countTouched, setCountTouched] = useState(false);
+  const [compare, setCompare] = useState(false);
+  const [loading, setLoading] = useState(false);
+  /** Frame bands currently drawn on the preview — drives the build button's
+   *  count label and disables building when nothing survived the key. */
+  const [previewCount, setPreviewCount] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const forgeCanvasRef = useRef<HTMLCanvasElement>(null);
+  const forgeKind = presetForgeKind(preset);
+
+  const clearDraft = () => {
+    setDraft(null);
+    setDraftImg(null);
+    setCompare(false);
+    setCountTouched(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  /** Upload lands here: decode, auto-key from the corners, count sprites. */
+  const pickFile = async (file: File) => {
+    setLoading(true);
+    setForgeMsg(null);
+    try {
+      const { data, url } = await fileToImageData(file);
+      setDraft({ data, url, name: file.name.replace(/\.[a-z0-9]+$/i, "") || "sheet" });
+      const sampled = toHex(sampleCorners(data.data, data.width, data.height));
+      setKeyHex(sampled);
+      setStrength(60);
+      const keyed = applyKey(data, parseHex(sampled), 60, softnessForStrength(60));
+      const runs = forgeKind === "single" ? [[0, data.width]] : frameRuns(keyed);
+      setDetected(runs.length);
+      setFrames(Math.max(1, runs.length));
+      setCountTouched(false);
+    } catch (err) {
+      setForgeMsg(`⚠ ${err instanceof Error ? err.message : "couldn't load that image"}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* Keep a decoded <img> for the "show original" compare pass. */
+  useEffect(() => {
+    if (!draft?.url) {
+      setDraftImg(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setDraftImg(img);
+    img.src = draft.url;
+  }, [draft?.url]);
+
+  /* Re-key + redraw the preview whenever a knob moves, WITH the frame bands
+   * drawn on top — the author sees exactly where the sheet will be sliced. */
+  const renderForgePreview = useCallback(() => {
+    const canvas = forgeCanvasRef.current;
+    if (!draft || !canvas) return;
+    const key = parseHex(keyHex);
+    const soft = softnessForStrength(strength);
+    const keyed = applyKey(draft.data, key, strength, soft);
+    const runs: Array<[number, number]> = countTouched
+      ? evenFrameRuns(keyed, frames)
+      : forgeKind === "single"
+        ? [[0, draft.data.width]]
+        : frameRuns(keyed);
+    setPreviewCount((c) => (c === runs.length ? c : runs.length));
+
+    const maxW = 520;
+    const scale = Math.min(1, maxW / draft.data.width);
+    canvas.width = Math.max(1, Math.round(draft.data.width * scale));
+    canvas.height = Math.max(1, Math.round(draft.data.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.imageSmoothingQuality = "high";
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (compare && draftImg) {
+      ctx.drawImage(draftImg, 0, 0, canvas.width, canvas.height);
+    } else {
+      const stage = document.createElement("canvas");
+      stage.width = draft.data.width;
+      stage.height = draft.data.height;
+      stage.getContext("2d")?.putImageData(keyed, 0, 0);
+      ctx.drawImage(stage, 0, 0, canvas.width, canvas.height);
+    }
+    // Slice guides: band fill + boundaries + the frame number each band
+    // becomes. Skipped in compare mode (guides still drawn — they frame the
+    // original too, so the author can check the spacing against the art).
+    ctx.font = `bold ${Math.max(11, Math.round(14 * scale))}px sans-serif`;
+    ctx.textBaseline = "top";
+    runs.forEach(([x0, x1], i) => {
+      const sx0 = x0 * scale;
+      const sx1 = x1 * scale;
+      ctx.fillStyle = "rgba(52, 211, 153, 0.10)";
+      ctx.fillRect(sx0, 0, sx1 - sx0, canvas.height);
+      ctx.strokeStyle = "rgba(52, 211, 153, 0.85)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx0 + 0.5, 0);
+      ctx.lineTo(sx0 + 0.5, canvas.height);
+      ctx.moveTo(sx1 - 0.5, 0);
+      ctx.lineTo(sx1 - 0.5, canvas.height);
+      ctx.stroke();
+      const tag = `${i + 1}`;
+      const tw = ctx.measureText(tag).width;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+      ctx.fillRect(sx0 + 3, 3, tw + 6, 16);
+      ctx.fillStyle = "#fbbf24";
+      ctx.fillText(tag, sx0 + 6, 5);
+    });
+  }, [draft, keyHex, strength, frames, countTouched, compare, draftImg, forgeKind]);
+
+  useEffect(() => {
+    renderForgePreview();
+  }, [renderForgePreview]);
+
+  /** The slice the build will actually use — even bands only when the author
+   *  overrode the auto-detected count. */
+  const buildWithForcedCount = forgeKind !== "single" && countTouched && frames > 0;
+
+  const build = async () => {
+    if (!draft) return;
     setForging(true);
     setForgeMsg(null);
     try {
-      const dataUrl = await new Promise<string>((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(String(r.result));
-        r.onerror = () => rej(new Error("could not read the file"));
-        r.readAsDataURL(file);
-      });
-      const strength = FORGE_STRENGTHS.find((f) => f.id === keyStrength) ?? FORGE_STRENGTHS[1];
       const size = FORGE_SIZES.find((s) => s.id === outSize) ?? FORGE_SIZES[0];
-      const sheet = await forgeSpriteSheet(dataUrl, presetForgeKind(preset), {
-        ...strength,
+      const sheet = await forgeSpriteSheet(draft.url, forgeKind, {
+        tolerance: strength,
+        softness: softnessForStrength(strength),
         ...(size.height ? { targetHeight: size.height } : {}),
+        ...(buildWithForcedCount ? { frameCount: frames } : {}),
       });
-      const base = file.name.replace(/\.[a-z0-9]+$/i, "") || "sheet";
-      const up = await uploadDataUrlAsset(storyId, `sheet-${base}.png`, "image", sheet.dataUrl, "sprites");
+      const up = await uploadDataUrlAsset(storyId, `sheet-${draft.name}.png`, "image", sheet.dataUrl, "sprites");
       onChange({
         image: up.success && up.assetId ? `asset:${up.assetId}` : sheet.dataUrl,
         frameWidth: sheet.frameWidth,
@@ -229,6 +374,7 @@ export function SpriteSheetControls({
       setForgeMsg(
         `✓ ${sheet.frameCount} frame${sheet.frameCount === 1 ? "" : "s"} · ${sheet.frameWidth} × ${sheet.frameHeight} each — sheet saved to the library and filled in below.`
       );
+      clearDraft();
     } catch (err) {
       setForgeMsg(`⚠ ${err instanceof Error ? err.message : "auto-build failed"}`);
     } finally {
@@ -243,53 +389,142 @@ export function SpriteSheetControls({
           cutout sheet). */}
       <div className="space-y-1 border border-amber-400/25 bg-amber-400/5 p-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <label className={`cursor-pointer border border-amber-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-amber-300 hover:bg-amber-400/10 ${forging ? "opacity-50" : ""}`}>
-            {forging ? "⚙ building…" : "⚡ Upload art → auto-build sheet"}
+          <label className={`cursor-pointer border border-amber-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-amber-300 hover:bg-amber-400/10 ${forging || loading ? "opacity-50" : ""}`}>
+            {loading ? "⏳ reading image…" : forging ? "⚙ building…" : draft ? "⇪ swap image…" : "⚡ Upload art → auto-build sheet"}
             <input
+              ref={fileInputRef}
               type="file"
               accept="image/*"
               className="hidden"
-              disabled={forging}
+              disabled={forging || loading}
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) void autoBuild(f);
+                if (f) void pickFile(f);
                 e.target.value = "";
               }}
             />
           </label>
           <span className="font-type text-[8px] leading-snug text-paper/45">
-            Frames side by side on ONE flat backdrop colour (magenta, green — anything flat). It keys the backdrop
-            out, slices the frames by the gaps, and fills everything in. A single figure gives a 1-frame cutout.
+            Frames side by side on ONE flat backdrop colour (magenta, green — anything flat). Nothing is applied yet:
+            upload first, tune the removal and sprite count on the preview, then build. A single figure gives a
+            1-frame cutout.
           </span>
         </div>
-        <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
-          backdrop removal:
-          <select
-            className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
-            value={keyStrength}
-            onChange={(e) => setKeyStrength(e.target.value)}
-          >
-            {FORGE_STRENGTHS.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
-          — gentle if it eats into the art · strong if backdrop specks survive. For full manual control use
-          Media Tools ▸ ✂ Sprite Cutout Lab.
-        </label>
-        <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
-          output size:
-          <select
-            className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
-            title="Frame height of the built sheet. A CAP, not a stretch: big art keeps its pixels up to it, small art is never upscaled into blur. Standard matches the classic presets (light story files)."
-            value={outSize}
-            onChange={(e) => setOutSize(e.target.value)}
-          >
-            {FORGE_SIZES.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
-            ))}
-          </select>
-          — bring big art? Pick <b>big</b> or <b>source</b> to keep the detail (bigger story files; 4MB/image cap).
-        </label>
+
+        {draft && (
+          <div className="space-y-1.5 border-t border-amber-400/20 pt-1.5">
+            {/* strength + key — tuned AFTER upload, against the live preview */}
+            <div className="flex flex-wrap items-center gap-3 font-type text-[9px] text-paper/60">
+              <label className="flex items-center gap-1.5" title="Colour distance treated as backdrop. Slide left if the key eats into the art, right if backdrop specks survive.">
+                backdrop removal strength
+                <input
+                  type="range"
+                  min={5}
+                  max={160}
+                  step={1}
+                  value={strength}
+                  onChange={(e) => setStrength(Number(e.target.value))}
+                  className="w-36 accent-amber-400"
+                />
+                <span className="w-8 text-right tabular-nums">{strength}</span>
+                <span className="text-paper/35">← gentle · strong →</span>
+              </label>
+              <label className="flex items-center gap-1">
+                key
+                <input
+                  type="color"
+                  value={keyHex}
+                  onChange={(e) => setKeyHex(e.target.value)}
+                  className="h-5 w-8 cursor-pointer border border-noir-600 bg-transparent"
+                />
+              </label>
+              <button
+                onClick={() => setKeyHex(toHex(sampleCorners(draft.data.data, draft.data.width, draft.data.height)))}
+                title="Re-sample the backdrop colour from the image corners"
+                className="border border-noir-600 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-amber-300/60 hover:text-amber-300"
+              >
+                ⟲ auto
+              </button>
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={compare} onChange={(e) => setCompare(e.target.checked)} />
+                show original
+              </label>
+            </div>
+
+            {/* sprite count — auto-detected, overridable */}
+            {forgeKind !== "single" && (
+              <div className="flex flex-wrap items-center gap-2 font-type text-[9px] text-paper/60">
+                <label className="flex items-center gap-1.5" title="Sprites the slicer will cut. Starts at the auto-detected number — edit it when the detector merges or splits frames; the preview switches to even bands so you can check the spacing.">
+                  sprites
+                  <input
+                    type="number"
+                    min={1}
+                    max={32}
+                    className="w-14 border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+                    value={frames}
+                    onChange={(e) => {
+                      setCountTouched(true);
+                      setFrames(Math.max(1, Math.min(32, parseInt(e.target.value, 10) || 1)));
+                    }}
+                  />
+                </label>
+                <span className="text-paper/40">
+                  auto-detected {detected}.
+                  {countTouched && frames !== detected
+                    ? ` Slicing evenly into ${frames} — check the guide lines below.`
+                    : " Wrong count (e.g. two figures touching count as one)? Type the real number."}
+                </span>
+                {countTouched && (
+                  <button
+                    onClick={() => {
+                      setCountTouched(false);
+                      setFrames(Math.max(1, detected));
+                    }}
+                    className="border border-noir-600 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-amber-300/60 hover:text-amber-300"
+                  >
+                    ⟲ use detected
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="inline-block max-w-full border border-noir-600" style={CHECKER}>
+              <canvas ref={forgeCanvasRef} className="block max-w-full" />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1 font-type text-[8px] text-paper/55">
+                output size:
+                <select
+                  className="border border-noir-600 bg-noir-950 px-1 py-0.5 text-[9px] text-paper/80"
+                  title="Frame height of the built sheet. A CAP, not a stretch: big art keeps its pixels up to it, small art is never upscaled into blur. Standard matches the classic presets (light story files)."
+                  value={outSize}
+                  onChange={(e) => setOutSize(e.target.value)}
+                >
+                  {FORGE_SIZES.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                onClick={build}
+                disabled={forging || previewCount === 0}
+                title="Key the backdrop, slice the frames as previewed, save the sheet to the library and fill this editor in"
+                className="border border-amber-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-amber-300 hover:bg-amber-400/10 disabled:opacity-40"
+              >
+                {forging ? "⚙ building…" : `✓ build sheet (${previewCount || "?"} sprite${previewCount === 1 ? "" : "s"})`}
+              </button>
+              <button
+                onClick={clearDraft}
+                className="border border-noir-600 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:border-crimson/60 hover:text-crimson"
+              >
+                ✕ cancel
+              </button>
+              <span className="font-type text-[8px] text-paper/35">Big art? Pick big / source to keep detail (4MB/image cap). Full manual control: Media Tools ▸ ✂ Sprite Cutout Lab.</span>
+            </div>
+          </div>
+        )}
+
         {forgeMsg && <p className="font-type text-[9px] text-paper/60">{forgeMsg}</p>}
       </div>
       <Field label={pickerLabel}>

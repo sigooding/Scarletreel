@@ -225,7 +225,7 @@ function bgStyle(bg: string): React.CSSProperties {
 }
 
 /**
- * VerbMenuPiePreview — the object-first verb menu (Full Throttle's skull pie)
+ * VerbMenuPiePreview — the object-first verb menu (the skull pie)
  * rendered at editor scale, so authors can tune it without a playtest: the
  * ring of verb chips + the centrepiece `verbMenuIcon` sprite. Same geometry
  * as Stage.tsx, shrunk.
@@ -6509,6 +6509,39 @@ function HotspotVoiceControls({
   );
 }
 
+/** Guard rails for the In-game theme's custom accent/danger ink: these two
+ *  colours take over --color-gold / --color-crimson EVERYWHERE (nameplates,
+ *  choice focus, gate badges), so a too-dark or near-identical pick makes UI
+ *  states look broken or invisible in play. Returns readable warnings; the
+ *  colours still save — it's advice, not a block. */
+function themeColorWarnings(accent?: string, danger?: string): string[] {
+  const rgb = (hex?: string) => {
+    if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+    return { r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16) };
+  };
+  /** relative luminance — the frame is near-black, so ink needs lum to read. */
+  const lum = (c: { r: number; g: number; b: number }) => {
+    const f = (v: number) => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const out: string[] = [];
+  const a = rgb(accent);
+  const d = rgb(danger);
+  // Built-in gold lum ≈ 0.5, built-in crimson ≈ 0.2 — warn well below those.
+  if (a && lum(a) < 0.15) out.push("The custom accent is very dark — highlights, nameplates and the choice focus ring will be hard to see on the noir frame.");
+  if (d && lum(d) < 0.08) out.push("The custom danger colour is nearly black — fail gates and HEAT warnings will be invisible.");
+  if (a && d) {
+    const dist = Math.sqrt((a.r - d.r) ** 2 + (a.g - d.g) ** 2 + (a.b - d.b) ** 2);
+    // Built-in gold↔crimson separation ≈ 120 — anything much closer blurs
+    // the good/bad distinction the player relies on.
+    if (dist < 60) out.push("Accent and danger are nearly the same colour — bad gates and HEAT will look like normal UI.");
+  }
+  return out;
+}
+
 function StudioInner({
   baseStories,
   initialStoryId,
@@ -9283,6 +9316,9 @@ function StudioInner({
                           onChange={(e) => setBox({ dangerColor: e.target.value })} />
                       </Field>
                     </div>
+                    {themeColorWarnings(dbox.accentColor, dbox.dangerColor).map((w, i) => (
+                      <p key={i} className="font-type text-[9px] leading-snug text-amber-400/90">⚠ {w}</p>
+                    ))}
                     {(dbox.accentColor || dbox.dangerColor) && (
                       <button
                         className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
@@ -9329,7 +9365,7 @@ function StudioInner({
                           </label>
                         </div>
                         <p className="font-type text-[9px] leading-snug text-paper/45">
-                          The object-first verb menu — Full Throttle's skull pie. <b>Opt-in</b>: it only appears on a
+                          The object-first verb menu — the skull pie. <b>Opt-in</b>: it only appears on a
                           Walkable Stage whose <b>Object-first verb menu</b> is on (see that panel). This switch is the
                           story-wide kill-switch: off = it never shows, in any scene. The sprite below sits at the
                           centre of the ring.
@@ -11296,7 +11332,7 @@ function StudioInner({
                             // Resolve exactly as the game does (Game.tsx): a
                             // scene's own sprite/image wins, otherwise the
                             // story-wide Player character (In-game theme) —
-                            // so Full Throttle's Ben walk sheet shows here.
+                            // so a story-wide player sheet shows here.
                             image: scene.stage.playerImage ?? story.playerSprite?.image,
                             sheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
                           }}
@@ -12139,7 +12175,7 @@ function StudioInner({
                                   onChange={(e) => updateScene(scene.id, { stage: { ...st, objectVerbMenu: e.target.checked || undefined } })}
                                 />
                                 <span>
-                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (Full Throttle's skull)</span>
+                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (the skull pie)</span>
                                   <br />
                                   Click the OBJECT first, then pick a verb from a small pie menu that pops up next to it
                                   (USE expands to your inventory). Off (default): the bottom-left verb coin, and classic
@@ -14450,7 +14486,7 @@ function StudioInner({
                         <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">💬 Topic-list conversation (opt-in)</div>
                         <p className="font-type text-[9px] leading-snug text-paper/45">
                           Instead of playing this scene's Beats straight through, the talk opens as a HUB of questions
-                          the player can ask (Full Throttle's "ask the bartender…"). Pick a topic, its lines play, then
+                          the player can ask ("ask the bartender…"). Pick a topic, its lines play, then
                           it returns to the hub; <b>leave</b> ends the conversation. Leave empty to keep the classic
                           linear conversation.
                         </p>
@@ -15127,7 +15163,7 @@ function StudioInner({
                         </div>
                       </div>
                     )}
-                    {/* ---- Ride minigame (Full Throttle road chase) ---- */}
+                    {/* ---- Ride minigame (road chase) ---- */}
                     <label className="flex items-center gap-2 border border-emerald-500/25 bg-emerald-500/5 p-1.5 text-[9px] text-paper/70">
                       <input
                         type="checkbox"
@@ -15154,7 +15190,7 @@ function StudioInner({
                         <Field label="Big on-screen prompt (defaults to 'RIDE')">
                           <input
                             className={inputCls}
-                            placeholder="OUTRUN THE ROTTWHEELER"
+                            placeholder="OUTRUN THE MIDNIGHT PACK"
                             value={c.ride.prompt ?? ""}
                             onChange={(e) =>
                               mutate((d) => {
