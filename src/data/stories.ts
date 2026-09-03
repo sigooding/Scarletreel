@@ -26,6 +26,7 @@ import { THE_LATE_SHIFT } from "./theLateShift";
 import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
 import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
 import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
+import { NOBODYS_WITNESS_DRAFT_3 } from "./nobodysWitnessDraft3";
 import { SCOOBY_RAVENSWOOD } from "./scoobyRavenswood";
 import { INSPECTOR_GADGET } from "./inspectorGadget";
 import { SOUTH_PARK } from "./southPark";
@@ -83,6 +84,7 @@ export const STORIES: Story[] = [
   FULL_THROTTLE_ORIGINAL,
   THROTTLE_ASH,
   NOBODYS_WITNESS_TRUE,
+  NOBODYS_WITNESS_DRAFT_3,
   NOBODYS_WITNESS_FINAL,
   NOBODYS_WITNESS_NEW,
   THE_LATE_SHIFT_REDUX,
