@@ -119,7 +119,7 @@ Vera sits and arranges sugar packets into a line.
 
 **VERA**
 
-My husband is missing. The police asked if he had left before. I said no. They wrote down yes and went to lunch.
+My husband is missing. The police asked if he had left before. I said no. They wrote down 'no fixed pattern' and told me to wait until morning.
 
 **JACK**
 
@@ -573,7 +573,7 @@ Vera paid you to shoot a man and you are worried about the invoice?
 
 **JACK**
 
-I put one hand on the door. Moe saw it. David saw the gun. For one second, all three of us waited for somebody to be brave.
+I put one hand on the door. Moe saw it. David saw the gun. I had time to pull the door open. I spent it waiting for David to move.
 
 **DAVID**
 

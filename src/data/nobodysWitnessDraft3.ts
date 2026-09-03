@@ -449,7 +449,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_d_v2",
           "vera",
-          "My husband is missing. The police asked if he had left before. I said no. They wrote down yes and went to lunch.",
+          "My husband is missing. The police asked if he had left before. I said no. They wrote down 'no fixed pattern' and told me to wait until morning.",
           { expression: "sitting, arranging sugar packets into a line" }
         ),
         beat(
@@ -1255,7 +1255,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat("nw3_k_d4", "david", "She found the numbers. I saw her find them. I moved the money. You can tell her that part if you want to make her night worse."),
         beat("nw3_k_m2", "moe", "Vera paid me for one job. I am not adding a second one for free."),
         beat("nw3_k_d5", "david", "Vera paid you to shoot a man and you are worried about the invoice?"),
-        beat("nw3_k_j4", "jack", "I put one hand on the door. Moe saw it. David saw the gun. For one second, all three of us waited for somebody to be brave."),
+        beat("nw3_k_j4", "jack", "I put one hand on the door. Moe saw it. David saw the gun. I had time to pull the door open. I spent it waiting for David to move."),
         beat("nw3_k_d6", "david", "The money is gone. I put it somewhere with no address and no witness. Nobody else alive knows where it is. When I am dead, that sentence gets shorter.", { expression: "to Jack" }),
         beat("nw3_k_j5", "jack", "You do not get to make the last line funny."),
         beat("nw3_k_d7", "david", "Everybody gets to make the last line funny. That is what the last line is for."),
