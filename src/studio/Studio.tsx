@@ -6519,6 +6519,7 @@ function StudioInner({
   onDeleteStory,
   onCreateStory,
   onUpdateTitleTheme,
+  onOpenManual,
 }: {
   baseStories: Story[];
   /** open on this story (e.g. "edit this scene in Studio" from the game) */
@@ -6531,6 +6532,7 @@ function StudioInner({
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
   onUpdateTitleTheme: (theme: TitleTheme) => void;
+  onOpenManual?: () => void;
 }) {
   const loadDraft = (id: string): Story => {
     try {
@@ -15573,7 +15575,7 @@ function StudioInner({
         </div>
       </div>
 
-      {showHelp && <StudioHelpModal onClose={() => setShowHelp(false)} />}
+      {showHelp && <StudioHelpModal onClose={() => setShowHelp(false)} onOpenManual={onOpenManual} />}
 
       {exportPayload !== null && (
         <div
@@ -15656,6 +15658,7 @@ export function Studio(props: {
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
   onUpdateTitleTheme: (theme: TitleTheme) => void;
+  onOpenManual?: () => void;
 }) {
   return (
     <ReactFlowProvider>

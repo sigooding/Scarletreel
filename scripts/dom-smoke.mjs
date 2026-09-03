@@ -188,6 +188,33 @@ for (const [label, re] of studioTabs) {
 }
 root.unmount(); await sleep(200); problems.length = 0;
 
+// Phase 3c: creator manual
+// The manual is a full in-app page rather than another modal. Exercise both
+// the newsstand entry point and a copied-style deep link so its navigation stays
+// useful in the desktop build as well as the browser preview.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/^📓 Creator Manual$/i)) {
+  await sleep(500);
+  const manualText = (container.textContent || "").replace(/\\s+/g, " ");
+  const manualSearch = container.querySelector('input[aria-label="Search the Studio creator manual"]');
+  const manualOk = /Build the case/i.test(manualText) && /Common errors/i.test(manualText) && !!manualSearch;
+  console.log("\\n=== CREATOR MANUAL ===");
+  console.log("  rendered manual with searchable index:", manualOk);
+  if (!manualOk) failed = true;
+  failed |= report("CREATOR MANUAL").crashed;
+} else {
+  console.log("!! could not find Creator Manual button");
+  failed = true;
+}
+root.unmount(); await sleep(200); problems.length = 0;
+win.history.replaceState(null, "", "#manual/choices");
+root = await mountFresh();
+const deepLinkOk = !!container.querySelector("#choices") && /Choices and consequences/i.test(container.textContent || "");
+console.log("  manual deep link mounted:", deepLinkOk);
+if (!deepLinkOk) failed = true;
+root.unmount(); await sleep(200); problems.length = 0;
+win.history.replaceState(null, "", "/");
+
 // Phase 4: play the flagship story
 root = await mountFresh(); problems.length = 0;
 if (clickByText(/Play Nobody/i)) { await sleep(3000); failed |= report("GAME (Nobody's Witness True Romance Cut)").crashed; }
