@@ -41,7 +41,7 @@ These facts are intentionally withheld from the opening and the briefing. They a
 3. **David has skimmed the accounts for six years.** The withdrawals are small adjustments buried in cash routes, not a suitcase of movie money. Vera finds the pattern in the accounts and is the only person, besides David, who has found it and can prove it at the start of the story.
 4. **Vera secretly pays Moe.** Her regular debt meetings place her inside Solomon's orbit. She pays Moe $8,000 in cash to kill David. Solomon did not order it.
 5. **Vera's plan is practical and ugly.** She intends to let David die, take the hidden money, clear her own Blue Hour debt, and leave Blackwood. She hires Jack as insurance: if the killing attracts attention, his dated missing-husband file makes her look like a wife who was searching before the body appeared.
-6. **David notices Vera in the accounts.** Vera does not know he noticed. He moves the money before she can take it. Jack learns that from David, but David dies before giving the hiding place. Nobody alive knows where the money is after the shot.
+6. **David notices Vera in the accounts.** Vera does not know he noticed. He moves the money before she can take it. If Jack presses David on the money, David tells him that directly; otherwise Jack only knows that something heavy has been moved until the later evidence makes the absence clear. David dies before giving the hiding place. Nobody alive knows where the money is after the shot.
 7. **The ending is heartbreaking, not romantic wish fulfilment.** Jack keeps choosing costly, protective actions. Vera does not turn those actions into a new obligation. She leaves Blackwood; Jack does not ask her to wait.
 
 ## Character direction
@@ -287,7 +287,7 @@ The jukebox has chosen a song about consequences and is playing it too fast. Moe
 
 **JACK (V.O.)**
 
-Moe kept his coat over the chair. Desh had a newspaper folded to the race results. Neither man looked at the door when I came in.
+Moe kept his coat over the chair. Desh had a newspaper folded to the race results, and his drink was already paid for. Neither man looked at the door when I came in.
 
 **DESH**
 
@@ -443,13 +443,17 @@ Jack leaves David with the locked door. The money-moved state is set on exit, no
 
 Vera has taken off her coat but not her shoes. On the table: the Blue Hour note, a glass of water, and a carbon receipt that has not yet decided whether it is evidence.
 
+If Jack pressed David directly about the money, the scene opens with:
+
 **JACK (V.O.)**
 
 David told me about the money. He did not give me the address. He told me something else, and it is the piece you do not know.
 
+Otherwise, Jack lets Vera speak first.
+
 **VERA**
 
-I found the skim. Six years of it. Not a big theft, not the kind that gives you a villain in a coat. A dollar here, a code there. I was the only person besides David who had found it and could prove it.
+I found the skim because David left the route book open after a Friday payment. I knew the codes; you learn a lender's language when he owns your lease. Six years of it. Not one big theft, not the kind that gives you a villain in a coat. A dollar here, a code there. I was the only person besides David who had found it and could prove it.
 
 **JACK**
 
@@ -473,7 +477,7 @@ I did not tell her he moved the money. The sentence stayed behind my teeth. It w
 
 **VERA**
 
-I paid Moe cash. He works Solomon's route. Friday payments put us in the same room, and nobody asked why I stayed after I handed him the envelope.
+I paid Moe cash. He works Solomon's route. I carried Solomon's Friday payment upstairs, and nobody asked why I stayed after I handed him the envelope.
 
 **JACK**
 
@@ -569,7 +573,7 @@ Vera paid you to shoot a man and you are worried about the invoice?
 
 **JACK**
 
-Moe, do not make this easy for him.
+I put one hand on the door. Moe saw it. David saw the gun. For one second, all three of us waited for somebody to be brave.
 
 **DAVID**
 
@@ -591,7 +595,7 @@ She paid me for one job. Solomon did not send me. Do not make me remember whethe
 
 **JACK (V.O.)**
 
-Moe leaves. I pick up the casing and put it in the receipt envelope. It is the only thing in the room I can label. Then I wait for Vera.
+Moe leaves. I pick up the casing and put it in the receipt envelope. It is the only thing in the room I can label. Then I wait for Vera, because somebody has to tell her the room has changed.
 
 Jack enters the room after the shot.
 
@@ -715,6 +719,30 @@ And David?
 
 David touched the reason for it.
 
+**ROSA**
+
+Those facts do not cancel each other. They make two separate charges.
+
+**JACK**
+
+Moe did it. Private cash. Solomon did not order it.
+
+**ROSA**
+
+Then the receipt is evidence. Who else has touched it?
+
+**JACK**
+
+Gone. David moved it before Vera knew he had seen her in the books. He died with the only address.
+
+**ROSA**
+
+You are not protecting her. You are making yourself part of the evidence. I am trying to keep you from becoming the part I have to file.
+
+**JACK**
+
+I know.
+
 Rosa checks the casing label and the dates before offering Jack the next move. Jack can give Rosa the receipt and the off-book payment, or keep the receipt for one more conversation with Solomon.
 
 The folder hotspot reads:
@@ -733,7 +761,7 @@ Three folders lie on the desk: DAVID, VERA, JACK. Solomon opens Vera's file to t
 
 **SOLOMON**
 
-David Voss is dead. Moe has become difficult to locate. Two hundred and eleven thousand dollars is missing from my accounts.
+David Voss is dead. Moe has become difficult to locate. Two hundred and eleven thousand, four hundred and six dollars and seventeen cents is missing from my accounts.
 
 **JACK**
 

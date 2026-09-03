@@ -913,7 +913,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       prose:
         "INT. THE BLUE CUE — NIGHT. The jukebox has chosen a song about consequences and is playing it too fast. Moe and Desh sit beneath a television showing a horse race from last week.",
       dialogueBeats: [
-        beat("nw3_b_j1", "jack", "Moe kept his coat over the chair. Desh had a newspaper folded to the race results. Neither man looked at the door when I came in.", { expression: "V.O." }),
+        beat("nw3_b_j1", "jack", "Moe kept his coat over the chair. Desh had a newspaper folded to the race results, and his drink was already paid for. Neither man looked at the door when I came in.", { expression: "V.O." }),
         beat("nw3_b_d1", "desh", "David used to say a locked door was an invitation with better manners. He said it while he was checking whether the lock was expensive."),
         beat("nw3_b_m1", "moe", "David used to say many things. Most of them cost somebody a window."),
         beat("nw3_b_j2", "jack", "I need the room to stop pretending it did not hear David Voss."),
@@ -1087,12 +1087,12 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           "nw3_c_j1",
           "jack",
           "David told me about the money. He did not give me the address. He told me something else, and it is the piece you do not know.",
-          { expression: "V.O.", conditionRule: { requiresFlags: ["nw3_money_moved"] } }
+          { expression: "V.O.", conditionRule: { requiresFlags: ["nw3_asked_money"] } }
         ),
         beat(
           "nw3_c_v1",
           "vera",
-          "I found the skim. Six years of it. Not a big theft, not the kind that gives you a villain in a coat. A dollar here, a code there. I was the only person besides David who had found it and could prove it.",
+          "I found the skim because David left the route book open after a Friday payment. I knew the codes; you learn a lender's language when he owns your lease. Six years of it. Not one big theft, not the kind that gives you a villain in a coat. A dollar here, a code there. I was the only person besides David who had found it and could prove it.",
           { expression: "standing by the window" }
         ),
         beat(
@@ -1128,7 +1128,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat(
           "nw3_c_v4",
           "vera",
-          "I paid Moe cash. He works Solomon's route. Friday payments put us in the same room, and nobody asked why I stayed after I handed him the envelope.",
+          "I paid Moe cash. He works Solomon's route. I carried Solomon's Friday payment upstairs, and nobody asked why I stayed after I handed him the envelope.",
           { expression: "matter-of-fact, which is how panic survives" }
         ),
         beat(
@@ -1255,13 +1255,13 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat("nw3_k_d4", "david", "She found the numbers. I saw her find them. I moved the money. You can tell her that part if you want to make her night worse."),
         beat("nw3_k_m2", "moe", "Vera paid me for one job. I am not adding a second one for free."),
         beat("nw3_k_d5", "david", "Vera paid you to shoot a man and you are worried about the invoice?"),
-        beat("nw3_k_j4", "jack", "Moe, do not make this easy for him."),
+        beat("nw3_k_j4", "jack", "I put one hand on the door. Moe saw it. David saw the gun. For one second, all three of us waited for somebody to be brave."),
         beat("nw3_k_d6", "david", "The money is gone. I put it somewhere with no address and no witness. Nobody else alive knows where it is. When I am dead, that sentence gets shorter.", { expression: "to Jack" }),
         beat("nw3_k_j5", "jack", "You do not get to make the last line funny."),
         beat("nw3_k_d7", "david", "Everybody gets to make the last line funny. That is what the last line is for."),
         beat("nw3_k_s1", "jack", "One shot. The door opened into black.", { silent: true, audioUrl: "/nwt-gunshot.wav", background: "gradient:linear-gradient(#090b12,#000)", backgroundTransition: "cut" }),
         beat("nw3_k_m3", "moe", "She paid me for one job. Solomon did not send me. Do not make me remember whether you were here."),
-        beat("nw3_k_j6", "jack", "Moe left. I picked up the casing and put it in the receipt envelope. It was the only thing in the room I could label. Then I waited for Vera.", { expression: "V.O. — action, not confession" }),
+        beat("nw3_k_j6", "jack", "Moe left. I picked up the casing and put it in the receipt envelope. It was the only thing in the room I could label. Then I waited for Vera, because somebody had to tell her the room had changed.", { expression: "V.O. — action, not confession" }),
       ],
       choices: [
         nav("nw3_k_enter", "Enter the room after the shot.", "nw3_empty", {
@@ -1384,7 +1384,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
         beat("nw3_r_j5", "jack", "Moe did it. Private cash. Solomon did not order it."),
         beat("nw3_r_r5", "rosa", "Then the receipt is evidence. Who else has touched it?"),
         beat("nw3_r_j6", "jack", "Gone. David moved it before Vera knew he had seen her in the books. He died with the only address.", { expression: "V.O." }),
-        beat("nw3_r_r6", "rosa", "You are not protecting her. You are making yourself part of the evidence."),
+        beat("nw3_r_r6", "rosa", "You are not protecting her. You are making yourself part of the evidence. I am trying to keep you from becoming the part I have to file."),
         beat("nw3_r_j7", "jack", "I know.", { expression: "quiet" }),
       ],
       choices: [
@@ -1447,7 +1447,7 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
       prose:
         "INT. SOLOMON'S OFFICE — MORNING. Three folders lie on the desk: DAVID, VERA, JACK. Solomon opens Vera's file to the page marked Friday. The heater is silent for once. He does not need to ask which debt he is holding.",
       dialogueBeats: [
-        beat("nw3_sf_s1", "solomon", "David Voss is dead. Moe has become difficult to locate. Two hundred and eleven thousand dollars is missing from my accounts."),
+        beat("nw3_sf_s1", "solomon", "David Voss is dead. Moe has become difficult to locate. Two hundred and eleven thousand, four hundred and six dollars and seventeen cents is missing from my accounts."),
         beat("nw3_sf_j1", "jack", "David collected. The pages show he also kept two sets of numbers. He was careful with figures and careless with people."),
         beat("nw3_sf_s2", "solomon", "You are defending him by making him legible."),
         beat("nw3_sf_j2", "jack", "I am keeping the facts separate."),
