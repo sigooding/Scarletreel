@@ -1143,6 +1143,12 @@ export const NOBODYS_WITNESS_DRAFT_3: Story = {
           "Eight thousand. He said he would make David quiet. Moe is a man who can turn quiet into a service."
         ),
         beat(
+          "nw3_c_v5b",
+          "vera",
+          "Moe said David was already a problem for Solomon. I let myself hear that as permission. It was only an excuse.",
+          { expression: "a correction she hates" }
+        ),
+        beat(
           "nw3_c_v6",
           "vera",
           "David dies. I take what he hid. I pay off the Blue Hour note. I leave Blackwood before Solomon has a reason to say my name twice. That was the plan.",

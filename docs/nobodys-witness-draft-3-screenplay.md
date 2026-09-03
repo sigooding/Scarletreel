@@ -489,6 +489,10 @@ Eight thousand. He said he would make David quiet. Moe is a man who can turn qui
 
 **VERA**
 
+Moe said David was already a problem for Solomon. I let myself hear that as permission. It was only an excuse.
+
+**VERA**
+
 David dies. I take what he hid. I pay off the Blue Hour note. I leave Blackwood before Solomon has a reason to say my name twice. That was the plan.
 
 **JACK**
