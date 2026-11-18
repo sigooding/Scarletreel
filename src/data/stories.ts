@@ -5,18 +5,11 @@ import { QTE_DEMO } from "./qteDemo";
 import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
-import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
-import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
 import { SCREENING_ROOM } from "./screeningRoom";import { STUDIO_TUTORIAL } from "./studioTutorial";
 import { NEON_DINER } from "./neonDiner";
-import { DEMO_LIE } from "./demoLie";
 import { DEMO_CONVERSATION } from "./demoConversation";
 import { DEMO_SCENE_CRAFT } from "./demoSceneCraft";
 import { DEMO_STRUCTURE } from "./demoStructure";
-import { THE_LATE_SHIFT } from "./theLateShift";
-import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
-import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
-import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
 
 /**
  * The playable catalogue.
@@ -45,11 +38,6 @@ import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
  * - DEMO_STRUCTURE ("Demo Lab: Branching Reel") — consequences & meters,
  *   exclusive groups, gating with hints, quick-time timeout branches, part
  *   breaks, acts, ending tiers and the heat bust.
- * - DEMO_LIE ("Demo Lab: Press the Lie") — the contradiction verb: a 🎯
- *   "press them on that" beat where the player must present the evidence
- *   that proves a claim false. Teaches breaking-evidence vs red herrings,
- *   the caught/bluff beats, wrong-evidence limits, trust/heat swings, and a
- *   lie inside an interrogation (composureDamage cracks the suspect).
  *
  * The other story files still live in src/data/ and every image, video and
  * audio asset is untouched in public/ — to bring one back, import it here and
@@ -62,17 +50,10 @@ import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
-  NOBODYS_WITNESS_TRUE,
-  NOBODYS_WITNESS_FINAL,
-  NOBODYS_WITNESS_NEW,
-  THE_LATE_SHIFT_REDUX,
-  THE_LATE_SHIFT_REIMAGINED,
-  THE_LATE_SHIFT,
   STUDIO_TUTORIAL,
   DEMO_CONVERSATION,
   DEMO_SCENE_CRAFT,
   DEMO_STRUCTURE,
-  DEMO_LIE,
   NEON_DINER,
   NOBODYS_WITNESS_FLAGSHIP,
   LAST_CALL_ON_PIER_7,

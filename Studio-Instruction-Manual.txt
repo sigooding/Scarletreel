@@ -10,49 +10,9 @@
    behaviour below is what the tool actually does — not a paraphrase.
 
 --------------------------------------------------------------------------------
-   RECENT CHANGES (press the lie, walkable 2D scenes, craft linter,
-                   flag notes, route charts, HUD, present-item verb)
+   RECENT CHANGES (flag notes, route charts, HUD, present-item verb)
    — read this first
 --------------------------------------------------------------------------------
-   NEW: PRESS THE LIE 🎯        the contradiction verb. A dialogue beat can
-   (catch them in a lie)         carry a LIE: while that line is on screen the
-                                 player gets a "🎯 Press them on that" button,
-                                 opens their satchel, and must present the ONE
-                                 clue that proves the claim false. Right clue
-                                 -> the CAUGHT beat plays (auto-gated on the
-                                 caught flag), trust/meters swing, optional
-                                 "…will remember that" card. Wrong clue -> a
-                                 BLUFF-CALLED line, heat up / trust down, and
-                                 after a wrong-evidence LIMIT (default 2) the
-                                 claim shuts for the scene. In an INTERROGATION
-                                 scene set "composure damage" and a proven lie
-                                 shatters the suspect (crack/clamp by trust).
-                                 Authored on the beat via the Dialogue tab's
-                                 "🎯 Press the Lie" panel. The validator checks
-                                 the evidence exists/obtains and the caught
-                                 beat is gated. See Section 11 "PRESS THE LIE".
-                                 Try Demo Lab: Press the Lie.
-   NEW: STAGE 2D 🚶             a scene can be a WALKABLE stage. Tick
-   (controllable character)      "Player walks around this scene" in the Scene
-                                 tab: the player clicks the ground to move a
-                                 character (or uses arrow / WASD keys), and
-                                 walking ONTO a hotspot fires it through the
-                                 SAME hotspot action (give item, show text, go
-                                 to scene — gating unchanged). It is a movement
-                                 layer over the same scene data, not a new game
-                                 model. Config: sprite (image or emoji:…),
-                                 spawn point, walk speed, reach distance,
-                                 keyboard toggle. See Section 9 "STAGE 2D".
-   NEW: CRAFT LINTER            the Continuity Department now also flags STORY
-                                 CRAFT, not just broken graphs: flags that are
-                                 set but never read (a payoff that never lands),
-                                 "will remember that" cards with nothing behind
-                                 them, memory tags nobody recalls, quick-time
-                                 deadlines that change nothing when they expire,
-                                 two choices that answer identically, and long
-                                 passive corridors with no interaction. All are
-                                 advisory (gold warnings); they never block
-                                 publish. See Section 14.
    NEW: FLAGS TAB (🏷)          a story-level tab listing every flag used
                                 anywhere (choices, gating, hotspots, QTE
                                 timeouts, pattern puzzles, the corkboard,
@@ -1244,33 +1204,6 @@
        route to the gold ending, or get it wrong and there's no second chance —
        +2 Heat and a route straight to the game-over ending.
 
-   STAGE 2D — A WALKABLE SCENE (controllable character)
-   -----------------------------------------------------
-   A scene can be a STAGE the player walks around instead of a static plate
-   they click. Turn it on in the Scene tab under "🚶 Stage 2D — walkable
-   character". Fields (scene.stage2d):
-
-     · playerImage   the character sprite: an image url / asset: reference,
-                     or an emoji glyph written "emoji:🕵️" (default).
-     · spawn         { x, y } spawn point in scene percentages (default
-                     bottom-centre, x:50 y:86).
-     · speed         walk speed as a % of scene width per second (default 18).
-     · reach         how close (scene-% of width) the character must get to a
-                     hotspot centre to fire it (default 3.5).
-     · keyboard      allow arrow / WASD movement as well as click-to-walk
-                     (default true).
-
-   In play the player clicks the ground (a target ripple shows) or steers with
-   the keys; walking the character ONTO a hotspot zone fires it through the
-   SAME interaction path as clicking it — gating, give-item pickups, showText,
-   openBoard and goToScene all behave exactly as before, and locked zones show
-   their fail message when walked up to. It is purely a movement / presentation
-   layer: the state model, choices, beats and consequences are unchanged. Coordinates
-   are scene percentages (x = % of width, y = % of height); the vertical step is
-   aspect-corrected so stride speed is uniform across a wide plate. Author your
-   hotspots where the player should walk to something. Try the office in
-   Demo Lab: Press the Lie.
-
 
 ================================================================================
    SECTION 10  —  CHOICES (NAVIGATION, REPLIES, HIDDEN, GROUPS, TIMERS)
@@ -1459,42 +1392,6 @@
    entry (unless autoNarrate is off). If you set noTypewriter, the prose is shown
    instantly rather than type-written. narrationAudioUrl replaces Web Speech for
    the prose with a recorded MP3.
-
-   PRESS THE LIE (the contradiction verb)
-   --------------------------------------
-   A beat can carry a LIE — a false statement the player must disprove with
-   evidence. Author it on the beat in the Dialogue tab via the
-   "🎯 Press the Lie (contradiction)" panel.
-
-     · claim                 what the player challenges (defaults to the beat's
-                             own line). Shown above the evidence bag.
-     · evidenceItemIds       the item id(s) that PROVE the claim false. Usually
-                             exactly ONE clue. Any other held item is a bluff.
-     · caughtBeat            the reaction that plays when the right evidence is
-                             presented. It is spliced in as the next line and is
-                             gated on contradictedFlag, so it only fires on a win.
-     · contradictedFlag      set when the lie breaks; gate the aftermath
-                             (choices/beats) on it.
-     · contradictedConsequences  the payoff swing (trust up, heat down, a flag).
-     · wrongBeat / wrongConsequences  what the speaker says and what it costs
-                             when the wrong evidence is shown (usually heat up /
-                             trust down).
-     · wrongEvidenceLimit    misses before the claim shuts for the scene
-                             (default 2).
-     · composureDamage       in an INTERROGATION scene, a proven lie also does
-                             this much composure damage (2+ cracks the suspect,
-                             running the normal crack/clamp-by-trust resolution).
-     · rememberLine          optional Telltale-style card on a successful catch.
-
-   Play: while the line is on screen a pulsing "🎯 Press them on that" button
-   opens the satchel; the player presents evidence. Right clue → caughtBeat +
-   flag + swing. Wrong clue → wrongBeat + cost, and after the limit the button
-   goes dead ("they shut you down"). ALWAYS give a failed press an ungated exit
-   choice so a shut-down claim can't soft-lock. The validator checks that the
-   evidence exists and is obtainable, that the caught/wrong beats have speakers,
-   and that the caught beat is gated on the caught flag. Worked example:
-   Demo Lab: Press the Lie (the pawn ticket breaks the alibi; the charred
-   matchbook is a red herring; the bar tab cracks the interrogation).
 
 
 ================================================================================
@@ -1703,22 +1600,6 @@
    - recipes referencing missing ingredients/results
    - items required by a gate but never granted anywhere (ERROR)
    - flags required by a gate but never set by any choice/hotspot/connection (ERROR)
-
-   CRAFT CHECKS (advisory warnings — the story can be walked but never LANDS)
-   - a flag set but never read by a gate, beat recall, recap or flag note — the
-     player's action changed nothing (the automated backward-design ledger)
-   - a flag cleared but never set
-   - a memoryLog tag nobody recalls or gates on ("the character remembers" —
-     then never does). Silent in episodic seasons (the end card lists them)
-   - a "will remember that" card with no memory tag and no state behind it
-   - a press-the-lie beat with no/unknown evidence, no caught flag, a missing
-     speaker on its caught/wrong beat, or a caught beat not gated on its flag
-   - a quick-time choice whose timeout lands on the same scene/reply with no
-     timeout consequences (a fake deadline)
-   - two visible choices with the same target, attitude, effects and no memory
-     (the same decision twice)
-   - a run of 4+ reachable scenes with no choice, hotspot or interrogation (a
-     passive corridor) — collapse it or ask something mid-run
 
    REPAIR (auto-fix)
    -----------------

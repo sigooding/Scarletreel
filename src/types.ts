@@ -53,8 +53,7 @@ export type HotspotActionType =
   | "meterChange"
   | "openBoard"
   | "useItem"
-  | "patternPuzzle"
-  | "startDialogue";
+  | "patternPuzzle";
 
 export interface HotspotAction {
   type: HotspotActionType;
@@ -67,9 +66,6 @@ export interface HotspotAction {
   itemConsumed?: string;
   /** for patternPuzzle hotspots: the puzzle configuration */
   patternPuzzle?: import("./game/PatternPuzzleTypes").PatternPuzzleConfig;
-  /** startDialogue hotspots (STAGE nodes) play the scene's dialogueBeats as
-   * a conversation. This action needs no payload of its own — the scene's
-   * beats ARE the payload. Any flagSet / meterChange here still applies. */
 }
 
 export interface Hotspot {
@@ -179,45 +175,6 @@ export interface Choice {
   consumePresentedItem?: boolean;
 }
 
-/** A catch-them-in-a-lie beat. Authored on a DialogueBeat via `beat.lie`:
- * while that line is on screen the player may press the speaker and must
- * produce the single piece of evidence that proves the claim false. The
- * contradiction verb — "you said you were home, but this motel receipt…" */
-export interface Contradiction {
-  /** Shown above the evidence bag when pressing (what is being challenged).
-   * Falls back to the beat's own line when blank. */
-  claim?: string;
-  /** The item ids that break the claim. Usually exactly ONE clue; accept a
-   * few so alternate evidence can crack the same lie (the player still has
-   * to hold one of them). */
-  evidenceItemIds: string[];
-  /** The beat that plays when the correct evidence is produced — the
-   * speaker caught. It is injected into the dialogue queue as the next line
-   * after the claim, the same way a reply unlocks a gated beat. */
-  caughtBeat: DialogueBeat;
-  /** Flag set when the lie is broken — gate the rest of the confrontation
-   * (choices, beats, routes) on it. */
-  contradictedFlag: string;
-  /** The payoff swing on a correct press (trust up, heat down, a memory of
-   * the win…). */
-  contradictedConsequences?: Consequences;
-  /** Line shown when the player presents evidence that doesn't break the
-   * claim — the speaker calls the bluff. Defaults to a generic scoff. */
-  wrongBeat?: DialogueBeat;
-  /** How many wrong pieces of evidence the player may show before the claim
-   * shuts for the scene (default 2 — one bad guess, one last chance). */
-  wrongEvidenceLimit?: number;
-  /** The cost of a bluff that gets called (usually heat up / trust down). */
-  wrongConsequences?: Consequences;
-  /** In an interrogation scene, a correct press also breaks this much
-   * composure (default 0 — the press stands on its own). 2+ is a
-   * contradiction that cracks a suspect open. */
-  composureDamage?: number;
-  /** Optional Telltale-style card when the lie lands (e.g. "Vera knows
-   * you've got her."). */
-  rememberLine?: string;
-}
-
 export interface DialogueBeat {
   id: string;
   characterId: string;
@@ -258,21 +215,6 @@ export interface DialogueBeat {
    * the `{said}` placeholder to echo the player's exact words. When several
    * memories are present, the first matching tag in insertion order wins. */
   recalls?: Record<string, string>;
-
-  /** PRESS THE LIE — the contradiction verb. When this beat is a line the
-   * speaker wants to hold onto (a false claim), the player gets a 🎯 "Press
-   * them on that" affordance: they open the evidence bag and must produce
-   * the ONE clue that breaks the statement. The right evidence plays the
-   * caught beat, swings trust/meters, and sets a flag the rest of the scene
-   * (and story) can gate on. The wrong evidence is a BLUFF the speaker calls
-   * — it costs trust and draws heat, and after `wrongEvidenceLimit` misses
-   * the claim cannot be pressed again this scene (you blew your chance).
-   *
-   * This is the detective core: instead of clicking through every hotspot,
-   * the player must have PAID ATTENTION and hold the evidence that matters.
-   * It composes with the interrogation (a correct press can dump composure)
-   * and with the corkboard (it can set a link flag). */
-  lie?: Contradiction;
 
   /* ---- AFTER THIS BEAT: route to another scene ----
    * Normally a beat's replacement background reverts to the scene plate when
@@ -820,64 +762,6 @@ export interface Interrogation {
   clampConsequences?: Consequences;
 }
 
-/**
- * A STAGE node — the Telltale-style walkable exploration scene.
- *
- * A stage node plays nothing like a standard node: there is no prose panel
- * and nothing to read before acting. The player walks a character around a
- * floor (click-to-walk and/or WASD/arrows), interactables render as
- * Telltale-style markers, and walking up to a marker fires it through the
- * SAME action path a clicked hotspot uses (gating, give-item, show-text,
- * use-item, exits — all unchanged). A marker whose action is
- * `startDialogue` (a character, usually drawn with the hotspot's image)
- * starts the scene's conversation — its dialogueBeats play in the normal
- * cinematic dialogue panel, ending in the scene's choices (give them
- * timeLimitSeconds for genuine Telltale "decide NOW" pressure). Exit
- * markers are ordinary goToScene hotspots: you walk to the door to leave.
- *
- * Prose on a stage node is intentionally NOT shown in play — narrative
- * lives in short caption lines (`showText` actions and `enterCaption`),
- * the way a Telltale scene speaks through what you do, not paragraphs.
- */
-export interface StageSettings {
-  /** The player character sprite. An image url / `asset:` token, or an emoji
-   *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
-  playerImage?: string;
-  /** Optional walk-cycle frames (url / `asset:`), cycled while moving — a
-   *  2-4 frame silhouette loop sells the walk. When omitted the sprite bobs
-   *  procedurally instead. Frame 0 doubles as the idle pose. */
-  walkFrames?: string[];
-  /** Seconds each walk frame holds (default 0.14). */
-  walkFrameDuration?: number;
-  /** Spawn point in scene percentages (0–100). Defaults to bottom-centre,
-   *  clamped onto the floor band. */
-  spawn?: { x: number; y: number };
-  /** Walk speed as a percentage of scene WIDTH per second (default ~18). */
-  speed?: number;
-  /** How close (in scene-% of width) the character must get to a marker to
-   *  fire it (default ~4). */
-  reach?: number;
-  /** Allow arrow-key / WASD movement as well as click-to-walk (default true). */
-  keyboard?: boolean;
-  /** The walkable floor band, as % of plate height from the top of the
-   *  screen. Default { top: 62, bottom: 94 }. Clicks outside the band walk
-   *  to the nearest edge of it. */
-  floor?: { top: number; bottom: number };
-  /** Perspective: how much SMALLER the character is drawn at the top of the
-   *  floor vs the bottom, 0–0.9 (default 0.35). 0 = flat, no depth scaling. */
-  depthScale?: number;
-  /** Base scale of the player sprite (default 1). */
-  playerScale?: number;
-  /** When interaction labels show on markers:
-   *  - "proximity" (default): labels fade in as the character approaches
-   *  - "always": every marker wears its label (busy but explicit)
-   *  - "none": reticles only — pure Die Hard pan-and-scan confidence */
-  hints?: "proximity" | "always" | "none";
-  /** A caption bar line shown once when the scene begins — the stage
-   *  equivalent of an opening narration beat (auto-fades, never blocks). */
-  enterCaption?: string;
-}
-
 export interface SceneNode {
   id: string;
   title: string;
@@ -885,13 +769,10 @@ export interface SceneNode {
    * scene's node card. Studio metadata only; the game never renders it. */
   note?: string;
   /** standard, credits (no HUD, big typography), cutscene (no HUD, full-screen video),
-   * stage (a Telltale-style WALKABLE exploration scene — no prose panel, the
-   * player walks a character around a floor and interacts by approaching
-   * things; conversations play via startDialogue markers), or note — an
-   * author placeholder ("Missing Scene Here"): wired into the graph
+   * or note — an author placeholder ("Missing Scene Here"): wired into the graph
    * on both sides but bypassed in play (the game follows its single outgoing
    * route straight through). */
-  nodeType?: "standard" | "credits" | "cutscene" | "stage" | "note";
+  nodeType?: "standard" | "credits" | "cutscene" | "note";
   /** Marks this scene as the END OF A PART. On leaving it, the game shows the
    * route flowchart for the part just played before continuing. The string is
    * the part's display name (e.g. "Part 3 — Two Hundred and Eleven Thousand").
@@ -944,13 +825,6 @@ export interface SceneNode {
   hideSceneTitle?: boolean;
   /** visual particle overlay; if undefined, falls back to legacy auto-matching based on ambient audio */
   particles?: "none" | "rain" | "smoke" | "storm";
-  /** STAGE NODES — the Telltale walkable-stage configuration. When the
-   * scene's nodeType is "stage" this drives the whole scene: the player
-   * walks a character around `stage.floor`, interactable markers fire
-   * hotspots through the normal action path, `startDialogue` markers open
-   * the conversation, exits are goToScene markers. Ignored on other node
-   * types. */
-  stage?: StageSettings;
   /** cinematic camera motion applied to the scene background image */
   cinematic?: CinematicSettings;
   /** Show Telltale-style letterbox bars (top/bottom black bands) over the scene. */
@@ -960,9 +834,6 @@ export interface SceneNode {
   transition?: "fade" | "fade-black" | "cut";
   /** Seconds for the scene entry transition (default 0.5). */
   transitionSpeed?: number;
-  /** The opening prose. NOT rendered on stage nodes (narrative there is
-   * captions: `stage.enterCaption` + showText markers) — keep it "" and put
-   * anything author-facing in `note`. */
   prose: string;
   dialogueBeats?: DialogueBeat[];
   hotspots?: Hotspot[];

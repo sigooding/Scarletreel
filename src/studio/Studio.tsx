@@ -22,7 +22,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { audio } from "../audio";
-import { CREDITS_PRESETS, CREDITS_PRESET_GROUPS, CREDITS_PRESET_LIST, applyCreditsPreset, creditsLookSummary, matchCreditsPreset } from "../credits";
+import { CREDITS_PRESETS, CREDITS_PRESET_LIST, applyCreditsPreset, matchCreditsPreset } from "../credits";
 import {
   BODY_FONTS,
   defaultLensFlare,
@@ -46,7 +46,6 @@ import {
   characterOpinion,
   clamp,
   collectFlags,
-  normalizeLegacyStory,
   collectMemoryTags,
   deepClone,
   effectiveChoiceGating,
@@ -59,7 +58,6 @@ import {
   episodeOfScene,
   unassignedScenes,
   seasonEpisodes,
-  stageFloor as stageFloorOf,
   storyEdges,
   uid,
   validateStory,
@@ -111,7 +109,6 @@ import type {
   Choice,
   CinematicSettings,
   Consequences,
-  Contradiction,
   CreditsSettings,
   CursorKind,
   ForegroundAnimation,
@@ -168,18 +165,6 @@ const BACKGROUNDS = [
 ];
 
 const AMBIENTS = ["none", "rain", "jazz", "drone", "tension"];
-
-/** The title-sequence faces as CSS variables — used by the credits preset
- * picker to render each card's name in the very typeface the look dials in.
- * Inline vars rather than `font-*` classes so the map stays data-driven. */
-const CREDITS_FONT_VAR: Record<string, string> = {
-  pulp: "var(--font-pulp)",
-  poster: "var(--font-poster)",
-  elegant: "var(--font-elegant)",
-  epic: "var(--font-epic)",
-  modern: "var(--font-modern)",
-  type: "var(--font-type)",
-};
 const METERS: MeterKey[] = ["Sultry", "Aggressive", "Clever", "Suspicion"];
 
 function bgStyle(bg: string): React.CSSProperties {
@@ -187,152 +172,6 @@ function bgStyle(bg: string): React.CSSProperties {
   if (resolved.startsWith("gradient:")) return { background: resolved.slice(9) };
   if (resolved.startsWith("video:")) return { background: "#0c0c14" };
   return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
-}
-
-/**
- * StageFloorEditor — the walkable-stage authoring plate. Drag the floor
- * band's top/bottom edges, the spawn dot, and any marker to reposition it;
- * everything writes straight back into the scene. Markers sit at a
- * hotspot's base (bottom-centre of its zone), exactly where the game draws
- * them, so what you lay out here is what plays.
- */
-function StageFloorEditor({
-  background,
-  media,
-  floor,
-  spawn,
-  hotspots,
-  onFloor,
-  onSpawn,
-  onMoveMarker,
-  selectedHotspotId,
-  onSelectHotspot,
-}: {
-  background: string;
-  media: (v?: string) => string | undefined;
-  floor: { top: number; bottom: number };
-  spawn: { x: number; y: number };
-  hotspots: { id: string; label: string; cursor: string; bounds: { x: number; y: number; w: number; h: number } }[];
-  onFloor: (top: number, bottom: number) => void;
-  onSpawn: (x: number, y: number) => void;
-  onMoveMarker: (hotspotId: string, cx: number, baseY: number) => void;
-  selectedHotspotId?: string | null;
-  onSelectHotspot?: (id: string) => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const drag = useRef<null | { kind: "floor-top" | "floor-bottom" | "spawn" | { hsId: string }; offX: number }>(null);
-
-  const pct = (e: React.PointerEvent) => {
-    const r = ref.current!.getBoundingClientRect();
-    return {
-      x: Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)),
-      y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
-    };
-  };
-  const round1 = (n: number) => Math.round(n * 10) / 10;
-  const marker = (h: { bounds: { x: number; y: number; w: number; h: number } }) => ({
-    x: h.bounds.x + h.bounds.w / 2,
-    y: h.bounds.y + h.bounds.h,
-  });
-
-  return (
-    <div
-      ref={ref}
-      className="relative aspect-video w-full touch-none select-none overflow-hidden border border-noir-600"
-      style={bgStyle(media(background) ?? background)}
-      onPointerDown={(e) => {
-        const kind = (e.target as HTMLElement).dataset.drag;
-        if (!kind) return;
-        if (kind.startsWith("hs:")) {
-          const hs = hotspots.find((h) => h.id === kind.slice(3));
-          if (!hs) return;
-          drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x };
-          onSelectHotspot?.(hs.id);
-        } else {
-          drag.current = { kind: kind as "floor-top" | "floor-bottom" | "spawn", offX: 0 };
-        }
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-        e.preventDefault();
-      }}
-      onPointerMove={(e) => {
-        if (!drag.current) return;
-        const p = pct(e);
-        const d = drag.current;
-        if (d.kind === "spawn") {
-          onSpawn(round1(Math.min(99, Math.max(1, p.x))), round1(Math.min(100, Math.max(0, p.y))));
-        } else if (d.kind === "floor-top") {
-          onFloor(round1(Math.min(floor.bottom - 4, Math.max(0, p.y))), floor.bottom);
-        } else if (d.kind === "floor-bottom") {
-          onFloor(floor.top, round1(Math.min(100, Math.max(floor.top + 4, p.y))));
-        } else if (typeof d.kind === "object") {
-          const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
-          if (!hs) return;
-          const w = hs.bounds.w;
-          const cx = Math.min(100 - w / 2, Math.max(w / 2, p.x - d.offX));
-          const baseY = Math.min(100, Math.max(0, p.y));
-          onMoveMarker(hs.id, round1(cx), round1(baseY));
-        }
-      }}
-      onPointerUp={() => {
-        drag.current = null;
-      }}
-    >
-      {/* above-floor / below-floor shading */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 bg-black/55" style={{ height: `${floor.top}%` }} />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55" style={{ height: `${100 - floor.bottom}%` }} />
-      <div
-        className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
-        style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
-      />
-      {/* floor edge handles */}
-      <div
-        data-drag="floor-top"
-        className="absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-ns-resize items-center justify-center"
-        style={{ top: `calc(${floor.top}% - 6px)` }}
-        title="Drag: floor top"
-      >
-        <span className="h-1 w-full bg-neon/70" />
-      </div>
-      <div
-        data-drag="floor-bottom"
-        className="absolute inset-x-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
-        style={{ top: `calc(${floor.bottom}% - 6px)` }}
-        title="Drag: floor bottom"
-      >
-        <span className="h-1 w-full bg-neon/70" />
-      </div>
-      {/* markers — one per hotspot, at its zone base */}
-      {hotspots.map((h) => {
-        const m = marker(h);
-        const sel = selectedHotspotId === h.id;
-        return (
-          <div
-            key={h.id}
-            data-drag={`hs:${h.id}`}
-            className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
-              sel ? "text-neon" : "text-gold"
-            }`}
-            style={{ left: `${m.x}%`, top: `${m.y}%` }}
-            title={`${h.label} — drag to move`}
-          >
-            <span className="whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
-              {h.label.slice(0, 22)}
-            </span>
-            <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
-          </div>
-        );
-      })}
-      {/* spawn dot */}
-      <div
-        data-drag="spawn"
-        className="absolute z-30 flex h-6 w-6 -translate-x-1/2 -translate-y-full cursor-move items-end justify-center"
-        style={{ left: `${spawn.x}%`, top: `${spawn.y}%` }}
-        title="Drag: character spawn point"
-      >
-        <span className="text-lg leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">🕵️</span>
-      </div>
-    </div>
-  );
 }
 
 const draftKey = (id: string) => `scarlet-studio-draft-${id}`;
@@ -552,7 +391,6 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           >
             {scene.nodeType === "credits" && "🎬 CREDITS · "}
             {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
-            {scene.nodeType === "stage" && "🚶 STAGE · "}
             {isStart && "★ START · "}
             {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
             {scene.title}
@@ -3573,74 +3411,6 @@ function FlagPicker({
   );
 }
 
-/** Compact editor for a contradiction's outcome consequences: one heat
- * delta, one trust swing against the scene speaker, and any set flags. */
-function LieConsequences({
-  lie,
-  field,
-  story,
-  onChange,
-}: {
-  lie: Contradiction;
-  field: "contradictedConsequences" | "wrongConsequences";
-  story: Story;
-  onChange: (cons: Consequences | undefined) => void;
-}) {
-  const cons = lie[field];
-  const setCons = (next: Consequences) => onChange(Object.values(next).some((v) => Array.isArray(v) && v.length) ? next : undefined);
-  const heat = cons?.meterChanges?.find((m) => m.meter === "Suspicion")?.delta ?? 0;
-  const trust = cons?.trustChanges?.[0]?.delta ?? 0;
-  const trustChar = cons?.trustChanges?.[0]?.characterId ?? story.characters[0]?.id ?? "";
-  const setHeat = (v: number) => {
-    const list = (cons?.meterChanges ?? []).filter((m) => m.meter !== "Suspicion");
-    if (v !== 0) list.push({ meter: "Suspicion", delta: v });
-    setCons({ ...cons, meterChanges: list.length ? list : undefined });
-  };
-  const setTrust = (v: number) => {
-    const list = (cons?.trustChanges ?? []).filter((t) => t.characterId !== trustChar);
-    if (v !== 0) list.push({ characterId: trustChar, delta: v });
-    setCons({ ...cons, trustChanges: list.length ? list : undefined });
-  };
-  return (
-    <div className="space-y-1">
-      <input
-        type="number"
-        className={inputCls}
-        placeholder="Heat delta (e.g. -1 catch / +2 bluff)"
-        value={heat || ""}
-        onChange={(e) => setHeat(Number(e.target.value) || 0)}
-      />
-      <div className="flex gap-1">
-        <select
-          className={`${inputCls} w-24`}
-          value={trustChar}
-          onChange={(e) => {
-            const list = (cons?.trustChanges ?? []).map((t) => ({ ...t, characterId: e.target.value }));
-            setCons({ ...cons, trustChanges: list.length ? list : undefined });
-          }}
-        >
-          {story.characters.map((c) => (
-            <option key={c.id} value={c.id}>{c.name.split(" ")[0]}</option>
-          ))}
-        </select>
-        <input
-          type="number"
-          className={inputCls}
-          placeholder="Trust delta"
-          value={trust || ""}
-          onChange={(e) => setTrust(Number(e.target.value) || 0)}
-        />
-      </div>
-      <FlagPicker
-        value={cons?.setFlags}
-        suggestions={[]}
-        onChange={(v) => setCons({ ...cons, setFlags: v })}
-        placeholder="set flag…"
-      />
-    </div>
-  );
-}
-
 /** Single-flag input with a dropdown of every known flag in the story. */
 function FlagInput({
   value,
@@ -4659,48 +4429,6 @@ function StudioInner({
     audio.pickup();
   };
 
-  const addStageScene = (fx: number, fy: number) => {
-    const id = `scene_${uid()}`;
-    mutate((d) => {
-      d.scenes.push({
-        id,
-        title: "Walkable Stage",
-        nodeType: "stage",
-        background: BACKGROUNDS[8],
-        ambientAudio: "drone",
-        prose: "",
-        stage: {
-          playerImage: "emoji:🕵️",
-          spawn: { x: 50, y: 86 },
-          speed: 18,
-          reach: 4,
-          keyboard: true,
-          floor: { top: 62, bottom: 94 },
-          depthScale: 0.35,
-          hints: "proximity",
-          enterCaption: "The room, in one line — what the player should feel walking in.",
-        },
-        choices: [],
-        hotspots: [
-          {
-            id: `hs_${uid()}`,
-            label: "The way out",
-            bounds: { x: 84, y: 72, w: 12, h: 20 },
-            cursor: "go",
-            isRepeatable: true,
-            action: { type: "goToScene", targetSceneId: "" },
-          },
-        ],
-        dialogueBeats: [],
-      });
-      d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
-    });
-    setSelectedId(id);
-    setTab("scene");
-    say("Walkable Stage created — a Telltale-style exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
-    audio.pickup();
-  };
-
   const addNoteScene = (fx: number, fy: number) => {
     const id = `scene_${uid()}`;
     mutate((d) => {
@@ -5576,20 +5304,7 @@ function StudioInner({
         failed += 1;
         failures.push(`${job.characterName}: ${(err as Error).message}`);
         const msg = (err as Error).message || "";
-        // Fatal for the whole batch: bad key, missing voice, model mismatch,
-        // out of credits. Continuing would burn the same failure on every line.
-        if (
-          msg.includes("401") ||
-          msg.includes("403") ||
-          msg.includes("400") ||
-          msg.includes("404") ||
-          msg.includes("refused") ||
-          msg.includes("422") ||
-          msg.includes("No ElevenLabs") ||
-          msg.includes("voice not found")
-        ) {
-          break;
-        }
+        if (msg.includes("401") || msg.includes("refused") || msg.includes("422")) break;
         // Rate limit: brief back-off then continue with the next line.
         if (msg.includes("429") || msg.includes("Rate limited")) await new Promise((r) => setTimeout(r, 4000));
       }
@@ -5610,15 +5325,13 @@ function StudioInner({
       const text = await file.text();
       const storyBundle: Story = JSON.parse(text);
       if (!storyBundle.scenes || !storyBundle.startSceneId) throw new Error("bad");
-
+      
       if (Array.isArray(storyBundle.assets) && storyBundle.assets.length > 0) {
         await importStoryAssets(storyBundle.id, storyBundle.assets);
       }
-
+      
       const { assets, ...cleanedStory } = storyBundle;
-      // Old exports carried the bolt-on `stage2d` layer; imports map it to the
-      // stage NODE so those cases keep walking.
-      commit(await compactStoryMedia(normalizeLegacyStory(cleanedStory)));
+      commit(await compactStoryMedia(cleanedStory));
       say(`Imported "${cleanedStory.title}" with ${assets?.length ?? 0} assets.`);
     } catch {
       say("That file isn't a valid reel. Tragic.");
@@ -5716,13 +5429,6 @@ function StudioInner({
           title="Add borderline full-screen video/storyboard cutscene (No main HUD)"
         >
           🎥 Cutscene
-        </button>
-        <button
-          onClick={() => addStageScene(80 + Math.random() * 200, 80 + Math.random() * 200)}
-          className="btn-tool"
-          title="Add a Telltale-style walkable stage — the player walks a character around the floor and interacts by approaching markers"
-        >
-          🚶 Stage
         </button>
         <button
           onClick={() => addEndScene(560 + Math.random() * 200, 120 + Math.random() * 80)}
@@ -6110,16 +5816,6 @@ function StudioInner({
               </button>
               <button
                 role="menuitem"
-                className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700 text-gold"
-                onClick={() => {
-                  addStageScene(menu.fx, menu.fy);
-                  setMenu(null);
-                }}
-              >
-                🚶 Add walkable stage here
-              </button>
-              <button
-                role="menuitem"
                 className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700 text-crimson"
                 onClick={() => {
                   addEndScene(menu.fx, menu.fy);
@@ -6315,12 +6011,7 @@ function StudioInner({
             </button>
           </div>
           <div className="grid grid-cols-4 border-b border-noir-600">
-            {/* Tab order follows the build: build a SCENE (Scene → Beats →
-                Hotspots → Choices → its Audio), then the STORY SETUP it uses
-                (Game Objective → Characters → Items → Flags), then STRUCTURE
-                (Acts → Episodes) and the in-game look, then ASSETS, then ▶
-                Test. Story-wide tabs sit above the scene panels as before. */}
-            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
+            {(["scene", "beats", "hotspots", "choices", "test", "characters", "audio", "items", "flags", "briefing", "acts", "episodes", "media", "ai", "dialogueBox", "globalTitle"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -6333,18 +6024,18 @@ function StudioInner({
                   beats: "Beats",
                   hotspots: "Hotspots",
                   choices: "Choices",
-                  audio: "🔊 Audio",
-                  briefing: "🎯 Game Objective",
+                  test: "▶ Test",
                   characters: "Characters",
+                  audio: "Audio",
                   items: "Items",
                   flags: "🏷 Flags",
+                  briefing: "🎯 Game Objective",
                   acts: "🎭 Acts",
                   episodes: "🎞 Episodes",
                   media: "📦 Media",
                   ai: "🎨 AI Images",
                   dialogueBox: "🎮 In-Game Theme",
                   globalTitle: "🎼 Newsstand Theme",
-                  test: "▶ Test",
                 }[t]}
               </button>
             ))}
@@ -6358,7 +6049,7 @@ function StudioInner({
                 <button onClick={() => setTab("characters")} className={`border p-1 ${story.characters.length ? "border-emerald-500/40 text-emerald-400" : "border-crimson/50 text-crimson"}`}>
                   2. Characters<br />{story.characters.length} total
                 </button>
-                <button onClick={() => setTab("items")} className={`border p-1 ${story.items.length ? "border-emerald-500/40 text-emerald-400" : "border-gold/50 text-gold"}`}>
+                <button onClick={() => setTab("items")} className="border border-gold/35 p-1 text-gold">
                   3. Items<br />{story.items.length} total
                 </button>
                 <button onClick={() => setTab("scene")} className={`border p-1 ${story.scenes.length >= 3 ? "border-emerald-500/40 text-emerald-400" : "border-gold/50 text-gold"}`}>
@@ -7146,7 +6837,7 @@ function StudioInner({
               </div>
             )}
 
-            {!scene && !["test", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai"].includes(tab) && (
+            {!scene && !["test", "characters", "items", "flags", "episodes", "media", "ai"].includes(tab) && (
               <p className="font-type text-xs text-paper/50">
                 Select a scene node on the canvas — or right-click the canvas to spawn a fresh one. Drag from a choice's pink
                 handle straight onto another scene to wire the plot.
@@ -7240,7 +6931,6 @@ function StudioInner({
                     <option value="standard">📁 Standard Game Scene (with HUD)</option>
                     <option value="credits">🎬 Opening Credits (Centered text, NO HUD)</option>
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
-                    <option value="stage">🚶 Walkable Stage (Telltale-style exploration)</option>
                   </select>
                 </Field>
                 </CollapsibleSection>
@@ -7339,10 +7029,7 @@ function StudioInner({
                     <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Credits intro</div>
 
                     {/* Look presets — one click sets the whole style bundle.
-                        Authored text and montage stills are never touched.
-                        Grouped into sections, and every card previews itself:
-                        the preset's own typeface, title colour and a one-line
-                        knob read-out. */}
+                        Authored text and montage stills are never touched. */}
                     {(() => {
                       const matchedPreset = matchCreditsPreset(scene.credits);
                       return (
@@ -7350,64 +7037,36 @@ function StudioInner({
                           <div className="flex items-center justify-between">
                             <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">Look presets</span>
                             <span className="font-type text-[8px] text-paper/40">
-                              {matchedPreset ? (
-                                <>
-                                  matches: <b className="text-gold/90">{CREDITS_PRESETS[matchedPreset].name}</b>
-                                </>
-                              ) : (
-                                "custom look"
-                              )}
+                              {matchedPreset ? "matches a preset" : "custom look"}
                             </span>
                           </div>
-                          {CREDITS_PRESET_GROUPS.map((g) => {
-                            const presets = CREDITS_PRESET_LIST.filter((p) => p.group === g.id);
-                            if (!presets.length) return null;
-                            return (
-                              <div key={g.id}>
-                                <div className="mb-1 flex items-baseline justify-between gap-2">
-                                  <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/45">{g.label}</span>
-                                  <span className="truncate font-type text-[7.5px] italic text-paper/30">{g.blurb}</span>
-                                </div>
-                                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                                  {presets.map((p) => {
-                                    const isSel = matchedPreset === p.id;
-                                    const sampleColor = p.look.titleColor ?? p.swatch;
-                                    return (
-                                      <button
-                                        key={p.id}
-                                        type="button"
-                                        title={p.tagline}
-                                        onClick={() => updateScene(scene.id, { credits: applyCreditsPreset(p.id, scene.credits) })}
-                                        className={`relative flex flex-col items-start rounded border p-1.5 text-left transition-all ${
-                                          isSel
-                                            ? "border-gold bg-gold/15 shadow-[0_0_8px_rgba(232,178,60,0.3)]"
-                                            : "border-noir-700 bg-noir-950/70 hover:border-paper/40 hover:bg-noir-800"
-                                        }`}
-                                      >
-                                        {isSel && <span className="absolute right-1 top-1 text-[8px] text-gold">✓</span>}
-                                        {/* The look's own typeface + title colour —
-                                            the card is its own preview. */}
-                                        <span
-                                          className="block w-full truncate text-[13px] leading-tight uppercase"
-                                          style={{
-                                            fontFamily: CREDITS_FONT_VAR[p.look.font ?? "pulp"] ?? CREDITS_FONT_VAR.pulp,
-                                            color: sampleColor,
-                                            textShadow: `0 0 7px ${sampleColor}55`,
-                                          }}
-                                        >
-                                          {p.name}
-                                        </span>
-                                        <span className="mt-0.5 w-full truncate font-type text-[7.5px] text-paper/50">{p.badge}</span>
-                                        <span className="mt-0.5 block w-full truncate font-type text-[7px] text-paper/35" title={creditsLookSummary(p.look)}>
-                                          {creditsLookSummary(p.look)}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })}
+                          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                            {CREDITS_PRESET_LIST.map((p) => {
+                              const isSel = matchedPreset === p.id;
+                              return (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  title={p.tagline}
+                                  onClick={() => updateScene(scene.id, { credits: applyCreditsPreset(p.id, scene.credits) })}
+                                  className={`flex flex-col items-start rounded border p-1.5 text-left transition-all ${
+                                    isSel
+                                      ? "border-gold bg-gold/15 shadow-[0_0_8px_rgba(232,178,60,0.3)]"
+                                      : "border-noir-700 bg-noir-950/70 hover:border-paper/40 hover:bg-noir-800"
+                                  }`}
+                                >
+                                  <div className="flex w-full items-center justify-between gap-1">
+                                    <span className="truncate font-pulp text-[8.5px] font-semibold text-paper">{p.name}</span>
+                                    <span
+                                      className="h-2 w-2 shrink-0 rounded-full border border-black/40"
+                                      style={{ backgroundColor: p.swatch, boxShadow: `0 0 4px ${p.swatch}` }}
+                                    />
+                                  </div>
+                                  <span className="mt-0.5 w-full truncate font-type text-[7.5px] text-paper/50">{p.badge}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                           <p className="pt-0.5 font-type text-[8.5px] italic leading-snug text-paper/50">
                             {matchedPreset
                               ? CREDITS_PRESETS[matchedPreset].tagline
@@ -7913,235 +7572,6 @@ function StudioInner({
                   </select>
                 </Field>
 
-                {/* ---- Stage node — Telltale-style walkable exploration ---- */}
-                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (Telltale-style)">
-                  <div className="space-y-2">
-                    {scene.nodeType !== "stage" ? (
-                      <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                        These settings only run on a <b>🚶 Walkable Stage</b> node — set <b>Node Layout Type</b> above to
-                        "🚶 Walkable Stage". A stage scene has <b>no prose panel</b>: the player walks a character around
-                        the floor, walks up to interaction markers to use them, talks via 🗣 Start-conversation markers,
-                        and exits by walking to a door marker.
-                      </p>
-                    ) : !scene.stage ? (
-                      <button
-                        className="btn-tool w-full"
-                        onClick={() =>
-                          updateScene(scene.id, {
-                            stage: {
-                              playerImage: "emoji:🕵️",
-                              spawn: { x: 50, y: 86 },
-                              speed: 18,
-                              reach: 4,
-                              keyboard: true,
-                              floor: { top: 62, bottom: 94 },
-                              depthScale: 0.35,
-                              hints: "proximity",
-                            },
-                          })
-                        }
-                      >
-                        ＋ Add stage settings (floor, spawn, character)
-                      </button>
-                    ) : (
-                      <>
-                        <p className="font-type text-[10px] leading-snug text-paper/55">
-                          Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. Markers sit where
-                          the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
-                          narrative is the caption below + 💬 show-text markers.
-                        </p>
-                        <StageFloorEditor
-                          background={scene.background}
-                          media={media}
-                          floor={
-                            stageFloorOf(scene.stage)
-                          }
-                          spawn={{ x: scene.stage.spawn?.x ?? 50, y: scene.stage.spawn?.y ?? 90 }}
-                          hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds }))}
-                          selectedHotspotId={null}
-                          onFloor={(top, bottom) =>
-                            updateScene(scene.id, { stage: { ...scene.stage!, floor: { top, bottom } } })
-                          }
-                          onSpawn={(x, y) => updateScene(scene.id, { stage: { ...scene.stage!, spawn: { x, y } } })}
-                          onMoveMarker={(hsId, cx, baseY) =>
-                            updateScene(scene.id, {
-                              hotspots: (scene.hotspots ?? []).map((h) =>
-                                h.id === hsId
-                                  ? { ...h, bounds: { ...h.bounds, x: Math.round((cx - h.bounds.w / 2) * 10) / 10, y: Math.round((baseY - h.bounds.h) * 10) / 10 } }
-                                  : h
-                              ),
-                            })
-                          }
-                        />
-                        <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
-                          <textarea
-                            className={`${inputCls} h-14 font-type`}
-                            value={scene.stage.enterCaption ?? ""}
-                            placeholder="One short line — what the player should feel walking in."
-                            onChange={(e) =>
-                              updateScene(scene.id, { stage: { ...scene.stage!, enterCaption: e.target.value || undefined } })
-                            }
-                          />
-                        </Field>
-                        <Field label="Character sprite (emoji:… or an image url / asset)">
-                          <input
-                            className={inputCls}
-                            value={scene.stage.playerImage ?? ""}
-                            placeholder="emoji:🕵️ or /img/… or asset:…"
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, playerImage: e.target.value || undefined },
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="Walk-cycle frames (one image url / asset: per line, optional)">
-                          <textarea
-                            className={`${inputCls} h-16 font-type`}
-                            value={(scene.stage.walkFrames ?? []).join("\n")}
-                            placeholder={"/img/walk1.png\n/img/walk2.png\n/img/walk3.png"}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: {
-                                  ...scene.stage!,
-                                  walkFrames: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
-                                },
-                              })
-                            }
-                          />
-                          <p className="mt-1 font-type text-[9px] text-paper/40">
-                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Leave empty for the
-                            procedural bob.
-                          </p>
-                        </Field>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Spawn X (%)">
-                            <input
-                              type="number" min={1} max={99} className={inputCls}
-                              value={scene.stage.spawn?.x ?? 50}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, spawn: { x: Number(e.target.value) || 50, y: scene.stage!.spawn?.y ?? 86 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Spawn Y (%)">
-                            <input
-                              type="number" min={1} max={99} className={inputCls}
-                              value={scene.stage.spawn?.y ?? 86}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Walk speed (% width / sec)">
-                            <input
-                              type="number" min={4} max={60} className={inputCls}
-                              value={scene.stage.speed ?? 18}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, speed: Number(e.target.value) || 18 },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Reach distance (%)">
-                            <input
-                              type="number" min={1} max={12} step={0.5} className={inputCls}
-                              value={scene.stage.reach ?? 4}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, reach: Number(e.target.value) || 4 },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Floor top (%)">
-                            <input
-                              type="number" min={0} max={98} className={inputCls}
-                              value={scene.stage.floor?.top ?? 62}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, floor: { top: Number(e.target.value) || 0, bottom: scene.stage!.floor?.bottom ?? 94 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Floor bottom (%)">
-                            <input
-                              type="number" min={2} max={100} className={inputCls}
-                              value={scene.stage.floor?.bottom ?? 94}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, floor: { top: scene.stage!.floor?.top ?? 62, bottom: Number(e.target.value) || 94 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Depth shrink at floor top (0–0.9)">
-                            <input
-                              type="number" min={0} max={0.9} step={0.05} className={inputCls}
-                              value={scene.stage.depthScale ?? 0.35}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, depthScale: Number(e.target.value) },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Sprite scale (default 1)">
-                            <input
-                              type="number" min={0.3} max={3} step={0.1} className={inputCls}
-                              value={scene.stage.playerScale ?? 1}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerScale: Number(e.target.value) || undefined },
-                                })
-                              }
-                            />
-                          </Field>
-                        </div>
-                        <Field label="Interaction labels on markers">
-                          <select
-                            className={inputCls}
-                            value={scene.stage.hints ?? "proximity"}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
-                              })
-                            }
-                          >
-                            <option value="proximity">Proximity — labels fade in as you approach</option>
-                            <option value="always">Always — every marker wears its label</option>
-                            <option value="none">None — reticles only (hover to peek)</option>
-                          </select>
-                        </Field>
-                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
-                          <input
-                            type="checkbox"
-                            checked={scene.stage.keyboard !== false}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, keyboard: e.target.checked },
-                              })
-                            }
-                          />
-                          Arrow / WASD movement enabled
-                        </label>
-                        <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                          <b className="text-cyan-neon">The Telltale loop:</b> Hotspots tab lays the markers (💬
-                          show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
-                          for doors). The Beats tab is the conversation a 🗣 marker starts; give the scene's choices{" "}
-                          <b>time limits</b> for real "decide now" pressure.
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </CollapsibleSection>
-
                 {/* ---- Letterbox & entry transition (Telltale polish) ---- */}
                 <div className="border border-gold/40 bg-gold/5 p-2 space-y-2">
                   <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎞 Letterbox &amp; transition</div>
@@ -8224,13 +7654,6 @@ function StudioInner({
                 </p>
                 </CollapsibleSection>
                 <CollapsibleSection id={`scene-${scene.id}-prose`} title="📜 Prose, pacing & structure">
-                {scene.nodeType === "stage" && (
-                  <p className="mb-2 border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                    🚶 <b>Stage nodes never show prose.</b> Anything typed here stays author-only — put the scene's
-                    opening line in <b>🚶 Walkable Stage → "Caption on scene entry"</b>, and its narration into 💬
-                    show-text markers.
-                  </p>
-                )}
                 <Field label="Prose (narrator)">
                   <textarea
                     className={`${inputCls} h-28 font-type`}
@@ -9309,242 +8732,6 @@ function StudioInner({
                       }
                     />
                     </CollapsibleSection>
-
-                    {/* PRESS THE LIE — the contradiction verb. This beat is a
-                        false claim; the player presses and must present the
-                        evidence that breaks it. */}
-                    <CollapsibleSection id={`beat-${b.id}-lie`} title="🎯 Press the Lie (contradiction)">
-                      {!b.lie ? (
-                        <button
-                          onClick={() =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              const beat = s.dialogueBeats!.find((x) => x.id === b.id)!;
-                              beat.lie = {
-                                evidenceItemIds: [],
-                                contradictedFlag: `${scene.id.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_lie_broken`,
-                                caughtBeat: {
-                                  id: `b_${uid()}`,
-                                  characterId: b.characterId,
-                                  text: "That's not — how did you…? All right. You've got me.",
-                                  conditionRule: { requiresFlags: [] },
-                                },
-                              };
-                            })
-                          }
-                          className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                        >
-                          ＋ This line is a lie the player can catch
-                        </button>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="font-type text-[10px] leading-snug text-paper/60">
-                            While this line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button.
-                            They open their satchel and must present the clue that proves it false. Right clue → the caught
-                            line plays and the flag sets; wrong clue → heat/trust cost, and they get only a few tries.
-                          </p>
-                          <Field label="The claim (what the player challenges — defaults to the line above)">
-                            <input
-                              className={inputCls}
-                              value={b.lie.claim ?? ""}
-                              placeholder={b.text.slice(0, 80)}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
-                                  lie.claim = e.target.value || undefined;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Breaking evidence — the clue item(s) that prove this false (player must be HOLDING one)">
-                            <div className="space-y-1">
-                              {story.items.length === 0 && (
-                                <p className="font-type text-[10px] text-crimson">No items in this story yet — add a clue item first.</p>
-                              )}
-                              {story.items.map((it) => {
-                                const on = b.lie!.evidenceItemIds.includes(it.id);
-                                return (
-                                  <label key={it.id} className="flex items-center gap-1.5 font-type text-[11px] text-paper/85">
-                                    <input
-                                      type="checkbox"
-                                      checked={on}
-                                      onChange={(e) =>
-                                        mutate((d) => {
-                                          const s = d.scenes.find((x) => x.id === scene.id)!;
-                                          const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
-                                          lie.evidenceItemIds = e.target.checked
-                                            ? [...lie.evidenceItemIds, it.id]
-                                            : lie.evidenceItemIds.filter((x) => x !== it.id);
-                                        })
-                                      }
-                                    />
-                                    {it.icon} {it.name}{it.isClue ? " 📌" : ""}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </Field>
-                          <Field label="Caught flag (set when the lie breaks — gate the aftermath on it)">
-                            <input
-                              className={inputCls}
-                              list={`flag-tags-${b.id}`}
-                              value={b.lie.contradictedFlag}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.contradictedFlag = e.target.value;
-                                })
-                              }
-                            />
-                            <datalist id={`flag-tags-${b.id}`}>
-                              {allFlags.filter((f) => f !== b.lie!.contradictedFlag).map((f) => (
-                                <option key={f} value={f} />
-                              ))}
-                            </datalist>
-                          </Field>
-                          <div className="border border-gold/30 bg-gold/5 p-2">
-                            <p className="mb-1 font-pulp text-[9px] uppercase tracking-widest text-gold">Caught-in-a-lie reaction (plays when the right evidence lands)</p>
-                            <div className="grid grid-cols-2 gap-1">
-                              <Field label="Speaker">
-                                <select
-                                  className={inputCls}
-                                  value={b.lie.caughtBeat.characterId}
-                                  onChange={(e) =>
-                                    mutate((d) => {
-                                      const s = d.scenes.find((x) => x.id === scene.id)!;
-                                      s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.caughtBeat.characterId = e.target.value;
-                                    })
-                                  }
-                                >
-                                  <option value="narrator">🎙 Narrator (V.O.)</option>
-                                  {story.characters.map((c) => (
-                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                  ))}
-                                </select>
-                              </Field>
-                              <Field label="Gate (auto-set to the caught flag)">
-                                <span className="font-type text-[10px] text-paper/50">
-                                  requires: <b className="text-gold">{b.lie.contradictedFlag}</b>
-                                </span>
-                              </Field>
-                            </div>
-                            <Field label="Reaction line">
-                              <CommitTextArea
-                                className={`${inputCls} h-14 font-type`}
-                                value={b.lie.caughtBeat.text}
-                                onCommit={(next) =>
-                                  mutateLatest((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
-                                    lie.caughtBeat.text = next;
-                                    lie.caughtBeat.conditionRule = { requiresFlags: [lie.contradictedFlag] };
-                                  })
-                                }
-                              />
-                            </Field>
-                          </div>
-                          <Field label='"They will remember that" card on a successful catch (optional)'>
-                            <input
-                              className={inputCls}
-                              value={b.lie.rememberLine ?? ""}
-                              placeholder='e.g. Vera knows you’ve got her.'
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.rememberLine = e.target.value || undefined;
-                                })
-                              }
-                            />
-                          </Field>
-                          <div className="grid grid-cols-2 gap-1">
-                            <Field label="Composure damage (in an interrogation; 0 = none, 2+ cracks)">
-                              <input
-                                type="number" min={0} max={6}
-                                className={inputCls}
-                                value={b.lie.composureDamage ?? 0}
-                                onChange={(e) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.composureDamage = Number(e.target.value) || 0;
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Wrong-evidence guesses before they shut down (default 2)">
-                              <input
-                                type="number" min={1} max={9}
-                                className={inputCls}
-                                value={b.lie.wrongEvidenceLimit ?? 2}
-                                onChange={(e) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.wrongEvidenceLimit = Number(e.target.value) || 2;
-                                  })
-                                }
-                              />
-                            </Field>
-                          </div>
-                          <Field label="Bluff-called line (wrong evidence — defaults to a generic scoff)">
-                            <CommitTextArea
-                              className={`${inputCls} h-12 font-type`}
-                              value={b.lie.wrongBeat?.text ?? ""}
-                              onCommit={(next) =>
-                                mutateLatest((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const lie = s.dialogueBeats!.find((x) => x.id === b.id)!.lie!;
-                                  if (next.trim()) {
-                                    lie.wrongBeat = lie.wrongBeat ?? { id: `b_${uid()}`, characterId: b.characterId, text: "" };
-                                    lie.wrongBeat.text = next;
-                                  } else {
-                                    lie.wrongBeat = undefined;
-                                  }
-                                })
-                              }
-                            />
-                          </Field>
-                          <div className="grid grid-cols-2 gap-1">
-                            <Field label="Correct-catch consequences (trust + / heat − / flags)">
-                              <LieConsequences
-                                lie={b.lie}
-                                field="contradictedConsequences"
-                                story={story}
-                                onChange={(cons) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.contradictedConsequences = cons;
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Bluff-called consequences (heat + / trust −)">
-                              <LieConsequences
-                                lie={b.lie}
-                                field="wrongConsequences"
-                                story={story}
-                                onChange={(cons) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.dialogueBeats!.find((x) => x.id === b.id)!.lie!.wrongConsequences = cons;
-                                  })
-                                }
-                              />
-                            </Field>
-                          </div>
-                          <button
-                            onClick={() =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.dialogueBeats!.find((x) => x.id === b.id)!.lie = undefined;
-                              })
-                            }
-                            className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                          >
-                            ✕ Remove the lie
-                          </button>
-                        </div>
-                      )}
-                    </CollapsibleSection>
                     </CollapsibleSection>
                   );
                 })}
@@ -9690,7 +8877,6 @@ function StudioInner({
                             { v: "showText", label: "💬 Show text" },
                             { v: "openBoard", label: "📌 Open corkboard" },
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
-                            { v: "startDialogue", label: "🗣 Start conversation (stage)" },
                           ].map((t) => (
                             <option key={t.v} value={t.v}>{t.label}</option>
                           ))}
