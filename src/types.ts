@@ -213,11 +213,6 @@ export interface Hotspot {
    *  zone answers works at range. Ignored on classic (non-stage) scenes,
    *  where hotspots already fire on click. */
   remote?: boolean;
-  /** PROP OCCLUSION — stage scenes only: this marker's object art draws OVER
-   *  the walkers instead of depth-sorting under them, so a big foreground
-   *  prop (the crashed saucer) believably covers the character walking
-   *  behind it. Default false: object art sits under walkers as always. */
-  occludes?: boolean;
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release
@@ -230,36 +225,6 @@ export interface Hotspot {
   examine?: boolean;
   /** Seconds the examine hold takes (default 2.5). */
   examineSeconds?: number;
-  /** MULTI-STATE OBJECT — one object that changes with the story instead of
-   *  being faked with flag-gated duplicate hotspots. States are evaluated in
-   *  order and the LAST one whose gate passes is active (so list the
-   *  unconditional default FIRST, then increasingly specific ones). The
-   *  active state overrides the hotspot's label / image / cursor / action /
-   *  gating; everything else (identity, bounds, verbs, accepted items,
-   *  repeatable…) is inherited unchanged — the marker never duplicates or
-   *  re-mounts, it just re-skins and re-answers in place. See
-   *  docs/adventure-mode.md § Multi-state objects. */
-  states?: HotspotState[];
-}
-
-/** One state of a multi-stage object (see Hotspot.states). Every field is an
- *  OVERRIDE — undefined means "keep the hotspot's own value" (and an empty
- *  string for `image` means 'draw no object art in this state'). */
-export interface HotspotState {
-  /** Stable id (validator references, Studio list keys). */
-  id: string;
-  /** When this state is active. Omitted = always active: list that state
-   *  FIRST as the default — an unconditional state listed later would
-   *  permanently shadow everything above it (the validator warns on it). */
-  when?: Gating;
-  label?: string;
-  image?: string;
-  cursor?: CursorKind;
-  action?: HotspotAction;
-  /** Replaces the hotspot's own gate while this state is active.
-   *  `undefined` = inherit the hotspot's gating; an EXPLICIT null = this
-   *  state is always unlocked (the "door now open" state of a locked door). */
-  gating?: Gating | null;
 }
 
 export interface Choice {
@@ -328,7 +293,7 @@ export interface Choice {
    * Default false — you flash it, you keep it. The choice being one-shot
    * already prevents showing the same item twice for two reactions. */
   consumePresentedItem?: boolean;
-  /** OPT-IN playable ride minigame (a road sequence). Picking
+  /** OPT-IN playable ride minigame (Full Throttle's road sequence). Picking
    *  this choice launches a steering game instead of navigating at once: the
    *  player weaves through oncoming traffic for the ride's duration — survive
    *  to `targetSceneId` (the choice's `consequences` apply on the win), crash
@@ -336,7 +301,7 @@ export interface Choice {
   ride?: RideConfig;
 }
 
-/** A playable vehicle-ride minigame (a highway chase): steer
+/** A playable vehicle-ride minigame (Full Throttle's highway chase): steer
  *  left/right across lanes, dodging oncoming traffic. Reaching the end wins
  *  the ride; a crash routes to the choice's `timedOutTargetSceneId`. */
 export interface RideConfig {
@@ -1079,24 +1044,6 @@ export interface Interrogation {
  * lives in short caption lines (`showText` actions and `enterCaption`),
  * the way a walkable scene speaks through what you do, not paragraphs.
  */
-/** One no-go rectangle the walker routes around (StageSettings.obstacles).
- *  Optionally carries a GATE: while the gate does NOT pass, the barrier is a
- *  solid wall (a locked door); the moment the gate opens the barrier ceases
- *  to exist and the walker may pass — the lock-and-key puzzle made spatial. */
-export interface StageObstacle {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  /** Stable id (editor/validator references). Optional. */
-  id?: string;
-  /** PASSAGE GATE — the barrier blocks while this gate is CLOSED and is
-   *  gone once it opens. Omit for furniture that always blocks (a counter,
-   *  a parked truck). A gate with an item requirement works too (the crowd
-   *  parts once you hold the badge). */
-  gating?: Gating;
-}
-
 export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
    *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
@@ -1111,13 +1058,6 @@ export interface StageSettings {
    *  When on, hotspots answer per verb (Hotspot.verbs) and the USE verb arms
    *  an inventory item. See docs/adventure-mode.md. */
   verbCoin?: boolean;
-  /** SENTENCE LINE — the SCUMM strip along the bottom of the room that
-   *  reads out the pending interaction as you hover ("Look at the
-   *  drop-safe", "Use wrench on the bike", or just "Walk to"). While on,
-   *  RIGHT-CLICKING an object is a quick 👁 Look, exactly like picking
-   *  look off the coin. Rooms without it (the default) render nothing
-   *  new and classic graphic-novel scenes are untouched. */
-  sentenceLine?: boolean;
   /** Which verbs the coin offers. Defaults to every verb the room uses. */
   verbs?: import("./types").VerbId[];
   /** OPT-IN for the two EXTRA body-verbs (👢 kick · 👊 punch). When true, the
@@ -1128,14 +1068,14 @@ export interface StageSettings {
    *  the extra verbs a per-ROOM choice, so a visual novel or a classic case
    *  never sees them unless it asks. See docs/adventure-mode.md. */
   extendedVerbs?: boolean;
-  /** OPT-IN — OBJECT-FIRST verb menu (the "skull pie"): instead of
+  /** OPT-IN — OBJECT-FIRST verb menu (Full Throttle's "skull"): instead of
    *  picking a verb from the bottom coin and then the object, the player
    *  CLICKS an object first and a small pie-style menu of the verbs THAT
    *  object answers pops up next to it; pick a verb to act. USE expands to
    *  the inventory when the object accepts items. Off (default): the classic
    *  flow (and the verb-first coin) is unchanged. See docs/adventure-mode.md. */
   objectVerbMenu?: boolean;
-  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (the
+  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (Full Throttle's
    *  classic skull pie): instead of opening the pie the instant you click an
    *  object, the player PRESSES AND HOLDS the object and a BIG circular menu
    *  opens in the middle of the screen — the story's `verbMenuIcon` sprite
@@ -1147,7 +1087,7 @@ export interface StageSettings {
   /** The sprite at the CENTRE of the object-first skull pie menu (see
    *  `objectVerbMenu` / `objectMenuHold`) — an image url / `asset:` token or
    *  an `emoji:` glyph, rendered BIG in the middle of the ring of verbs so
-   *  the menu wears the game's own art.
+   *  the menu wears the game's own art (Full Throttle's flaming skull).
    *  Default: a skull emoji. Normally set story-wide on the 🎮 In-game theme
    *  tab (Story.verbMenuIcon); a stage value overrides it. */
   objectMenuIcon?: string;
@@ -1218,14 +1158,8 @@ export interface StageSettings {
    *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
    *  routes around them (A* on a coarse grid, then string-pulled to the
    *  corners a person would actually turn at); the keyboard slides along them
-   *  instead of stopping dead. See src/logic.ts `stageRoute`.
-   *  A barrier may carry a GATE (`gating`): while the gate is CLOSED the
-   *  barrier is a solid wall, and the instant it opens the barrier is GONE —
-   *  a locked door made SPATIAL (the walker physically cannot pass, never
-   *  mind the menus). Pair it with a door hotspot (or a multi-state object)
-   *  whose action sets the opening flag. See docs/adventure-mode.md
-   *  § "Doors as real doors". */
-  obstacles?: StageObstacle[];
+   *  instead of stopping dead. See src/logic.ts `stageRoute`. */
+  obstacles?: { x: number; y: number; w: number; h: number }[];
   /** WIDE WORLD — how many viewport-widths the room spans (default 100 =
    *  one screen, the classic single plate). 200 = two screens side by side,
    *  like a LucasArts scrolling alley: the camera follows the walker and
@@ -1286,14 +1220,6 @@ export interface StageNpc {
   patrol?: StageNpcWaypoint[];
   /** Walk speed in world-% / second (default: the room's walker speed). */
   speed?: number;
-  /** INTERACTABLE NPC — link this actor to a 🗣 start-conversation marker
-   *  (by hotspot id) and the actor BECOMES that marker: the static diamond
-   *  hides and the character itself is clickable — the walker chases the
-   *  actor's LIVE position (re-routing while they patrol) and the
-   *  conversation fires on catch. Pressing N in play walks to + talks with
-   *  the nearest linked character. Ambient (no link) NPCs stay pure
-   *  set-dressing, exactly as before. */
-  talkHotspotId?: string;
   /** How the route repeats (default "loop" — jump back to waypoint 1):
    *  "pingpong" walks the route backwards to the start and out again;
    *  "once" walks it a single time and HOLDS the last waypoint's motion
@@ -1656,7 +1582,7 @@ export interface StoryMap {
  *    reading-forward, one decision at a time.
  *  - "adventure": a point-and-click room game — walkable rooms (STAGE nodes),
  *    verb cursors (look / take / talk / use / go), inventory puzzles, NPCs
- *    with idle animation. See docs/adventure-mode.md.
+ *    with idle animation. Prototype: src/data/throttleAsh.ts.
  *  - "vn": a visual novel — full-screen portraits, minimal UI, dialogue-led.
  *
  *  Today this is a DECLARATION (Studio shows it, the validator reads it, and
@@ -1699,7 +1625,7 @@ export interface Story {
    *  tab. See CursorArt. */
   cursorArt?: Partial<Record<import("./types").CursorKind | "default", CursorArt>>;
   /** The sprite at the CENTRE of the object-first skull pie menu (Full
-   *  the skull pie — see StageSettings.objectVerbMenu / objectMenuHold).
+   *  Throttle's skull — see StageSettings.objectVerbMenu / objectMenuHold).
    *  An image url / `asset:` token or an `emoji:` glyph; rendered BIG in the
    *  middle of the ring of verbs whenever the pie opens. Purely additive:
    *  unset keeps the default skull emoji and every non-opt-in game is
@@ -1708,7 +1634,7 @@ export interface Story {
   /** OPT-IN master switch for the object-first verb menu (the skull pie).
    *  The menu is already per-scene opt-in (StageSettings.objectVerbMenu);
    *  this is the STORY-wide kill-switch. Default undefined = "on" (scenes
-   *  that opt in keep their menu, so existing opt-in stories are
+   *  that opt in keep their menu, so existing stories like Full Throttle are
    *  untouched). Set `false` to disable the pie everywhere — every scene's
    *  objectVerbMenu / objectMenuHold is ignored — so a game that never uses
    *  it never shows it. Authored on the 🎮 In-game theme tab. */

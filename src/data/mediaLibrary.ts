@@ -429,19 +429,7 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
     });
     cinematic(sc.cinematic);
     sc.credits?.montage?.forEach(visit);
-    // Hotspot media: the object's image, its voice clips (base action, verb
-    // actions, per-item replies) and — for MULTI-STATE objects — every
-    // state's image and action clip.
-    sc.hotspots?.forEach((h) => {
-      visit(h.image);
-      visit(h.action.audioUrl);
-      Object.values(h.verbs ?? {}).forEach((a) => visit(a?.audioUrl));
-      Object.values(h.itemAudio ?? {}).forEach(visit);
-      (h.states ?? []).forEach((st) => {
-        visit(st.image);
-        visit(st.action?.audioUrl);
-      });
-    });
+    sc.hotspots?.forEach((h) => visit(h.image));
     sc.dialogueBeats?.forEach((b) => {
       visit(b.audioUrl);
       visit(b.background);
@@ -470,26 +458,6 @@ function visitStoryMediaRefs(story: Story, visit: (value: string | undefined) =>
   visit(story.coverImage);
   visit(story.dialogueBox?.backgroundImage);
   visit(story.map?.backgroundImage);
-  // Story-wide presentation art (the 🎮 In-Game Theme tab): custom cursors,
-  // the inventory container and the story-wide 🚶 walker. These are authored
-  // through the Studio's upload pickers, so they carry `asset:` refs — the
-  // play-time resolver MUST visit them or the art previews fine in the Studio
-  // but renders nothing in the game (the exact failure this walk exists to
-  // prevent). Emoji tokens are not media and are skipped.
-  if (story.inventoryDisplay) {
-    visit(story.inventoryDisplay.image);
-    visit(story.inventoryDisplay.sheet?.image);
-  }
-  if (story.playerSprite) {
-    const img = story.playerSprite.image;
-    if (img && !img.startsWith("emoji:")) visit(img);
-    visit(story.playerSprite.sheet?.image);
-  }
-  Object.values(story.cursorArt ?? {}).forEach((art) => {
-    if (!art) return;
-    visit(art.image);
-    visit(art.sheet?.image);
-  });
 }
 
 /** Every IndexedDB asset id a story references (via `asset:` or `video:asset:`),
@@ -580,16 +548,7 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
     if (sc.credits?.montage?.length) {
       sc.credits.montage = sc.credits.montage.map((m) => resolveMediaValue(m, map) ?? m);
     }
-    sc.hotspots?.forEach((h) => {
-      apply(h, "image");
-      apply(h.action, "audioUrl");
-      Object.values(h.verbs ?? {}).forEach((a) => a && apply(a, "audioUrl"));
-      if (h.itemAudio) h.itemAudio = Object.fromEntries(Object.entries(h.itemAudio).map(([k, v]) => [k, resolveMediaValue(v, map) ?? v]));
-      (h.states ?? []).forEach((st) => {
-        apply(st, "image");
-        if (st.action) apply(st.action, "audioUrl");
-      });
-    });
+    sc.hotspots?.forEach((h) => apply(h, "image"));
     sc.dialogueBeats?.forEach((b) => {
       apply(b, "audioUrl");
       apply(b, "background");
@@ -616,20 +575,6 @@ export async function resolveStoryMedia(story: Story): Promise<Story> {
   apply(next, "coverImage");
   if (next.dialogueBox) apply(next.dialogueBox, "backgroundImage");
   if (next.map) apply(next.map, "backgroundImage");
-  // Story-wide presentation art — mirrors visitStoryMediaRefs (keep in sync).
-  if (next.inventoryDisplay) {
-    apply(next.inventoryDisplay, "image");
-    if (next.inventoryDisplay.sheet) apply(next.inventoryDisplay.sheet, "image");
-  }
-  if (next.playerSprite) {
-    if (next.playerSprite.image) apply(next.playerSprite, "image");
-    if (next.playerSprite.sheet) apply(next.playerSprite.sheet, "image");
-  }
-  for (const art of Object.values(next.cursorArt ?? {})) {
-    if (!art) continue;
-    if (art.image) apply(art, "image");
-    if (art.sheet) apply(art.sheet, "image");
-  }
   return next;
 }
 
@@ -782,17 +727,6 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
     }
     for (const h of sc.hotspots ?? []) {
       h.image = await compact(h.image, "image", h.label || sc.title);
-      h.action.audioUrl = await compact(h.action.audioUrl, "audio", `${h.label || sc.title} action`);
-      for (const a of Object.values(h.verbs ?? {})) if (a) a.audioUrl = await compact(a.audioUrl, "audio", `${h.label || sc.title} verb`);
-      if (h.itemAudio) {
-        for (const [id, clip] of Object.entries(h.itemAudio)) {
-          h.itemAudio[id] = (await compact(clip, "audio", `${h.label || sc.title} item ${id}`)) ?? clip;
-        }
-      }
-      for (const st of h.states ?? []) {
-        st.image = await compact(st.image, "image", `${h.label || sc.title} state ${st.id}`);
-        if (st.action) st.action.audioUrl = await compact(st.action.audioUrl, "audio", `${h.label || sc.title} state ${st.id}`);
-      }
     }
     if (sc.cinematic?.foregroundImage) {
       sc.cinematic.foregroundImage = (await compact(sc.cinematic.foregroundImage, "image", sc.title)) || undefined;
@@ -885,41 +819,6 @@ export async function compactStoryMedia(story: Story): Promise<Story> {
   if (next.map?.backgroundImage) {
     next.map.backgroundImage =
       (await compact(next.map.backgroundImage, "image", `${next.title} travel map`)) || undefined;
-  }
-  // Story-wide presentation art — mirrors visitStoryMediaRefs (keep in sync).
-  // These are SMALL UI sprites (cursors, the inventory container, the walker),
-  // so a failed persist keeps the inline data URL instead of swapping in the
-  // gradient fallback — a gradient cursor is no cursor at all, and silently
-  // replacing authored art is worse than leaving a compact-but-valid data URL.
-  const compactKeep = async (value: string | undefined, name: string): Promise<string | undefined> => {
-    if (!value || !value.startsWith("data:")) return value;
-    const id = await getOrCreate(value, "image", name);
-    return id ? `asset:${id}` : value;
-  };
-  if (next.inventoryDisplay) {
-    next.inventoryDisplay.image = await compactKeep(next.inventoryDisplay.image, `${next.title} inventory`);
-    if (next.inventoryDisplay.sheet?.image)
-      next.inventoryDisplay.sheet.image =
-        (await compactKeep(next.inventoryDisplay.sheet.image, `${next.title} inventory sheet`)) ??
-        next.inventoryDisplay.sheet.image;
-  }
-  if (next.playerSprite) {
-    if (next.playerSprite.image && !next.playerSprite.image.startsWith("emoji:")) {
-      next.playerSprite.image =
-        (await compactKeep(next.playerSprite.image, `${next.title} walker`)) ?? next.playerSprite.image;
-    }
-    if (next.playerSprite.sheet?.image) {
-      next.playerSprite.sheet.image =
-        (await compactKeep(next.playerSprite.sheet.image, `${next.title} walker sheet`)) ??
-        next.playerSprite.sheet.image;
-    }
-  }
-  for (const art of Object.values(next.cursorArt ?? {})) {
-    if (!art) continue;
-    if (art.image) art.image = (await compactKeep(art.image, `${next.title} cursor`)) ?? art.image;
-    if (art.sheet?.image)
-      art.sheet.image =
-        (await compactKeep(art.sheet.image, `${next.title} cursor sheet`)) ?? art.sheet.image;
   }
   return next;
 }
@@ -1127,17 +1026,6 @@ export async function bundleVoiceFileRefs(
     }
     for (const h of sc.hotspots ?? []) {
       h.image = await bundleValue(h.image);
-      h.action.audioUrl = await bundleValue(h.action.audioUrl);
-      for (const a of Object.values(h.verbs ?? {})) if (a) a.audioUrl = await bundleValue(a.audioUrl);
-      if (h.itemAudio) {
-        for (const [id, clip] of Object.entries(h.itemAudio)) {
-          h.itemAudio[id] = (await bundleValue(clip)) ?? clip;
-        }
-      }
-      for (const st of h.states ?? []) {
-        st.image = await bundleValue(st.image);
-        if (st.action) st.action.audioUrl = await bundleValue(st.action.audioUrl);
-      }
     }
     await applyCinematic(sc.cinematic);
     for (const b of sc.dialogueBeats ?? []) {

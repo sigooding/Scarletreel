@@ -94,35 +94,6 @@ scene0.hotspots = [
     action: { type: "showText", text: "Round trip." },
     image: await up("image", "scene0-hotspot", png("scene0-hotspot")),
   },
-  // MULTI-STATE + hotspot VOICE media: every state image and every action
-  // clip (base, verb, per-item, per-state) must survive the export →
-  // import → resolve round trip exactly like any other media field.
-  {
-    id: "hs-ie-states",
-    label: "The many-faced drawer",
-    bounds: { x: 40, y: 10, w: 20, h: 20 },
-    cursor: "look",
-    action: {
-      type: "showText",
-      text: "Shut.",
-      audioUrl: await up("audio", "hs-states-base", mp3("hs-states-base")),
-    },
-    verbs: { take: { type: "showText", text: "No.", audioUrl: await up("audio", "hs-states-take", mp3("hs-states-take")) } },
-    itemAudio: { coin: await up("audio", "hs-states-coin", mp3("hs-states-coin")) },
-    states: [
-      {
-        id: "st-open",
-        when: { requiresFlags: ["opened"] },
-        label: "The open drawer",
-        image: await up("image", "scene0-drawer-open", png("scene0-drawer-open")),
-        action: {
-          type: "showText",
-          text: "Empty.",
-          audioUrl: await up("audio", "hs-states-open", mp3("hs-states-open")),
-        },
-      },
-    ],
-  },
 ];
 
 // Stage-node walker media: single sprite, loose walk frames, and the sprite sheet.
@@ -224,40 +195,6 @@ story.map = {
   title: "Round-Trip City",
   backgroundImage: await up("image", "map-bg", png("map-bg")),
   locations: [{ id: "rt-loc", label: "The Docks", targetSceneId: scene0.id, x: 50, y: 50 }],
-};
-// Story-wide presentation art (the 🎮 In-Game Theme tab): the inventory
-// container, the story-wide walker and two custom cursors. These used to be
-// MISSING from the media walk — uploaded art previews fine in the Studio but
-// arrived in the game as literal `asset:` refs and rendered nothing.
-story.inventoryDisplay = {
-  mode: "container",
-  image: await up("image", "inv-container", png("inv-container")),
-  sheet: {
-    image: await up("image", "inv-sheet", png("inv-sheet")),
-    frameWidth: 64,
-    frameHeight: 64,
-    animations: { loop: { frames: [0, 1], fps: 6 } },
-  },
-};
-story.playerSprite = {
-  image: await up("image", "walker", png("walker")),
-  sheet: {
-    image: await up("image", "walker-sheet", png("walker-sheet")),
-    frameWidth: 32,
-    frameHeight: 48,
-    animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 10 } },
-  },
-};
-story.cursorArt = {
-  look: { image: await up("image", "cursor-look", png("cursor-look")), size: 32 },
-  talk: {
-    sheet: {
-      image: await up("image", "cursor-talk-sheet", png("cursor-talk-sheet")),
-      frameWidth: 32,
-      frameHeight: 32,
-      animations: { loop: { frames: [0, 1, 2], fps: 8 } },
-    },
-  },
 };
 
 /* ------------------------------------------------------------------ */

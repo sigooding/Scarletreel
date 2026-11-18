@@ -271,9 +271,8 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /** Column ranges of non-transparent content, merging gaps smaller than
- * ~1% of the image width so brush noise doesn't split a frame in two.
- * Exported so the auto-build preview can show the detected runs live. */
-export function frameRuns(img: ImageData): Array<[number, number]> {
+ * ~1% of the image width so brush noise doesn't split a frame in two. */
+function frameRuns(img: ImageData): Array<[number, number]> {
   const { width: w, height: h, data } = img;
   const occupied: boolean[] = new Array(w).fill(false);
   for (let x = 0; x < w; x++) {
@@ -303,59 +302,6 @@ export function frameRuns(img: ImageData): Array<[number, number]> {
   }
   // Drop slivers (stray specks the key missed) under 2% of the width.
   return merged.filter(([a, b]) => b - a >= w * 0.02);
-}
-
-/** Evenly-spaced frame bands across the CONTENT span of a keyed image —
- * the author's override when gap-detection finds the wrong number of
- * sprites (two figures touching merge into one run; a stray speck splits
- * one in two). Finds the first/last occupied column and divides that span
- * into `n` equal bands. Returns [] when nothing survived the key. */
-export function evenFrameRuns(img: ImageData, n: number): Array<[number, number]> {
-  const count = Math.max(1, Math.round(n));
-  const { width: w, height: h, data } = img;
-  let first = -1;
-  let last = -1;
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) {
-      if (data[(y * w + x) * 4 + 3] > 8) {
-        if (first < 0) first = x;
-        last = x;
-        break;
-      }
-    }
-  }
-  if (first < 0) return [];
-  const span = last + 1 - first;
-  const band = span / count;
-  const out: Array<[number, number]> = [];
-  for (let i = 0; i < count; i++) out.push([Math.round(first + i * band), Math.round(first + (i + 1) * band)]);
-  return out;
-}
-
-/** Derived feathering for the auto-build strength slider: presets average
- * ~65% of the tolerance (gentle 25/35, normal 40/60, strong 50/90). */
-export function softnessForStrength(tolerance: number): number {
-  return Math.max(10, Math.round(tolerance * 0.65));
-}
-
-/** Decode a dropped/picked File into raw pixels + an object-url-free data
- * url. Shared by the auto-build preview (SheetEditor) and callers that want
- * to re-key the source per slider move instead of re-encoding passes. */
-export async function fileToImageData(file: File): Promise<{ data: ImageData; url: string }> {
-  const url = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("couldn't read that file"));
-    reader.readAsDataURL(file);
-  });
-  const img = await loadImage(url);
-  const c = document.createElement("canvas");
-  c.width = img.naturalWidth;
-  c.height = img.naturalHeight;
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  if (!ctx) throw new Error("canvas unavailable");
-  ctx.drawImage(img, 0, 0);
-  return { data: ctx.getImageData(0, 0, c.width, c.height), url };
 }
 
 function presetAnimations(kind: ForgeKind, n: number): ForgedSheet["animations"] {
@@ -388,12 +334,6 @@ export interface ForgeOptions {
    *  out at `min(cap, tallest source frame)` — big art keeps its detail up
    *  to the cap, small art is never upscaled into blur. */
   targetHeight?: number;
-  /** Author-chosen sprite count. When set (and kind !== "single"), the
-   *  content span is sliced into this many EVEN bands instead of the gap
-   *  detection — the fix for "I uploaded 5 sprites and it found 4"
-   *  (touching figures merge into one transparent-gap run). The preview
-   *  shows the bands live, so authors see the split before applying. */
-  frameCount?: number;
 }
 
 /** Named strengths for the auto-key, surfaced anywhere auto-build runs. */
@@ -439,13 +379,7 @@ export async function forgeSpriteSheet(imageUrl: string, kind: ForgeKind, option
   keyedCanvas.height = src.height;
   keyedCanvas.getContext("2d")!.putImageData(keyed, 0, 0);
 
-  const forced = kind !== "single" && options?.frameCount && options.frameCount > 0 ? Math.round(options.frameCount) : 0;
-  const runs =
-    kind === "single"
-      ? [[0, src.width] as [number, number]]
-      : forced
-        ? evenFrameRuns(keyed, forced)
-        : frameRuns(keyed);
+  const runs = kind === "single" ? [[0, src.width] as [number, number]] : frameRuns(keyed);
   if (!runs.length) throw new Error("no frames found — the backdrop didn't key out (is it a flat colour?)");
 
   // Crop each frame to its own content.

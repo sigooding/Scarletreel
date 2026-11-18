@@ -61,14 +61,6 @@ import {
   seasonEpisodes,
   stageFloor as stageFloorOf,
   stagePlayerScale,
-  stageWalkPoly,
-  stageWalkDepth,
-  stageRoutePoly,
-  stageMarkerPointPoly,
-  clampToWalkPoly,
-  stepStagePos,
-  stageBlockedPoly,
-  STAGE_GRID_STEP,
   storyEdges,
   CURSOR_ICON,
   CURSOR_SLOTS,
@@ -77,7 +69,6 @@ import {
   VERB_IDS,
   VERB_LABEL,
   verbsForScene,
-  hotspotReachableActions,
   uid,
   validateStory,
   type ValidationIssue,
@@ -146,8 +137,6 @@ import type {
   Gating,
   GlobalState,
   Hotspot,
-  HotspotAction,
-  HotspotState,
   InventorySettings,
   Item,
   LensFlareGhostTier,
@@ -159,8 +148,6 @@ import type {
   SceneNode,
   StageNpc,
   StageNpcWaypoint,
-  StageObstacle,
-  StageSettings,
   StageScriptStep,
   Story,
 } from "../types";
@@ -225,7 +212,7 @@ function bgStyle(bg: string): React.CSSProperties {
 }
 
 /**
- * VerbMenuPiePreview — the object-first verb menu (the skull pie)
+ * VerbMenuPiePreview — the object-first verb menu (Full Throttle's skull pie)
  * rendered at editor scale, so authors can tune it without a playtest: the
  * ring of verb chips + the centrepiece `verbMenuIcon` sprite. Same geometry
  * as Stage.tsx, shrunk.
@@ -317,9 +304,6 @@ function StageFloorEditor({
   floorPoints,
   onFloorPoints,
   onResizeProp,
-  pickPoint,
-  onPickPoint,
-  onCancelPick,
 }: {
   background: string;
   media: (v?: string) => string | undefined;
@@ -368,7 +352,7 @@ function StageFloorEditor({
    *  and the selected one shows a ✕ (onObstacleDelete). DRAG an obstacle's
    *  body to move it and pull the ↘ corner of the selected one to resize it
    *  (both commit through onObstacleMove). All world-%. */
-  obstacles?: StageObstacle[];
+  obstacles?: { x: number; y: number; w: number; h: number }[];
   selectedObstacle?: number | null;
   onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
   onObstacleSelect?: (index: number | null) => void;
@@ -382,11 +366,6 @@ function StageFloorEditor({
    *  path instead of a flat band. */
   floorPoints?: { x: number; y: number }[];
   onFloorPoints?: (pts: { x: number; y: number }[]) => void;
-  /** 🎬 CUTSCENE RECORDER — armed by a walkTo/npcWalkTo step row: the next
-   *  plain click on the plate becomes that step's x/y instead of dragging. */
-  pickPoint?: { npc: boolean } | null;
-  onPickPoint?: (p: { x: number; y: number }) => void;
-  onCancelPick?: () => void;
   /** ↕↔ RESIZE A PROP — drag the ↔ handle on an NPC/prop's corner to scale it
    *  live (feet stay planted on the marker). Writes the hotspot's zone width,
    *  with x recentred so the marker doesn't drift. */
@@ -451,185 +430,11 @@ function StageFloorEditor({
   const [draftOb, setDraftOb] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const draftObStart = useRef<{ x: number; y: number } | null>(null);
 
-  // 🖌 PAINT THE PATH — click points onto the plate to lay the walk polygon
-  // vertex by vertex (the drag handles then fine-tune it). Each click appends
-  // a vertex in click order; from the third point the polygon is live and the
-  // walker routes through it. "Clear" drops back to the flat floor band.
-  const [drawing, setDrawing] = useState(false);
-
   // ▶ WALK-CYCLE PREVIEW — play the walker's walk animation on the plate so
   // the author sees the frames/fps without a playtest. Sheets play their
   // "walk" animation; image/emoji walkers bob procedurally.
   const [playWalk, setPlayWalk] = useState(false);
   const walkFps = player?.sheet?.animations?.walk?.fps;
-
-  /* ---- 🥾 WALK TEST — a LIVE walker on the plate, driven by the REAL
-   * engine router. Click the floor or a marker and the character walks the
-   * exact route the game would take (A* around the authored barriers,
-   * clamped to the authored floor/path); WASD/arrows drive it too. The
-   * dashed polyline is the planned route and the chip is the verdict —
-   * including "no route" when the layout seals a marker off. Gated
-   * barriers (🚪 doors) default to SHUT so the locked layout is what's
-   * tested; toggle them open to prove the unlocked one. */
-  const [walkTest, setWalkTest] = useState(false);
-  const [doorsOpen, setDoorsOpen] = useState(false);
-  const [walkerPos, setWalkerPos] = useState<{ x: number; y: number } | null>(null);
-  const [walkerMoving, setWalkerMoving] = useState(false);
-  const [walkRouteDraw, setWalkRouteDraw] = useState<{ x: number; y: number }[]>([]);
-  const [walkNote, setWalkNote] = useState<{ text: string; ok: boolean } | null>(null);
-  const posRef = useRef<{ x: number; y: number } | null>(null);
-  const routeRef = useRef<{ x: number; y: number }[]>([]);
-  const labelRef = useRef<string | null>(null);
-  const keysRef = useRef(new Set<string>());
-  const EDITOR_WALK_SPEED = 34; // world-%/second — brisk enough to test, slow enough to read
-  const walkPoly = stageWalkPoly({ floor, floorPoints } as StageSettings, worldW);
-  const walkFloor = stageWalkDepth(walkPoly);
-  const solidObstacles = (obstacles ?? []).filter((o) => !(o.gating && doorsOpen));
-  const walkPolyRef = useRef(walkPoly);
-  walkPolyRef.current = walkPoly;
-  const solidRef = useRef(solidObstacles);
-  solidRef.current = solidObstacles;
-
-  const routeWalker = (to: { x: number; y: number }, label?: string) => {
-    const poly = walkPolyRef.current;
-    const from = posRef.current ?? clampToWalkPoly(spawn.x, spawn.y, poly, worldW);
-    posRef.current = from;
-    const dest = clampToWalkPoly(to.x, to.y, poly, worldW);
-    const route = stageRoutePoly(from, dest, solidRef.current, poly, walkFloor, STAGE_GRID_STEP, worldW);
-    labelRef.current = label ?? null;
-    if (!route.length) {
-      routeRef.current = [];
-      setWalkRouteDraw([]);
-      setWalkNote({
-        text: `✗ No route to ${label ?? "that spot"} — the layout seals it off${
-          (obstacles ?? []).some((o) => o.gating) && !doorsOpen ? " (try opening the 🚪 doors)" : ""
-        }`,
-        ok: false,
-      });
-      return;
-    }
-    // A clear path comes back as a SINGLE point (the destination) — only a
-    // detour carries the start as its first point. Drop the start when it's
-    // there, never the destination, or the walker would have nowhere to go.
-    const rest =
-      route.length > 1 && Math.hypot(route[0].x - from.x, route[0].y - from.y) < 0.5
-        ? route.slice(1)
-        : route;
-    routeRef.current = rest.length ? rest : [{ ...dest }];
-    setWalkRouteDraw(route);
-    setWalkNote({ text: `→ ${label ? `walking to ${label}` : "walking"}…`, ok: true });
-  };
-
-  const toggleWalkTest = () => {
-    const next = !walkTest;
-    if (next) {
-      const start = clampToWalkPoly(spawn.x, spawn.y, walkPolyRef.current, worldW);
-      posRef.current = start;
-      routeRef.current = [];
-      setWalkerPos({ ...start });
-      setWalkRouteDraw([]);
-      setWalkNote({ text: "Walker at spawn — click the floor or a marker to send it there · WASD/arrows drive it", ok: true });
-    } else {
-      posRef.current = null;
-      routeRef.current = [];
-      keysRef.current.clear();
-      setWalkerPos(null);
-      setWalkRouteDraw([]);
-      setWalkNote(null);
-    }
-    setWalkTest(next);
-  };
-
-  // The animation loop: route-following + keyboard drive, same movement
-  // rules as the game (aspect-corrected steps, blocked => slide along).
-  useEffect(() => {
-    if (!walkTest) return;
-    let raf = 0;
-    // Seed the clock from the FIRST rAF timestamp, not performance.now() —
-    // the two can be on different time bases (happy-dom), and a negative
-    // first delta would clamp dt to 0 and freeze the walker.
-    let last: number | null = null;
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      if (last === null) last = now;
-      const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
-      last = now;
-      const pos = posRef.current;
-      if (!pos) return;
-      const obs = solidRef.current;
-      const poly = walkPolyRef.current;
-      let moving = false;
-      if (keysRef.current.size) {
-        // Keyboard drive cancels any plotted route, exactly like the game.
-        if (routeRef.current.length) {
-          routeRef.current = [];
-          labelRef.current = null;
-          setWalkRouteDraw([]);
-          setWalkNote(null);
-        }
-        let dx = 0;
-        let dy = 0;
-        if (keysRef.current.has("left")) dx -= 1;
-        if (keysRef.current.has("right")) dx += 1;
-        if (keysRef.current.has("up")) dy -= 1;
-        if (keysRef.current.has("down")) dy += 1;
-        if (dx || dy) {
-          const step = stepStagePos(pos, { x: pos.x + dx, y: pos.y + dy }, EDITOR_WALK_SPEED, dt, 16 / 9);
-          if (!stageBlockedPoly(step.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = step;
-          else if (!stageBlockedPoly(step.x, pos.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: step.x, y: pos.y };
-          else if (!stageBlockedPoly(pos.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: pos.x, y: step.y };
-          moving = true;
-        }
-      } else if (routeRef.current.length) {
-        const tgt = routeRef.current[0];
-        const step = stepStagePos(pos, tgt, EDITOR_WALK_SPEED, dt, 16 / 9);
-        posRef.current = { x: step.x, y: step.y };
-        moving = !step.arrived;
-        if (step.arrived) {
-          routeRef.current.shift();
-          if (!routeRef.current.length) {
-            setWalkRouteDraw([]);
-            setWalkNote({ text: `✓ ${labelRef.current ? `reached ${labelRef.current}` : "arrived"}`, ok: true });
-          }
-        }
-      }
-      const cur = posRef.current;
-      if (cur) setWalkerPos({ ...cur });
-      setWalkerMoving((m) => (m === moving ? m : moving));
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [walkTest, worldW]);
-
-  // WASD/arrows while the walk test runs (never while typing in a field).
-  useEffect(() => {
-    if (!walkTest) return;
-    const KEYMAP: Record<string, string> = {
-      ArrowLeft: "left", a: "left", A: "left",
-      ArrowRight: "right", d: "right", D: "right",
-      ArrowUp: "up", w: "up", W: "up",
-      ArrowDown: "down", s: "down", S: "down",
-    };
-    const down = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      const k = KEYMAP[e.key];
-      if (!k) return;
-      e.preventDefault();
-      keysRef.current.add(k);
-    };
-    const up = (e: KeyboardEvent) => {
-      const k = KEYMAP[e.key];
-      if (k) keysRef.current.delete(k);
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-      keysRef.current.clear();
-    };
-  }, [walkTest]);
 
   // The player's drawn height as a % of the plate (clamped so the walker can't
   // blow through the plate or vanish) — reused by the emoji glyph so IT scales
@@ -647,32 +452,6 @@ function StageFloorEditor({
         // element carrying `data-drag`.
         const dragEl = (e.target as HTMLElement).closest?.("[data-drag]") as HTMLElement | null;
         const kind = dragEl?.dataset.drag;
-        // 🥾 Walk test: a press on the plate sends the walker there — the
-        // REAL router plans and walks the route. Takes precedence over the
-        // drawing tools while the test runs.
-        if (!kind && walkTest) {
-          const p = pct(e);
-          routeWalker({ x: p.x / scale, y: p.y });
-          e.preventDefault();
-          return;
-        }
-        // 🎬 Cutscene recorder: an armed pick consumes this click as a plain
-        // point (no drag) — highest precedence on empty plate.
-        if (!kind && pickPoint && onPickPoint) {
-          const p = pct(e);
-          onPickPoint({ x: round1(Math.min(worldW, Math.max(0, p.x / scale))), y: round1(p.y) });
-          e.preventDefault();
-          return;
-        }
-        // 🖌 Paint path: a click on empty plate appends a polygon vertex
-        // (walk test keeps precedence — you can route-test while armed).
-        if (!kind && drawing) {
-          const p = pct(e);
-          const next = [...(floorPoints ?? []), { x: round1(Math.min(worldW, Math.max(0, p.x / scale))), y: round1(p.y) }];
-          onFloorPoints?.(next);
-          e.preventDefault();
-          return;
-        }
         // 🚧 obstacle tool: a press on empty plate starts a draft box.
         if (!kind && obstacleMode) {
           const p = pct(e);
@@ -725,14 +504,6 @@ function StageFloorEditor({
         } else if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
-          // 🥾 Walk test: pressing a MARKER sends the walker to its marker
-          // point — the exact spot the game would stop at — so a marker the
-          // layout can't reach is caught here, not in playtest.
-          if (walkTest) {
-            routeWalker(stageMarkerPointPoly(hs, walkPolyRef.current, worldW), hs.label);
-            e.preventDefault();
-            return;
-          }
           drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x * scale };
           onSelectHotspot?.(hs.id);
         } else if (kind.startsWith("entry:")) {
@@ -1013,26 +784,6 @@ function StageFloorEditor({
           style={{ left: `${draftOb.x * scale}%`, top: `${draftOb.y}%`, width: `${draftOb.w * scale}%`, height: `${draftOb.h}%` }}
         />
       ) : null}
-      {/* 🖌 paint-path hint — live vertex count while arming clicks */}
-      {drawing ? (
-        <span className="pointer-events-none absolute left-1/2 top-1 z-[60] -translate-x-1/2 whitespace-nowrap rounded border border-neon/60 bg-noir-950/90 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon">
-          Paint path — click to add points{(floorPoints ?? []).length < 3 ? ` (${(floorPoints ?? []).length}/3)` : ""}, tool button to finish
-        </span>
-      ) : null}
-      {/* 🎬 recorder banner — armed pick, with cancel */}
-      {pickPoint ? (
-        <span className="absolute left-1/2 top-1 z-[60] flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded border border-neon/60 bg-noir-950/90 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon">
-          Pick {pickPoint.npc ? "NPC" : "player"} walk target — click the plate
-          <button
-            className="ml-1 border border-neon/50 px-1 text-[9px] leading-none hover:bg-neon/20"
-            title="Cancel without setting the target"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onCancelPick?.(); }}
-          >
-            ✕
-          </button>
-        </span>
-      ) : null}
       {/* markers — one per hotspot, at its zone base (world-scaled on wide
           worlds). When the hotspot carries object art (image / sheet), the
           NPC/prop itself is drawn on the plate — feet planted on the marker,
@@ -1108,69 +859,6 @@ function StageFloorEditor({
           </div>
         );
       })}
-      {/* 🥾 WALK TEST — the live walker: same art as the spawn dummy, minus
-          its handles. Routed by the real engine router (see routeWalker). */}
-      {walkTest && walkerPos ? (
-        <div
-          data-walktest-walker
-          className="pointer-events-none absolute z-[32] flex -translate-x-1/2 -translate-y-full flex-col items-center"
-          style={{ left: `${walkerPos.x * scale}%`, top: `${walkerPos.y}%`, height: `${playerHPct}%` }}
-          title="Walk-test walker — click the floor or a marker to send it there"
-        >
-          {player && sheetDrawable(player.sheet) ? (
-            <SheetSprite
-              sheet={player.sheet!}
-              anim={walkerMoving ? "walk" : "idle"}
-              fallbacks={["walk", "idle", "loop"]}
-              height="100%"
-              freezeOnFallback={!walkerMoving}
-            />
-          ) : player?.image && !player.image.startsWith("emoji:") ? (
-            <img
-              src={assetUrl(media(player.image) ?? player.image)}
-              alt=""
-              className={`h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] ${walkerMoving ? "stage2d-walk" : ""}`}
-              draggable={false}
-            />
-          ) : (
-            <span
-              className={`block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] ${walkerMoving ? "stage2d-walk" : ""}`}
-              style={{ fontSize: `${playerHPct * 0.8}cqh` }}
-            >
-              {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
-            </span>
-          )}
-          <span className="mt-0.5 rounded bg-noir-950/85 px-1 font-pulp text-[7px] uppercase tracking-wider text-gold">🥾 test</span>
-          <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
-        </div>
-      ) : null}
-      {/* 🥾 the planned route, dashed gold — what the router intends */}
-      {walkTest && walkRouteDraw.length > 1 ? (
-        <svg className="pointer-events-none absolute inset-0 z-[27] h-full w-full" viewBox={`0 0 ${worldW} 100`} preserveAspectRatio="none" aria-hidden>
-          <polyline
-            points={walkRouteDraw.map((pt) => `${pt.x},${pt.y}`).join(" ")}
-            fill="none"
-            stroke="#e8b23c"
-            strokeWidth={1.5}
-            strokeDasharray="5 4"
-            vectorEffect="non-scaling-stroke"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            opacity={0.85}
-          />
-        </svg>
-      ) : null}
-      {/* 🥾 the verdict chip — route found / arrived / walled off */}
-      {walkTest && walkNote ? (
-        <div
-          data-walktest-note
-          className={`pointer-events-none absolute left-2 top-2 z-[40] max-w-[75%] rounded border px-2 py-1 font-type text-[10px] shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${
-            walkNote.ok ? "border-gold/60 bg-noir-950/90 text-gold" : "border-crimson/70 bg-noir-950/90 text-crimson"
-          }`}
-        >
-          {walkNote.text}
-        </div>
-      ) : null}
       {/* ENTRY SPAWNS — cyan dots: where the walker appears when arriving
           from another room (drag to move; scene entrySpawns in the panel) */}
       {Object.entries(entrySpawns ?? {}).map(([fromId, p]) => (
@@ -1246,7 +934,7 @@ function StageFloorEditor({
     <button
       onClick={() => {
         setObstacleMode((v) => !v);
-        if (!obstacleMode) { onObstacleSelect?.(null); setDrawing(false); }
+        if (!obstacleMode) onObstacleSelect?.(null);
       }}
       className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
         obstacleMode ? "border-crimson bg-crimson/20 text-crimson" : "border-crimson/40 bg-noir-900 text-crimson/80 hover:bg-crimson/10"
@@ -1284,57 +972,8 @@ function StageFloorEditor({
     </button>
   );
 
-  // 🖌 Paint mode: click vertices straight onto the plate. Complements the
-  // seeded rectangle (pathToolBtn) and the draggable/midpoint handles.
-  const drawPtsBtn = (
-    <button
-      onClick={() => {
-        const next = !drawing;
-        setDrawing(next);
-        if (next) {
-          setObstacleMode(false);
-          onObstacleSelect?.(null);
-        }
-      }}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        drawing ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
-      }`}
-      title="Click points on the plate to paint the walk polygon vertex by vertex — from the third point it's live"
-    >
-      {drawing ? "Paint path (on)" : "Paint path"}
-    </button>
-  );
-
   // ▶ Walk-cycle preview — play the walker's walk animation on the plate so
   // the author sees the frames and fps without a playtest.
-  // 🥾 WALK TEST — live walker + real router on the plate (see the state
-  // block near the walk-cycle preview). While on, a 🚪 doors toggle rides
-  // along: gated barriers shut (the locked layout) or open.
-  const walkTestBtn = (
-    <button
-      data-walktest-btn
-      onClick={toggleWalkTest}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        walkTest ? "border-gold bg-gold/20 text-gold" : "border-gold/40 bg-noir-900 text-gold/80 hover:bg-gold/10"
-      }`}
-      title="Put a live walker on the plate — click the floor or a marker and it walks the REAL route (around barriers, along the path). WASD/arrows drive it too."
-    >
-      🥾 Walk test{walkTest ? " (on)" : ""}
-    </button>
-  );
-  const doorsBtn = walkTest ? (
-    <button
-      data-walktest-doors
-      onClick={() => setDoorsOpen((v) => !v)}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        doorsOpen ? "border-emerald-400 bg-emerald-400/15 text-emerald-300" : "border-crimson/50 bg-noir-900 text-crimson/90 hover:bg-crimson/10"
-      }`}
-      title="Gated barriers (🚪 doors) during the test: shut = the locked layout, open = the unlocked one"
-    >
-      🚪 Doors: {doorsOpen ? "open" : "shut"}
-    </button>
-  ) : null;
-
   const walkToolBtn = (
     <button
       onClick={() => setPlayWalk((v) => !v)}
@@ -1365,11 +1004,8 @@ function StageFloorEditor({
                 drag floor edges · spawn · markers · <b className="text-cyan-neon">↕</b> resize · <b className="text-neon">🧭</b> path · <b className="text-crimson">🚧</b> obstacles · <b className="text-gold">▶</b> walk
               </span>
               {pathToolBtn}
-              {drawPtsBtn}
               {obstacleToolBtn}
               {walkToolBtn}
-              {walkTestBtn}
-              {doorsBtn}
               <button
                 onClick={() => setExpanded(false)}
                 className="border border-gold/40 bg-noir-900 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
@@ -1386,11 +1022,8 @@ function StageFloorEditor({
             <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/40">Stage plate</span>
             <div className="flex items-center gap-1.5">
               {pathToolBtn}
-              {drawPtsBtn}
               {obstacleToolBtn}
               {walkToolBtn}
-              {walkTestBtn}
-              {doorsBtn}
               <button
                 onClick={() => setExpanded(true)}
                 className="border border-cyan-neon/40 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
@@ -1916,19 +1549,12 @@ function ScriptEditor({
   onChange,
   npcIds,
   scenes,
-  onPickPoint,
-  picking,
 }: {
   steps: StageScriptStep[];
   onChange: (next: StageScriptStep[]) => void;
   /** Ambient NPC ids in this scene (for the NPC step targets). */
   npcIds: string[];
   scenes: { id: string; title: string }[];
-  /** Armed from a row: the next plate click becomes that step's x/y
-   *  (the cutscene recorder — no hand-typed coordinates). */
-  onPickPoint?: (index: number, npc: boolean) => void;
-  /** Which row is currently waiting for its plate click. */
-  picking?: { index: number; npc: boolean } | null;
 }) {
   const upd = (i: number, patch: Record<string, unknown>) =>
     onChange(steps.map((s, si) => (si === i ? ({ ...s, ...patch } as StageScriptStep) : s)));
@@ -1977,19 +1603,9 @@ function ScriptEditor({
             )}
             {(st.do === "walkTo" || st.do === "npcWalkTo") && (
               <>
-                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x % of the walkable world" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
-                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y % of the stage floor" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
-                {onPickPoint ? (
-                  <button
-                    onClick={() => onPickPoint(i, st.do === "npcWalkTo")}
-                    className={`flex-none border px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-                      picking?.index === i ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
-                    }`}
-                    title={picking?.index === i ? "Waiting for a plate click — pick again to cancel" : "Click the stage plate to set this target visually"}
-                  >
-                    {picking?.index === i ? "Picking…" : "Pick on plate"}
-                  </button>
-                ) : null}
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x %" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
+                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y %" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
+                <span className="text-[9px] text-paper/40">x / y (scene %)</span>
               </>
             )}
             {st.do === "face" && (
@@ -6509,39 +6125,6 @@ function HotspotVoiceControls({
   );
 }
 
-/** Guard rails for the In-game theme's custom accent/danger ink: these two
- *  colours take over --color-gold / --color-crimson EVERYWHERE (nameplates,
- *  choice focus, gate badges), so a too-dark or near-identical pick makes UI
- *  states look broken or invisible in play. Returns readable warnings; the
- *  colours still save — it's advice, not a block. */
-function themeColorWarnings(accent?: string, danger?: string): string[] {
-  const rgb = (hex?: string) => {
-    if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
-    return { r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16) };
-  };
-  /** relative luminance — the frame is near-black, so ink needs lum to read. */
-  const lum = (c: { r: number; g: number; b: number }) => {
-    const f = (v: number) => {
-      const s = v / 255;
-      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-    };
-    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
-  };
-  const out: string[] = [];
-  const a = rgb(accent);
-  const d = rgb(danger);
-  // Built-in gold lum ≈ 0.5, built-in crimson ≈ 0.2 — warn well below those.
-  if (a && lum(a) < 0.15) out.push("The custom accent is very dark — highlights, nameplates and the choice focus ring will be hard to see on the noir frame.");
-  if (d && lum(d) < 0.08) out.push("The custom danger colour is nearly black — fail gates and HEAT warnings will be invisible.");
-  if (a && d) {
-    const dist = Math.sqrt((a.r - d.r) ** 2 + (a.g - d.g) ** 2 + (a.b - d.b) ** 2);
-    // Built-in gold↔crimson separation ≈ 120 — anything much closer blurs
-    // the good/bad distinction the player relies on.
-    if (dist < 60) out.push("Accent and danger are nearly the same colour — bad gates and HEAT will look like normal UI.");
-  }
-  return out;
-}
-
 function StudioInner({
   baseStories,
   initialStoryId,
@@ -6552,7 +6135,6 @@ function StudioInner({
   onDeleteStory,
   onCreateStory,
   onUpdateTitleTheme,
-  onOpenManual,
 }: {
   baseStories: Story[];
   /** open on this story (e.g. "edit this scene in Studio" from the game) */
@@ -6565,7 +6147,6 @@ function StudioInner({
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
   onUpdateTitleTheme: (theme: TitleTheme) => void;
-  onOpenManual?: () => void;
 }) {
   const loadDraft = (id: string): Story => {
     try {
@@ -6669,11 +6250,6 @@ function StudioInner({
   /** Hotspots tab: drawing hotspots, or drawing 🚧 no-go barriers. */
   const [zoneMode, setZoneMode] = useState<"hotspot" | "barrier" | "spawn">("hotspot");
   const [selectedBarrier, setSelectedBarrier] = useState<number | null>(null);
-  // Cutscene recorder: the walkTo/npcWalkTo step row waiting for a plate
-  // click. `origin` routes the picked point back to the right script (the
-  // stage tab's room-entry script or a hotspot's runScript); arming from a
-  // hotspot row jumps to the stage tab so the plate is on screen.
-  const [scriptPick, setScriptPick] = useState<{ index: number; npc: boolean; origin: "enter" | "hotspot"; hotspotId?: string } | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
   // Which single beat is maximised in the Beats tab. Beats default to
@@ -6961,11 +6537,6 @@ function StudioInner({
   const addScene = (fx: number, fy: number) => {
     const id = `scene_${uid()}`;
     const isFirstScene = story.scenes.length === 0;
-    // An author who sketches the ENDINGS first (🏁 End before any playable
-    // scene) still needs a start: the first playable scene claims the start
-    // marker whenever the story has none ("" only before one exists or after
-    // the last scene was deleted — deleteScene already re-points it).
-    const needsStart = !story.startSceneId;
     // 🧭 Mode switch: in an ADVENTURE case a new room is a walkable stage
     // (🚶 node) by default, not a prose plate — that IS the mode.
     const adv = story.gameKind === "adventure";
@@ -6999,11 +6570,11 @@ function StudioInner({
         dialogueBeats: [],
       });
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
-      if (isFirstScene || needsStart) d.startSceneId = id;
+      if (isFirstScene) d.startSceneId = id;
     });
     setSelectedId(id);
     setTab(adv ? "stage" : "scene");
-    if ((isFirstScene || needsStart) && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
+    if (isFirstScene && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
     if (adv) say("Room created as a 🚶 walkable stage. Put a plate on it, draw 🚧 obstacles, then hang 👁 look / ✋ take / 💬 talk / ➜ go hotspots on it.");
     audio.pickup();
   };
@@ -7116,9 +6687,6 @@ function StudioInner({
         dialogueBeats: [],
       });
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
-      // First playable scene claims the start marker even when the author
-      // sketched 🏁 endings first (same rule as addScene).
-      if (!d.startSceneId) d.startSceneId = id;
     });
     setSelectedId(id);
     setTab("stage");
@@ -7607,33 +7175,10 @@ function StudioInner({
       }
 
       if (!sc.isEnding) {
-        // Mirror the validator's exit accounting (storyEdges): edge exits,
-        // after-beat routes, entry scripts and puzzle branches are all ways
-        // out too. Counting only choices/hotspots would "repair" a healthy
-        // stage room whose door is a walk-off edge arrow by injecting a
-        // bogus choice into it.
         const exits = [
           ...(sc.autoAdvanceTargetSceneId ? [{ gated: false }] : []),
           ...(sc.choices ?? []).map((c) => ({ gated: !!effectiveChoiceGating(c) })),
-          ...(sc.hotspots ?? [])
-            .filter((h) =>
-              hotspotReachableActions(h).some(
-                (a) =>
-                  !!a.targetSceneId ||
-                  (!!a.patternPuzzle && (!!a.patternPuzzle.targetSceneId || !!a.patternPuzzle.wrongTargetSceneId)) ||
-                  (a.script ?? []).some((st) => st.do === "goToScene")
-              )
-            )
-            .map((h) => ({ gated: !!h.gating })),
-          ...(sc.dialogueBeats ?? [])
-            .filter((b) => b.afterBeatTargetSceneId)
-            .map((b) => ({ gated: !!b.conditionRule })),
-          ...Object.values(sc.stage?.exitEdges ?? {})
-            .filter((e) => e?.targetSceneId)
-            .map((e) => ({ gated: !!e.gating })),
-          ...(sc.stage?.enterScript ?? []).some((st) => st.do === "goToScene")
-            ? [{ gated: false }]
-            : [],
+          ...(sc.hotspots ?? []).filter((h) => h.action.targetSceneId).map((h) => ({ gated: !!h.gating })),
         ];
         const hasOpenExit = exits.some((e) => !e.gated);
         if (!hasOpenExit) {
@@ -7656,83 +7201,6 @@ function StudioInner({
           delete item.combinableWith;
           fixes.push(`removed broken recipe on "${item.name}"`);
         }
-      }
-    });
-
-    /* ---- scene links that live OUTSIDE the scene list ---- */
-    // Stage rooms: walk-off edge exits, entry-script/run-script goToScene
-    // steps, and entry spawns keyed by the incoming scene.
-    next.scenes.forEach((sc) => {
-      if (!sc.stage) return;
-      for (const edge of ["left", "right"] as const) {
-        const ex = sc.stage.exitEdges?.[edge];
-        if (ex?.targetSceneId && !sceneIds.has(ex.targetSceneId)) {
-          ex.targetSceneId = start;
-          fixes.push(`re-pointed ${edge} edge exit in "${sc.title}"`);
-        }
-      }
-      const fixScript = (steps: StageScriptStep[] | undefined, label: string) => {
-        (steps ?? []).forEach((st) => {
-          if (st.do === "goToScene" && !sceneIds.has(st.targetSceneId)) {
-            st.targetSceneId = start;
-            fixes.push(`re-pointed ${label} step in "${sc.title}"`);
-          }
-        });
-      };
-      fixScript(sc.stage.enterScript, "entry script");
-      sc.hotspots?.forEach((h) => fixScript(h.action.script, `"${h.label}" script`));
-      if (sc.stage.entrySpawns) {
-        for (const fromId of Object.keys(sc.stage.entrySpawns)) {
-          if (!sceneIds.has(fromId)) {
-            delete sc.stage.entrySpawns[fromId];
-            fixes.push(`removed stale entry spawn in "${sc.title}"`);
-          }
-        }
-      }
-    });
-    // Travel map: a pin on a deleted scene re-lands on the start scene.
-    (next.map?.locations ?? []).forEach((loc) => {
-      if (!sceneIds.has(loc.targetSceneId)) {
-        loc.targetSceneId = start;
-        fixes.push(`re-pointed map location "${loc.label || loc.id}"`);
-      }
-    });
-    // Episodes: drop deleted scenes from chapter lists; a chapter left with
-    // no scenes can never finish, so it goes too (its siblings renumber).
-    if (next.episodes?.length) {
-      next.episodes.forEach((ep) => {
-        const before = ep.sceneIds.length;
-        ep.sceneIds = ep.sceneIds.filter((id) => sceneIds.has(id));
-        if (ep.sceneIds.length !== before) fixes.push(`removed deleted scene(s) from episode "${ep.title}"`);
-        if (ep.startSceneId && !sceneIds.has(ep.startSceneId)) {
-          ep.startSceneId = ep.sceneIds[0] ?? "";
-          fixes.push(`reset opening scene of episode "${ep.title}"`);
-        } else if (!ep.startSceneId && ep.sceneIds.length) {
-          ep.startSceneId = ep.sceneIds[0];
-          fixes.push(`set opening scene of episode "${ep.title}"`);
-        }
-      });
-      const empty = next.episodes.filter((ep) => !ep.sceneIds.length);
-      if (empty.length) {
-        next.episodes = next.episodes.filter((ep) => ep.sceneIds.length);
-        // keep the unlock/handoff graph consistent with the new episode list
-        const kept = new Set(next.episodes.map((e) => e.id));
-        next.episodes.forEach((ep) => {
-          ep.unlockAfter = ep.unlockAfter?.filter((u) => kept.has(u.episodeId));
-          if (ep.nextEpisodeByEnding) {
-            for (const k of Object.keys(ep.nextEpisodeByEnding)) {
-              if (!kept.has(ep.nextEpisodeByEnding![k])) delete ep.nextEpisodeByEnding![k];
-            }
-          }
-        });
-        fixes.push(`removed emptied episode(s): ${empty.map((e) => e.title).join(", ")}`);
-      }
-    }
-    // Acts: a title card that opens on a deleted scene opens on the start.
-    (next.acts ?? []).forEach((act) => {
-      if (act.startSceneId && !sceneIds.has(act.startSceneId)) {
-        act.startSceneId = start;
-        fixes.push(`re-pointed act "${act.label || act.title}"`);
       }
     });
 
@@ -7849,10 +7317,6 @@ function StudioInner({
       sceneIdMap.set(s.id, `${s.id}_copy_${uid().slice(0, 5)}`);
     });
     const remap = (id?: string) => (id ? sceneIdMap.get(id) ?? id : id);
-    // Stage scripts (enter scripts, hotspot runScripts) can navigate with
-    // goToScene steps — those targets are scene references too.
-    const remapScript = (steps: StageScriptStep[] | undefined): StageScriptStep[] | undefined =>
-      steps?.map((st) => (st.do === "goToScene" ? { ...st, targetSceneId: remap(st.targetSceneId) ?? st.targetSceneId } : st));
 
     const copy: Story = {
       ...src,
@@ -7881,7 +7345,6 @@ function StudioInner({
           action: {
             ...h.action,
             targetSceneId: remap(h.action.targetSceneId),
-            script: remapScript(h.action.script),
             patternPuzzle: h.action.patternPuzzle
               ? {
                   ...h.action.patternPuzzle,
@@ -7897,32 +7360,7 @@ function StudioInner({
           afterBeatTargetSceneId: remap(b.afterBeatTargetSceneId),
         })),
         onEnterActions: s.onEnterActions,
-        stage: s.stage
-          ? {
-              ...s.stage,
-              // Walk-off edge exits lead into other rooms — point the copy's
-              // arrows at the copy's rooms, not the original's.
-              exitEdges: Object.fromEntries(
-                Object.entries(s.stage.exitEdges ?? {}).map(([edge, ex]) => [
-                  edge,
-                  ex ? { ...ex, targetSceneId: remap(ex.targetSceneId) ?? ex.targetSceneId } : ex,
-                ])
-              ) as typeof s.stage.exitEdges,
-              // Entry spawns are keyed by the INCOMING scene's id.
-              entrySpawns: Object.fromEntries(
-                Object.entries(s.stage.entrySpawns ?? {}).map(([fromId, p]) => [remap(fromId) ?? fromId, p])
-              ),
-              enterScript: remapScript(s.stage.enterScript),
-            }
-          : s.stage,
       })),
-      // Travel-map pins land on scenes — remap them like every other link.
-      map: src.map
-        ? {
-            ...src.map,
-            locations: src.map.locations.map((l) => ({ ...l, targetSceneId: remap(l.targetSceneId) ?? l.targetSceneId })),
-          }
-        : src.map,
       acts: src.acts?.map((a) => ({ ...a, id: `act_${uid()}`, startSceneId: remap(a.startSceneId) ?? a.startSceneId })),
       // Episodes are rebuilt with new ids below where the episode-id map exists.
       episodes: src.episodes?.map((e) => ({
@@ -8161,11 +7599,6 @@ function StudioInner({
   };
 
   const importJson = async (file: File) => {
-    // Snapshot the story being edited when the import started. Reading the
-    // file + compacting its media is async (IndexedDB round-trips); anything
-    // the author does in between (add a scene, switch story, ＋ New Story)
-    // must NOT be silently clobbered by the late import commit.
-    const storyAtStart = storyRef.current;
     try {
       const text = await file.text();
       const storyBundle: Story = JSON.parse(text);
@@ -8178,15 +7611,7 @@ function StudioInner({
       const { assets, ...cleanedStory } = storyBundle;
       // Old exports carried the bolt-on `stage2d` layer; imports map it to the
       // stage NODE so those cases keep walking.
-      const compacted = await compactStoryMedia(normalizeLegacyStory(cleanedStory));
-      if (storyAtStart !== storyRef.current) {
-        // The reel moved on while the file was reading — importing now would
-        // throw away the newer edits. Cancel loudly instead of losing work.
-        say("The case changed while the file was reading — import cancelled. Try again.");
-        audio.fail();
-        return;
-      }
-      commit(compacted);
+      commit(await compactStoryMedia(normalizeLegacyStory(cleanedStory)));
       say(`Imported "${cleanedStory.title}" with ${assets?.length ?? 0} assets.`);
     } catch {
       say("That file isn't a valid reel. Tragic.");
@@ -9316,9 +8741,6 @@ function StudioInner({
                           onChange={(e) => setBox({ dangerColor: e.target.value })} />
                       </Field>
                     </div>
-                    {themeColorWarnings(dbox.accentColor, dbox.dangerColor).map((w, i) => (
-                      <p key={i} className="font-type text-[9px] leading-snug text-amber-400/90">⚠ {w}</p>
-                    ))}
                     {(dbox.accentColor || dbox.dangerColor) && (
                       <button
                         className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
@@ -9365,7 +8787,7 @@ function StudioInner({
                           </label>
                         </div>
                         <p className="font-type text-[9px] leading-snug text-paper/45">
-                          The object-first verb menu — the skull pie. <b>Opt-in</b>: it only appears on a
+                          The object-first verb menu — Full Throttle's skull pie. <b>Opt-in</b>: it only appears on a
                           Walkable Stage whose <b>Object-first verb menu</b> is on (see that panel). This switch is the
                           story-wide kill-switch: off = it never shows, in any scene. The sprite below sits at the
                           centre of the ring.
@@ -11313,13 +10735,10 @@ function StudioInner({
                           handle on the character's head resizes it live; the <b className="text-neon">↔</b> on a prop/NPC's
                           corner scales that object (feet stay planted). <b className="text-gold">▶ Walk</b> previews the
                           walker's walk cycle. <b className="text-neon">🧭 Make path</b> turns the walkable zone into a
-                          polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding path, or arm{" "}
-                          <b className="text-neon">Paint path</b> and click points straight onto the plate. Arm{" "}
+                          polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding path. Arm{" "}
                           <b className="text-crimson">🚧 Draw obstacle</b> and drag a box to fence off furniture. Markers sit
                           where the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
-                          narrative is the caption below + 💬 show-text markers. A{" "}
-                          <b className="text-neon">Pick on plate</b> button on a script step (below) waits for a click here
-                          and writes the coordinates for you.
+                          narrative is the caption below + 💬 show-text markers.
                         </p>
                         <StageFloorEditor
                           background={scene.background}
@@ -11332,7 +10751,7 @@ function StudioInner({
                             // Resolve exactly as the game does (Game.tsx): a
                             // scene's own sprite/image wins, otherwise the
                             // story-wide Player character (In-game theme) —
-                            // so a story-wide player sheet shows here.
+                            // so Full Throttle's Ben walk sheet shows here.
                             image: scene.stage.playerImage ?? story.playerSprite?.image,
                             sheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
                           }}
@@ -11370,10 +10789,7 @@ function StudioInner({
                           floorPoints={scene.stage.floorPoints ?? []}
                           onFloorPoints={(pts) =>
                             updateScene(scene.id, {
-                              // Keep 1-2 point drafts too — paint mode adds
-                              // vertices one click at a time; the game and
-                              // the polygon UI only engage at >= 3 points.
-                              stage: { ...scene.stage!, floorPoints: pts.length ? pts : undefined },
+                              stage: { ...scene.stage!, floorPoints: pts.length >= 3 ? pts : undefined },
                             })
                           }
                           entrySpawns={scene.stage.entrySpawns}
@@ -11401,29 +10817,6 @@ function StudioInner({
                               hotspots: (scene.hotspots ?? []).map((h) => (h.id === hsId ? { ...h, bounds } : h)),
                             })
                           }
-                          pickPoint={scriptPick ? { npc: scriptPick.npc } : null}
-                          onPickPoint={(p) => {
-                            // Cutscene recorder: land the picked point on the
-                            // step that armed it, then hop back to the tab the
-                            // row lives on so the numbers are visible.
-                            if (!scriptPick) return;
-                            const { index, origin, hotspotId } = scriptPick;
-                            setScriptPick(null);
-                            const patchStep = (s: StageScriptStep): StageScriptStep =>
-                              s.do === "walkTo" || s.do === "npcWalkTo" ? { ...s, x: p.x, y: p.y } : s;
-                            if (origin === "enter") {
-                              const next = (scene.stage?.enterScript ?? []).map((s, si) => (si === index ? patchStep(s) : s));
-                              updateScene(scene.id, { stage: { ...scene.stage!, enterScript: next } });
-                            } else if (hotspotId) {
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const arr = s.hotspots!.find((x) => x.id === hotspotId)!.action.script ?? [];
-                                if (arr[index]) arr[index] = patchStep(arr[index]);
-                              });
-                            }
-                            if (origin === "hotspot") setTab("hotspots");
-                          }}
-                          onCancelPick={() => setScriptPick(null)}
                         />
                         <Field label="World width — how many screens the room spans (100 = one, the classic plate)">
                           <div className="flex items-center gap-2">
@@ -11666,8 +11059,6 @@ function StudioInner({
                             }
                             npcIds={(scene.stage.npcs ?? []).map((n) => n.id)}
                             scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
-                            onPickPoint={(index, npc) => setScriptPick((cur) => (cur?.origin === "enter" && cur.index === index ? null : { index, npc, origin: "enter" }))}
-                            picking={scriptPick?.origin === "enter" ? scriptPick : null}
                           />
                           {(scene.stage.enterScript?.length ?? 0) > 0 ? (
                             <input
@@ -11976,22 +11367,6 @@ function StudioInner({
                                         <option value="left">left</option>
                                       </select>
                                     </label>
-                                    {/* INTERACTABLE NPC — link to a talker marker */}
-                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70" title="Link this actor to a talk marker: the character becomes clickable — the player clicks them (or presses N) and the walker chases them to start the conversation.">
-                                      talk marker
-                                      <select
-                                        className={inputCls}
-                                        value={n.talkHotspotId ?? ""}
-                                        onChange={(e) => setNpc(i, { talkHotspotId: e.target.value || undefined })}
-                                      >
-                                        <option value="">— ambient (not clickable) —</option>
-                                        {(scene.hotspots ?? [])
-                                          .filter((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue"))
-                                          .map((h) => (
-                                            <option key={h.id} value={h.id}>💬 {h.label}</option>
-                                          ))}
-                                      </select>
-                                    </label>
                                     <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
                                       scale
                                       <input
@@ -12155,27 +11530,11 @@ function StudioInner({
                                 <input
                                   type="checkbox"
                                   className="mt-0.5"
-                                  checked={!!st.sentenceLine}
-                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, sentenceLine: e.target.checked || undefined } })}
-                                />
-                                <span>
-                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💬 Sentence line (SCUMM)</span>
-                                  <br />
-                                  A strip along the bottom of the room reads out the pending interaction as you hover
-                                  ("Look at the drop-safe", "Use wrench on the bike", "Walk to"), and RIGHT-CLICKING an
-                                  object is a quick 👁 look. Off (the default): nothing renders and right-click stays the
-                                  browser's.
-                                </span>
-                              </label>
-                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
-                                <input
-                                  type="checkbox"
-                                  className="mt-0.5"
                                   checked={objectMenuOn}
                                   onChange={(e) => updateScene(scene.id, { stage: { ...st, objectVerbMenu: e.target.checked || undefined } })}
                                 />
                                 <span>
-                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (the skull pie)</span>
+                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (Full Throttle's skull)</span>
                                   <br />
                                   Click the OBJECT first, then pick a verb from a small pie menu that pops up next to it
                                   (USE expands to your inventory). Off (default): the bottom-left verb coin, and classic
@@ -13489,45 +12848,25 @@ function StudioInner({
                             </p>
                           ) : null}
                           {obs.map((o, oi) => (
-                            <div key={oi} className="space-y-1">
-                              <div className="flex items-center gap-1">
-                                <button
-                                  className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
-                                    selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
-                                  }`}
-                                  onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
-                                >
-                                  🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%{o.gating ? " 🚪" : ""}
-                                </button>
-                                <button
-                                  className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                  title="Remove this barrier"
-                                  onClick={() => {
-                                    setObs(obs.filter((_, j) => j !== oi));
-                                    setSelectedBarrier(null);
-                                  }}
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                              {selectedBarrier === oi ? (
-                                <div className="border border-crimson/20 bg-crimson/5 p-1">
-                                  <p className="font-type text-[9px] leading-snug text-paper/45">
-                                    🚪 <b className="text-crimson">Door:</b> give the barrier a gate and it blocks only
-                                    while the gate is SHUT — the moment it opens (a flag set by a key hotspot, a
-                                    conversation, a state's action) the walker can pass through. A barrier with no gate
-                                    always blocks (furniture).
-                                  </p>
-                                  <GatingEditor
-                                    gating={o.gating}
-                                    onChange={(g) => setObs(obs.map((b, j) => (j === oi ? { ...b, gating: g } : b)))}
-                                    items={story.items}
-                                    characters={story.characters}
-                                    flags={allFlags}
-                                    sectionId={`stage-barrier-${scene.id}-${oi}`}
-                                  />
-                                </div>
-                              ) : null}
+                            <div key={oi} className="flex items-center gap-1">
+                              <button
+                                className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
+                                  selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
+                                }`}
+                                onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
+                              >
+                                🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%
+                              </button>
+                              <button
+                                className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
+                                title="Remove this barrier"
+                                onClick={() => {
+                                  setObs(obs.filter((_, j) => j !== oi));
+                                  setSelectedBarrier(null);
+                                }}
+                              >
+                                ✕
+                              </button>
                             </div>
                           ))}
                           <button
@@ -13623,7 +12962,7 @@ function StudioInner({
                   <div key={h.id} onClick={() => setSelectedHotspot(h.id)}>
                     <CollapsibleSection
                       id={`hotspot-${h.id}`}
-                      title={<span>⌖ {h.label || "Hotspot"}{(h.states?.length ?? 0) > 0 ? ` 🔁${h.states!.length}` : ""}</span>}
+                      title={<span>⌖ {h.label || "Hotspot"}</span>}
                       titleClass="text-gold"
                       defaultOpen={selectedHotspot === h.id}
                       className={`border ${selectedHotspot === h.id ? "border-neon" : "border-noir-600"}`}
@@ -14049,246 +13388,6 @@ function StudioInner({
                         </div>
                       );
                     })()}
-
-                    {/* ---- MULTI-STATE OBJECT: one marker that changes with the story ---- */}
-                    {(() => {
-                      const hsSetBase = (patch: Partial<Hotspot>) =>
-                        mutate((d) => {
-                          const s = d.scenes.find((x) => x.id === scene.id)!;
-                          Object.assign(s.hotspots!.find((x) => x.id === h.id)!, patch);
-                        });
-                      const states = h.states ?? [];
-                      const setStates = (next: Hotspot["states"]) =>
-                        hsSetBase({ states: next?.length ? next : undefined });
-                      const patchState = (idx: number, patch: Partial<HotspotState>) =>
-                        setStates(states.map((st, i) => (i === idx ? { ...st, ...patch } : st)));
-                      const addState = () =>
-                        setStates([
-                          ...states,
-                          {
-                            id: `st_${uid()}`,
-                            when: { requiresFlags: [] },
-                            label: "",
-                          },
-                        ]);
-                      const moveState = (idx: number, dir: -1 | 1) => {
-                        const j = idx + dir;
-                        if (j < 0 || j >= states.length) return;
-                        const next = [...states];
-                        [next[idx], next[j]] = [next[j], next[idx]];
-                        setStates(next);
-                      };
-                      return (
-                        <CollapsibleSection
-                          id={`hotspot-states-${h.id}`}
-                          title={<span>🔁 States {states.length ? `· ${states.length}` : ""}</span>}
-                          hint={states.length ? `${states.length} state${states.length > 1 ? "s" : ""}` : "one object, many faces"}
-                          titleClass="text-cyan-neon"
-                          className="border border-cyan-neon/30 bg-cyan-neon/5"
-                        >
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            ONE marker that changes with the story — a lever up/down, a drawer full/empty, a door
-                            locked/open — instead of stacking gated duplicate hotspots. States are checked in order and
-                            the <b>last one whose gate passes wins</b>: list the unconditional default <b>first</b>,
-                            then the specific ones. A state only overrides what you fill in (label / art / cursor /
-                            action / gate); the object's zone, verbs and accepted items are shared. Typical pair: the
-                            base object takes the thing and sets a flag; the flag-gated state re-skins the same marker
-                            as the aftermath ("the empty bench hook").
-                          </p>
-                          {states.map((st, idx) => (
-                            <div key={st.id} className="space-y-1 border border-noir-700/60 bg-noir-950/40 p-1.5">
-                              <div className="flex items-center gap-1">
-                                <span className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon/80">
-                                  {idx + 1} · {st.when?.requiresFlags?.length || st.when?.requiresItems?.length || st.when?.requiresMemories?.length ? `after ${st.when?.requiresFlags?.[0] ?? st.when?.requiresItems?.[0] ?? "…"}` : "default (always)"}
-                                </span>
-                                <span className="flex-1" />
-                                <button className="px-1 text-paper/50 hover:text-paper" title="Move up (earlier = less specific)" onClick={() => moveState(idx, -1)}>↑</button>
-                                <button className="px-1 text-paper/50 hover:text-paper" title="Move down (later = wins over the ones above)" onClick={() => moveState(idx, 1)}>↓</button>
-                                <button className="px-1 font-pulp text-[9px] text-crimson hover:underline" title="Remove this state" onClick={() => setStates(states.filter((_, i) => i !== idx))}>✕</button>
-                              </div>
-                              <div className="grid grid-cols-2 gap-1">
-                                <Field label="Label (blank = keep the object's)">
-                                  <input
-                                    className={inputCls}
-                                    value={st.label ?? ""}
-                                    placeholder={h.label}
-                                    onChange={(e) => patchState(idx, { label: e.target.value || undefined })}
-                                  />
-                                </Field>
-                                <Field label="Cursor (blank = keep)">
-                                  <select
-                                    className={inputCls}
-                                    value={st.cursor ?? ""}
-                                    onChange={(e) => patchState(idx, { cursor: (e.target.value || undefined) as HotspotState["cursor"] })}
-                                  >
-                                    <option value="">— keep the object's —</option>
-                                    {VERB_IDS.map((c) => (
-                                      <option key={c} value={c}>{VERB_ICON[c]} {VERB_LABEL[c]}</option>
-                                    ))}
-                                  </select>
-                                </Field>
-                              </div>
-                              <Field label="Object image in this state (blank = keep · 'none' = no art)">
-                                <ImagePicker
-                                  value={st.image ?? ""}
-                                  onChange={(v) => patchState(idx, { image: v === undefined ? undefined : v || "" })}
-                                  storyId={story.id}
-                                  includeGradients={false}
-                                  placeholder="Pick the state's art…"
-                                />
-                                <div className="mt-1 flex gap-1">
-                                  {st.image ? (
-                                    <>
-                                      {st.image !== "" && (
-                                        <button
-                                          className="border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                                          onClick={() => patchState(idx, { image: "" })}
-                                        >
-                                          ◻ No art in this state
-                                        </button>
-                                      )}
-                                      <button
-                                        className="border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                                        onClick={() => patchState(idx, { image: undefined })}
-                                      >
-                                        ✕ Keep the object's art
-                                      </button>
-                                    </>
-                                  ) : null}
-                                </div>
-                              </Field>
-                              <GatingEditor
-                                gating={st.when}
-                                onChange={(g) => patchState(idx, { when: g })}
-                                items={story.items}
-                                characters={story.characters}
-                                flags={allFlags}
-                                sectionId={`hsstate-when-${h.id}-${st.id}`}
-                              />
-                              {/* ---- the state's ACTION override ---- */}
-                              <div className="space-y-1 border border-gold/20 bg-gold/5 p-1.5">
-                                <div className="flex items-center gap-1">
-                                  <span className="font-pulp text-[9px] uppercase tracking-widest text-gold/80">⚙ Action in this state</span>
-                                  <span className="flex-1" />
-                                  {st.action ? (
-                                    <button
-                                      className="px-1 font-pulp text-[9px] text-crimson hover:underline"
-                                      onClick={() => patchState(idx, { action: undefined })}
-                                    >
-                                      ✕ keep the object's action
-                                    </button>
-                                  ) : null}
-                                </div>
-                                <select
-                                  className={inputCls}
-                                  value={st.action?.type ?? ""}
-                                  onChange={(e) => {
-                                    if (!e.target.value) { patchState(idx, { action: undefined }); return; }
-                                    const ty = e.target.value as HotspotAction["type"];
-                                    patchState(idx, {
-                                      action:
-                                        ty === "showText" ? { type: "showText", text: "" }
-                                        : ty === "giveItem" ? { type: "giveItem", itemGranted: undefined }
-                                        : ty === "goToScene" ? { type: "goToScene", targetSceneId: undefined }
-                                        : ty === "useItem" ? { type: "useItem", itemConsumed: undefined }
-                                        : ty === "setFlag" ? { type: "setFlag", flagSet: "" }
-                                        : { type: "showText", text: "" },
-                                    });
-                                  }}
-                                >
-                                  <option value="">— keep the object's action —</option>
-                                  <option value="showText">💬 Say a line</option>
-                                  <option value="giveItem">🎁 Give item</option>
-                                  <option value="goToScene">→ Go to scene</option>
-                                  <option value="useItem">🗝 Use item (consumes it)</option>
-                                  <option value="setFlag">🚩 Set flag</option>
-                                  <option value="startDialogue">🗣 Start conversation (stage)</option>
-                                </select>
-                                {st.action?.type === "showText" || st.action?.type === "useItem" ? (
-                                  <textarea
-                                    className={`${inputCls} h-14 font-type`}
-                                    placeholder="What it says in this state…"
-                                    value={st.action.text ?? ""}
-                                    onChange={(e) => patchState(idx, { action: { ...st.action!, text: e.target.value } })}
-                                  />
-                                ) : null}
-                                {st.action?.type === "giveItem" ? (
-                                  <select
-                                    className={inputCls}
-                                    value={st.action.itemGranted ?? ""}
-                                    onChange={(e) => patchState(idx, { action: { ...st.action!, itemGranted: e.target.value || undefined } })}
-                                  >
-                                    <option value="">— pick an item —</option>
-                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
-                                  </select>
-                                ) : null}
-                                {st.action?.type === "goToScene" ? (
-                                  <select
-                                    className={inputCls}
-                                    value={st.action.targetSceneId ?? ""}
-                                    onChange={(e) => patchState(idx, { action: { ...st.action!, targetSceneId: e.target.value || undefined } })}
-                                  >
-                                    <option value="">— pick a scene —</option>
-                                    {story.scenes.map((s) => (<option key={s.id} value={s.id}>{s.title}</option>))}
-                                  </select>
-                                ) : null}
-                                <FlagInput
-                                  value={st.action?.flagSet}
-                                  suggestions={allFlags}
-                                  onChange={(v) => st.action && patchState(idx, { action: { ...st.action, flagSet: v } })}
-                                />
-                                {(st.action?.type === "showText" || st.action?.type === "useItem") && (
-                                  <HotspotVoiceControls
-                                    story={story}
-                                    sceneId={scene.id}
-                                    assetKey={`${h.id}-state-${st.id}`}
-                                    line={st.action.text ?? ""}
-                                    value={st.action.audioUrl}
-                                    onChange={(url) => st.action && patchState(idx, { action: { ...st.action, audioUrl: url } })}
-                                  />
-                                )}
-                              </div>
-                              {/* ---- the state's GATE override (locked door → open door) ---- */}
-                              <div className="flex flex-wrap items-center gap-1 border border-crimson/20 bg-crimson/5 p-1.5">
-                                <span className="font-pulp text-[9px] uppercase tracking-widest text-crimson/80">🔒 Lock while in this state</span>
-                                <select
-                                  className={inputCls}
-                                  value={st.gating === null ? "open" : st.gating ? "replace" : "inherit"}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    if (v === "inherit") patchState(idx, { gating: undefined });
-                                    else if (v === "open") patchState(idx, { gating: null });
-                                    else patchState(idx, { gating: st.gating ?? { requiresFlags: [] } });
-                                  }}
-                                >
-                                  <option value="inherit">inherit the object's gate</option>
-                                  <option value="open">always unlocked (e.g. the opened door)</option>
-                                  <option value="replace">use its own gate…</option>
-                                </select>
-                                {st.gating ? (
-                                  <div className="w-full">
-                                    <GatingEditor
-                                      gating={st.gating === null ? undefined : st.gating}
-                                      onChange={(g) => patchState(idx, { gating: g ?? null })}
-                                      items={story.items}
-                                      characters={story.characters}
-                                      flags={allFlags}
-                                      sectionId={`hsstate-gate-${h.id}-${st.id}`}
-                                    />
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                          <button
-                            onClick={addState}
-                            className="w-full border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                          >
-                            ＋ Add a state (e.g. "after it's been taken")
-                          </button>
-                        </CollapsibleSection>
-                      );
-                    })()}
                     {h.action.type === "patternPuzzle" && (
                       (() => {
                         const pp = h.action.patternPuzzle ?? { title: "Bank Statements", instruction: "Find the entries that don't belong", rows: [], targetCount: 3, payoffText: "" };
@@ -14471,13 +13570,6 @@ function StudioInner({
                           }
                           npcIds={(scene.stage?.npcs ?? []).map((n) => n.id)}
                           scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
-                          onPickPoint={(index, npc) => {
-                            // Jump to the stage tab so the plate is on screen;
-                            // after the click the editor hops back here.
-                            setScriptPick({ index, npc, origin: "hotspot", hotspotId: h.id });
-                            setTab("stage");
-                          }}
-                          picking={scriptPick?.origin === "hotspot" && scriptPick.hotspotId === h.id ? scriptPick : null}
                         />
                       </div>
                     )}
@@ -14486,7 +13578,7 @@ function StudioInner({
                         <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">💬 Topic-list conversation (opt-in)</div>
                         <p className="font-type text-[9px] leading-snug text-paper/45">
                           Instead of playing this scene's Beats straight through, the talk opens as a HUB of questions
-                          the player can ask ("ask the bartender…"). Pick a topic, its lines play, then
+                          the player can ask (Full Throttle's "ask the bartender…"). Pick a topic, its lines play, then
                           it returns to the hub; <b>leave</b> ends the conversation. Leave empty to keep the classic
                           linear conversation.
                         </p>
@@ -15163,7 +14255,7 @@ function StudioInner({
                         </div>
                       </div>
                     )}
-                    {/* ---- Ride minigame (road chase) ---- */}
+                    {/* ---- Ride minigame (Full Throttle road chase) ---- */}
                     <label className="flex items-center gap-2 border border-emerald-500/25 bg-emerald-500/5 p-1.5 text-[9px] text-paper/70">
                       <input
                         type="checkbox"
@@ -15190,7 +14282,7 @@ function StudioInner({
                         <Field label="Big on-screen prompt (defaults to 'RIDE')">
                           <input
                             className={inputCls}
-                            placeholder="OUTRUN THE MIDNIGHT PACK"
+                            placeholder="OUTRUN THE ROTTWHEELER"
                             value={c.ride.prompt ?? ""}
                             onChange={(e) =>
                               mutate((d) => {
@@ -15611,7 +14703,7 @@ function StudioInner({
         </div>
       </div>
 
-      {showHelp && <StudioHelpModal onClose={() => setShowHelp(false)} onOpenManual={onOpenManual} />}
+      {showHelp && <StudioHelpModal onClose={() => setShowHelp(false)} />}
 
       {exportPayload !== null && (
         <div
@@ -15694,7 +14786,6 @@ export function Studio(props: {
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
   onUpdateTitleTheme: (theme: TitleTheme) => void;
-  onOpenManual?: () => void;
 }) {
   return (
     <ReactFlowProvider>

@@ -1,4 +1,4 @@
-# Engine improvements — six proposals (two built)
+# Engine improvements — six proposals (one built)
 
 A working list of things the *engine* (playtime runtime, not the authoring UI)
 doesn't do yet, ranked by how much authoring pain they remove. Each entry says
@@ -30,21 +30,23 @@ same tally, so coverage fills in without a human at the keyboard.
 
 ---
 
-## 2. ✅ Deterministic seeded RNG — **IMPLEMENTED**
+## 2. Deterministic seeded RNG for playtests
 
-**Shipped:** `src/game/rng.ts` — mulberry32 + a string seed hash, a shared
-module stream (`gameRandom` / `gameRange` / `gamePick` / `gameShuffle`),
-`setGameSeed` for tests and future Studio toggles, and a boot-time
-`initGameSeedFromUrl` that Game.tsx runs at import: put **?seed=1234** (any
-string) on the URL and every gameplay draw pins to one stream — the console
-logs a `[seed]` line confirming the run is deterministic. Gameplay call
-sites now route through it (PatternPuzzle's row shuffle, RideGame's spawn
-timing / lane / sprite); cosmetic randomness — ids, audio noise, storm
-particles, Studio canvas — deliberately stays live. 18 engine checks cover
-stream determinism, seed parsing and the helpers.
+**What:** route every random draw in the engine (QTE jitter, ambient variation,
+shuffle-style beat selection, any future dice roll) through one seeded PRNG.
+A `?seed=1234` URL parameter or a Studio toggle fixes the seed for a run.
+
+**Why:** two runs of the same case with the same inputs should produce the same
+run. Today a bug that only appears on an unlucky roll is unreproducible, which
+makes it unfixable. Paired with coverage, a seeded run is a regression test:
+"seed 42, take these branches, land here".
+
+**Cost:** small-to-medium. `src/logic.ts` gains a tiny mulberry32/xorshift and
+a `Rng` threaded through `applyConsequences`-style call sites; the audit is
+finding every `Math.random()` in `src/game/` and deciding whether it is
+gameplay (seeded) or cosmetic (unseeded).
 
 ---
-
 
 ## 3. Rewind one decision
 

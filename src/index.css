@@ -205,15 +205,6 @@ body,
   border: 0;
   cursor: pointer;
 }
-/* HINT KEY (H) — every marker + NPC chip pulses so the player can see what
-   is interactive. Filter-only: no transforms, so marker layout never jumps. */
-.stage-marker-flash {
-  animation: stage-flash-pulse 0.55s ease-in-out 4;
-}
-@keyframes stage-flash-pulse {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(2) drop-shadow(0 0 8px rgba(232, 178, 60, 0.95)); }
-}
 .stage-marker-reticle {
   width: 13px;
   height: 13px;
@@ -272,8 +263,7 @@ body,
   animation: stage-caption-in 0.3s ease-out both;
 }
 @keyframes stage-caption-in {
-  /* The bar lives at the TOP of the plate now — it drops in from above. */
-  from { opacity: 0; transform: translateY(-6px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -2232,7 +2222,7 @@ body,
 }
 
 /* ---------------------------------------------------------------------
-   RIDE MINIGAME (highway chase) — the scrolling road,
+   RIDE MINIGAME (Full Throttle highway chase) — the scrolling road,
    the oncoming traffic and the rider's bike are styled here so the
    RideGame component can stay lean. All motion is CSS/RAF-driven.
    --------------------------------------------------------------------- */

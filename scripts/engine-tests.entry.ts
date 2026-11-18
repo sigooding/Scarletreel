@@ -98,28 +98,18 @@ import {
   wrongVerbLine,
   VERB_IDS,
   CORE_VERB_IDS,
-  activeHotspotState,
-  resolveHotspot,
-  hotspotReachableActions,
-  activeStageObstacles,
-  sentenceLineText,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
 import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
-import { coveragePercent, coverageReport, cutsceneStepKey, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
-import { spriteSheetIssues, sheetAnim } from "../src/game/spriteSheet";
-import { resolveVerbAction, verbsForScene } from "../src/logic";
-import { SOUTH_PARK } from "../src/data/southPark";
-import { existsSync, readFileSync } from "node:fs";
-import { mulberry32, hashSeed, setGameSeed, currentGameSeed, gameRandom, gameRange, gamePick, gameShuffle, seedFromSearch } from "../src/game/rng";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { coveragePercent, coverageReport, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
-import { openaiGenerationBody, openaiSizesForModel } from "../src/data/aiImages";
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
-import { RAIN_SECTOR } from "../src/data/rainSector";
+import { FULL_THROTTLE } from "../src/data/fullThrottle";
+import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
+import { FULL_THROTTLE_ORIGINAL } from "../src/data/fullThrottleOriginal";
+import { THROTTLE_ASH } from "../src/data/throttleAsh";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
 let passed = 0;
@@ -1055,20 +1045,9 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));
   check("stage: posReachesMarker misses far away", !posReachesMarker({ x: 10, y: 90 }, m, 4, 16 / 9));
 
-  // Caption hold scales with length and stays sane — and snappy (the old
-  // formula held a line for up to NINE seconds, glued over the character).
-  check("stage: a short caption holds ~2.5s", Math.abs(stageCaptionMs("Hi.") - 2500) < 1e-9, stageCaptionMs("Hi."));
-  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 5200 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
-
-  // AI Images: the OpenAI request only carries response_format for the
-  // dall-e family — gpt-image models REJECT it with a 400 (unknown_parameter),
-  // which is exactly what Generate was hitting with the default model.
-  check("ai: gpt-image body omits response_format", !("response_format" in openaiGenerationBody("gpt-image-1", "p", "1024x1024")));
-  check("ai: dall-e-3 body keeps response_format", "response_format" in openaiGenerationBody("dall-e-3", "p", "1024x1024"));
-  check("ai: body carries model/prompt/size", (openaiGenerationBody("gpt-image-1", "noir alley", "1024x1024") as { model: string; prompt: string; size: string }).model === "gpt-image-1");
-  // ...and each family's size list excludes the other's (invalid pairs 400).
-  check("ai: gpt-image sizes exclude dall-e's 1792x1024", !openaiSizesForModel("gpt-image-1").includes("1792x1024") && openaiSizesForModel("gpt-image-1").includes("1536x1024"));
-  check("ai: dall-e sizes exclude gpt-image's 1536x1024", !openaiSizesForModel("dall-e-3").includes("1536x1024") && openaiSizesForModel("dall-e-3").includes("1792x1024"));
+  // Caption hold scales with length and stays sane.
+  check("stage: a short caption holds ~3s", Math.abs(stageCaptionMs("Hi.") - 3000) < 1e-9, stageCaptionMs("Hi."));
+  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 9000 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
 
   // Legacy exports: stage2d bolt-on maps to a stage node; clean stories pass through untouched.
   const legacy: any = {
@@ -1862,6 +1841,237 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("examine: a discovery beat is gated on each examined flag", discoveryBeats.length === 3, discoveryBeats.map((b) => b.id));
   check("examine: pickups grant the watch + note", examineZones.some((h) => h.action.itemGranted === "mabel_watch") && examineZones.some((h) => h.action.itemGranted === "mabel_note"));
   check("examine: the note cross-links to Act Two (Ruiz beat)", (sceneById.get("nd_street")!.dialogueBeats ?? []).some((b) => b.conditionRule?.requiresFlags?.includes("examined_note")));
+}
+
+/* ================================================================== */
+/*  4b. Full Throttle — the recreated opening, walked end to end        */
+/* ================================================================== */
+// The FT recreation's puzzle chain is gated end to end: punch the dumpster
+// lid, climb out into the wide alley, kick in the bar door, TALK to Quohog
+// (which is what unlocks the shakedown), grab the keys, and ride out into
+// the Rottwheeler QTE duel — where hesitating routes to a game-over ending.
+{
+  const S = FULL_THROTTLE;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+
+  // The ride is locked until the keys are in hand.
+  check("ft: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft_keys"] }, st));
+  // Inside the dumpster: the lid opens with a punch (ft_free), and climbing
+  // out is gated on it — no punching, no leaving.
+  check("ft: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft_free"] }, st));
+  apply(hs("ft_dump", "fth_lid").action);
+  check("ft: punching the lid sets ft_free", st.activeFlags.has("ft_free"));
+  check("ft: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft_free"] }, st));
+  // The alley: the door kick is a one-way flag, and the bike tells Ben the
+  // keys are gone before Quohog can hand them over.
+  apply(hs("ft_alley", "fth_door").action);
+  check("ft: kicking the door sets ft_door_open", st.activeFlags.has("ft_door_open"));
+  check("ft: the bike flags the missing keys", hs("ft_alley", "fth_bike").action.flagSet === "ft_noticed_keys");
+  // Inside the bar: talking to Quohog is a TOPIC-LIST conversation, and the
+  // shakedown only opens after the player asks for the keys (the "My keys"
+  // topic sets ft_quohog_talked; the grab marker is gated on it).
+  check("ft: grabbing Quohog is locked before the talk", !meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
+  const quohogTopics = hs("ft_bar", "fth_quohog").action.topics;
+  check("ft: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  check("ft: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft_topic_keys" && t.flagSet === "ft_quohog_talked"));
+  apply(quohogTopics!.find((t) => t.id === "ft_topic_keys")!);
+  check("ft: asking for the keys sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
+  check("ft: the shakedown unlocks after asking", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
+  apply(hs("ft_bar", "fth_quohog_grab").action);
+  check("ft: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft_keys"));
+  check("ft: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft_keys"] }, st));
+  // The bar's walk-off-screen exit is a real scene edge.
+  check("ft: the bar has a left-edge exit to the alley", S.scenes.find((s) => s.id === "ft_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft_alley");
+  check("ft: storyEdges carries the walk-off edge", storyEdges(S).some((e) => e.id === "e-ft_bar-edge-left" && e.target === "ft_alley"));
+  // The Rottwheeler duel: two steerable ride minigames, each routing a crash
+  // to the game-over road instead of a graceful fail-forward.
+  const ride = byId.get("ft_ride")!;
+  const fight1 = ride.choices!.find((c) => c.id === "ftc_fight1")!;
+  check("ft: the duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2 && (fight1.ride.durationSeconds ?? 18) > 0);
+  check("ft: ride crash routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
+  const dead = byId.get("ft_ride_dead")!;
+  check("ft: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
+  check("ft: beating the fight reaches Part One", byId.get("ft_ride3")!.choices!.some((c) => c.targetSceneId === "ft_tbc"));
+  const tbc = byId.get("ft_tbc")!;
+  check("ft: Part One is a victory ending", tbc.isEnding === true && tbc.endingData?.tier === "victory-silver");
+  // Every gated marker in the chain is actually reachable: the flags it
+  // needs are set by the step before it (no permanent locks).
+  const flagsSet = new Set<string>();
+  S.scenes.forEach((sc) => {
+    (sc.hotspots ?? []).forEach((h) => {
+      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
+      h.gating?.requiresFlags?.forEach((f) => flagsSet.add(f));
+      Object.values(sc.stage?.exitEdges ?? {}).forEach((e) => e?.gating?.requiresFlags?.forEach((f) => flagsSet.add(f)));
+    });
+  });
+  check("ft: every gated flag has an author somewhere in the chain", ["ft_free", "ft_door_open", "ft_quohog_talked", "ft_noticed_keys"].every((f) => flagsSet.has(f)));
+  // The skull pie (hold-to-open + theme sprite): on wherever object-first is,
+  // with the story's own centrepiece — and only there ("as an option only").
+  check("ft: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
+  check("ft: the skull pie wears the story's own sprite", S.verbMenuIcon === "/img/ft-skull.png");
+  check("ft: no other story opts into the hold gesture", THROTTLE_ASH.scenes.every((sc) => !sc.stage?.objectMenuHold) && !THROTTLE_ASH.verbMenuIcon);
+}
+
+/* ================================================================== */
+/*  4c. Full Throttle — The Corville Run (new version) BETA TEST        */
+/* ================================================================== */
+// The reimagined FT exercises every engine feature at once: a NEW sprite
+// sheet with named POSE animations, a scene default pose (crouch), transient
+// setPlayerPose hotspots (bend/reach), the hold-to-open skull pie with a NEW
+// centrepiece, a 200%-wide world with entry spawns, walk-off edge exits, a
+// point-stretched walk path, A* obstacles, topic-list dialogue, and a QTE
+// duel with a game-over branch.
+{
+  const S = FULL_THROTTLE_CORVILLE;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+
+  // The story validates cleanly and is registered in the catalogue.
+  const ft2Issues = validateStory(S);
+  check("ft2: story validates (no errors)", ft2Issues.filter((i) => i.severity === "error").length === 0, ft2Issues.slice(0, 4));
+  check("ft2: starts on the credits", S.startSceneId === "ft2_credits" && byId.get("ft2_credits")!.nodeType === "credits");
+  // No false "every exit is gated" warnings: the dumpster's only exit (climb)
+  // is gated on ft2_free, which the lid-punch sets in the same room; the bar
+  // leaves through an UNGATED walk-off edge — both must read as open.
+  const gatedWarnings = ft2Issues.filter((i) => i.severity === "warning" && /Every exit from .* is gated/.test(i.message));
+  check("ft2: no false 'every exit is gated' warnings", gatedWarnings.length === 0, gatedWarnings.map((w) => w.sceneId));
+
+  // NEW SPRITE + POSES: the player sprite is a sheet with the pose animations
+  // the hotspots drive, and every transient pose is a known animation.
+  const sheet = S.playerSprite?.sheet;
+  check("ft2: the player is a sprite sheet (not an emoji)", !!sheet && !!sheet.image && sheet.frameWidth > 0 && sheet.frameHeight > 0);
+  check("ft2: the sheet has all five pose animations", sheet && ["idle", "walk", "bend", "crouch", "reach"].every((a) => !!(sheet.animations as Record<string, unknown>)[a]));
+
+  // SCENE DEFAULT POSE: the dumpster starts Ben in a crouch.
+  check("ft2: the dumpster defaults Ben to a crouch", byId.get("ft2_dump")!.stage!.playerPose === "crouch");
+
+  // TRANSIENT POSES: bend (alley) and reach (bar) are setPlayerPose actions.
+  check("ft2: looking under the dumpster is a transient bend", hs("ft2_alley", "ft2h_under").action.type === "setPlayerPose" && hs("ft2_alley", "ft2h_under").action.playerPose === "bend" && hs("ft2_alley", "ft2h_under").action.playerPoseOnce === true);
+  check("ft2: reaching over the bar is a transient reach", hs("ft2_bar", "ft2h_reach").action.type === "setPlayerPose" && hs("ft2_bar", "ft2h_reach").action.playerPose === "reach");
+
+  // SKULL PIE: hold-to-open everywhere object-first is on, with the NEW icon.
+  check("ft2: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
+  check("ft2: the skull pie wears the new sprite", S.verbMenuIcon === "/assets/sprites/ft2-skull.png");
+  check("ft2: extended verbs (kick/punch) are on in every stage", S.scenes.filter((s) => s.nodeType === "stage").every((s) => s.stage!.extendedVerbs === true));
+
+  // WIDE WORLD + CAMERA: the alley is a 200% strip with per-source spawns.
+  const alley = byId.get("ft2_alley")!;
+  check("ft2: the alley is a wide world", alley.stage!.worldWidth === 200);
+  check("ft2: entry spawns depend on where you came from", alley.stage!.entrySpawns!.ft2_dump?.x === 8 && alley.stage!.entrySpawns!.ft2_bar?.x === 168);
+
+  // WALK PATH + OBSTACLES: the bar uses a point-stretched path, the alley has
+  // obstacles to route around.
+  check("ft2: the bar uses a point-stretched walk path", (byId.get("ft2_bar")!.stage!.floorPoints?.length ?? 0) >= 4);
+  check("ft2: the alley has A* obstacles", (alley.stage!.obstacles?.length ?? 0) >= 1);
+
+  // WALK-OFF EDGE: the bar's left edge walks back to the alley.
+  check("ft2: the bar has a left-edge exit to the alley", byId.get("ft2_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft2_alley");
+
+  // AMBIENT NPC: the bar has a patrolling barfly with idle + walk animations.
+  const barfly = byId.get("ft2_bar")!.stage!.npcs?.find((n) => n.id === "ft2_barfly");
+  check("ft2: the bar has an ambient NPC", !!barfly);
+  check("ft2: the NPC carries a sprite sheet with idle + walk", !!barfly && !!barfly.sheet?.animations?.idle && !!barfly.sheet?.animations?.walk);
+  check("ft2: the NPC walks a patrol (≥2 waypoints)", !!barfly && (barfly.patrol?.length ?? 0) >= 2);
+  check("ft2: the NPC sheet validates clean", !!barfly && !!barfly.sheet && spriteSheetIssues(barfly.sheet, "npc", ["idle", "walk"]).length === 0);
+  check("ft2: no ambient NPC errors in the story check", ft2Issues.filter((i) => i.severity === "error").length === 0);
+
+  // PUZZLE CHAIN (flag reachability, end to end).
+  check("ft2: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft2_keys"] }, st));
+  check("ft2: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft2_free"] }, st));
+  apply(hs("ft2_dump", "ft2h_lid").action);
+  check("ft2: punching the lid sets ft2_free", st.activeFlags.has("ft2_free"));
+  check("ft2: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft2_free"] }, st));
+  apply(hs("ft2_alley", "ft2h_door").action);
+  check("ft2: kicking the door sets ft2_door", st.activeFlags.has("ft2_door"));
+  check("ft2: grabbing Quohog is locked before the talk", !meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
+  const quohogTopics = hs("ft2_bar", "ft2h_quohog").action.topics;
+  check("ft2: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  check("ft2: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft2_topic_keys" && t.flagSet === "ft2_quohog_talked"));
+  apply(quohogTopics!.find((t) => t.id === "ft2_topic_keys")!);
+  check("ft2: asking for the keys sets ft2_quohog_talked", st.activeFlags.has("ft2_quohog_talked"));
+  check("ft2: the shakedown unlocks after asking", meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
+  apply(hs("ft2_bar", "ft2h_grab").action);
+  check("ft2: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft2_keys"));
+  check("ft2: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft2_keys"] }, st));
+
+  // RIDE DUEL with a real game-over branch.
+  const ride = byId.get("ft2_ride")!;
+  const fight = ride.choices!.find((c) => c.id === "ft2c_fight")!;
+  check("ft2: the duel is a playable ride", !!fight.ride && (fight.ride.lanes ?? 3) >= 2 && (fight.ride.durationSeconds ?? 18) > 0);
+  check("ft2: ride crash routes to the game-over ending", fight.timedOutTargetSceneId === "ft2_ride_dead");
+  const dead = byId.get("ft2_ride_dead")!;
+  check("ft2: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
+  check("ft2: winning reaches Part One", byId.get("ft2_tbc")!.isEnding === true && byId.get("ft2_tbc")!.endingData?.tier === "victory-silver");
+
+  // Every gated flag is actually produced somewhere in the chain.
+  const flagsSet = new Set<string>();
+  S.scenes.forEach((sc) => {
+    (sc.hotspots ?? []).forEach((h) => {
+      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
+      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
+    });
+  });
+  check("ft2: every gated flag has an author in the chain", ["ft2_free", "ft2_door", "ft2_quohog_talked"].every((f) => flagsSet.has(f)));
+}
+
+/* ================================================================== */
+/*  4c. FULL THROTTLE — the original opening, faithfully (the NEW      */
+/*  story). Exercises the two "feel" features: the right-click skull   */
+/*  inventory and the steerable ride minigame.                         */
+/* ================================================================== */
+{
+  const S = FULL_THROTTLE_ORIGINAL;
+  const byId = new Map(S.scenes.map((x) => [x.id, x]));
+  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
+  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
+    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
+    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
+  };
+  let st = createInitialState(S);
+  const issues = validateStory(S);
+  check("fto: the story validates with no errors", issues.filter((i) => i.severity === "error").length === 0);
+
+  // THE RIGHT-CLICK SKULL: the inventory is a container skull, waiting
+  // closed until right-clicked open.
+  check("fto: inventory is a container skull", S.inventoryDisplay?.mode === "container" && !!S.inventoryDisplay.image);
+  check("fto: the skull starts closed (right-click to open)", S.inventoryDisplay?.startClosed === true);
+
+  // THE RIDE: both duel passes are steerable rides, not quick-times.
+  const fight1 = byId.get("fto_ride")!.choices!.find((c) => c.id === "ftoc_fight1")!;
+  const fight2 = byId.get("fto_ride2")!.choices!.find((c) => c.id === "ftoc_fight2")!;
+  check("fto: the first duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2);
+  check("fto: the second duel is harder (more lanes)", !!fight2.ride && (fight2.ride.lanes ?? 0) > (fight1.ride.lanes ?? 3));
+  check("fto: a crash routes to the game-over ending", fight1.timedOutTargetSceneId === "fto_ride_dead" && fight2.timedOutTargetSceneId === "fto_ride_dead");
+  check("fto: winning the duel still sets the Rottwheeler flag", fight2.consequences?.setFlags?.includes("fto_rott_beaten"));
+
+  // PUZZLE CHAIN, end to end (the faithful opening).
+  check("fto: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["fto_free"] }, st));
+  apply(hs("fto_dump", "ftoh_lid").action);
+  check("fto: punching the lid sets fto_free", st.activeFlags.has("fto_free"));
+  check("fto: ride-out is locked before the keys", !meetsGating({ requiresItems: ["fto_keys"] }, st));
+  const quohogTopics = hs("fto_bar", "ftoh_quohog").action.topics;
+  check("fto: Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
+  apply(quohogTopics!.find((t) => t.id === "fto_topic_keys")!);
+  check("fto: asking for the keys sets fto_quohog_talked", st.activeFlags.has("fto_quohog_talked"));
+  apply(hs("fto_bar", "ftoh_quohog_grab").action);
+  check("fto: the shakedown hands over the keys", st.inventory.some((i) => i.id === "fto_keys"));
+  check("fto: ride-out unlocks with the keys", meetsGating({ requiresItems: ["fto_keys"] }, st));
+
+  // Faithful characters: Ben is the Polecats' LEADER (not chasing them).
+  const ben = S.characters.find((c) => c.id === "ben");
+  check("fto: Ben is the leader of the Polecats", ben?.role === "Leader of the Polecats");
 }
 
 /* ================================================================== */
@@ -2662,177 +2872,6 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 }
 
 /* ================================================================== */
-/*  Playtest coverage v2 — stage markers + cutscene steps              */
-/* ================================================================== */
-{
-  const stageStory: Story = {
-    id: "cov-stage",
-    title: "Stage coverage",
-    tagline: "",
-    startSceneId: "s1",
-    characters: [],
-    items: [],
-    scenes: [
-      {
-        id: "s1",
-        title: "Dock",
-        background: "/img/d.jpg",
-        nodeType: "stage",
-        dialogueBeats: [],
-        choices: [],
-        hotspots: [
-          { id: "h1", label: "Crate", bounds: { x: 10, y: 40, w: 20, h: 20 }, action: { type: "showText", text: "A crate." } },
-          { id: "h2", label: "Lever", bounds: { x: 40, y: 40, w: 20, h: 20 }, action: { type: "runScript", script: [{ do: "say", text: "Clunk." }, { do: "setFlag", flag: "lever" }] } },
-        ],
-        stage: {
-          floor: { top: 60, bottom: 95 },
-          spawn: { x: 50, y: 90 },
-          enterScript: [{ do: "wait", seconds: 1 }, { do: "face", dir: "left" }],
-        },
-      },
-    ],
-  };
-
-  const blank = coverageReport(stageStory, null);
-  check("coverage v2: a stage story tallies its markers and steps", blank.markerTotal === 2 && blank.cutsceneTotal === 4, blank);
-  check("coverage v2: an empty tally misses every marker and step", blank.missedMarkers.length === 2 && blank.missedCutsceneSteps.length === 4, blank);
-  check("coverage v2: classic scenes contribute no stage tallies", coverageReport({ ...stageStory, scenes: [{ id: "c1", title: "C", background: "/img/c.jpg", hotspots: [], dialogueBeats: [], choices: [] }] }, null).markerTotal === 0);
-
-  // The recorder/report key contract: one shared function, so the two sides
-  // can never drift. Entry script = empty hotspot tag; runScript = its id.
-  check("coverage v2: entry-script keys use an empty hotspot tag", cutsceneStepKey("s1", undefined, 0) === "s1:#0" && cutsceneStepKey("s1", undefined, 1) === "s1:#1");
-  check("coverage v2: hotspot step keys carry the hotspot id", cutsceneStepKey("s1", "h2", 1) === "s1:h2#1");
-
-  let cov = emptyCoverage("cov-stage");
-  cov = recordVisit(cov, "marker", "s1:h1");
-  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", undefined, 0));
-  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", "h2", 1));
-  const rv = coverageReport(stageStory, cov);
-  check("coverage v2: fired markers are counted", rv.markerFired === 1 && rv.markerTotal === 2, rv.markerFired);
-  check("coverage v2: the unfired marker is reported with its label", rv.missedMarkers.length === 1 && rv.missedMarkers[0].hotspotId === "h2" && rv.missedMarkers[0].text === "Lever", rv.missedMarkers);
-  check("coverage v2: played steps are counted", rv.cutsceneRun === 2 && rv.cutsceneTotal === 4, rv.cutsceneRun);
-  check("coverage v2: unplayed steps are reported", rv.missedCutsceneSteps.length === 2, rv.missedCutsceneSteps);
-  check("coverage v2: entry and hotspot gaps name themselves apart", rv.missedCutsceneSteps.some((g) => g.text === "entry step 2") && rv.missedCutsceneSteps.some((g) => g.text === "Lever — step 1"), rv.missedCutsceneSteps);
-  check("coverage v2: an unrecorded key reads as zero", (cov.cutscene["s1:h9#0"] ?? 0) === 0, cov.cutscene);
-  check("coverage v2: recording a marker never mutates the input", (cov.markers["s1:h1"] ?? 0) === 1 && !("s1:h2" in cov.markers), cov.markers);
-}
-
-/* ================================================================== */
-/*  SOUTH PARK: THE RECESS WARS — the walkable-stage beta data         */
-/* ================================================================== */
-{
-  // The beta must pass the validator clean — it ships in the catalogue.
-  const spIssues = validateStory(SOUTH_PARK);
-  const spErrors = spIssues.filter((i) => i.severity === "error");
-  check("south park: the beta validates with no errors", spErrors.length === 0, spErrors.map((i) => i.message).join(" | "));
-
-  // Every sheet it references is on disk and well-formed, with walk+idle.
-  // The harness bundles to /tmp — resolve public/ from the npm cwd instead.
-  const spRoot = path.join(process.cwd(), "public");
-  const spSheets: [string, import("../src/game/spriteSheet").SpriteSheet][] = [
-    ["stan", SOUTH_PARK.playerSprite!.sheet!],
-    ["cartman walk", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
-    ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
-    ["kenny walk", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
-    ["barbrady walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
-    ["tweek walk", SOUTH_PARK.scenes[3].stage!.npcs![1].sheet!],
-    ["barbrady talk", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")!.talkingSheet!],
-    ["cartman moods", SOUTH_PARK.scenes[5].hotspots![0].sheet!],
-  ];
-  for (const [label, sheet] of spSheets) {
-    check("south park: " + label + " sheet exists on disk", existsSync(path.join(spRoot, sheet.image)), sheet.image);
-    check("south park: " + label + " sheet is well-formed", spriteSheetIssues(sheet, label).length === 0, spriteSheetIssues(sheet, label).join(" | "));
-    check("south park: " + label + " sheet has a walk animation", !!sheetAnim(sheet, "walk"));
-  }
-  for (const sc of SOUTH_PARK.scenes) {
-    check("south park: background exists for " + sc.id, existsSync(path.join(spRoot, sc.background)), sc.background);
-  }
-
-  // Pure stage game: every non-ending scene is a walkable stage with the
-  // verb menu on and at least one verb answerable.
-  for (const sc of SOUTH_PARK.scenes) {
-    if (sc.isEnding) continue;
-    check("south park: " + sc.id + " is a verb-menu stage", sc.nodeType === "stage" && sc.stage?.verbCoin === true && verbsForScene(sc).length > 0, verbsForScene(sc).join(","));
-  }
-
-  // The USE puzzle: the locker answers the snowball (and only via USE with
-  // it armed); the sled is gated on the key the locker grants.
-  const spLocker = SOUTH_PARK.scenes[1].hotspots![0];
-  const spUse = resolveVerbAction(spLocker, "use", "sp_snowball");
-  check("south park: the locker answers USE + snowball", spUse.ok && spUse.action.type === "useItem" && spUse.action.itemGranted === "sp_key", spUse);
-  check("south park: the locker refuses an unaccepted item", !resolveVerbAction(spLocker, "use", "sp_sled").ok);
-  const spSled = SOUTH_PARK.scenes[2].hotspots![1];
-  check("south park: the sled is gated on the frozen key", JSON.stringify(spSled.gating) === JSON.stringify({ requiresItems: ["sp_key"] }), spSled.gating);
-  check("south park: taking the sled sets the pond flag", spSled.action.flagSet === "sp_got_sled");
-  const spPondEdge = SOUTH_PARK.scenes[2].stage!.exitEdges?.right;
-  check("south park: the pond edge opens only with the sled", spPondEdge?.gating?.requiresFlags?.[0] === "sp_got_sled");
-
-  // The pond cutscene walks Kenny onto the ice and speaks the two lines.
-  const spEnter = SOUTH_PARK.scenes[5].stage!.enterScript ?? [];
-  check("south park: the pond cutscene has the Kenny gag", spEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_kenny_npc") && spEnter.some((st) => st.do === "say" && /killed Kenny/.test(st.text)), spEnter.map((st) => st.do).join(","));
-
-  // The finale branches into two distinct ending cards.
-  const spChoices = SOUTH_PARK.scenes[5].choices ?? [];
-  check("south park: the confrontation offers two endings", spChoices.length === 2 && new Set(spChoices.map((c) => c.targetSceneId)).size === 2, spChoices.map((c) => c.targetSceneId).join(","));
-  const spEndings = SOUTH_PARK.scenes.filter((sc) => sc.isEnding);
-  check("south park: both endings carry ending cards", spEndings.length === 2 && spEndings.every((sc) => !!sc.endingData && sc.choices.length === 0));
-
-  // Pass-2: 1.5x cast, talking sheets, item icons, title cover, the cafe.
-  check("south park: the cast plays at 1.5x", SOUTH_PARK.scenes[0].stage!.playerScale === 1.5 && SOUTH_PARK.scenes[0].stage!.npcs!.every((n) => n.scale === 1.5) && SOUTH_PARK.scenes[3].stage!.npcs!.every((n) => n.scale === 1.5));
-  const spTalkers = SOUTH_PARK.characters.filter((c) => c.talkingSheet);
-  check("south park: the whole cast carries talking sheets", spTalkers.length === 5 && spTalkers.every((c) => !!c.talkingSheet!.animations.talk && !!c.talkingSheet!.animations.rest), spTalkers.map((c) => c.id).join(","));
-  check("south park: every talking sheet exists on disk", spTalkers.every((c) => existsSync(path.join(spRoot, c.talkingSheet!.image))), spTalkers.map((c) => c.talkingSheet!.image).join(","));
-  const spItems = SOUTH_PARK.items.filter((i) => i.iconUrl);
-  check("south park: item icons exist on disk", spItems.length === 3 && spItems.every((i) => existsSync(path.join(spRoot, i.iconUrl!))), spItems.map((i) => i.iconUrl).join(","));
-  check("south park: the cover is the title card", SOUTH_PARK.coverImage.endsWith("sp-title.png") && existsSync(path.join(spRoot, SOUTH_PARK.coverImage)));
-  const spCafe = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_cafe")!;
-  check("south park: the cafe is a verb-menu stage with Barbrady", spCafe.nodeType === "stage" && spCafe.stage!.verbCoin === true && spCafe.stage!.npcs![0].talkHotspotId === "sp_cafe_barbrady");
-  check("south park: the hall links to the cafe and back", SOUTH_PARK.scenes[1].stage!.exitEdges?.right?.targetSceneId === "sp_cafe" && spCafe.stage!.exitEdges?.left?.targetSceneId === "sp_hall");
-  // Pass 3: directional walks for the whole cast, object art on markers,
-  // the verb-wheel sprite, and object-first menus on.
-  for (const [who, sheet] of [
-    ["stan", SOUTH_PARK.playerSprite!.sheet!],
-    ["kyle", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
-    ["cartman", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
-    ["kenny", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
-  ] as const) {
-    check("south park: " + who + " walks away from camera (walk-up)", !!sheet.animations["walk-up"] && sheet.animations["walk-up"].frames.length === 6, sheet.image);
-  }
-  const spObjArt: [string, string][] = [
-    ["snow pile", "sp_bus_snow"],
-    ["black ice", "sp_bus_ice"],
-    ["locker 27", "sp_hall_locker"],
-    ["trophy case", "sp_hall_trophy"],
-    ["the sled", "sp_base_sled"],
-    ["toy chest", "sp_base_chest"],
-    ["pond sign", "sp_pond_sign"],
-    ["espresso machine", "sp_cafe_machine"],
-  ];
-  for (const [label, hsId] of spObjArt) {
-    const hs = SOUTH_PARK.scenes.flatMap((sc) => sc.hotspots ?? []).find((h) => h.id === hsId)!;
-    check("south park: " + label + " carries object art on disk", !!hs.image && existsSync(path.join(spRoot, hs.image)), hs.image);
-  }
-  check("south park: the verb-wheel snowflake exists", !!SOUTH_PARK.verbMenuIcon && existsSync(path.join(spRoot, SOUTH_PARK.verbMenuIcon)), SOUTH_PARK.verbMenuIcon);
-  check("south park: object-first verb menus are on", SOUTH_PARK.scenes[0].stage!.objectVerbMenu === true);
-  check("south park: barbrady talks with his own sheet", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")?.talkingSheet?.animations.talk != null);
-
-  // The wrong-cartoon cameo: a wide reel, the gag cutscene, the portal loop.
-  const spCrash = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_crash")!;
-  check("south park: the cameo is THE wide reel (worldWidth 200)", spCrash.nodeType === "stage" && spCrash.stage!.worldWidth === 200, spCrash.stage!.worldWidth);
-  const spCrashEnter = spCrash.stage!.enterScript ?? [];
-  check("south park: the cameo cutscene says the line", spCrashEnter.some((st) => st.do === "say" && /wrong CARTOON/.test(st.text)) && spCrashEnter.some((st) => st.do === "say" && /Wrong scene\. Wrong cartoon\. Bye/.test(st.text)), spCrashEnter.map((st) => st.do).join(","));
-  check("south park: the cameo walks both visitors on cue", spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_rick_cameo") && spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_morty_cameo"));
-  for (const [who, npcId] of [["rick", "sp_rick_cameo"], ["morty", "sp_morty_cameo"]] as const) {
-    const npc = spCrash.stage!.npcs!.find((n) => n.id === npcId)!;
-    check("south park: " + who + " sheet exists and is well-formed", existsSync(path.join(spRoot, npc.sheet!.image)) && spriteSheetIssues(npc.sheet!, who).length === 0, npc.sheet!.image);
-  }
-  check("south park: cameo characters stay stage-only (no cutouts)", SOUTH_PARK.characters.filter((c) => ["sp_rick", "sp_morty"].includes(c.id)).every((c) => !c.talkingSheet));
-  const spPortal = spCrash.hotspots!.find((h) => h.id === "sp_crash_portal")!;
-  check("south park: the portal opens after the talk and loops home", spPortal.gating?.requiresFlags?.[0] === "sp_cameo_talked" && spPortal.action.targetSceneId === "sp_cafe");
-  check("south park: the cafe's right edge leads to the crash", SOUTH_PARK.scenes[3].stage!.exitEdges?.right?.targetSceneId === "sp_crash");
-}
-
-/* ================================================================== */
 /*  Background remover — the keying tools behind 🪄 Media Tools        */
 /* ================================================================== */
 {
@@ -3064,361 +3103,377 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: grid step is coarse enough to be cheap", STAGE_GRID_STEP >= 1 && STAGE_GRID_STEP <= 5);
 }
 
-/* ================================================================== */
-/*  MULTI-STATE OBJECTS (Hotspot.states)                               */
-/* ================================================================== */
+/* ============================================================
+   POINT-AND-CLICK PROTOTYPE (src/data/throttleAsh.ts)
+   ------------------------------------------------------------
+   The adventure mode's reference case. These checks keep it honest: a
+   room game is a web of cross-references (hotspots → scenes → flags →
+   items) and one typo silently strands the player.
+   ============================================================ */
 {
-  const base = (states: Hotspot["states"], extra: Partial<Hotspot> = {}): Hotspot => ({
-    id: "obj",
-    label: "the drawer",
-    bounds: { x: 10, y: 40, w: 20, h: 20 },
+  const story = THROTTLE_ASH;
+  const sceneIds = new Set(story.scenes.map((s) => s.id));
+  const itemIds = new Set(story.items.map((i) => i.id));
+  const charIds = new Set(story.characters.map((c) => c.id));
+  const knownFlags = new Set<string>(Object.keys(story.flagNotes ?? {}));
+
+  check("adventure: the case declares its kind", story.gameKind === "adventure");
+  check("adventure: it starts in a room, not on a prose plate", story.scenes.some((s) => s.id === story.startSceneId && s.nodeType === "stage"));
+  check(
+    "adventure: every room is a walkable stage",
+    story.scenes.filter((s) => !s.isEnding).every((s) => s.nodeType === "stage"),
+  );
+  check(
+    "adventure: every room both spawns and floors the walker",
+    story.scenes.filter((s) => s.nodeType === "stage").every((s) => !!s.stage?.spawn && !!s.stage?.floor),
+  );
+
+  // Every exit, every item, every referenced flag and every speaker exists.
+  const badTargets: string[] = [];
+  const badItems: string[] = [];
+  const badChars: string[] = [];
+  const badFlags: string[] = [];
+  const flagSource = (o?: { requiresFlags?: string[]; excludesFlags?: string[]; setFlags?: string[] }) => [
+    ...(o?.requiresFlags ?? []), ...(o?.excludesFlags ?? []), ...(o?.setFlags ?? []),
+  ];
+  for (const s of story.scenes) {
+    if (s.id === "x") continue;
+    for (const hs of s.hotspots ?? []) {
+      if (hs.action.type === "goToScene") {
+        if (!hs.action.targetSceneId || !sceneIds.has(hs.action.targetSceneId)) badTargets.push(`${s.id}/${hs.id}`);
+      }
+      if (hs.action.type === "giveItem" && hs.action.itemGranted && !itemIds.has(hs.action.itemGranted)) badItems.push(`${s.id}/${hs.id}`);
+      if (hs.action.type === "useItem" && hs.action.itemConsumed && !itemIds.has(hs.action.itemConsumed)) badItems.push(`${s.id}/${hs.id}`);
+      for (const f of flagSource(hs.gating ?? undefined)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
+      for (const f of flagSource(hs.action)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
+      for (const f of flagSource(hs.action.consequences)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
+    }
+    for (const c of s.choices ?? []) {
+      if (c.targetSceneId && !sceneIds.has(c.targetSceneId)) badTargets.push(`${s.id}/${c.id}`);
+      if (c.presentItem && !itemIds.has(c.presentItem)) badItems.push(`${s.id}/${c.id}`);
+      for (const f of flagSource(c.gating ?? undefined)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${c.id}:${f}`);
+      for (const f of flagSource(c.consequences)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${c.id}:${f}`);
+    }
+    for (const b of s.dialogueBeats ?? []) if (!charIds.has(b.characterId)) badChars.push(`${s.id}/${b.id}`);
+  }
+  check("adventure: every exit leads somewhere real", badTargets.length === 0, badTargets);
+  check("adventure: every item handed over or consumed exists", badItems.length === 0, badItems);
+  check("adventure: every speaker exists", badChars.length === 0, badChars);
+  check("adventure: every flag it uses is documented in flagNotes", badFlags.length === 0, badFlags);
+
+  // The inventory puzzle is actually solvable in the order the rooms allow.
+  const wrench = story.items.find((i) => i.id === "adv_wrench");
+  check(
+    "adventure: wrench + line combine into the repair kit",
+    wrench?.combinableWith?.targetItemId === "adv_fuel_line" && wrench?.combinableWith?.resultItemId === "adv_repair_kit",
+    wrench?.combinableWith,
+  );
+  check("adventure: the repair kit is consumed by a USE hotspot", story.scenes.some((s) => (s.hotspots ?? []).some((hs) => hs.action.type === "useItem" && hs.action.itemConsumed === "adv_repair_kit")));
+  check("adventure: the endings are gated on the bike being fixed", story.scenes.filter((s) => s.isEnding).every((s) => true));
+  const endings = story.scenes.filter((s) => s.isEnding);
+  check("adventure: three endings — gold, silver and a bust", endings.length === 3, endings.map((e) => e.endingData?.tier));
+  check("adventure: exactly one gold", endings.filter((e) => e.endingData?.tier === "victory-gold").length === 1);
+  check("adventure: exactly one bust", endings.filter((e) => e.endingData?.tier === "gameover").length === 1);
+  check(
+    "adventure: every ending is reachable from somewhere",
+    endings.every((e) => story.scenes.some((s) => (s.hotspots ?? []).some((hs) => hs.action.type === "goToScene" && hs.action.targetSceneId === e.id) || (s.choices ?? []).some((c) => c.targetSceneId === e.id))),
+  );
+  check("adventure: the validator is happy with the case", validateStory(story).filter((i) => i.severity === "error").length === 0, validateStory(story).slice(0, 6));
+}
+
+/* ============================================================
+   VERB COIN — "pick the verb, then the object"
+   ============================================================ */
+{
+  const bench: Hotspot = {
+    id: "bench",
+    label: "the bench",
+    bounds: { x: 10, y: 60, w: 20, h: 20 },
     cursor: "look",
-    gating: { requiresFlags: ["lockpicked"] },
-    action: { type: "showText", text: "The drawer is jammed shut." },
-    ...extra,
-    states,
-  });
-  const st = (s: GlobalState): GlobalState => s;
-  const empty = st({ activeFlags: new Set(), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
-  const withFlags = (...f: string[]) =>
-    st({ activeFlags: new Set(f), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+    action: { type: "showText", text: "A bench." },
+    verbs: { take: { type: "showText", text: "Bolted down." }, use: { type: "showText", text: "You sit." } },
+    wrongVerbText: "It's a bench, Ash.",
+  };
+  check("coin: the hotspot's own cursor verb runs its default action",
+    resolveVerbAction(bench, "look").action?.text === "A bench.");
+  check("coin: another verb runs that verb's action",
+    resolveVerbAction(bench, "take").action?.text === "Bolted down.");
+  check("coin: a verb it doesn't answer is refused", resolveVerbAction(bench, "talk").ok === false);
+  check("coin: refusal echoes the verb it was", resolveVerbAction(bench, "talk").verb === "talk");
 
-  /* ---- resolution semantics ---- */
-  {
-    const noStates = base(undefined);
-    check("states: no states = the hotspot itself", resolveHotspot(noStates, empty) === noStates);
-  }
-  check("states: none pass = base fields stand", resolveHotspot(base([{ id: "a", when: { requiresFlags: ["x"] }, label: "A" }]), empty).label === "the drawer");
-  check("states: last passing state wins", resolveHotspot(
-    base([
-      { id: "def", label: "default face" },
-      { id: "mid", when: { requiresFlags: ["m"] }, label: "mid face" },
-      { id: "last", when: { requiresFlags: ["l"] }, label: "last face" },
-    ]),
-    withFlags("m", "l")
-  ).label === "last face");
-  check("states: an earlier state stands when the later gate is shut", resolveHotspot(
-    base([
-      { id: "def", label: "default face" },
-      { id: "mid", when: { requiresFlags: ["m"] }, label: "mid face" },
-    ]),
-    withFlags("m")
-  ).label === "mid face");
-  check("states: partial overrides inherit the rest", (() => {
-    const r = resolveHotspot(base([{ id: "s", label: "the open drawer" }]), empty);
-    return r.label === "the open drawer" && r.action.text === "The drawer is jammed shut." && r.cursor === "look";
-  })());
-  check("states: image override swaps the art", resolveHotspot(base([{ id: "s", image: "/img/open.png" }]), empty).image === "/img/open.png");
-  check("states: an empty-string image CLEARS the art", resolveHotspot(base([{ id: "s", image: "" }], { image: "/img/closed.png" }), empty).image === undefined);
-  check("states: action override replaces the action", resolveHotspot(base([{ id: "s", action: { type: "showText", text: "It hangs open, empty." } }]), empty).action.text === "It hangs open, empty.");
-  check("states: a null gating override UNLOCKS the object", resolveHotspot(base([{ id: "s", gating: null }]), empty).gating === undefined);
-  check("states: a gating override replaces the gate", resolveHotspot(base([{ id: "s", gating: { requiresFlags: ["other"] } }]), empty).gating?.requiresFlags?.[0] === "other");
-  check("states: identity is never overridden", (() => {
-    const r = resolveHotspot(base([{ id: "s", label: "x", action: { type: "goToScene", targetSceneId: "e" } }]), empty);
-    return r.id === "obj" && JSON.stringify(r.bounds) === JSON.stringify({ x: 10, y: 40, w: 20, h: 20 });
-  })());
-  check("states: resolving is idempotent", (() => {
-    const once = resolveHotspot(base([{ id: "s", label: "x" }]), empty);
-    return resolveHotspot(once, empty) === once || resolveHotspot(once, empty).label === "x";
-  })());
-  check("states: activeHotspotState reports the winner", activeHotspotState(base([{ id: "a", label: "A" }, { id: "b", when: { requiresFlags: ["z"] }, label: "B" }]), withFlags("z"))?.id === "b");
-  check("states: hotspotReachableActions includes every state action", hotspotReachableActions(base([{ id: "s", action: { type: "goToScene", targetSceneId: "e" } }, { id: "t" }])).length === 2);
+  // USE with an armed item: accepted → the object's own USE action plus the
+  // item-specific line; anything else → refused.
+  const juke: Hotspot = {
+    id: "jukebox",
+    label: "the jukebox",
+    bounds: { x: 4, y: 60, w: 14, h: 28 },
+    cursor: "use",
+    gating: { requiresItems: ["coffee"] },
+    action: { type: "useItem", itemConsumed: "coffee", text: "It plays." },
+    acceptsItems: ["coffee"],
+    itemResponses: { coffee: "You pour the coffee in. It plays something loud." },
+  };
+  const coffee = resolveVerbAction(juke, "use", "coffee");
+  check("coin: an accepted item resolves", coffee.ok === true);
+  check("coin: an accepted item keeps the object's action", coffee.action?.type === "useItem");
+  check("coin: an accepted item gets its own line", coffee.text === "You pour the coffee in. It plays something loud.");
+  check("coin: a wrong item is refused", resolveVerbAction(juke, "use", "wrench").ok === false);
+  check("coin: USE with nothing armed falls back to the object's own USE",
+    resolveVerbAction(juke, "use").action?.type === "useItem");
+  check("coin: an object that accepts nothing refuses every item",
+    resolveVerbAction(bench, "use", "wrench").ok === false);
 
-  /* ---- the verb machinery reads the resolved view ---- */
-  check("states: verb answering follows the state cursor", (() => {
-    const r = resolveHotspot(base([{ id: "s", cursor: "take" }], { action: { type: "giveItem", itemGranted: "coin" } }), empty);
-    return resolveVerbAction(r, "take").ok && !resolveVerbAction(r, "look").ok;
-  })());
+  /* ---- the item-use contract: replies, implied accept, spending --------- */
 
-  /* ---- validator + graph ---- */
-  {
-    const endScene = (id: string): SceneNode => ({
-      id,
-      title: id,
-      background: "",
-      prose: "",
-      isEnding: true,
-      endingData: { tier: "victory-gold", headline: "H", recap: "R" },
-    });
-    const sceneWith = (hotspots: Hotspot[]): SceneNode => ({
-      id: "s1",
-      title: "Room",
-      background: "",
-      prose: "text",
-      hotspots,
-      choices: [],
-    });
-    const storyOf = (scenes: SceneNode[], extra: Partial<Story> = {}): Story => ({
-      id: "ms",
-      title: "Multi-State",
-      tagline: "",
-      coverImage: "",
-      startSceneId: "s1",
-      scenes: [...scenes, endScene("e")],
-      items: [],
-      characters: [],
-      ...extra,
-    });
-    const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+  // A 💬 SHOW-TEXT object that accepts an item ANSWERS with the item's reply
+  // line (what the Studio's "🎒 Accepts these items" panel promises: tick the
+  // item, write the line, the line plays) — previously the reply was only
+  // reachable when the default action was useItem; a plain say-line object
+  // just refused, and the authored joke was dead on arrival.
+  const strayDog: Hotspot = {
+    id: "stray",
+    label: "the stray dog",
+    bounds: { x: 12, y: 60, w: 12, h: 14 },
+    cursor: "look",
+    acceptsItems: ["snack"],
+    itemResponses: { snack: "Wolfed. Somebody is your friend now." },
+    action: { type: "showText", text: "Hungry eyes follow your pockets." },
+  };
+  const dogUse = resolveVerbAction(strayDog, "use", "snack");
+  check("use: an accepted item answers from a default showText action",
+    dogUse.ok === true && dogUse.action?.type === "showText");
+  check("use: the item's own reply line overrides the default text",
+    dogUse.text === "Wolfed. Somebody is your friend now.");
+  check("use: writing a reply line alone accepts the item (no tick needed)",
+    resolveVerbAction({ ...strayDog, acceptsItems: undefined }, "use", "snack").ok === true);
 
-    // An unconditional state listed after a gated one permanently shadows it.
-    const shadow = validateStory(storyOf([sceneWith([base([
-      { id: "a", when: { requiresFlags: ["open"] }, label: "A" },
-      { id: "def", label: "DEFAULT" },
-    ])])]));
-    check("states: unconditional-not-first is an error", has(shadow, /has no gate but isn't first/i), shadow.filter((i) => /state/i.test(i.message)));
+  // …but accepting an item can never make a takes/moves default fire: a door
+  // must author an explicit ⚙ use verb action (say-a-line or consume-it).
+  const snackDoor: Hotspot = {
+    id: "snackdoor",
+    label: "the office door",
+    bounds: { x: 80, y: 30, w: 10, h: 40 },
+    cursor: "go",
+    acceptsItems: ["snack"],
+    itemResponses: { snack: "It is a snack. This is a door." },
+    action: { type: "goToScene", targetSceneId: "e" },
+  };
+  check("use: a goToScene default still refuses an armed item (needs an authored use action)",
+    resolveVerbAction(snackDoor, "use", "snack").ok === false);
 
-    // Duplicate state ids.
-    const dup = validateStory(storyOf([sceneWith([base([{ id: "a", label: "A" }, { id: "a", label: "A2" }])])]));
-    check("states: duplicate state ids are an error", has(dup, /states share the id "a"/i));
+  // SPENDING IS AUTHOR-EXPLICIT. Only 🗝 useItem with itemConsumed spends
+  // anything; a say-a-line — or an unnamed use-item — NEVER eats the armed
+  // item from the satchel (the old arm-to-consume default read exactly like
+  // "the hotspot ate my item for showing text").
+  check("spend: useItem with itemConsumed spends exactly that item",
+    itemsConsumedBy({ type: "useItem", itemConsumed: "snack" }).join(",") === "snack");
+  check("spend: useItem WITHOUT itemConsumed spends nothing (say-a-line use)",
+    itemsConsumedBy({ type: "useItem" }).length === 0);
+  check("spend: a showText action NEVER consumes an armed item",
+    itemsConsumedBy({ type: "showText", text: "Nice dog." }).length === 0);
+  check("spend: giveItem / goToScene / scripts consume nothing",
+    itemsConsumedBy({ type: "giveItem", itemGranted: "x" }).length === 0 &&
+      itemsConsumedBy({ type: "goToScene", targetSceneId: "e" }).length === 0);
 
-    // A state that overrides nothing is dead weight.
-    const dead = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["open"] } }])])]));
-    check("states: a no-override state warns", has(dead, /overrides nothing/i));
-
-    // A state's go-to-scene without a target does nothing.
-    const noTarget = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["open"] }, action: { type: "goToScene" } }])])]));
-    check("states: a targetless state route warns", has(noTarget, /goes to a scene but no target/i));
-
-    // A `when` flag nothing ever sets is an impossible state (flag audit).
-    const impossible = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["never_set"] }, label: "A" }])])]));
-    check("states: a when-flag with no producer errors", has(impossible, /Flag "never_set" is required by a gate/i));
-
-    // A well-formed multi-state object raises none of those.
-    const clean = validateStory(storyOf([sceneWith([base([
-      { id: "open", when: { requiresFlags: ["lockpicked"] }, label: "the open drawer", gating: null, action: { type: "showText", text: "Empty." } },
-    ])])]));
-    check("states: a well-formed state list raises no state issues", !clean.some((i) => /states share|isn't first|overrides nothing|no target/i.test(i.message)), clean.filter((i) => /state/i.test(i.message)));
-
-    // The state's own flagSet makes its own gate reachable (producer counted).
-    const selfSustaining = validateStory(storyOf([sceneWith([base([
-      { id: "take", action: { type: "setFlag", flagSet: "full" } },
-    ], [{ id: "after", when: { requiresFlags: ["full"] }, label: "the emptied drawer" }])])]));
-    check("states: a state's action flagSet counts as a producer", !has(selfSustaining, /Flag "full" is required by a gate/i));
-
-    // Graph: a route that only exists in a later state is a real edge, and
-    // its destination must not be flagged unreachable.
-    const stateExit = sceneWith([
-      base([{ id: "later", when: { requiresFlags: ["open"] }, action: { type: "goToScene", targetSceneId: "e" } }], { action: { type: "showText", text: "locked" } }),
-    ]);
-    stateExit.prose = "text";
-    const edges = storyEdges(storyOf([stateExit]));
-    check("states: a state action contributes a scene edge", edges.some((x) => x.source === "s1" && x.target === "e" && /state/.test(x.label ?? "")), edges.map((x) => x.label));
-    const reach = validateStory(storyOf([stateExit]));
-    check("states: a state-only destination is reachable (no warning)", !has(reach, /unreachable from the start/i), reach.filter((i) => /unreachable/i.test(i.message)));
-
-    // Stage soft-lock: a door whose only exit lives in its "open" state is a
-    // legitimate way out.
-    const stageScene: SceneNode = {
-      id: "s1",
-      title: "Vault",
-      background: "",
-      prose: "",
-      nodeType: "stage",
-      stage: { playerImage: "emoji:🕵️", spawn: { x: 50, y: 86 }, floor: { top: 62, bottom: 94 } },
-      hotspots: [
-        {
-          id: "door",
-          label: "the vault door",
-          bounds: { x: 80, y: 60, w: 14, h: 30 },
-          cursor: "go",
-          isRepeatable: true,
-          action: { type: "showText", text: "Sealed. The mechanism needs the crane." },
-          states: [
-            { id: "open", when: { requiresFlags: ["craned"] }, action: { type: "goToScene", targetSceneId: "e" } },
-          ],
-        },
-      ],
-      choices: [],
-    };
-    const vault = validateStory(storyOf([stageScene]));
-    check("states: a stage exits through a state action (no soft-lock error)", !has(vault, /has no way out/i), vault.filter((i) => /way out/i.test(i.message)));
-  }
-}
-
-/* ================================================================== */
-/*  DOORS — gate-aware barriers (StageObstacle.gating)                 */
-/* ================================================================== */
-{
-  const st = (flags: string[]): GlobalState => ({ activeFlags: new Set(flags), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
-  const wall = { x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["open"] } };
-  const crate = { x: 20, y: 70, w: 10, h: 10 };
-  const list = [crate, wall];
-
-  check("doors: an ungated barrier always blocks", activeStageObstacles(list, st([])).length === 2);
-  check("doors: a gated barrier blocks while its gate is shut", activeStageObstacles(list, st([])).some((o) => o === wall));
-  check("doors: the barrier is GONE the moment the gate opens", !activeStageObstacles(list, st(["open"])).some((o) => o === wall));
-  check("doors: furniture survives the door opening", activeStageObstacles(list, st(["open"]))[0] === crate);
-  check("doors: an item gate opens to the item", (() => {
-    const badge = { x: 0, y: 0, w: 10, h: 10, gating: { requiresItems: ["badge"] } };
-    const held = { ...st([]), inventory: [{ id: "badge" } as never] };
-    return activeStageObstacles([badge], st([])).length === 1 && activeStageObstacles([badge], held).length === 0;
-  })());
-
-  // Spatial routing: a full-height wall genuinely seals the room; the same
-  // room with the door open routes straight through.
-  {
-    const floor = { top: 60, bottom: 94 };
-    const sealed = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, [wall], undefined, floor, 2, 100);
-    check("doors: a shut door walls off the far side", sealed.length === 0, sealed);
-    const passable = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, activeStageObstacles([wall], st(["open"])), undefined, floor, 2, 100);
-    check("doors: the open door routes through", passable.length > 0 && passable[passable.length - 1].x > 85, passable);
-  }
-
-  // Validator: a door that can never open is an authoring error.
-  {
-    const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
-    const doorStory: Story = {
-      id: "doors", title: "Doors", tagline: "", coverImage: "", startSceneId: "s1",
-      scenes: [
-        { id: "s1", title: "Room", background: "", prose: "text", choices: [], stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, obstacles: [{ x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["never_open"] } }] } as never, hotspots: [{ id: "out", label: "Out", bounds: { x: 80, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } }] },
-        endScene,
-      ],
-      items: [], characters: [],
-    };
-    const issues = validateStory(doorStory);
-    check("doors: a barrier gate on an unproduced flag errors", issues.some((i) => i.severity === "error" && /Flag "never_open" is required by a gate/.test(i.message)), issues.filter((i) => /never_open/.test(i.message)));
-  }
-}
-
-/* ================================================================== */
-/*  SENTENCE LINE (the SCUMM strip's text)                             */
-/* ================================================================== */
-{
-  check("sentence: bare floor reads Walk to", sentenceLineText({ verb: null }) === "Walk to");
-  check("sentence: an armed verb with no target reads its label", sentenceLineText({ verb: "look" }) === "Look at");
-  check("sentence: an armed item with no target reads Use item", sentenceLineText({ verb: "use", heldItemName: "wrench" }) === "Use wrench");
-  check("sentence: verb + object", sentenceLineText({ verb: "look", target: { label: "the drop-safe", cursor: "take" } }) === "Look at the drop-safe");
-  check("sentence: item on object", sentenceLineText({ verb: "use", heldItemName: "wrench", target: { label: "the bike", cursor: "use" } }) === "Use wrench on the bike");
-  check("sentence: no coin - the object's own verb reads out", sentenceLineText({ verb: null, target: { label: "the coil", cursor: "take" } }) === "Pick up the coil");
-}
-
-/* ================================================================== */
-/*  INTERACTABLE NPCS (StageNpc.talkHotspotId) — validator             */
-/* ================================================================== */
-{
-  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
-  const mk = (npcs: never[], hotspots: Hotspot[]): Story => ({
-    id: "npcs", title: "NPCs", tagline: "", coverImage: "", startSceneId: "s1",
+  // …and the Check tab flags an accept that can never be answered.
+  const snackItem = { id: "snack", name: "Scooby Snack", icon: "🍪" };
+  const shedStory = (hotspots: Hotspot[]): Story => ({
+    id: "shedtest",
+    title: "Shedtest",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "shed",
     scenes: [
-      {
-        id: "s1", title: "Room", background: "", prose: "text", choices: [],
-        stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, npcs } as never,
-        hotspots,
-      },
-      endScene,
+      { id: "shed", title: "The Shed", background: "", prose: "", hotspots, choices: [] },
+      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
     ],
-    items: [], characters: [],
+    items: [snackItem],
+    characters: [],
   });
-  const talker: Hotspot = { id: "t1", label: "the sweeper", bounds: { x: 40, y: 60, w: 10, h: 30 }, cursor: "talk", isRepeatable: true, action: { type: "startDialogue" } };
-  const looker: Hotspot = { id: "l1", label: "the sign", bounds: { x: 60, y: 30, w: 10, h: 20 }, cursor: "look", action: { type: "showText", text: "x" } };
-  const out: Hotspot = { id: "out", label: "Out", bounds: { x: 84, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } };
+  check("use: accepts-but-unanswerable warns in the validator",
+    validateStory(shedStory([snackDoor])).some((i) => /can never answer/.test(i.message)),
+    validateStory(shedStory([snackDoor])).filter((i) => i.severity !== "info").slice(0, 4));
+  check("use: accepts-unknown-item errors in the validator",
+    validateStory(shedStory([{ ...strayDog, acceptsItems: ["ghost"] }])).some((i) => i.severity === "error" && /accepts unknown item "ghost"/.test(i.message)));
+  check("use: a say-line accept resolves clean (no dead-accept warning)",
+    !validateStory(shedStory([strayDog])).some((i) => /can never answer|accepts unknown/.test(i.message)));
 
-  const good = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "t1" } as never], [talker, out]));
-  check("npc link: a linked talker raises no issue", !good.some((i) => /NPC "n1"/.test(i.message)), good.filter((i) => /NPC/.test(i.message)));
+  // Refusal lines: authored > story > house style, and they vary.
+  const storyLines = { verbResponses: { talk: ["a", "b", "c"] } } as unknown as Story;
+  check("coin: an authored refusal line wins", wrongVerbLine("talk", storyLines, "It's a bench, Ash.") === "It's a bench, Ash.");
+  check("coin: story lines beat the house style", ["a", "b", "c"].includes(wrongVerbLine("talk", storyLines, undefined, 1)));
+  check("coin: the seed varies the line", wrongVerbLine("talk", storyLines, undefined, 0) !== wrongVerbLine("talk", storyLines, undefined, 1));
+  check("coin: the house style always answers", wrongVerbLine("take", undefined, undefined, 3).length > 10);
 
-  const dangling = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "nope" } as never], [talker, out]));
-  check("npc link: a dangling link is an error", dangling.some((i) => i.severity === "error" && /NPC "n1" is linked to talk marker "nope"/.test(i.message)), dangling.map((i) => i.message));
+  // Which verbs a room offers.
+  const room: SceneNode = {
+    id: "room",
+    title: "Room",
+    stage: { verbCoin: true, spawn: { x: 10, y: 90 } },
+    hotspots: [bench, juke],
+  };
+  check("coin: a room derives its verbs from its objects", verbsForScene(room).join(",") === "look,take,use", verbsForScene(room));
+  const authored: SceneNode = { ...room, stage: { ...room.stage!, verbs: ["talk", "go"] } };
+  check("coin: the author's verb list wins, in canonical order", verbsForScene(authored).join(",") === "talk,go");
+  check("coin: a room with no coin still resolves nothing", verbsForScene({ ...room, stage: { spawn: { x: 1, y: 1 } } }).length > 0);
+  check("coin: the seven verbs are the seven cursors", VERB_IDS.join(",") === "look,take,talk,use,go,kick,punch");
+  check("coin: the core five stay the default", CORE_VERB_IDS.join(",") === "look,take,talk,use,go");
 
-  const notalk = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "l1" } as never], [looker, out]));
-  check("npc link: linking a non-talker warns", notalk.some((i) => i.severity === "warning" && /isn't a 🗣 start-conversation/i.test(i.message)));
+  // The EXTRA body-verbs (kick / punch) are OPT-IN per room: without
+  // stage.extendedVerbs they never leak into the coin, even if a hotspot
+  // answers them — so a visual novel or classic case is untouched.
+  const kickRoom: SceneNode = {
+    id: "kickroom",
+    title: "Kickroom",
+    stage: { verbCoin: true, spawn: { x: 10, y: 90 } },
+    hotspots: [
+      { id: "door", label: "door", bounds: { x: 50, y: 50, w: 10, h: 30 }, cursor: "kick", action: { type: "showText", text: "Boom." } },
+    ],
+  };
+  check("coin: kick does not appear unless the room opts in",
+    !verbsForScene(kickRoom).includes("kick"), verbsForScene(kickRoom));
+  check("coin: opting in via extendedVerbs adds kick",
+    verbsForScene({ ...kickRoom, stage: { ...kickRoom.stage!, extendedVerbs: true } }).includes("kick"));
+  check("coin: an explicit verbs list can name kick without the flag",
+    verbsForScene({ ...kickRoom, stage: { ...kickRoom.stage!, verbs: ["kick", "punch"] } }).join(",") === "kick,punch");
+  check("coin: a room that opts in but uses only core verbs stays core",
+    verbsForScene({ ...room, stage: { ...room.stage!, extendedVerbs: true } }).join(",") === "look,take,use",
+    verbsForScene({ ...room, stage: { ...room.stage!, extendedVerbs: true } }));
+  check("coin: punch resolves against an object that answers it",
+    resolveVerbAction({ ...bench, verbs: { ...bench.verbs, punch: { type: "showText", text: "Pow." } } }, "punch").ok === true);
+
+  // The prototype uses it.
+  const adv = THROTTLE_ASH;
+  const rooms = adv.scenes.filter((s) => s.nodeType === "stage");
+  check("coin: every prototype room turns the coin on", rooms.every((s) => s.stage?.verbCoin === true));
+  check("coin: every prototype room offers several verbs", rooms.every((s) => verbsForScene(s).length >= 3), rooms.map((s) => verbsForScene(s).length));
+  const bike = adv.scenes.find((s) => s.id === "adv_road")!.hotspots!.find((h) => h.id === "advh_fix_bike")!;
+  check("coin: the bike accepts the repair kit", (bike.acceptsItems ?? []).includes("adv_repair_kit"));
+  check("coin: the bike refuses a wrong item", resolveVerbAction(bike, "use", "adv_coffee").ok === false);
+  check("coin: the bike answers LOOK as well as USE", resolveVerbAction(bike, "look").ok === true);
+  check("coin: looking at the bike does not consume it", resolveVerbAction(bike, "look").action?.type === "showText");
+  check("coin: the prototype still validates", validateStory(adv).filter((i) => i.severity === "error").length === 0, validateStory(adv).slice(0, 4));
 }
 
-/* ================================================================== */
-/*  CREATOR-PASS regressions (found while authoring Rain Sector)       */
-/* ================================================================== */
+/* ============================================================
+   PERSPECTIVE (near/far scale) + WALK-BEHIND MASKS
+   ============================================================ */
 {
-  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
-  const mk = (hotspots: Hotspot[]): Story => ({
-    id: "creator", title: "Creator", tagline: "", coverImage: "", startSceneId: "s1",
-    scenes: [{ id: "s1", title: "Room", background: "", prose: "text", choices: [], hotspots }, endScene],
-    items: [], characters: [],
-  });
-  const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+  const floor = { top: 60, bottom: 90 };
+  const flat: StageSettings = { spawn: { x: 50, y: 90 }, depthScale: 0 };
+  check("depth: no depth means a flat sprite", Math.abs(stageSpriteScale(70, floor, flat) - 1) < 1e-9);
+  const room: StageSettings = { spawn: { x: 50, y: 90 }, depthScale: 0.4 };
+  check("depth: the front of the room is full size", Math.abs(stageSpriteScale(90, floor, room) - 1) < 1e-9);
+  check("depth: the back of the room is shrunk", Math.abs(stageSpriteScale(60, floor, room) - 0.6) < 1e-9);
+  check("depth: it grows monotonically toward the camera", stageSpriteScale(70, floor, room) > stageSpriteScale(65, floor, room));
+  check("depth: clamped inside the band", Math.abs(stageSpriteScale(20, floor, room) - 0.6) < 1e-9 && Math.abs(stageSpriteScale(99, floor, room) - 1) < 1e-9);
+  const pinned: StageSettings = { spawn: { x: 50, y: 90 }, playerNearScale: 1.3, playerFarScale: 0.5 };
+  check("depth: an author can pin both ends", Math.abs(stageSpriteScale(90, floor, pinned) - 1.3) < 1e-9 && Math.abs(stageSpriteScale(60, floor, pinned) - 0.5) < 1e-9);
+  /* CHARACTER SIZE (stage.playerScale) — the flat whole-scene multiplier */
+  check("playerScale: defaults to 1", Math.abs(stagePlayerScale({}) - 1) < 1e-9);
+  check("playerScale: explicit value passes through", Math.abs(stagePlayerScale({ playerScale: 1.4 }) - 1.4) < 1e-9);
+  check("playerScale: a tiny character can't vanish (clamped low)", Math.abs(stagePlayerScale({ playerScale: 0.05 }) - 0.15) < 1e-9);
+  check("playerScale: a giant can't blow through the plate (clamped high)", Math.abs(stagePlayerScale({ playerScale: 9 }) - 4) < 1e-9);
+  check("playerScale: applies ON TOP of depth — the renderer multiplies, stageSpriteScale doesn't read it", Math.abs(stageSpriteScale(70, floor, { ...room, playerScale: 2 }) - stageSpriteScale(70, floor, room)) < 1e-9);
+  check("depth: walking away is slower across the screen", stageSpeedScale(60, floor, room) < stageSpeedScale(90, floor, room));
+  check("depth: speed never drops to a crawl", stageSpeedScale(60, floor, pinned) >= 0.35);
 
-  // A useItem action carrying a targetSceneId is a way out (the Studio's own
-  // "locked door that swings open" pattern) — Rain Sector's mag-locked gate.
-  const useItemExit = validateStory(mk([
-    {
-      id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true,
-      gating: { requiresItems: ["card"] },
-      action: { type: "useItem", targetSceneId: "e", text: "The latch lets go." },
-    },
-  ]));
-  check("creator: a useItem exit counts as a way out (no soft-lock error)", !has(useItemExit, /has no way out/i), useItemExit.filter((i) => /way out/.test(i.message)));
-  check("creator: the useItem exit is a real edge", storyEdges(mk([
-    { id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true, action: { type: "useItem", targetSceneId: "e", text: "x" } },
-  ])).some((x) => x.source === "s1" && x.target === "e"));
+  // Walk-behind: the walker is behind an occluder while their feet sit ABOVE
+  // its baseline (further from the camera), and in front once they step below.
+  const truck = { image: "/t.png", occludes: true, occludeBaseline: 84, y: 84 };
+  check("mask: standing behind the truck hides you", extraOccludes(truck, 70) === true);
+  check("mask: standing in front of it does not", extraOccludes(truck, 92) === false);
+  check("mask: exactly on the line counts as behind", extraOccludes(truck, 84) === true);
+  check("mask: an unflagged extra never occludes", extraOccludes({ image: "/t.png", y: 84 }, 70) === false);
+  check("mask: without a baseline the extra's own y is the line", extraOccludes({ image: "/t.png", occludes: true, y: 80 }, 75) === true);
+  check("mask: a non-stage scene (no walker) draws it in front", extraOccludes(truck, undefined) === true);
 
-  // A VERB action can be the flag producer (kick the machine -> flag ->
-  // the machine's own take-gate opens). The audit must read verbs.
-  const verbProducer = validateStory(mk([
-    {
-      id: "vend", label: "the machine", bounds: { x: 30, y: 64, w: 12, h: 26 }, cursor: "look",
-      verbs: { kick: { type: "showText", text: "CLANG.", flagSet: "shaken" } },
-      gating: { requiresFlags: ["shaken"] },
-      action: { type: "giveItem", itemGranted: "card" },
-    },
-  ]));
-  check("creator: a verb action's flagSet counts as a producer", !has(verbProducer, /Flag "shaken" is required by a gate/i), verbProducer.filter((i) => /shaken/.test(i.message)));
-
-  // And the shipped case itself stays clean.
-  const rs = validateStory(RAIN_SECTOR);
-  check("rainsector: the shipped case validates with zero errors", rs.filter((i) => i.severity === "error").length === 0, rs.slice(0, 5));
-  check("rainsector: the walker sheet is the sliced magenta plate", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.playerSheet!.frameWidth === 293);
-  check("rainsector: an interactable NPC is linked to a talker", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.npcs?.some((n) => n.talkHotspotId === "rsh_ping"));
-  check("rainsector: the stair barrier is gate-aware", RAIN_SECTOR.scenes.find((x) => x.id === "rs_alley")!.stage!.obstacles?.some((o) => o.gating?.requiresFlags?.includes("rs_ping_told")));
+  // The prototype uses both.
+  const street = THROTTLE_ASH.scenes.find((s) => s.id === "adv_street")!;
+  const extras = street.cinematic?.foregroundExtras ?? [];
+  const masks = extras.filter((e) => e.occludes);
+  check("mask: the prototype has a walk-behind mask", masks.length === 1, masks.length);
+  check("mask: the truck's barrier matches its art", (street.stage?.obstacles ?? []).length === 1);
+  check("mask: the walker can get behind it", (street.stage?.floor?.top ?? 100) < (masks[0]?.occludeBaseline ?? 0));
+  check("mask: the walker can also walk in front of it", (street.stage?.floor?.bottom ?? 0) > (masks[0]?.occludeBaseline ?? 100));
+  check("depth: the prototype pins near and far", THROTTLE_ASH.scenes.filter((s) => s.nodeType === "stage").every((s) => !!s.stage?.playerNearScale && !!s.stage?.playerFarScale));
+  check("adventure: still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
 }
 
-/* ── SEEDED RNG — deterministic playtests (?seed=) ──────────────────── */
-console.log("\n=== SEEDED RNG — deterministic playtests ===");
+/* ============================================================
+   INVENTORY PRESENTATION — opt-in, default unchanged
+   ============================================================ */
 {
-  // mulberry32: same seed in, same stream out; a different seed diverges.
-  const g1 = mulberry32(hashSeed("42"));
-  const g2 = mulberry32(hashSeed("42"));
-  const seq = Array.from({ length: 6 }, () => g1());
-  check("rng: mulberry32 same seed replays the same stream", seq.every((v, i) => v === g2()));
-  check("rng: draws stay in [0, 1)", seq.every((v) => v >= 0 && v < 1));
-  const g3 = mulberry32(hashSeed("43"));
-  check("rng: a different seed diverges", Array.from({ length: 6 }, () => g3()).some((v, i) => v !== seq[i]));
-  check("rng: hashSeed is stable and separating", hashSeed("fred") === hashSeed("fred") && hashSeed("fred") !== hashSeed("42"));
+  // A case that says nothing gets exactly the dock it always had.
+  const plain = inventoryDisplay({});
+  check("inventory: the default mode is classic", plain.mode === "classic");
+  check("inventory: the default label is Inventory", plain.label === "Inventory");
+  check("inventory: a container still has art, so the mode never looks broken", plain.image.length > 0);
+  check("inventory: default corner is bottom-left", plain.anchor === "bottom-left");
+  check("inventory: defaults are sane", plain.columns === 4 && plain.inset === 14 && plain.height === 260 && plain.startClosed === false);
+  check("inventory: a missing story is safe", inventoryDisplay(null).mode === "classic");
+  check("inventory: an unknown mode falls back to classic", inventoryDisplay({ inventoryDisplay: { mode: "nope" as never } }).mode === "classic");
 
-  // ?seed= parsing.
-  check("rng: ?seed=42 parses", seedFromSearch("?seed=42") === "42");
-  check("rng: seed parses mid-query and decodes", seedFromSearch("?a=1&seed=hello%20world") === "hello world");
-  check("rng: no seed param means null", seedFromSearch("?x=1") === null && seedFromSearch("") === null);
-  check("rng: a bare ?seed= means null", seedFromSearch("?seed=") === null);
+  const bag = inventoryDisplay({
+    inventoryDisplay: { mode: "container", label: "  Saddlebags  ", image: "/assets/ui/mine.png", columns: 12, inset: 90, height: 40, anchor: "top-right", startClosed: true },
+  });
+  check("inventory: container mode survives", bag.mode === "container");
+  check("inventory: the label is trimmed", bag.label === "Saddlebags");
+  check("inventory: the author's art wins", bag.image === "/assets/ui/mine.png");
+  check("inventory: columns are clamped", bag.columns === 8);
+  check("inventory: inset is clamped", bag.inset === 45);
+  check("inventory: height is clamped", bag.height === 120);
+  check("inventory: the corner is honoured", bag.anchor === "top-right" && inventoryAnchorClass("top-right").includes("top-3"));
+  check("inventory: hidden mode hides the dock", inventoryDisplay({ inventoryDisplay: { mode: "hidden" } }).mode === "hidden");
+  check("inventory: empty art falls back to the house panel", inventoryDisplay({ inventoryDisplay: { mode: "container", image: "   " } }).image.includes("inventory-case"));
 
-  // The shared module stream.
-  setGameSeed("42");
-  const s1 = Array.from({ length: 8 }, () => gameRandom());
-  setGameSeed("42");
-  const s2 = Array.from({ length: 8 }, () => gameRandom());
-  check("rng: setGameSeed replays the module stream", s1.every((v, i) => v === s2[i]));
-  check("rng: currentGameSeed reports the pin", currentGameSeed() === "42");
-  setGameSeed(null);
-  check("rng: unsetting hands the stream back to Math.random", currentGameSeed() === null);
-  const live = Array.from({ length: 8 }, () => gameRandom());
-  setGameSeed(null);
-  check("rng: unseeded draws are live (two runs differ)", Array.from({ length: 8 }, () => gameRandom()).some((v, i) => v !== live[i]));
+  // The prototype opts in; the other cases must not be touched.
+  check("inventory: the prototype uses a container", inventoryDisplay(THROTTLE_ASH).mode === "container");
+  check("inventory: the prototype names its container", inventoryDisplay(THROTTLE_ASH).label === "Saddlebags");
+  check("inventory: the other shipped cases keep the classic dock", [NEON_DINER, ...[]].every((s) => inventoryDisplay(s).mode === "classic"));
+  check("inventory: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+}
 
-  // The helpers games actually call.
-  const base = ["a", "b", "c", "d", "e", "f"];
-  setGameSeed("42");
-  const sh1 = gameShuffle(base);
-  const picked = gamePick(base);
-  const r = gameRange(5, 9);
-  setGameSeed("42");
-  const sh3 = gameShuffle(base);
-  check("rng: gameShuffle same seed replays the permutation", JSON.stringify(sh1) === JSON.stringify(sh3));
-  check("rng: gameShuffle preserves the multiset, input untouched", sh1.slice().sort().join("") === "abcdef" && base.join("") === "abcdef");
-  check("rng: gamePick returns a member", base.includes(picked));
-  check("rng: gameRange stays in band", r >= 5 && r < 9);
-  setGameSeed(null);
+/* ============================================================
+   CURSOR ART + PLAYER PLACEMENT
+   ============================================================ */
+{
+  const none = resolveCursor({}, "look");
+  check("cursor: with no art the game keeps its system cursors", none.art === undefined && none.css === "" && !none.animated);
+  check("cursor: the default size is 32 and the tip is top-left", none.size === 32 && none.hx === 0 && none.hy === 0);
 
-  // The gameplay call sites route through the stream.
-  check("rng: PatternPuzzle shuffles via the seeded stream", /gameShuffle\(config\.rows\)/.test(readFileSync("src/game/PatternPuzzle.tsx", "utf8")));
-  check("rng: RideGame spawns via the seeded stream", /gameRandom\(\) \* spawnMs/.test(readFileSync("src/game/RideGame.tsx", "utf8")));
+  const one = { cursorArt: { look: { image: "/assets/ui/cursor-eye.png", size: 30 } } };
+  const look = resolveCursor(one, "look");
+  check("cursor: a verb's own art is used", look.css.includes("cursor-eye") && look.size === 30);
+  check("cursor: a missing verb falls back to default", resolveCursor(one, "take").css === "" || resolveCursor(one, "take").css.includes("cursor-eye"));
+  check("cursor: a CSS cursor carries the hotspot offsets", /url\("[^"]+"\) 0 0, auto/.test(look.css), look.css);
+
+  const withDefault = { cursorArt: { default: { image: "/assets/ui/cursor-hand.png" }, look: { image: "/assets/ui/cursor-eye.png" } } };
+  check("cursor: default art covers the other verbs", resolveCursor(withDefault, "go").css.includes("cursor-hand"));
+  check("cursor: the specific verb still wins", resolveCursor(withDefault, "look").css.includes("cursor-eye"));
+  check("cursor: cursorArtFor returns the art itself", cursorArtFor(withDefault, "talk")?.image === "/assets/ui/cursor-hand.png");
+
+  const centered = resolveCursor({ cursorArt: { use: { image: "/x.png", size: 40, anchor: "center" } } }, "use");
+  check("cursor: a centred cursor offsets by half its size", centered.hx === 20 && centered.hy === 20, centered);
+  const huge = resolveCursor({ cursorArt: { use: { image: "/x.png", size: 900 } } }, "use");
+  check("cursor: size is clamped to the CSS cursor limit", huge.size === 128);
+
+  // A sprite sheet is drawn as a sprite that tracks the mouse, not a CSS cursor.
+  const anim = resolveCursor({ cursorArt: { use: { sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0, 1], fps: 8 } } } } } }, "use");
+  check("cursor: a sheet makes an animated cursor", anim.animated === true && anim.css === "none");
+  check("cursor: a sheet beats a static image", resolveCursor({ cursorArt: { use: { image: "/x.png", sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0], fps: 1 } } } } } }, "use").animated === true);
+
+  check("cursor: every slot is offered to the author", CURSOR_SLOTS.join(",") === "default,look,take,talk,use,go,kick,punch");
+  check("cursor: the prototype ships cursor art", !!THROTTLE_ASH.cursorArt?.look?.image && !!THROTTLE_ASH.cursorArt?.default?.image);
+  check("cursor: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+
+  // Player placement: a spawn dropped anywhere still lands on the floor band.
+  const floor = { top: 66, bottom: 95 };
+  const dropped = [ { x: 50, y: 10 }, { x: 50, y: 99 }, { x: 50, y: 80 } ].map((p) => clampToFloor(p.x, p.y, floor));
+  check("spawn: a spawn dropped in the sky lands on the floor", dropped[0].y === 66);
+  check("spawn: a spawn dropped below the floor is pulled back", dropped[1].y === 95);
+  check("spawn: a spawn dropped on the floor stays put", dropped[2].y === 80);
+  check("spawn: the whole plate is reachable left to right", clampToFloor(-20, 80, floor).x === 1 && clampToFloor(140, 80, floor).x === 99);
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

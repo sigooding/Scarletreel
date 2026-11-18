@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { gameRandom } from "./rng";
 import type { RideConfig } from "../types";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
 
 /**
- * RideGame — a playable vehicle-ride minigame (a highway chase).
+ * RideGame — a playable vehicle-ride minigame (Full Throttle's highway chase).
  *
  * The player steers a vehicle across a few lanes, dodging oncoming traffic
  * that scrolls toward them. Survive the ride's duration and you run the
@@ -136,14 +135,12 @@ export function RideGame({
         return { ...o, y };
       });
       if (now >= spawnAt) {
-        // Seeded via the game RNG: ?seed= pins spawn timing, lane and
-        // sprite so a run that crashes at a specific pattern replays.
-        spawnAt = now + spawnMs + gameRandom() * spawnMs * 0.4;
+        spawnAt = now + spawnMs + Math.random() * spawnMs * 0.4;
         objs.push({
           id: nextId++,
-          lane: Math.floor(gameRandom() * lanes),
+          lane: Math.floor(Math.random() * lanes),
           y: -18,
-          sprite: traffic[Math.floor(gameRandom() * traffic.length)],
+          sprite: traffic[Math.floor(Math.random() * traffic.length)],
         });
       }
       objs = objs.filter((o) => o.y < 108);

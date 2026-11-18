@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { audio } from "../audio";
-import { gameShuffle } from "./rng";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
 
 export function PatternPuzzleGame({
@@ -14,9 +13,14 @@ export function PatternPuzzleGame({
   onWrong: () => void;
   onClose: () => void;
 }) {
-  // Seeded via the game RNG: ?seed= fixes the row order, so a puzzle that
-  // only breaks on one arrangement replays on demand.
-  const shuffled = useMemo(() => gameShuffle(config.rows), []);
+  const shuffled = useMemo(() => {
+    const arr = [...config.rows];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }, []);
 
   /** The authoritative number of rows to flag. A correct submission must flag
    *  EVERY answer row, so the cap has to equal the answer count — an authored

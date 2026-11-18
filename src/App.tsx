@@ -6,7 +6,6 @@ import { clearSession, readSession, writeSession } from "./game/session";
 import { decodeStory, isEpisodic, latestSave, loadEndings, removeStoryEndings, seasonEpisodes, storySeasonProgress } from "./logic";
 import { assetUrl } from "./assetPath";
 import { Studio } from "./studio/Studio";
-import { CreatorManual } from "./studio/CreatorManual";
 import { resolveAssetReference, resolveStoryMedia, compactStoryMedia, loadStoryAssetsForExport, importStoryAssets, deleteStoryAssets } from "./data/mediaLibrary";
 import type { EndingLog, Story, TitleTheme } from "./types";
 
@@ -26,7 +25,6 @@ type Mode =
       primedNarration?: PrimedAudio | null;
     }
   | { kind: "studio"; openStoryId?: string; openSceneId?: string }
-  | { kind: "manual" }
   | { kind: "gallery" };
 
 const SETTINGS_KEY = "scarlet-reel-settings-v1";
@@ -518,8 +516,6 @@ export default function App() {
       if (story) setImported(story);
     } else if (location.hash === "#studio" || new URLSearchParams(location.search).get("studio")) {
       setMode({ kind: "studio" });
-    } else if (location.hash === "#manual" || location.hash.startsWith("#manual/") || new URLSearchParams(location.search).get("manual") !== null) {
-      setMode({ kind: "manual" });
     } else if (location.hash === "#play" || new URLSearchParams(location.search).get("play")) {
       const flagship =
         STORIES.find((s) => s.id === "nobodys-witness-true") ??
@@ -671,10 +667,8 @@ export default function App() {
       clearSession();
     } else if (mode.kind === "play") {
       writeSession({ kind: "play", storyId: mode.story.id });
-    } else if (mode.kind === "studio" || mode.kind === "gallery") {
-      writeSession({ kind: mode.kind });
     } else {
-      clearSession();
+      writeSession({ kind: mode.kind });
     }
   }, [mode]);
 
@@ -851,7 +845,6 @@ export default function App() {
           initialStoryId={mode.openStoryId}
           initialSceneId={mode.openSceneId}
           onExit={() => setMode({ kind: "menu" })}
-          onOpenManual={() => setMode({ kind: "manual" })}
           onPlay={(s, opts) => {
             if (openStudioPlayWindow(s, opts?.fromSceneId)) {
               say("Playtest opened in a new window.");
@@ -908,10 +901,6 @@ export default function App() {
             setGlobalTitleTheme(theme);
           }}
         />
-      )}
-
-      {mode.kind === "manual" && (
-        <CreatorManual onExit={() => setMode({ kind: "menu" })} onOpenStudio={() => setMode({ kind: "studio" })} />
       )}
 
       {mode.kind === "gallery" && (
@@ -1023,12 +1012,6 @@ export default function App() {
                   className="border-2 border-cyan-neon bg-cyan-neon/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-cyan-neon shadow-[0_0_20px_rgba(42,217,217,0.3)] hover:bg-cyan-neon/25 transition-all hover:scale-105"
                 >
                   🎬 Open Studio Editor
-                </button>
-                <button
-                  onClick={() => setMode({ kind: "manual" })}
-                  className="border border-gold/70 bg-gold/5 px-5 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold hover:bg-gold/15 transition-all hover:scale-105"
-                >
-                  📓 Creator Manual
                 </button>
               </div>
             </header>
@@ -1282,12 +1265,6 @@ export default function App() {
                 className="border-2 border-paper/30 px-6 py-3 font-pulp text-sm uppercase tracking-[0.2em] text-paper/80 hover:border-cyan-neon hover:text-cyan-neon"
               >
                 🗞 Morgue File — ending gallery
-              </button>
-              <button
-                onClick={() => setMode({ kind: "manual" })}
-                className="border-2 border-cyan-neon/45 px-6 py-3 font-pulp text-sm uppercase tracking-[0.2em] text-cyan-neon hover:bg-cyan-neon/10"
-              >
-                📓 Creator Manual — Studio guide
               </button>
               {/* Import / Export for the entire catalog */}
               <button

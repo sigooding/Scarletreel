@@ -78,31 +78,6 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    this is what catches invalid DOM nesting (React logs it as an error) and
    mount-time crashes that the pure-logic suites can't see.
 
-4. **Walking-stage beta test** (`npm run test:stage`) — the 🚶 STAGE nodes'
-   dedicated regression net (`scripts/beta/stage-harness.mjs`, same esbuild +
-   happy-dom trick). Part 1 pins the walking engine math from `src/logic.ts`
-   (movement, floor/path clamping, obstacle routing, camera, world edges,
-   legacy `stage2d` normalisation). Parts 2–4 mount the real `<GamePlayer>`
-   and play a synthetic story across the stage ↔ graphic-novel boundary in
-   every direction: WASD/arrow walking, click-to-walk around furniture, the
-   verb coin, remote looks, conversations that lock the floor, wide-world
-   camera pans, walk-off-screen edge exits, a live MULTI-STATE safe puzzle
-   (locked → opened → taken through `Hotspot.states`), a gate-aware DOOR
-   barrier that physically seals the alley until a conversation opens it, the
-   SCUMM sentence line (hover readout + right-click look), and a real stage
-   round-trip through Demo Lab: Press the Lie. The non-interference half
-   asserts the classic novel scenes between stages keep their prose panel,
-   hotspots, exam card, choice keyboard shortcuts (W/S/arrows/digits) and
-   default cursor — no walker, markers, captions or armed coin verb may leak
-   across the boundary. Part 5 mounts the real Studio and drives the 🔁
-   States editor (badge, add, remove) and the plate's 🥾 walk test (a sealed
-   marker reports NO ROUTE with the doors shut; opening them lets the live
-   walker cross and reach it; WASD/arrows drive it). The play phases also
-   pin the interaction QoL — the H marker flash, coin hotkeys 1-9, the
-   double-click jog (timed: a jog crosses the room where a walk can't), and
-   an interactable NPC: clicking the patrolling character gives chase and
-   the conversation fires on catch; N does it with no mouse at all.
-
 ### Building a sprite sheet from a generated plate
 
 The AI tab builds sheets in the browser (generate on flat magenta → key the

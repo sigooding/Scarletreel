@@ -1,4 +1,7 @@
 import type { Story } from "../types";
+import { FULL_THROTTLE } from "./fullThrottle";
+import { FULL_THROTTLE_CORVILLE } from "./fullThrottleCorville";
+import { FULL_THROTTLE_ORIGINAL } from "./fullThrottleOriginal";
 import { NOBODYS_WITNESS_FLAGSHIP } from "./nobodysWitnessFlagship";
 import { LAST_CALL_ON_PIER_7 } from "./lastCallOnPier7";
 import { QTE_DEMO } from "./qteDemo";
@@ -6,7 +9,7 @@ import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
 import { MAP_DEMO } from "./mapDemo";
 import { TINTIN_MERIDIAN } from "./tintinMeridian";
-import { RAIN_SECTOR } from "./rainSector";
+import { THROTTLE_ASH } from "./throttleAsh";
 import { KINGFISHER_JOB } from "./kingfisherJob";
 import { BUMPY_NIGHT } from "./allAboutEve";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
@@ -22,10 +25,8 @@ import { THE_LATE_SHIFT } from "./theLateShift";
 import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
 import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
 import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
-import { NOBODYS_WITNESS_DRAFT_3 } from "./nobodysWitnessDraft3";
 import { SCOOBY_RAVENSWOOD } from "./scoobyRavenswood";
 import { INSPECTOR_GADGET } from "./inspectorGadget";
-import { SOUTH_PARK } from "./southPark";
 
 /**
  * The playable catalogue.
@@ -71,12 +72,13 @@ import { SOUTH_PARK } from "./southPark";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
-  SOUTH_PARK,
-  RAIN_SECTOR,
   INSPECTOR_GADGET,
   SCOOBY_RAVENSWOOD,
+  FULL_THROTTLE_CORVILLE,
+  FULL_THROTTLE,
+  FULL_THROTTLE_ORIGINAL,
+  THROTTLE_ASH,
   NOBODYS_WITNESS_TRUE,
-  NOBODYS_WITNESS_DRAFT_3,
   NOBODYS_WITNESS_FINAL,
   NOBODYS_WITNESS_NEW,
   THE_LATE_SHIFT_REDUX,
