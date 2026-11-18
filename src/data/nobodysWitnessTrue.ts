@@ -15,8 +15,15 @@ import type { Story } from "../types";
  *      profanity stays (it's a Tarantino picture), the filler doesn't.
  *
  * Voice audio from the draft is intentionally dropped: every line was
- * rewritten, so the old recordings no longer match the words. Scene music
- * and the cold-open gunshot survive.
+ * rewritten, so the old recordings no longer match the words.
+ *
+ * Soundtrack (engine can hold one looping bed per scene — no mid-scene
+ * needle-drops). Cue sheet: docs/nwt-soundtrack.md
+ *   · /nobodys-witness.mp3 — titles + She Walks In + SHE STAYS
+ *   · /Midnight in the Rain2.mp3 — Act 1 diner jazz
+ *   · /nwt-bluecue-jukebox.mp3 — Blue Cue diegetic 7-inch
+ *   · musicMode: "none" — office, warehouse, Rosa, mill, yard, trade,
+ *     final diner, dry endings (silence is a cue)
  */
 
 export const NOBODYS_WITNESS_TRUE: Story = {
@@ -37,6 +44,15 @@ export const NOBODYS_WITNESS_TRUE: Story = {
     loseConditions: [
       "Nobody walks out of this story. The only question is what it costs them.",
     ],
+  },
+  dialogueBox: {
+    bodyFont: "type",
+    headingFont: "pulp",
+    hudTheme: "sepia-pulp",
+    accentColor: "#c8862f",
+    bordered: true,
+    backdropBlur: 2,
+    reserveLines: 3,
   },
   acts: [
     {
@@ -68,78 +84,78 @@ export const NOBODYS_WITNESS_TRUE: Story = {
     {
       id: "jack",
       name: "Jack Morrow",
-      role: "Private investigator. Sixteen years a cop, ten years a booth.",
-      avatarUrl: "/img/nw2/ch-jack.jpg",
+      role: "Private investigator. Ten years a cop, ten years a booth. Look: worn charcoal wool overcoat, rumpled white shirt, loosened slate-blue tie, old leather shoulder holster.",
+      avatarUrl: "/img/nwt/ch-jack-morrow-midshot.png",
       trustMeter: 0,
       voice: { pitch: 0.72, rate: 0.9 },
     },
     {
       id: "vera",
       name: "Vera Voss",
-      role: "The client. Sweet as pie, quicker than she lets on.",
-      avatarUrl: "/img/nw2/ch-vera.jpg",
+      role: "The client. Sweet as pie, quicker than she lets on. Look: navy wool coat over a faded burgundy cardigan and cream blouse, diner apron at the waist.",
+      avatarUrl: "/img/nwt/ch-vera-voss-midshot.png",
       trustMeter: 0,
       voice: { pitch: 1.12, rate: 1.02 },
     },
     {
       id: "rosa",
       name: "Rosa Delgado",
-      role: "The last honest cop in Blackwood. Jack's oldest friend.",
-      avatarUrl: "/img/nw2/ch-rosa.jpg",
+      role: "The last honest cop in Blackwood. Jack's oldest friend. Look: dark navy detective's raincoat, charcoal blouse, badge at the belt, notebook in hand.",
+      avatarUrl: "/img/nwt/ch-rosa-delgado-midshot.png",
       trustMeter: 0,
       voice: { pitch: 0.95, rate: 0.98 },
     },
     {
       id: "solomon",
       name: "Solomon Reyes",
-      role: "The man who owns the town's debts. Genuinely polite about it.",
-      avatarUrl: "/img/nw2/ch-solomon.jpg",
+      role: "The man who owns the town's debts. Genuinely polite about it. Look: immaculate charcoal suit, muted oxblood tie, pale shirt, understated brass watch.",
+      avatarUrl: "/img/nwt/ch-solomon-reyes-midshot.png",
       trustMeter: 0,
       voice: { pitch: 0.82, rate: 0.92 },
     },
     {
       id: "david",
       name: "David Voss",
-      role: "The missing husband. Ran Solomon's money for years.",
-      avatarUrl: "/img/ch-david-voss.jpg",
+      role: "Fourteen years Solomon Reyes's money man — the books, the skim, all of it. Then he stole from the one man in the county you don't steal from. The bakery was the story he told himself to keep his hands steady. Look: faded brown cardigan, pale checked shirt, loosened narrow tie, ink-stained fingers.",
+      avatarUrl: "/img/nwt/ch-david-voss-midshot.png",
       trustMeter: 0,
       voice: { pitch: 0.9, rate: 0.95 },
     },
     {
       id: "moe",
       name: "Moe",
-      role: "Solomon's. The one who thinks.",
-      avatarUrl: "/img/nw2/ch-moe.jpg",
+      role: "Solomon's. The one who thinks. Look: heavy black work jacket over dark plaid flannel, plain black tee, practical leather belt.",
+      avatarUrl: "/img/nwt/ch-moe-midshot.png",
       trustMeter: 0,
       voice: { pitch: 0.88, rate: 0.95 },
     },
     {
       id: "desh",
       name: "Desh",
-      role: "Solomon's. The one who talks.",
-      avatarUrl: "/img/nw2/ch-desh.jpg",
+      role: "Solomon's. The one who talks. Look: cheap olive nylon jacket, mustard-and-navy checked shirt, loose dark tie, race paper under one arm.",
+      avatarUrl: "/img/nwt/ch-desh-midshot.png",
       trustMeter: 0,
       voice: { pitch: 1.0, rate: 1.05 },
     },
     {
       id: "ted",
       name: "Ted",
-      role: "Owes Solomon. Has a daughter.",
-      avatarUrl: "emoji:😰",
+      role: "Owes Solomon. Has a daughter. Look: faded navy utility jacket, gray work shirt, cheap striped tie, daughter's photograph in his pocket.",
+      avatarUrl: "/img/nwt/ch-ted-midshot.png",
       trustMeter: 0,
     },
     {
       id: "gary",
       name: "Gary",
-      role: "At the pumps, having a day.",
-      avatarUrl: "emoji:🧰",
+      role: "At the pumps, having a day. Look: oil-stained forest-green mechanic coveralls, thermal henley, red shop rag at the shoulder.",
+      avatarUrl: "/img/nwt/ch-gary-midshot.png",
       trustMeter: 0,
     },
     {
       id: "denny",
       name: "Denny",
-      role: "At the pumps, eating out of a paper bag.",
-      avatarUrl: "emoji:🍟",
+      role: "At the pumps, eating out of a paper bag. Look: faded mustard windbreaker over a cream work shirt, old cap in hand, paper bag of fries.",
+      avatarUrl: "/img/nwt/ch-denny-midshot.png",
       trustMeter: 0,
     },
   ],
@@ -165,50 +181,55 @@ export const NOBODYS_WITNESS_TRUE: Story = {
   ],
   flagNotes: {
     nwt_named_client:
-      "You gave Vera's name to Solomon's guys in a pool hall — to see a man blink.",
+      "You gave Vera's name to Solomon's guys in a pool hall — to see a man blink. Solomon already had it.",
     nwt_saw_watch:
       "You saw the stopped watch in Vera's shoebox. Her father's. It stopped the winter before he died and never got fixed.",
     nwt_saw_rosas_cost:
       "You saw the transfer form on Rosa's seat. County sheriff's, forty minutes out. Her whole exit, sitting in a car she hasn't driven.",
     nwt_saw_own_file:
       "You saw your own file in Solomon's drawer. Sixteen years, filed under assets.",
-    nwt_asked_shape:
-      "You asked Vera to describe David. 'He's got kind hands. A man's hands tell on him.'",
     nwt_bag_examined:
       "You saw the packed suitcase and the bus schedule in her back seat at the mill lot. Neither of you said a word about it.",
     nwt_knows_theyre_armed:
       "You noticed Moe's jacket sitting wrong. Nobody in the Blue Cue said why.",
-    nwt_told_her:
-      "You told her the truth in the booth: they asked David where she was, and he wouldn't say.",
     nwt_violence:
       "You swung on Moe in the Blue Cue. He didn't swing back. He felt bad about it.",
-    nwt_david_protected_her:
-      "Desh told you the truth: they asked David where his wife was, and he wouldn't say.",
   },
   layout: {
+    /* Full serpentine, all 29 scenes — the four continuation/branch nodes
+       (diner_take, bluecue_out, bluecue_named, warehouse_out) previously had
+       no slot and stacked at the canvas origin. Row grammar: left→right,
+       then right→left; branches trail their parent; the endings fan out
+       below Vera the way they fan below her in the booth. */
     nwt_coldopen: { x: 40, y: 40 },
     nwt_titles: { x: 320, y: 40 },
     nwt_diner: { x: 600, y: 40 },
-    nwt_bluecue: { x: 880, y: 40 },
-    nwt_office: { x: 1160, y: 40 },
-    nwt_warehouse: { x: 1440, y: 40 },
-    nwt_laundromat: { x: 1720, y: 40 },
-    nwt_threeam: { x: 1720, y: 240 },
-    nwt_pumps: { x: 1440, y: 240 },
-    nwt_interlude: { x: 1160, y: 240 },
-    nwt_rental: { x: 880, y: 240 },
-    nwt_yard: { x: 600, y: 240 },
-    nwt_call: { x: 600, y: 440 },
-    nwt_rosa: { x: 880, y: 440 },
-    nwt_mill: { x: 1160, y: 440 },
-    nwt_cost: { x: 1440, y: 440 },
-    nwt_bluecue2: { x: 1720, y: 440 },
-    nwt_trade: { x: 1720, y: 640 },
-    nwt_diner2: { x: 1440, y: 640 },
-    nwt_vera: { x: 1160, y: 640 },
-    nwt_end_stays: { x: 880, y: 760 },
-    nwt_end_walks: { x: 1160, y: 880 },
-    nwt_end_watch: { x: 1440, y: 880 },
+    nwt_diner_take: { x: 880, y: 40 },
+    nwt_bluecue: { x: 1160, y: 40 },
+    nwt_bluecue_out: { x: 1440, y: 40 },
+    nwt_bluecue_named: { x: 1720, y: 40 },
+    nwt_office: { x: 2000, y: 40 },
+    nwt_warehouse: { x: 2000, y: 240 },
+    nwt_warehouse_out: { x: 1720, y: 240 },
+    nwt_laundromat: { x: 1440, y: 240 },
+    nwt_threeam: { x: 1160, y: 240 },
+    nwt_pumps: { x: 880, y: 240 },
+    nwt_interlude: { x: 600, y: 240 },
+    nwt_rental: { x: 320, y: 240 },
+    nwt_yard: { x: 40, y: 240 },
+    nwt_call: { x: 40, y: 440 },
+    nwt_rosa: { x: 320, y: 440 },
+    nwt_mill: { x: 600, y: 440 },
+    nwt_cost: { x: 880, y: 440 },
+    nwt_bluecue2: { x: 1160, y: 440 },
+    nwt_bluecue_walk: { x: 1440, y: 440 },
+    nwt_trade: { x: 1720, y: 440 },
+    nwt_diner2: { x: 2000, y: 440 },
+    nwt_vera: { x: 2000, y: 640 },
+    nwt_bluecue_fight: { x: 1440, y: 640 },
+    nwt_end_stays: { x: 1720, y: 760 },
+    nwt_end_walks: { x: 2000, y: 880 },
+    nwt_end_watch: { x: 2280, y: 880 },
   },
   scenes: [
     /* ════════════════════════ ACT ONE ════════════════════════ */
@@ -219,6 +240,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       nodeType: "cutscene",
       background: "/img/nw2/bg-coldopen-fence.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       hideSceneTitle: true,
       choiceDelaySeconds: 2,
       prose:
@@ -235,7 +257,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           characterId: "narrator",
           expression: "the cut",
           text: "(A gunshot. Somewhere behind the fence. Flat. Close. Like a door slamming.)",
-          audioUrl: "/uploads/nobodys-witness-draft/1787844883836-w8js3o3.wav",
+          audioUrl: "/nwt-gunshot.wav",
           silent: true,
         },
       ],
@@ -250,6 +272,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       nodeType: "credits",
       background: "/img/style/nw2-signature-a-neon80s.jpg",
       musicUrl: "/nobodys-witness.mp3",
+      musicMode: "track",
+      musicLevel: 0.6,
       musicFadeSeconds: 2,
       credits: {
         title: "NOBODY'S WITNESS",
@@ -289,7 +313,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blackwood Diner — 11:47",
       background: "/img/nw2/bg-diner-int.jpg",
       ambientAudio: "rain",
-      musicUrl: "/uploads/nobodys-witness-draft/1787847428747-cokhzj2.mp3",
+      musicUrl: "/Midnight in the Rain2.mp3",
+      musicMode: "track",
+      musicLevel: 0.45,
+      musicFadeSeconds: 2,
       letterbox: true,
       prose:
         "Rain on glass. A ceiling fan ticking in slow, lazy circles. Eleven forty-seven, same booth most nights, phone face-down on the table because I already know who isn't calling.",
@@ -304,7 +331,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_d_vo0b",
           characterId: "jack",
           expression: "V.O.",
-          text: "Blackwood. Mill closed in '09, took everything that fed it with it. Four thousand people left, a clinic with a waiting list, and Solomon Reyes, who employs more of this town than the county does. Nobody here's bad. They're hungry. Different thing.",
+          text: "Blackwood. Mill closed in '09, took everything that fed it with it. What came after: four thousand people, a clinic with a waiting list, and Solomon Reyes, who employs more of this town than the county does. Nobody here's bad. They're hungry. Different thing.",
         },
         {
           id: "nwt_d_vo0c",
@@ -385,7 +412,6 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           attitudeTag: "Clever",
           reply: true,
           memoryLog: "describe_him",
-          consequences: { setFlags: ["nwt_asked_shape"] },
         },
         {
           id: "nwt_d_q2",
@@ -411,6 +437,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blackwood Diner — 11:47",
       background: "/img/nw2/bg-diner-int.jpg",
       ambientAudio: "rain",
+      musicMode: "inherit",
       letterbox: true,
       prose: "",
       dialogueBeats: [
@@ -489,7 +516,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue Pool Hall",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
-      musicUrl: "/uploads/nobodys-witness-draft/1788024868121-4jwpy6y.mp3",
+      musicUrl: "/nwt-bluecue-jukebox.mp3",
+      musicMode: "track",
+      musicLevel: 0.4,
+      musicFadeSeconds: 1.6,
       letterbox: true,
       prose:
         "A pool hall off Route 9. Balls clacking, a jukebox playing something old and warped, ice in a glass somewhere. One lamp over the table, everything else in shadow.\n\nIt's called the Blue Cue. It isn't blue. The cue wasn't straight either.",
@@ -641,6 +671,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue — Out",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
+      musicMode: "inherit",
       letterbox: true,
       prose: "The lamp. The jukebox. The door, and rain behind it.",
       dialogueBeats: [
@@ -697,6 +728,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue — The Name",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
+      musicMode: "inherit",
       letterbox: true,
       prose: "The jukebox. Balls clacking. Nothing else changes at all.",
       dialogueBeats: [
@@ -726,7 +758,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_pn_d1",
           characterId: "desh",
           expression: "not turning around",
-          text: "Means you've got a client and now we've got a Tuesday.",
+          text: "Means you've got a client and now you've got our full attention.",
         },
         {
           id: "nwt_pn_j2",
@@ -769,6 +801,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "A Trail Too Clean to Trust",
       background: "/img/nw2/bg-office-night.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
+      musicFadeSeconds: 1.4,
       letterbox: true,
       prose:
         "A cramped office at night. One lamp, one pool of yellow light, everything past its edge black. The folder fanned out like a hand of cards. His face lit from below, tired.",
@@ -783,7 +817,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_o_vo2",
           characterId: "jack",
           expression: "V.O.",
-          text: "Bank statements first. David Voss pulled six grand cash four days before he vanished. Fine — people do that when they're running. Except he pulled it in three withdrawals, three branches, three straight days, each one just under the amount that gets a teller's attention.",
+          text: "Bank statements first. David Voss pulled six grand from his personal account four days before he vanished. Separate from whatever he skimmed from Solomon, it looked like travel money. Fine — people do that when they're running. Except he pulled it in three withdrawals, three branches, three straight days, each one just under the amount that gets a teller's attention.",
         },
         {
           id: "nwt_o_j1",
@@ -868,6 +902,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Man Who Curates Debts",
       background: "/img/nwd/ep1/warehouse.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "Zip-tied to a metal chair. Cold concrete. Motor oil and old rain. Shipping crates to the ceiling and one bare bulb doing all the work.",
@@ -971,6 +1006,38 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           expression: "flat. Footsteps stopping directly behind the chair. No warmth left anywhere.",
           text: "Who said anything about letting you go.",
         },
+        {
+          id: "nwt_w_sol9",
+          characterId: "solomon",
+          expression: "slow steps around the chair — not the Ted voice anymore",
+          text: "David Voss worked for me fourteen years. Counted my money. Found places for it. Now two hundred and eleven thousand dollars is missing — fourteen months of amounts small enough to disappear inside a busy ledger. I don't know whether David took it, lost it, or let somebody use his hands. I know the number, and I do inventory.",
+        },
+        {
+          id: "nwt_w_sol10",
+          characterId: "solomon",
+          expression: "calm, administrative — the terms, laid down like a mortgage",
+          text: "Here's your let-go, Mr. Morrow. You find him. You bring me him, or the money, either one, I don't actually care which. Forty-eight hours. After that I stop being polite and start being owed, and the man who took this long to come up empty doesn't get a third conversation. Moe'll cut you loose in the alley when we're done here. Not out of kindness — out of office hours.",
+        },
+        {
+          id: "nwt_w_sol11a",
+          characterId: "solomon",
+          conditionRule: { excludesFlags: ["nwt_named_client"] },
+          expression: "almost offhand",
+          text: "And don't go thinking I need you for the wife. I know the wife. Your client's name is on the whole account — the second this started, I knew whose folder sat on your table. I didn't ask you who hired you. The diner counter did. This town tells me things the way it tells a church; I own its debts, Mr. Morrow, and people confess to what they owe.",
+        },
+        {
+          id: "nwt_w_sol11b",
+          characterId: "solomon",
+          conditionRule: { requiresFlags: ["nwt_named_client"] },
+          expression: "almost offhand",
+          text: "The name you spent at my pool hall to watch Moe blink — it was mine already. Your client's name has been on the whole account since before she walked into your diner, and I'd have heard it in here either way. Which is why you're breathing, for the record. A man who gives his client up for nothing can't be used for anything. A man who does it to see a face? That man can be sent places.",
+        },
+        {
+          id: "nwt_w_sol12",
+          characterId: "solomon",
+          expression: "the door",
+          text: "Forty-eight hours from the moment that chair hits the ground. Bring me the man or bring me the money. Bring me neither, and not one thing you care about finishes out its week. That's not a threat. I don't make those. That's the payment schedule.",
+        },
       ],
       hotspots: [
         {
@@ -1029,9 +1096,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         },
         {
           id: "nwt_wo_g1",
-          characterId: "desh",
-          expression: "somewhere behind him, sharp",
+          characterId: "narrator",
+          expression: "one of the two guards, somewhere behind him — sharp",
           text: "He's loose! Get the fuck—",
+          silent: true,
         },
         {
           id: "nwt_wo_vo3",
@@ -1050,6 +1118,12 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           characterId: "jack",
           expression: "V.O. — flat, in the rain",
           text: "He doesn't care about David Voss. He meant it. Which means somebody else does care — enough to build me a folder and let me walk in blind. And I knew exactly one person who wanted him found. Stood there a long time before I dialed.",
+        },
+        {
+          id: "nwt_wo_vo5b",
+          characterId: "jack",
+          expression: "V.O. — the terms, landing on him",
+          text: "His forty-eight hours were running in my chest by the time I found that payphone. The man or the money, either one, he didn't care which — one private investigator with a cut on his forehead, holding a deadline the size of a noose. The clock said I had until the night after next. I spent the first three minutes of it trying not to care that I already did.",
         },
         {
           id: "nwt_wo_rosa1",
@@ -1080,6 +1154,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Nobody Just Leaves",
       background: "/img/nwd/ep2/laundromat.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       partBreak: "Act One — The Woman Who Sold Herself Twice",
       letterbox: true,
       prose:
@@ -1129,7 +1204,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_l_j4",
           characterId: "jack",
           expression: "doing the math out loud",
-          text: "She told me three weeks. That leaves two weeks he was sitting around this country before he ever left it.",
+          text: "She told me three weeks. That leaves two weeks he was sitting around this county before he ever left it.",
         },
         {
           id: "nwt_l_r5",
@@ -1151,7 +1226,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_l_r6",
           characterId: "rosa",
-          text: "Town this size? A woman wants her husband found, she asks at the depot and the clinic and she's got him by Tuesday. She doesn't hire you. Hiring you isn't looking for him, Jack. It's a record of having looked. I'm not saying she's lying about everything. I'm saying you built her a story where she's the victim, and some part of you needed her to be.",
+          text: "Town this size? A woman wants her husband found, she asks at the depot and the clinic and she's got him inside a week. She doesn't hire you. Hiring you isn't looking for him, Jack. It's a record of having looked. I'm not saying she's lying about everything. I'm saying you built her a story where she's the victim, and some part of you needed her to be.",
         },
         {
           id: "nwt_l_j6",
@@ -1193,7 +1268,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_l_vo2",
           characterId: "jack",
           expression: "V.O. — the door chime, rain picking back up",
-          text: "She didn't finish the sentence. Didn't need to. Six years she's been saying some version of it and she has never once been wrong.",
+          text: "She didn't finish the sentence. Didn't need to. She's been saying some version of it since before I had a booth, and she has never once been wrong.",
         },
       ],
       hotspots: [
@@ -1296,7 +1371,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_t_j4",
           characterId: "jack",
           expression: "warming despite himself — the most alive he sounds anywhere",
-          text: "Three withdrawals. Three branches. Three days. Everybody sees that and thinks nervous. It's not nervous. Nervous is one big withdrawal and a plane ticket. This is homework. Careful people leave a different shape than scared people.",
+          text: "Three withdrawals. Three branches. Three days. Everybody sees that and thinks nervous. It's not. Nervous is one big withdrawal and a bus ticket. This is homework. Careful people leave a different shape than scared people.",
         },
         {
           id: "nwt_t_v6",
@@ -1411,6 +1486,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Pumps at Route 6",
       background: "/img/nwd/ep2/pumps-route6.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "A gas station off a two-lane road. Wind. One working pump ticking. A radio inside playing something country and badly tuned. Two men on a bench by the ice machine.\n\nNothing here advances the plot. That's the point.",
@@ -1478,7 +1554,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_g_d6",
           characterId: "denny",
-          text: "Gary. Four months back you asked me if it was normal for a woman to start doing her hair on a Tuesday.",
+          text: "Gary. Four months back you asked me if it was normal for a woman to start getting her hair done on a workday and lying about it.",
         },
         {
           id: "nwt_g_g7",
@@ -1490,6 +1566,12 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           characterId: "denny",
           expression: "the kill shot",
           text: "That's the exact shape of knowing. That's knowing with a fucking hat on.",
+        },
+        {
+          id: "nwt_g_d7b",
+          characterId: "denny",
+          expression: "flat, before Gary can answer",
+          text: "And before you ask — no, I don't know what hat.",
         },
         {
           id: "nwt_g_g8",
@@ -1523,7 +1605,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_g_vo1",
           characterId: "jack",
           expression: "V.O. — his pump clicking off. He doesn't hang it up.",
-          text: "Two hours north I stopped at a place with three pumps and one that worked, and I'd have paid money for the noise to keep being about something else. A man at a gas station in the middle of nowhere got the whole thing in one sentence. It's a Tuesday and you decide not to ask.",
+          text: "Two hours north I stopped at a place with three pumps and one that worked, and I'd have paid money for the noise to keep being about something else. A man at a gas station in the middle of nowhere got the whole thing in one sentence. There's a night like that in every life — and you don't know you're in it until it's behind you.",
         },
         {
           id: "nwt_g_d10",
@@ -1602,6 +1684,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       nodeType: "cutscene",
       background: "/img/nwd/ep2/apartment-shoebox.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       hideSceneTitle: true,
       prose:
         "A smaller place than the one she dresses up for. Warmer light than anywhere else in this story has had. Nobody's watching her. That's the point.\n\nA shoebox on the bed: photographs, handwriting in the margins. A man's watch, stopped, the leather band cracked with age.",
@@ -1640,6 +1723,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Man Who Wasn't Missing",
       background: "/img/nwd/ep2/rental-kitchen.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "A quiet residential street. Crickets. Much less rain up here than Blackwood. A rental on a dead-end street — weekly rate, cash, under a name that isn't David Voss.\n\nKnocking. Didn't expect an answer. Got one.",
@@ -1648,7 +1732,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_vo1",
           characterId: "jack",
           expression: "V.O.",
-          text: "Doc came through on the motel, and the paper on the utilities was four days fresher than the story I'd been sold. People think changing your name fixes everything. It doesn't fix the part that still pays its bills.",
+          text: "Doc Sato came through on the motel, and the paper on the utilities was four days fresher than the story I'd been sold. People think changing your name fixes everything. It doesn't fix the part that still pays its bills.",
         },
         {
           id: "nwt_r_dav1",
@@ -1672,12 +1756,12 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_vo2",
           characterId: "jack",
           expression: "V.O.",
-          text: "Two duffel bags by the door, unpacked. Part of him still thought he'd have to run. I know that feeling from the inside.",
+          text: "Two duffel bags by the door, both unpacked. One held clothes; the other receipts and a spare shirt. No money. I'd have known a money bag blind. Fourteen years is a long time to count a man's money before you take it.",
         },
         {
           id: "nwt_r_j2",
           characterId: "jack",
-          text: "Solomon Reyes grabbed me two nights ago. Zip-tied me to a chair and asked, real polite, where his money was. Gave me forty-eight hours to bring him you or the cash. That clock's down to about thirty.",
+          text: "Solomon Reyes grabbed me two nights ago. Zip-tied me to a chair and asked, real polite, where his money was. Gave me forty-eight hours to bring him you or the cash. The clock's just about out — we might already be on borrowed time.",
         },
         {
           id: "nwt_r_dav3",
@@ -1694,7 +1778,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_j4",
           characterId: "jack",
           expression: "conversational, which is worse — moving through the room, reading it",
-          text: "Weekly rate. Cash. Four hours north — not eight, not a state line, four. And you put the power on under your own account. You've got two hundred and eleven thousand dollars in a bag and you could be anywhere on this earth, and instead you're close enough to drive home in an afternoon, in a house you pay for one week at a time.",
+          text: "Weekly rate. Cash. Four hours north — not eight, not a state line, four. And you put the power on under your own account. No cash in either bag. You could be anywhere on this earth, and instead you're close enough to drive home in an afternoon, in a house you pay for one week at a time.",
         },
         {
           id: "nwt_r_dav4",
@@ -1706,7 +1790,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_j5",
           characterId: "jack",
           expression: "cutting through, voice never going up",
-          text: "Weekly means you don't know how long you'll need it. Close means you want to be findable by exactly one person. You're not hiding, David. You're waiting. Nine days. She's not late. And some part of you has known that since Tuesday.",
+          text: "Weekly means you don't know how long you'll need it. Close means you want to be findable by exactly one person. You're not hiding, David. You're waiting. Nine days. She's not late. And you've known that every single one of the days she hasn't called.",
         },
         {
           id: "nwt_r_dav5",
@@ -1717,14 +1801,14 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_r_j6",
           characterId: "jack",
-          expression: "dry, but gentle",
-          text: "Client list's competitive this week. Try me.",
+          expression: "dry — no warmth in it",
+          text: "Don't worry. I've got my own ledger this week. Talk.",
         },
         {
           id: "nwt_r_dav6",
           characterId: "david",
           expression: "the relief of finally saying it",
-          text: "Vera and I planned this together. All of it. The money, the bus, the folder — fourteen months skimming off Solomon, small enough he never felt it. I pulled the last of it in one go and got out like we agreed. Two hundred and eleven thousand. That's what it costs to leave. People in that town have died over a tenth of it.",
+          text: "Vera did not plan this with me. She found the skim in the accounts — she was the only person besides me who could read the route books and prove what the missing numbers meant. I saw her looking. That's when I moved the money, before she knew I'd seen her. Not into either bag. Not anywhere with an address she could find. Two hundred and eleven thousand dollars. I know where it is. She doesn't. Nobody else does.",
         },
         {
           id: "nwt_r_j7",
@@ -1735,18 +1819,18 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_dav7",
           characterId: "david",
           expression: "nodding, grim",
-          text: "That was the plan. You dig, you come up empty, you tell her — and everybody, cops included — she genuinely had no idea. Clean alibi. Except you didn't come up empty. You came up here.",
+          text: "That was her plan, maybe. You dig, you come up empty, you tell her — and everybody, cops included — she genuinely had no idea. Clean alibi. Except you didn't come up empty. You came up here.",
         },
         {
           id: "nwt_r_j8",
           characterId: "jack",
-          text: "Then explain why you look like a man waiting for the sky. If this was the plan, what's left to be scared of?",
+          text: "Then why wait here? If she found the theft, why give her a room to come to?",
         },
         {
           id: "nwt_r_dav8",
           characterId: "david",
           expression: "quieter, scared now, pacing",
-          text: "Two days ago Vera stopped answering the number only I have. And a plan where you split the money fifty-fifty doesn't usually end with one person going quiet right when the other one's ready to collect his half. I've been so busy hiding from Solomon I forgot I should've been hiding from her too.",
+          text: "I thought Solomon was the only man coming. Then, two days ago, Vera stopped answering the number only I have. I knew I'd misread the silence. I've been hiding from Solomon; now I'm waiting to learn whether Vera wants the truth or what's left of it.",
         },
         {
           id: "nwt_r_vo3",
@@ -1764,7 +1848,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_r_vo4",
           characterId: "jack",
           expression: "V.O. — under the fade",
-          text: "He talked forty minutes. Most of it I already had. By the end he'd stopped being frightened — lighter, like a man told he could finally put a bag down. That's the one thing I'd take back. Not the six seconds. That. I let him put the bag down.",
+          text: "He talked forty minutes. Most of it I already had. By the end he'd stopped being frightened — lighter, like a man told he could finally put a bag down. I let him. Fourteen years of counting a loan shark's money had taught me what fear looks like, and the man had one face he could still make, and he made it at the wrong guy. I saw what he was. I let him rest anyway. Turns out that was the most expensive forty minutes I ever paid for.",
         },
       ],
       hotspots: [
@@ -1776,7 +1860,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           isRepeatable: true,
           action: {
             type: "showText",
-            text: "Unpacked. Part of him still thought he'd have to run. Two hundred and eleven thousand dollars, and one bag he never opened.",
+            text: "Two bags, both light. One holds clothes; the other holds receipts and a spare shirt. The money David stole is not here, which is why he keeps looking at the door.",
           },
         },
         {
@@ -1812,6 +1896,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Everything I Already Knew",
       background: "/img/nwd/ep2/yard-screen-door.jpg",
       ambientAudio: "drone",
+      musicMode: "none",
       letterbox: true,
       prose:
         "The kitchen, later. Crickets outside. Quiet — deliberately, unbearably ordinary.",
@@ -1825,8 +1910,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_y_j1",
           characterId: "jack",
-          expression: "tired, almost warm",
-          text: "My week's been full of stupid. Go ahead.",
+          expression: "tired, not warm — professional",
+          text: "My week's been full of stupid. Make it quick.",
         },
         {
           id: "nwt_y_dav2",
@@ -1837,7 +1922,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_y_j2",
           characterId: "jack",
-          text: "You know how to bake?",
+          text: "That's a nice story. You don't know the first thing about bread, do you.",
         },
         {
           id: "nwt_y_dav3",
@@ -1879,31 +1964,31 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_y_j4",
           characterId: "jack",
-          expression: "low",
-          text: "Go. I'll slow them down.",
+          expression: "low, already counting seconds",
+          text: "There's your back door. I'm not your lookout, David. Use it or don't.",
         },
         {
           id: "nwt_y_dav7",
           characterId: "david",
           expression: "disbelieving",
-          text: "You don't even know these people—",
+          text: "You're not gonna—",
         },
         {
           id: "nwt_y_j5",
           characterId: "jack",
-          text: "Go.",
+          text: "Go. I didn't come here for you.",
         },
         {
           id: "nwt_y_dav8",
           characterId: "david",
           expression: "quiet, almost embarrassed — half a second in the doorway",
-          text: "Hey. Thanks for not just handing me over the second you knew. Most guys would've.",
+          text: "Tell her—",
         },
         {
           id: "nwt_y_j6",
           characterId: "jack",
           expression: "not looking at him",
-          text: "Don't thank me yet.",
+          text: "I won't.",
         },
         {
           id: "nwt_y_s1",
@@ -1940,10 +2025,23 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           silent: true,
         },
         {
+          id: "nwt_y_s5",
+          characterId: "narrator",
+          expression: "the bag — long seconds alone in the rain",
+          text: "(Then, back at the house: the safe door. I check the duffel David kept between himself and the door. Shirts. Receipts. No cash. I leave it where it is. The missing money stays missing; the room keeps its shape and no answer.)",
+          silent: true,
+        },
+        {
+          id: "nwt_y_vo3",
+          characterId: "jack",
+          expression: "V.O. — flat, ruined, no tenderness in it",
+          text: "Two hundred and eleven thousand dollars, and all I can take from the room is the fact that it isn't there. No cash. No address. David moved it before Vera knew he'd seen her, and he died with the only map behind his teeth. I leave the duffel and wait for her, because somebody has to tell her the room has changed. I'd find out later what bag she'd already packed. She didn't ask me for a way out. She didn't have to.",
+        },
+        {
           id: "nwt_y_vo2",
           characterId: "jack",
           expression: "V.O. — the flatness is the injury",
-          text: "Six tables. Bread in the morning. One thing he'd have to be bad at first. I said don't thank me yet. Those were my words. I've got the rest of my life to find better ones, and it won't matter, because he's not in the room for them.",
+          text: "Six tables. Bread in the morning. One thing he'd have to be bad at first. I said I wouldn't. Those were my words. I've got the rest of my life to find better ones, and it won't matter, because he's not in the room for them.",
         },
       ],
       hotspots: [
@@ -1971,7 +2069,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Call",
       background: "/img/nwd/ep3/yard-call.jpg",
       ambientAudio: "rain",
-      partBreak: "Act Two — Nobody Just Leaves",
+      musicMode: "none",
+      partBreak: "Act Three — Nobody's Witness",
       letterbox: true,
       prose:
         "Rain, steady. Jack still in the yard. State-police radios somewhere behind him, distant. He sits on wet grass, knees up, phone lit in his hand — the only light in frame besides the emergency strobes, red and blue, unfocused in the rain.",
@@ -2074,7 +2173,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_c_vo2",
           characterId: "jack",
           expression: "V.O. — final beat, devastated and clear-eyed at once",
-          text: "I still love her. I want that on the record, whatever happens after. Knowing what I know now didn't put it out. It just means I'm walking toward her with my eyes open instead of shut. I'm not sure that's braver. I think it might just be sadder.",
+          text: "Knowing what I know now didn't make me turn the car around. It just means I'm walking toward her with my eyes open instead of shut. I'm not sure that's braver. I think it might just be sadder.",
         },
       ],
       hotspots: [
@@ -2100,6 +2199,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "What Rosa Knows",
       background: "/img/nw2/bg-rosa-car.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       letterbox: true,
       prose:
         "Rain, past midnight, four hours from home. A car idling at the curb with its lights off. Rosa heard the call go out on the scanner and was on the road before anyone thought to phone her. She never asks where he's been when it's bad. She just opens the door.",
@@ -2258,6 +2358,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Two Hundred and Eleven Thousand",
       background: "/img/nw2/bg-mill-lot.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       letterbox: true,
       prose:
         "An empty lot behind the shuttered mill — chain-link, wet gravel, one working sodium light buzzing. Rain, fine and constant. No traffic. Nothing.\n\nThe same kind of fence the story opened on. The town only has the one kind of night, and it reuses it.",
@@ -2290,7 +2391,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_m_j1",
           characterId: "jack",
-          text: "I don't know.",
+          text: "He's dead.",
         },
         {
           id: "nwt_m_v2",
@@ -2328,8 +2429,26 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_m_v5",
           characterId: "vera",
-          expression: "measured, factual — the way people recite things they've rehearsed alone",
-          text: "Two hundred and eleven thousand dollars. Fourteen months. David moved it, I tracked every dime. I picked the date. I built the folder. I picked you.",
+          expression: "measured, factual — the way people recite things they've rehearsed alone, and then it starts to come out wrong",
+          text: "Two hundred and eleven thousand dollars. I found the theft in the accounts — fourteen months of small withdrawals hidden in David's route books. I was the only person besides David who could prove what the empty spaces meant. I built the folder, picked the date, and picked you. I thought the money was still where he kept it. Then I found an empty room. I didn't know David had seen me in the accounts, and I don't know where the money went. That was the part of the plan I was certain about: the bag would be there.",
+        },
+        {
+          id: "nwt_m_v5b",
+          characterId: "vera",
+          expression: "matter-of-fact, which is how panic survives",
+          text: "I paid Moe eight thousand in cash. I knew which collection envelope he carried upstairs to Solomon's office, and I stayed after closing on the service stair. He worked Solomon's route; reaching him was the only part I knew how to do. I put the cash in his hand and asked him to make David quiet. Moe said David was already a problem for Solomon. I let myself hear that as permission. It was only an excuse.",
+        },
+        {
+          id: "nwt_m_v5c",
+          characterId: "vera",
+          expression: "the plan, stripped of its costume",
+          text: "David dies. I take what he hid. I clear my debt. I leave Blackwood before Solomon has a reason to say my name twice. That was the plan. Not redemption. Arithmetic.",
+        },
+        {
+          id: "nwt_m_v5d",
+          characterId: "vera",
+          expression: "the part that makes the folder ugly",
+          text: "The folder was insurance. If the killing got loud, the police would find a detective's file dated before the body: a frightened wife looking for a missing husband. You were supposed to be a clean fact with a receipt.",
         },
         {
           id: "nwt_m_j5",
@@ -2339,20 +2458,20 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_m_v6",
           characterId: "vera",
-          expression: "simply",
-          text: "Because you're the only man in Blackwood who doesn't work for Solomon and doesn't want to.",
+          expression: "simply, and then the charm slides off it",
+          text: "I picked a man because he looked lonely enough to say yes. That's the whole reason, honey. I'm not gonna hand you the pretty version now that you've heard the other one.",
         },
         {
           id: "nwt_m_j6",
           characterId: "jack",
-          expression: "quiet",
+          expression: "quiet, not angry",
           text: "That's not a compliment. That's a spec sheet.",
         },
         {
           id: "nwt_m_v7",
           characterId: "vera",
           expression: "not denying it",
-          text: "No. It's not a compliment.",
+          text: "Yeah. I told myself it was a good reason all week. It wasn't a good reason. It was the only reason I had.",
         },
         {
           id: "nwt_m_j7",
@@ -2376,7 +2495,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v9",
           characterId: "vera",
           expression: "flat — and she volunteers it. He hasn't asked.",
-          text: "I knew Solomon had the address before you did. Doc Sato sold it to them Tuesday. Six hundred dollars. I found out about eleven hours before you got there. I could have called David. I had the number. I didn't.",
+          text: "I knew Solomon had the address before you did. Doc Sato told me he'd sold it to them Tuesday. Six hundred dollars. I found out about eleven hours before you got there. I had his number. I called it. It rang three times, and I told myself it was too late, and I put it down.",
         },
         {
           id: "nwt_m_s2",
@@ -2394,7 +2513,13 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v10",
           characterId: "vera",
           expression: "even",
-          text: "Because if I called him, he'd have run. And if he ran with the money, I'd have had nothing. And I hadn't finished deciding what I was willing to lose. He had eleven hours, and I spent every one of them thinking about myself.",
+          text: "Because if I'd told him, he'd have run. And if he'd run with what I thought was the money, I'd have had nothing. That's what I'd been telling myself all week — and it might've been enough if I'd let it ring out. I hung up before anybody answered, and then I told myself the arithmetic made it a decision. It didn't. I was scared. That's the more honest version.",
+        },
+        {
+          id: "nwt_m_v10b",
+          characterId: "vera",
+          expression: "cutting herself off, furious about it",
+          text: "And don't you look at me like that. God damn it. This is what fine looks like, Jack. You've never seen me any other way, and you're not gonna start now.",
         },
         {
           id: "nwt_m_v11",
@@ -2406,7 +2531,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v12",
           characterId: "vera",
           expression: "smaller — she doesn't perform any of this",
-          text: "My father borrowed four thousand dollars from Solomon Reyes. 2011. A furnace, in November. By the time he died it was eleven, and you don't pay it off here — you pay ON it. Forever. Then you hand it to whoever's left. That was me. Kessler. That was my name before David. In case you wondered why Solomon's never once called me Mrs. Voss.",
+          text: "My father borrowed four thousand dollars from Solomon Reyes. 2011. A furnace, in November. By the time he died it was eleven, and the note came to me. David never signed it. You don't pay it off here — you pay ON it. Forever. Then you hand it to whoever's left. That was me. Kessler. That was my name before David. In case you wondered why Solomon's never once called me Mrs. Voss.",
         },
         {
           id: "nwt_m_v13",
@@ -2424,13 +2549,19 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v15",
           characterId: "vera",
           expression: "quieter — the whole shape of it",
-          text: "So no. I didn't do it for a bag of money. I did it because there's no version of staying here where I ever stop owing him. Not me, not my kids, not their kids. I wanted out. That's all it ever was. I wanted out, and I didn't care what it cost — and then it cost something, and now I care. That's not redemption. That's arithmetic catching up.",
+          text: "So no. I didn't do it only for a bag of money. I did it because there's no version of staying here where I ever stop owing him. Not me, not my kids, not their kids. I wanted out. That's all it ever was. I wanted out, and I didn't care what it cost — and then it cost something, and now I care. That's not redemption. That's arithmetic catching up.",
+        },
+        {
+          id: "nwt_m_v15b",
+          characterId: "vera",
+          expression: "the first word she has not dressed up",
+          text: "I'm afraid of Solomon. Not the debt. Him. He can walk into a room and make you feel like you've already agreed to the next ten years.",
         },
         {
           id: "nwt_m_j10",
           characterId: "jack",
           expression: "very quiet",
-          text: "Were you gonna cut him out? When it was done?",
+          text: "Were you ever going to warn him?",
         },
         {
           id: "nwt_m_s3",
@@ -2443,7 +2574,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v16",
           characterId: "vera",
           expression: "honest, and it's worse than a lie",
-          text: "I hadn't decided.",
+          text: "I kept telling myself I would — when I had the money in sight, when I knew what I was willing to lose. He had eleven hours, and I spent them not doing the hard part: warning him. That's not a better answer, Jack. It's the same one with a door on it.",
         },
         {
           id: "nwt_m_j11",
@@ -2508,7 +2639,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_m_v21",
           characterId: "vera",
           expression: "not looking at him",
-          text: "I've already cost one man everything he had. I'm standing here doing the math on the second one.",
+          text: "I've already cost one man everything he had. I'm standing here doing the fucking math on the second one.",
         },
         {
           id: "nwt_m_j15",
@@ -2517,17 +2648,17 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           text: "Then stop doing math.",
         },
         {
-          id: "nwt_m_vo4",
-          characterId: "jack",
-          expression: "V.O. — final beat",
-          text: "She looked at me a long time. And I understood, standing in a wet lot behind a mill that closed when I was thirty-two, that she was going to try to save me. That she'd decided it somewhere in the last four seconds, and she was going to be quiet about it, and she was going to be better at it than I was going to be at stopping her.",
-        },
-        {
           id: "nwt_m_bag_beat",
           characterId: "jack",
           conditionRule: { requiresFlags: ["nwt_bag_examined"] },
           expression: "V.O. — quiet",
-          text: "Through the back window of her car: a suitcase, packed, and a bus schedule folded on top of it. She's been ready to leave since Tuesday morning. Ready before either of us gave her a reason to stay. I looked a long time. Neither of us said one word about it.",
+          text: "Through the back window of her car: a suitcase, packed, and a bus schedule folded on top of it. Ready before either of us gave her a reason to stay. I looked a long time. Neither of us said one word about it.",
+        },
+        {
+          id: "nwt_m_vo4",
+          characterId: "jack",
+          expression: "V.O. — final beat",
+          text: "She looked at me a long time. And I understood, standing in a wet lot behind a mill that closed when I was thirty-two, that she was going to try to save me. That she'd decided it somewhere in the last four seconds, and she was going to be quiet about it, and she was going to be better at it than I was going to be at stopping her.",
         },
       ],
       hotspots: [
@@ -2572,6 +2703,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Cost",
       background: "/img/nw2/bg-rosa-car.jpg",
       ambientAudio: "rain",
+      musicMode: "none",
       letterbox: true,
       prose:
         "The mill lot, later. Rain. Jack alone where he stood — then headlights sweeping the gravel, and Rosa's car pulling up beside him.",
@@ -2624,6 +2756,12 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           text: "All of it. The two-eleven plus what her father still owed. He's calling it one number now. Two hundred and twenty-two thousand. He gave her till Friday.",
         },
         {
+          id: "nwt_ct_r4b",
+          characterId: "rosa",
+          expression: "flat, not unkind",
+          text: "And your forty-eight went out this morning. I know you know. You've been carrying that thing around dead on your back all day and you never once said it. That's not stealth, Jack. That's just where you put the weight.",
+        },
+        {
           id: "nwt_ct_j3",
           characterId: "jack",
           expression: "quiet",
@@ -2660,7 +2798,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_ct_r8",
           characterId: "rosa",
           expression: "carefully",
-          text: "She came to see me. Two hours ago. Walked into the station and asked me what happens to a person who confesses to a theft the victim can't report to the police. She wasn't asking about jail, Jack. She was asking how to make it land on her and nobody else.",
+          text: "She came to see me. Two hours ago. Walked into the station and asked what happens to a person who confesses to a theft the victim can't report to the police. She wasn't confessing to the shooting. She was asking how to put her name on the theft without dragging anybody else into it.",
         },
         {
           id: "nwt_ct_j6",
@@ -2700,7 +2838,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_ct_r12",
           characterId: "rosa",
           expression: "flat, not unkind",
-          text: "I'm not. I'm doing it because of David Voss, same as you. You just get to feel like you're doing it for love. I get the paperwork.",
+          text: "I'm not. I'm doing it because of David Voss, same as you. You just get to feel like you're doing it for her. I get the paperwork.",
         },
         {
           id: "nwt_ct_j9",
@@ -2717,7 +2855,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_ct_r14",
           characterId: "rosa",
           expression: "cutting him off, not unkind",
-          text: "Don't. If you say something decent right now I'm gonna have to arrest one of you, and I've already decided I'm not going to, and I'd like to keep not deciding that for a few more hours.",
+          text: "Don't. If you say something decent right now, I'm going to have to put it in a report. I have a murder scene, a confession to theft, and no clean chain to the shooting. Give me one fact I can use before you make me choose a side.",
         },
         {
           id: "nwt_ct_form_beat",
@@ -2782,7 +2920,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "The Blue Cue, Again",
       background: "/img/nw2/bg-poolhall.jpg",
       ambientAudio: "jazz",
-      musicUrl: "/uploads/nobodys-witness-draft/1788024868121-4jwpy6y.mp3",
+      musicUrl: "/nwt-bluecue-jukebox.mp3",
+      musicMode: "track",
+      musicLevel: 0.4,
+      musicFadeSeconds: 1.6,
       letterbox: true,
       prose:
         "The same pool hall. Same warped jukebox. Same balls clacking. Deliberately identical to Act One. Thursday night. One day left on her.",
@@ -2796,24 +2937,24 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_b_desh1",
           characterId: "desh",
-          expression: "mid-conversation, exactly as before",
-          text: "— all I'm saying is, if the machine can tell it's the WRONG item, the machine already knows what the right item is. So why's it asking me?",
+          expression: "mid-conversation, listening to the record",
+          text: "— I'm telling you, this is the same song. Same little horn, same sad man getting to the chorus and giving up. How does a jukebox know when you're already having a bad night?",
         },
         {
           id: "nwt_b_moe1",
           characterId: "moe",
-          text: "It's not asking you.",
+          text: "It doesn't know.",
         },
         {
           id: "nwt_b_desh2",
           characterId: "desh",
           expression: "genuinely puzzled",
-          text: "It says please.",
+          text: "Then why's it keep picking this one?",
         },
         {
           id: "nwt_b_moe2",
           characterId: "moe",
-          text: "That's not asking. That's a recording of somebody who asked once, in nineteen ninety-something, and now it just plays.",
+          text: "Because you keep putting money in it. Machines don't have sympathy, Desh. They have habits.",
         },
         {
           id: "nwt_b_vo2",
@@ -2906,22 +3047,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           text: "Moe's jacket sat wrong on him all night. Heavy on one side, the way a shoulder sits when it's carrying something nobody asked it to carry into a room. Nobody in here mentioned it. That's how I knew it was for me.",
         },
         {
-          id: "nwt_b_desh5",
-          characterId: "desh",
-          expression: "calling after him, and he means it",
-          text: "Hey — Morrow. For what it's worth. He didn't give her up. They asked him where she was and he wouldn't say. Six hundred bucks got us the house. Nothing got us her.",
-        },
-        {
-          id: "nwt_b_vo5",
-          characterId: "jack",
-          expression: "V.O. — spare, breaking",
-          text: "Two hundred and eleven thousand dollars in a bag, eleven hours where she could have called him — and at the end of it, he still wouldn't say her name. I've thought about which one of us that makes the fool. I keep getting the same answer and I keep not liking it.",
-        },
-        {
           id: "nwt_b_moe8",
           characterId: "moe",
           expression: "last line, to Desh, casual, back to it",
-          text: "It plays a recording, Desh. That's all it is. It's a recording.",
+          text: "Put another quarter in if you want the ending. It won't make it a different song.",
         },
       ],
       hotspots: [
@@ -2938,17 +3067,109 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_b_go",
           text: "Turn. Walk out.",
-          targetSceneId: "nwt_trade",
+          targetSceneId: "nwt_bluecue_walk",
           attitudeTag: "Neutral",
-          consequences: { setFlags: ["nwt_david_protected_her"] },
         },
         {
           id: "nwt_b_fight",
           text: "Do something about it.",
-          targetSceneId: "nwt_trade",
+          targetSceneId: "nwt_bluecue_fight",
           attitudeTag: "Aggressive",
-          consequences: { setFlags: ["nwt_violence", "nwt_david_protected_her"], meterChanges: [{ meter: "Suspicion", delta: 3 }] },
+          consequences: { setFlags: ["nwt_violence"] },
         },
+      ],
+    },
+
+    {
+      id: "nwt_bluecue_walk",
+      title: "The Blue Cue — Out the Hard Way",
+      background: "/img/nw2/bg-poolhall.jpg",
+      ambientAudio: "jazz",
+      musicMode: "inherit",
+      letterbox: true,
+      prose:
+        "The door. Rain behind it. Desh's voice a beat later — the way a man says a thing he's already decided he wants you to have. Thursday night.",
+      dialogueBeats: [
+        {
+          id: "nwt_bw_desh1",
+          characterId: "desh",
+          expression: "calling after him, and he means it",
+          text: "Hey — Morrow. For what it's worth. He didn't give her up. They asked him where she was and he wouldn't say. Six hundred bucks got us the house. Nothing got us her.",
+        },
+        {
+          id: "nwt_bw_vo1",
+          characterId: "jack",
+          expression: "V.O. — spare, breaking",
+          text: "Two hundred and eleven thousand dollars missing, eleven hours with his number in her hand. And tonight she told me the part that got me wasn't the killing. It was that she called. Three rings, and she hung up before anybody answered — and then she told herself the arithmetic made it a decision. It didn't. And at the end of it, he still wouldn't say her name. I keep trying to make it a better story for her. I keep getting the same answer. I've thought about which one of us that makes the fool. I keep not liking it.",
+        },
+      ],
+      choices: [
+        { id: "nwt_bw_go", text: "The office above the feed store.", targetSceneId: "nwt_trade", attitudeTag: "Neutral" },
+      ],
+    },
+
+    {
+      id: "nwt_bluecue_fight",
+      title: "The Blue Cue — Doing Something About It",
+      background: "/img/nw2/bg-poolhall.jpg",
+      ambientAudio: "jazz",
+      musicMode: "inherit",
+      letterbox: true,
+      prose:
+        "The lamp. The jukebox, still playing. The sound of a man's mouth being opened by a glass — and then the silence afterward, which is the part that stays. Thursday night.",
+      dialogueBeats: [
+        {
+          id: "nwt_bf_s1",
+          characterId: "narrator",
+          expression: "the glass coming off the bar",
+          text: "(The glass is the closest thing. It comes off the bar and it's fast — faster than it should be for a man who's been polite all night. Moe takes it on the mouth without moving his hands. The room doesn't help. Nobody stops anybody. They've seen this before.)",
+          silent: true,
+        },
+        {
+          id: "nwt_bf_m1",
+          characterId: "moe",
+          expression: "dabbing his lip with a bar napkin, not looking up",
+          text: "Okay.",
+        },
+        {
+          id: "nwt_bf_j1",
+          characterId: "jack",
+          expression: "breathing hard, not done",
+          text: "That's it?",
+        },
+        {
+          id: "nwt_bf_m2",
+          characterId: "moe",
+          expression: "flat, no heat",
+          text: "For now.",
+        },
+        {
+          id: "nwt_bf_d1",
+          characterId: "desh",
+          expression: "quiet, the first time his face closes",
+          text: "Hey — Morrow. There's a thing I was gonna—",
+        },
+        {
+          id: "nwt_bf_m3",
+          characterId: "moe",
+          expression: "not looking up",
+          text: "Desh. No. He didn't want it.",
+        },
+        {
+          id: "nwt_bf_d2",
+          characterId: "desh",
+          expression: "a beat — then he does what Moe says",
+          text: "...Okay.",
+        },
+        {
+          id: "nwt_bf_vo1",
+          characterId: "jack",
+          expression: "V.O. — spare, flat, the damage arriving late",
+          text: "I'd swung on a man who told me he'd feel bad about hitting me back, and the price was a sentence I didn't know existed. Desh had opened his mouth to hand me something — a thing Moe shut down before the sentence came out. I never found out what it was. I never asked. And I've got a feeling, from the look David had at the back door, that it was the one thing I'd have wanted.",
+        },
+      ],
+      choices: [
+        { id: "nwt_bf_go", text: "Leave before he changes his mind.", targetSceneId: "nwt_trade", attitudeTag: "Aggressive" },
       ],
     },
 
@@ -3114,7 +3335,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_tr_sol11",
           characterId: "solomon",
           expression: "unreadable, sitting back down",
-          text: "Now I'm older, and there's a man dead in a yard because I gave permission for it, and I find I don't like the arithmetic as much as I used to. Take the deal off the table before I remember I'm a businessman.",
+          text: "Now I'm older, and there's a man dead in a yard after one of my men took private money. I didn't order it. I let my system make it possible. I find I don't like the arithmetic as much as I used to. Take the deal off the table before I remember I'm a businessman.",
         },
         {
           id: "nwt_tr_j12",
@@ -3261,6 +3482,8 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       background: "/img/nw2/bg-diner-int.jpg",
       ambientAudio: "rain",
       musicUrl: "/nobodys-witness.mp3",
+      musicMode: "track",
+      musicLevel: 0.7,
       musicFadeSeconds: 3,
       letterbox: true,
       prose: "The door bell. Rain swelling, then muffled. Footsteps — the same unhurried walk from the first scene.",
@@ -3269,7 +3492,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_fa_vo1",
           characterId: "jack",
           expression: "V.O. — spare",
-          text: "I called it in from the booth. She picked up on the first ring, like the phone was already in her hand. I said one hour, the booth. Twenty-two minutes later the door bell — nobody in this town has hurried for anything in fifty years, and that's how I knew.",
+          text: "I called it in from the booth. She picked up on the first ring, like the phone was already in her hand. I said one hour, the booth. Two minutes later the door bell — nobody in this town has hurried for anything in fifty years, and that's how I knew.",
         },
         {
           id: "nwt_fa_vo2",
@@ -3281,7 +3504,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_fa_v1",
           characterId: "vera",
           expression: "quiet",
-          text: "It's everywhere. By noon. Denny told me at the pumps this afternoon and he couldn't look at me while he did it.",
+          text: "It's everywhere. By noon. Heard it at the pumps this afternoon — the kid on the register couldn't look at me while he said it.",
         },
         {
           id: "nwt_fa_j1",
@@ -3349,7 +3572,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_fa_v6",
           characterId: "vera",
           expression: "quiet",
-          text: "I'm not sure that's love, Jack. I think it might be the same thing everybody in this town does. Deciding for somebody else because you've decided you know better.",
+          text: "I'm not sure that's what this is, Jack. I think it might be the same thing everybody in this town does. Deciding for somebody else because you've decided you know better.",
         },
         {
           id: "nwt_fa_j6",
@@ -3360,8 +3583,16 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         {
           id: "nwt_fa_vo3",
           characterId: "jack",
+          conditionRule: { excludesFlags: ["nwt_violence"] },
           expression: "V.O. — spare. Rain. The fan.",
           text: "One piece of information left that was mine to give or keep. Two days I'd had it. Desh's voice, and a man in a kitchen who wouldn't say her name.",
+        },
+        {
+          id: "nwt_fa_vo4",
+          characterId: "jack",
+          conditionRule: { requiresFlags: ["nwt_violence"] },
+          expression: "V.O. — spare. Rain. The fan. Flatter.",
+          text: "Two days I'd had it and never got it. Desh had opened his mouth in the Blue Cue and Moe shut him before the sentence came out. I'd bought that silence with a glass to the mouth of a man who'd have said yes to my swing. There wasn't anything left to give her. There was only what I'd already delivered.",
         },
       ],
       choices: [
@@ -3370,13 +3601,15 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           text: "Tell her. They asked him where she was. He wouldn't say.",
           targetSceneId: "nwt_end_stays",
           attitudeTag: "Sultry",
-          consequences: { setFlags: ["nwt_told_her"] },
+          gating: { excludesFlags: ["nwt_violence"] },
+          hidden: true,
         },
         {
           id: "nwt_fa_keep",
-          text: "Keep it. Some things you only get once.",
+          text: "Say nothing. Let her go.",
           targetSceneId: "nwt_end_walks",
           attitudeTag: "Neutral",
+          hidden: true,
         },
       ],
     },
@@ -3387,8 +3620,10 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       isEnding: true,
       background: "/img/nw2/bg-diner-int.jpg",
       musicUrl: "/nobodys-witness.mp3",
+      musicMode: "inherit",
+      musicLevel: 0.7,
       letterbox: true,
-      prose: "Two days I'd had it. The booth between them, the bag on the vinyl, ten feet of the same rain.",
+      prose: "Two days I'd had it. The booth between us, the bag on the vinyl, and a space neither of us could cross without making it a promise.",
       dialogueBeats: [
         {
           id: "nwt_es_j1",
@@ -3436,7 +3671,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_es_v3",
           characterId: "vera",
           expression: "breaking, loud for the first time",
-          text: "Eleven hours. I had eleven fucking hours and his number, and I sat there doing arithmetic, Jack—",
+          text: "Eleven hours. I had eleven fucking hours and his number, Jack. I called it. Three rings. I hung up before anybody answered — then I sat there doing arithmetic.",
         },
         {
           id: "nwt_es_j4",
@@ -3520,7 +3755,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_es_v8",
           characterId: "vera",
           expression: "breaking, quietly",
-          text: "That's not — I mean I have money. I have two hundred and eleven thousand dollars and a bus at six, and I don't have anywhere to GO, Jack. There isn't a place. I've been doing arithmetic since I was nineteen and I never once did it on what happens after.",
+          text: "That's not — I mean I have a bus at six and no money I can call mine. I don't have anywhere to GO, Jack. There isn't a place. I've been doing arithmetic since I was nineteen and I never once did it on what happens after.",
         },
         {
           id: "nwt_es_v9",
@@ -3538,7 +3773,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_es_vo2",
           characterId: "jack",
           expression: "V.O. — spare, flat, no relief in it at all",
-          text: "That's the sound. If you want the exact moment — that's it. A bag going back down on a vinyl seat at eleven fifty-one at night.",
+          text: "That's the sound. If you want the exact moment — that's it. A bag going back down on a vinyl seat at eleven fifty-one at night. Not because she chose me. Because she had finally run out of lies about what came after.",
         },
         {
           id: "nwt_es_s8",
@@ -3568,13 +3803,13 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_es_vo3",
           characterId: "jack",
           expression: "V.O. — very quiet, the last line",
-          text: "She got it back. That's the one thing that came back. Eleven fifty-one on a Friday — a woman put a bag down, and a sentence finished. In this town, that's about as close to a happy ending as anybody's ever come.",
+          text: "She stayed until dawn. Not for me. The bus went without her, the diner took her back, and at first light she went upstairs and closed the door. I walked out the front. Two people can sit in the same booth and still be the distance that breaks them.",
         },
         {
           id: "nwt_es_s9",
           characterId: "narrator",
           expression: "the bookend",
-          text: "(Blackwood's main street at night, empty — same as the first frame. Neon smearing teal and magenta across wet asphalt. Two figures through the diner window this time, small, still, sitting opposite each other. Not moving.)",
+          text: "(First light through the diner window. The booth is empty. A light comes on in the room above it. Jack's coat disappears down the wet street.)",
           silent: true,
         },
       ],
@@ -3582,7 +3817,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         tier: "victory-gold",
         headline: "SHE STAYS",
         recap:
-          "A woman put a bag down and sat back down in a booth at eleven fifty-one on a Friday, and a sentence finished. In this town, that's about as close to a happy ending as anybody's ever come.",
+          "Jack told Vera what David refused to say. She stayed until the bus left, then closed the upstairs door. The debt is gone; the space between them is not.",
       },
       choices: [],
     },
@@ -3592,15 +3827,24 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "Nobody's Witness",
       isEnding: true,
       background: "/img/nw2/bg-empty-booth.jpg",
-      musicUrl: "/nobodys-witness.mp3",
+      musicMode: "none",
+      musicFadeSeconds: 1.8,
       letterbox: true,
       prose: "The fan. The rain. The bag on the vinyl seat, close enough to pick up fast. Neither of them touching it.",
       dialogueBeats: [
         {
           id: "nwt_ew_vo1",
           characterId: "jack",
+          conditionRule: { excludesFlags: ["nwt_violence"] },
           expression: "V.O. — spare",
           text: "She didn't ask. I didn't tell. I let the two days stay between us where I'd put them — and I'm keeping them there now. Some things you only get once, and I've decided the yard was one of them.",
+        },
+        {
+          id: "nwt_ew_vo1b",
+          characterId: "jack",
+          conditionRule: { requiresFlags: ["nwt_violence"] },
+          expression: "V.O. — spare, flatter",
+          text: "She didn't ask. There wasn't anything to tell — or there had been, and I'd priced it out of the room in a pool hall. I let the two days sit where they'd put them, and I'm keeping them there now. Some things you never got, and by the time you want them, the man who'd have handed them over has already closed his mouth.",
         },
         {
           id: "nwt_ew_s1",
@@ -3668,7 +3912,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
         tier: "victory-silver",
         headline: "NOBODY'S WITNESS",
         recap:
-          "He kept the yard. She kept the bus. Ten years he let the coffee go cold, and tonight he drank it anyway. Cold. Didn't matter.",
+          "He kept the yard. She took the bus. Neither of them mistook a sacrifice for a future, and the money stayed missing.",
       },
       choices: [],
     },
@@ -3678,7 +3922,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
       title: "A Stopped Watch",
       isEnding: true,
       background: "/img/nw2/bg-empty-booth.jpg",
-      musicUrl: "/nobodys-witness.mp3",
+      musicMode: "none",
       letterbox: true,
       prose: "The Blackwood Diner. Rain on the window. The ceiling fan. The booth opposite him stays empty.",
       dialogueBeats: [
@@ -3795,7 +4039,7 @@ export const NOBODYS_WITNESS_TRUE: Story = {
           id: "nwt_ec_r5",
           characterId: "rosa",
           expression: "quiet — the part that actually hurts",
-          text: "And Jack — she doesn't know it worked. By the time Solomon's boys started talking at noon she was three counties gone. Far as she knows, she's still carrying every cent of it.",
+          text: "And Jack — she doesn't know it worked. By the time Solomon's boys started talking at noon she was three counties gone. Far as she knows, she's still carrying the debt and the guilt. The stolen money is still somewhere no living person can point to.",
         },
         {
           id: "nwt_ec_watch_beat",

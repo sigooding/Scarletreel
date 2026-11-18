@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
 const { fileURLToPath, pathToFileURL } = require("node:url");
+const { packScreel, unpackScreel, isZipBuffer } = require("./screelZip.cjs");
 
 const APP_NAME = "Scarlet Reel";
 const DIST_INDEX = path.join(__dirname, "..", "dist", "index.html");
@@ -216,32 +217,55 @@ function registerSavesIpc() {
   });
 }
 
-/** The native File menu (Save/Load/Export/Import/Open Saves Folder/Quit).
- *  Items send an action string to every window; the game listens via
- *  scarletReelDesktop.onMenu. */
-function registerAppMenu() {
+/** Per-window app mode ("studio" | "play" | "menu" | …). The File menu
+ *  labels and accelerators follow the FOCUSED window so Studio's Ctrl+S
+ *  (Save Case) never steals the player's Save Game, and a Studio playtest
+ *  popup doesn't rewrite the editor's menu. */
+const windowMode = new WeakMap();
+
+/** Last folder the author saved/opened a case in, so the next dialog starts there. */
+let lastCaseDir = null;
+
+function focusedMode() {
+  const win = BrowserWindow.getFocusedWindow();
+  return (win && windowMode.get(win)) || "menu";
+}
+
+/** The native File menu. Items send an action string to the FOCUSED window;
+ *  Studio and the player each listen via scarletReelDesktop.onMenu. */
+function rebuildAppMenu() {
   const send = (action) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("scarlet-menu", action);
-    }
+    const win = BrowserWindow.getFocusedWindow();
+    if (win && !win.isDestroyed()) win.webContents.send("scarlet-menu", action);
   };
-  const template = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
-    {
-      label: "File",
-      submenu: [
+  const studio = focusedMode() === "studio";
+  const fileSubmenu = studio
+    ? [
+        { label: "Save Case", accelerator: "CmdOrCtrl+S", click: () => send("save") },
+        { label: "Save Case As…", accelerator: "CmdOrCtrl+Shift+S", click: () => send("save-case-as") },
+        { label: "Open Case…", accelerator: "CmdOrCtrl+O", click: () => send("load") },
+        { type: "separator" },
+        { label: "Export Save…", click: () => send("export-save") },
+        { label: "Import Save…", click: () => send("import-save") },
+        { label: "Open Saves Folder", click: () => send("open-saves-dir") },
+      ]
+    : [
         { label: "Save Game", accelerator: "CmdOrCtrl+S", click: () => send("save") },
         { label: "Load Game…", accelerator: "CmdOrCtrl+O", click: () => send("load") },
         { type: "separator" },
         { label: "Export Save…", click: () => send("export-save") },
         { label: "Import Save…", click: () => send("import-save") },
         { label: "Open Saves Folder", click: () => send("open-saves-dir") },
-        { type: "separator" },
-        process.platform === "darwin"
-          ? { role: "quit" }
-          : { label: "Quit", accelerator: "CmdOrCtrl+Q", click: () => app.quit() },
-      ],
-    },
+      ];
+  fileSubmenu.push(
+    { type: "separator" },
+    process.platform === "darwin"
+      ? { role: "quit" }
+      : { label: "Quit", accelerator: "CmdOrCtrl+Q", click: () => app.quit() }
+  );
+  const template = [
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
+    { label: "File", submenu: fileSubmenu },
     { role: "editMenu" },
     { role: "viewMenu" },
     { role: "windowMenu" },
@@ -249,9 +273,130 @@ function registerAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+function registerAppMenu() {
+  rebuildAppMenu();
+  app.on("browser-window-focus", () => rebuildAppMenu());
+}
+
+function assetsToDataUrls(assets) {
+  return (Array.isArray(assets) ? assets : []).map((a) => ({
+    id: String(a.id || ""),
+    name: String(a.name || "asset"),
+    type: a.type === "audio" || a.type === "video" || a.type === "image" ? a.type : "image",
+    ...(a.folder ? { folder: String(a.folder) } : {}),
+    size: Number(a.size) || 0,
+    uploadedAt: Number(a.uploadedAt) || Date.now(),
+    dataUrl: `data:${a.mime || "application/octet-stream"};base64,${a.base64 || ""}`,
+  }));
+}
+
+async function writeCaseFile(filePath, storyJson, assets) {
+  if (/\.screel$/i.test(filePath)) {
+    const buf = packScreel({ storyJson, assets });
+    await fs.writeFile(filePath, buf);
+    return;
+  }
+  const story = JSON.parse(storyJson || "null");
+  if (!story || typeof story !== "object") throw new Error("Case payload is not valid JSON.");
+  const bundled = { ...story, assets: assetsToDataUrls(assets) };
+  await fs.writeFile(filePath, JSON.stringify(bundled, null, 2), "utf8");
+}
+
+function registerReelIpc() {
+  ipcMain.handle("scarlet-app:set-mode", (event, mode) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    windowMode.set(win, String(mode || "menu"));
+    if (BrowserWindow.getFocusedWindow() === win) rebuildAppMenu();
+  });
+
+  ipcMain.handle("scarlet-reel:save", async (event, payload) => {
+    const storyJson = String(payload?.storyJson ?? "");
+    if (!storyJson) throw new Error("Nothing to save.");
+    const assets = Array.isArray(payload?.assets) ? payload.assets : [];
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const requested = typeof payload?.filePath === "string" ? payload.filePath : "";
+    let filePath = requested;
+    if (!filePath) {
+      const suggested = String(payload?.suggestedName || "case.screel").replace(/[\\/:*?"<>|]/g, "_");
+      const startDir = lastCaseDir || app.getPath("documents");
+      const res = await dialog.showSaveDialog(win ?? undefined, {
+        title: "Save case",
+        defaultPath: path.join(startDir, suggested),
+        filters: [
+          { name: "Scarlet Reel case", extensions: ["screel"] },
+          { name: "Scarlet Reel JSON", extensions: ["json"] },
+          { name: "All files", extensions: ["*"] },
+        ],
+      });
+      if (res.canceled || !res.filePath) return { canceled: true };
+      filePath = res.filePath;
+      // Electron only auto-appends the first filter's extension on some
+      // platforms. If the author picked the case filter but typed no
+      // extension, give them a .screel.
+      if (!path.extname(filePath)) filePath += ".screel";
+    }
+    await writeCaseFile(filePath, storyJson, assets);
+    lastCaseDir = path.dirname(filePath);
+    return { canceled: false, path: filePath };
+  });
+
+  ipcMain.handle("scarlet-reel:open", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const res = await dialog.showOpenDialog(win ?? undefined, {
+      title: "Open case",
+      defaultPath: lastCaseDir || app.getPath("documents"),
+      properties: ["openFile"],
+      filters: [
+        { name: "Scarlet Reel case", extensions: ["screel", "json"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (res.canceled || !res.filePaths[0]) return { canceled: true };
+    const filePath = res.filePaths[0];
+    const buf = await fs.readFile(filePath);
+    lastCaseDir = path.dirname(filePath);
+    if (isZipBuffer(buf) || /\.screel$/i.test(filePath)) {
+      const unpacked = unpackScreel(buf);
+      return { canceled: false, path: filePath, storyJson: unpacked.storyJson, assets: unpacked.assets };
+    }
+    const text = buf.toString("utf8");
+    JSON.parse(text); // refuse garbage before we ship it to the renderer
+    return { canceled: false, path: filePath, storyJson: text, assets: [] };
+  });
+}
+
 /** ElevenLabs voice files: strictly voices/<person>/<scene>/<line>.mp3 so the
  *  renderer can never write outside the committed voice tree. */
+/** Studio uploads for the 🧱 3D sprite folder: assets/sprites3d/<name>.<ext>.
+ *  Same two-mode behaviour as voices/ — dev checkouts get real repo files,
+ *  packaged apps get the userData game-media folder. */
+const SPRITE3D_REL_PATH_RE = /^assets\/sprites3d\/[a-z0-9][a-z0-9-]*\.(png|jpe?g|webp)$/;
+
 const VOICE_REL_PATH_RE = /^voices\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.mp3$/;
+
+function registerSprite3dIpc() {
+  ipcMain.handle("scarlet-media:save-sprite3d", async (_event, payload) => {
+    const relativePath = String(payload?.relativePath ?? "");
+    if (!SPRITE3D_REL_PATH_RE.test(relativePath)) {
+      throw new Error(`Invalid 3D sprite path "${relativePath}" — expected assets/sprites3d/<name>.<png|jpg|webp>`);
+    }
+    const bytes = payload?.bytes;
+    const buffer = Buffer.from(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
+    if (!buffer.length) throw new Error("Sprite was empty.");
+
+    const targets = desktopUploadTargets(relativePath);
+    await Promise.all(targets.map(async (target) => {
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, buffer);
+    }));
+
+    const publicTarget = targets.find((target) => target.includes(`${path.sep}public${path.sep}`));
+    if (publicTarget) return { url: `/${relativePath.split(path.sep).join("/")}`, path: publicTarget };
+    const target = targets[0];
+    return { url: pathToFileURL(target).toString(), path: target };
+  });
+}
 
 function registerVoiceIpc() {
   ipcMain.handle("scarlet-voice:save", async (_event, payload) => {
@@ -472,8 +617,10 @@ if (!gotLock) {
   app.quit();
 } else {
   registerDesktopMediaIpc();
+  registerSprite3dIpc();
   registerVoiceIpc();
   registerSavesIpc();
+  registerReelIpc();
   registerWindowIpc();
   registerAppMenu();
 

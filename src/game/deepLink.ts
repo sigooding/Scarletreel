@@ -223,6 +223,7 @@ export function deepLinkFromUrl(): DeepLinkRequest {
  *  page with its query string dropped. */
 export function buildDeepLink(
   opts: {
+    storyId?: string;
     sceneId?: string;
     flags?: Iterable<string>;
     items?: Iterable<string>;
@@ -237,6 +238,7 @@ export function buildDeepLink(
   const add = (k: string, v: string) => {
     if (v) parts.push(`${k}=${encodeURIComponent(v)}`);
   };
+  if (opts.storyId) add("story", opts.storyId);
   if (opts.sceneId) add("scene", opts.sceneId);
   const flags = [...(opts.flags ?? [])];
   if (flags.length) add("flags", flags.join(","));

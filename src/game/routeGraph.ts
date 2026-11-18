@@ -1,4 +1,5 @@
-import type { JourneyStep, Story } from "../types";
+import { sceneRoutes } from "../sceneRoutes";
+import type { Choice, JourneyStep, Story } from "../types";
 
 /* ------------------------------------------------------------------ *
  *  ROUTE GRAPH
@@ -77,16 +78,9 @@ export function scenesInAct(story: Story, actId: string): Set<string> {
     out.add(id);
     // Endings terminate the walk — nothing follows them.
     if (scene.isEnding) continue;
-    if (scene.autoAdvanceTargetSceneId) queue.push(scene.autoAdvanceTargetSceneId);
-    for (const c of scene.choices ?? []) {
-      if (c.targetSceneId) queue.push(c.targetSceneId);
-      if (c.timedOutTargetSceneId) queue.push(c.timedOutTargetSceneId);
-    }
-    for (const h of scene.hotspots ?? []) {
-      if (h.action.targetSceneId) queue.push(h.action.targetSceneId);
-      const puzzle = h.action.patternPuzzle;
-      if (puzzle?.targetSceneId) queue.push(puzzle.targetSceneId);
-      if (puzzle?.wrongTargetSceneId) queue.push(puzzle.wrongTargetSceneId);
+    for (const route of sceneRoutes(scene)) {
+      if (route.kind === "choice" && (route.ref as Choice).reply) continue;
+      queue.push(route.target);
     }
   }
   return out;
@@ -139,108 +133,25 @@ export function buildRouteGraph(
 
   /* ---- edges ---- */
   const edges: RouteEdge[] = [];
-  const seenEdge = new Set<string>();
-
   for (const sceneId of inAct) {
     const scene = byId.get(sceneId);
-    if (!scene) continue;
-    if (scene.autoAdvanceTargetSceneId && inAct.has(scene.autoAdvanceTargetSceneId)) {
-      const key = `${sceneId}->${scene.autoAdvanceTargetSceneId}:auto`;
-      if (!seenEdge.has(key)) {
-        seenEdge.add(key);
-        edges.push({
-          id: key,
-          source: sceneId,
-          target: scene.autoAdvanceTargetSceneId,
-          label: "auto",
-          attitude: "Neutral",
-          status: visited.has(sceneId) && visited.has(scene.autoAdvanceTargetSceneId) ? "taken" : "missed",
-        });
-      }
-    }
-    for (const c of scene.choices ?? []) {
-      // Replies are in-scene dialogue, not navigation.
-      if (c.reply || !c.targetSceneId) continue;
-      if (!inAct.has(c.targetSceneId)) continue;
-
-      const taken = pickedChoices.has(c.id) && visited.has(c.targetSceneId);
-      const status: RouteStatus = taken
-        ? "taken"
-        : lockedChoices.has(c.id)
-          ? "locked"
-          : "missed";
-
-      const key = `${sceneId}->${c.targetSceneId}:${c.id}`;
-      if (seenEdge.has(key)) continue;
-      seenEdge.add(key);
+    if (!scene || scene.isEnding) continue;
+    for (const route of sceneRoutes(scene)) {
+      if (!inAct.has(route.target)) continue;
+      const choice = route.kind === "choice" ? route.ref as Choice : null;
+      if (choice?.reply) continue;
+      const timeout = route.path[route.path.length - 1] === "timedOutTargetSceneId";
+      const taken = choice
+        ? timeout
+          ? journey.some((j) => j.sceneId === sceneId && j.timedOut && visited.has(route.target))
+          : pickedChoices.has(choice.id) && visited.has(route.target)
+        : visited.has(sceneId) && visited.has(route.target);
       edges.push({
-        id: key,
-        source: sceneId,
-        target: c.targetSceneId,
-        label: c.text.length > 34 ? `${c.text.slice(0, 32)}…` : c.text,
-        attitude: c.attitudeTag ?? "Neutral",
-        status,
+        id: route.id, source: sceneId, target: route.target,
+        label: timeout ? "(hesitated)" : route.label,
+        attitude: route.attitude,
+        status: taken ? "taken" : choice && lockedChoices.has(choice.id) ? "locked" : "missed",
       });
-
-      if (c.timedOutTargetSceneId && inAct.has(c.timedOutTargetSceneId)) {
-        const tKey = `${sceneId}->${c.timedOutTargetSceneId}:${c.id}:timeout`;
-        if (!seenEdge.has(tKey)) {
-          seenEdge.add(tKey);
-          const tTaken = journey.some(
-            (j) => j.sceneId === sceneId && j.timedOut && visited.has(c.timedOutTargetSceneId!)
-          );
-          edges.push({
-            id: tKey,
-            source: sceneId,
-            target: c.timedOutTargetSceneId,
-            label: "(hesitated)",
-            attitude: "Neutral",
-            status: tTaken ? "taken" : "missed",
-          });
-        }
-      }
-    }
-    // Scene-moving hotspots are walkable edges too — the act membership walk
-    // follows them, so the map must draw them, or the door scenes (the
-    // freezer, the back room) float unconnected and their return edges have
-    // no forward edge to pair with.
-    for (const h of scene.hotspots ?? []) {
-      const doorTarget = h.action.targetSceneId;
-      if (doorTarget && inAct.has(doorTarget)) {
-        const dKey = `${sceneId}->${doorTarget}:hs:${h.id}`;
-        if (!seenEdge.has(dKey)) {
-          seenEdge.add(dKey);
-          edges.push({
-            id: dKey,
-            source: sceneId,
-            target: doorTarget,
-            label: h.label.length > 34 ? `${h.label.slice(0, 32)}…` : h.label,
-            attitude: "Neutral",
-            status: visited.has(sceneId) && visited.has(doorTarget) ? "taken" : "missed",
-          });
-        }
-      }
-      // A pattern puzzle's scene targets are doors as well.
-      const puzzle = h.action.patternPuzzle;
-      for (const [target, tag] of [
-        [puzzle?.targetSceneId, "solved"],
-        [puzzle?.wrongTargetSceneId, "final miss"],
-      ] as [string | undefined, string][]) {
-        if (target && inAct.has(target)) {
-          const pKey = `${sceneId}->${target}:puzzle:${h.id}:${tag}`;
-          if (!seenEdge.has(pKey)) {
-            seenEdge.add(pKey);
-            edges.push({
-              id: pKey,
-              source: sceneId,
-              target: target,
-              label: `(${tag})`,
-              attitude: "Clever",
-              status: visited.has(sceneId) && visited.has(target) ? "taken" : "missed",
-            });
-          }
-        }
-      }
     }
   }
 

@@ -3,6 +3,7 @@ import type { GlobalState, Item } from "../types";
 import type { ResolvedInventory } from "../logic";
 import { assetUrl } from "../assetPath";
 import { audio } from "../audio";
+import { DialogFrame } from "../components/DialogFrame";
 import { SheetSprite } from "./SheetSprite";
 import { sheetDrawable } from "./spriteSheet";
 
@@ -59,6 +60,7 @@ export function InventoryDock({
   onExplainCrafting,
   hasCrafting,
   onUseItem,
+  onModalOpenChange,
 }: {
   state: GlobalState;
   display: ResolvedInventory;
@@ -68,6 +70,7 @@ export function InventoryDock({
   hasCrafting: boolean;
   /** Dropped an item onto a scene object (by its `data-hs-id`) — USE it there. */
   onUseItem?: (item: Item, hotspotId: string) => void;
+  onModalOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(!display.startClosed);
   const [flash, setFlash] = useState<string | null>(null);
@@ -86,6 +89,12 @@ export function InventoryDock({
     const t = setTimeout(() => setFlash(null), 900);
     return () => clearTimeout(t);
   }, [flash]);
+
+  const modalOpen = display.mode === "modal" && open && state.inventory.length > 0;
+  useEffect(() => {
+    onModalOpenChange?.(modalOpen);
+    return () => onModalOpenChange?.(false);
+  }, [modalOpen, onModalOpenChange]);
 
   /* ---- close the right-click menu on outside clicks / blur / Escape ---- */
   useEffect(() => {
@@ -182,7 +191,10 @@ export function InventoryDock({
     const move = (e: PointerEvent) => {
       const d = dragRef.current;
       if (!d) return;
-      if (!d.active && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 6) d.active = true;
+      if (!d.active && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) > 6) {
+        d.active = true;
+        if (display.mode === "modal") setOpen(false);
+      }
       if (!d.active) return;
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const over = el?.closest?.("[data-hs-id]")?.getAttribute("data-hs-id") ?? null;
@@ -197,7 +209,7 @@ export function InventoryDock({
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
     };
-  }, [drag, finishDrag]);
+  }, [drag, finishDrag, display.mode]);
 
   const startDrag = (item: Item, e: React.PointerEvent) => {
     if (e.button !== 0 && e.pointerType === "mouse") return;
@@ -208,6 +220,40 @@ export function InventoryDock({
   if (display.mode === "hidden") return null;
 
   const isContainer = display.mode === "container";
+  // MODAL — the loot opens as a centred overlay with big art instead of a
+  // corner dock. The trigger button still lives in the HUD row.
+  const isModal = display.mode === "modal";
+  const craftingControls = hasCrafting && (
+        <>
+          <button
+            onClick={() => {
+              audio.click();
+              setCombineMode((m) => !m);
+              setCombineSel(null);
+              if (isModal) setOpen(true);
+            }}
+            aria-pressed={combineMode}
+            data-color={!combineMode ? "neon" : undefined}
+            data-active={combineMode || undefined}
+            className="hud-btn px-2 py-1.5"
+            title="Tap one item, then another, to combine them — no dragging needed"
+          >
+            🔧 {combineMode ? "Tapping" : "Combine"}
+          </button>
+          <button
+            onClick={() => {
+              audio.click();
+              if (isModal) setOpen(false);
+              onExplainCrafting();
+            }}
+            data-color="cyan"
+            className="hud-btn px-2 py-1.5"
+            title="Show the recipe available in this story"
+          >
+            ? Recipes
+          </button>
+        </>
+      );
   const heading = (
     <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
       <button
@@ -228,34 +274,7 @@ export function InventoryDock({
       >
         {isContainer ? "🎒" : "🧳"} {display.label} {state.inventory.length} {open ? "▾" : "▸"}
       </button>
-      {hasCrafting && (
-        <>
-          <button
-            onClick={() => {
-              audio.click();
-              setCombineMode((m) => !m);
-              setCombineSel(null);
-            }}
-            data-color={!combineMode ? "neon" : undefined}
-            data-active={combineMode || undefined}
-            className="hud-btn px-2 py-1.5"
-            title="Tap one item, then another, to combine them — no dragging needed"
-          >
-            🔧 {combineMode ? "Tapping" : "Combine"}
-          </button>
-          <button
-            onClick={() => {
-              audio.click();
-              onExplainCrafting();
-            }}
-            data-color="cyan"
-            className="hud-btn px-2 py-1.5"
-            title="Show the recipe available in this story"
-          >
-            ? Recipes
-          </button>
-        </>
-      )}
+      {(!isModal || !modalOpen) && craftingControls}
     </div>
   );
 
@@ -263,6 +282,7 @@ export function InventoryDock({
     <button
       key={item.id}
       data-item-id={item.id}
+      aria-label={item.name}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/item", item.id);
@@ -283,6 +303,7 @@ export function InventoryDock({
       onContextMenu={(e) => {
         e.preventDefault();
         audio.click();
+        if (isModal) setOpen(false);
         setCtxMenu({ item, x: e.clientX, y: e.clientY });
       }}
       onClick={() => {
@@ -302,6 +323,7 @@ export function InventoryDock({
           return;
         }
         audio.click();
+        if (isModal) setOpen(false);
         onInspect(item);
       }}
       title={`${item.name} — ${combineMode ? "combine mode: tap two items" : "click to inspect · drag onto an object to use it, or onto another item to combine · right-click for the verb menu"}`}
@@ -309,13 +331,23 @@ export function InventoryDock({
         item.isClue ? "border-crimson/60 bg-crimson/10" : "border-paper/30 bg-noir-700"
       } ${flash === item.id ? "combine-flash" : ""} ${
         combineMode && combineSel === item.id ? "ring-2 ring-gold shadow-[0_0_14px_rgba(232,178,60,0.6)]" : ""
-      } ${isContainer ? "h-11 w-11 text-xl" : "h-14 w-14"} ${
+      } ${isModal ? "text-5xl" : isContainer ? "h-11 w-11 text-xl" : "h-14 w-14"} ${
         drag?.item.id === item.id ? "opacity-40" : ""
       }`}
-      style={{ touchAction: "none" }}
+      style={
+        isModal
+          ? { touchAction: "none", height: display.tileSize, width: display.tileSize }
+          : { touchAction: "none" }
+      }
     >
       {item.iconUrl ? (
-        <img src={assetUrl(item.iconUrl)} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        <img
+          src={assetUrl(item.iconUrl)}
+          alt={item.name}
+          loading="lazy"
+          decoding="async"
+          className={`h-full w-full ${isModal ? "object-contain p-1.5" : "object-cover"}`}
+        />
       ) : (
         item.icon
       )}
@@ -335,7 +367,58 @@ export function InventoryDock({
             Tap the first item, then tap the second to combine.
           </div>
         )}
-        {open && state.inventory.length > 0 ? (
+        {open && state.inventory.length > 0 && isModal ? (
+          /* ---- modal: a centred overlay with LARGE item art ----
+             Rendered from inside the dock so it inherits every drag,
+             combine and inspect handler; only the presentation differs.
+             The backdrop closes it, and the panel stops propagation so a
+             click on the loot never dismisses the screen. */
+          <DialogFrame label={display.label} onDismiss={() => setOpen(false)} onKeyDown={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-noir-950/80 backdrop-blur-sm"
+            onClick={() => {
+              audio.click();
+              setOpen(false);
+            }}
+          >
+            <div
+              className="hud-frame slide-up relative max-h-[86vh] w-[min(92vw,860px)] overflow-y-auto p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-baseline justify-between gap-3 border-b border-gold/25 pb-2">
+                <h2 className="font-pulp text-sm uppercase tracking-[0.2em] text-gold">
+                  {display.label}
+                </h2>
+                <span className="font-type text-[11px] text-paper/50">
+                  {state.inventory.length} item{state.inventory.length === 1 ? "" : "s"} · click to inspect · drag onto the scene to use · Esc closes
+                </span>
+              </div>
+              {hasCrafting && <div className="mb-4 flex flex-wrap items-center gap-2">{craftingControls}</div>}
+              <div
+                className="grid justify-center gap-4"
+                style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${display.tileSize}px, max-content))` }}
+              >
+                {state.inventory.map((item) => (
+                  <div key={item.id} className="flex flex-col items-center gap-1.5">
+                    {itemChip(item)}
+                    <span className="max-w-[9rem] text-center font-type text-[11px] leading-tight text-paper/80">
+                      {item.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  audio.click();
+                  setOpen(false);
+                }}
+                className="absolute right-3 top-3 border border-paper/30 px-2.5 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/70 hover:bg-paper/10"
+              >
+                ✕ Close
+              </button>
+            </div>
+          </DialogFrame>
+        ) : null}
+        {open && state.inventory.length > 0 && !isModal ? (
           isContainer ? (
             /* ---- container: the sprite, with the loot laid out inside ---- */
             <div
@@ -452,7 +535,9 @@ export function InventoryDock({
 function anchorClass(anchor: ResolvedInventory["anchor"]): string {
   switch (anchor) {
     case "bottom-right":
-      return "bottom-3 right-3 items-end";
+      // The bottom-right system row owns Sound/Help. Keep the author's
+      // pockets above it, including when the dock is collapsed.
+      return "bottom-16 right-3 items-end";
     case "top-left":
       return "top-3 left-3 items-start";
     case "top-right":

@@ -94,18 +94,18 @@ const TAB_RE: Record<string, RegExp> = {
 };
 async function tab(name: string) {
   // The toolbar's "🚶 Stage" button ADDS a stage scene; the inspector tab with
-  // the same label switches panels. Always prefer the tab-grid button.
+  // the same label switches panels. Prefer semantic tabs, not their layout CSS.
   const matches = q("button").filter((el: any) => TAB_RE[name].test((el.textContent || "").trim()));
-  const b = matches.find((el: any) => el.closest?.(".grid.grid-cols-4")) ?? matches[0];
+  const b = matches.find((el: any) => el.getAttribute?.("role") === "tab") ?? matches[0];
   if (!b) { check(`tab ${name} exists`, false); return false; }
   b.click();
   await sleep(500);
   return true;
 }
 
-/** A select whose options include every one of the given scene ids. */
+/** A destination picker in the inspector, not the scene-navigation select. */
 const selectWithTargets = (...ids: string[]) =>
-  q("select").find((el: any) => ids.every((id) => [...el.querySelectorAll("option")].some((o: any) => o.value === id)));
+  q(".studio-inspector select").find((el: any) => ids.every((id) => [...el.querySelectorAll("option")].some((o: any) => o.value === id)));
 
 /** The current story, read from the editor's own autosaved draft. */
 const draftKey = (id: string) => `scarlet-studio-draft-${id}`;
@@ -242,6 +242,9 @@ async function main() {
     blankIssues.length === 1 && blankIssues[0].severity === "warning" && !errorsOf(blank).length,
     blankIssues.map((i) => i.message),
   );
+  const blankSnap = snap();
+  check("2.3 next-step coach points at the first room", /Add your first room/.test(blankSnap), blankSnap.slice(0, 240));
+  check("2.4 empty-canvas starter is on the map", /Your game is empty/.test(blankSnap), blankSnap.slice(0, 240));
   sweepProblems("new story");
 
   /* ---------- Part 3: author the micro-case ----------

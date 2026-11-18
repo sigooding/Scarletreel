@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld("scarletReelDesktop", {
     return ipcRenderer.invoke("scarlet-media:save-upload", payload);
   },
   /**
+   * Copy an uploaded 3D prop/texture into the sprites3d folder
+   * (assets/sprites3d/<name>.<ext>) so it becomes a committable repo file.
+   */
+  saveSprite3d(payload) {
+    return ipcRenderer.invoke("scarlet-media:save-sprite3d", payload);
+  },
+  /**
    * Copy a generated ElevenLabs voice line into the voices folder
    * (voices/<person>/<scene>/<line>.mp3) so it is a real, committable file.
    */
@@ -64,5 +71,15 @@ contextBridge.exposeInMainWorld("scarletReelDesktop", {
     const listener = (_event, action) => cb(action);
     ipcRenderer.on("scarlet-menu", listener);
     return () => ipcRenderer.removeListener("scarlet-menu", listener);
+  },
+  /* ---- author case files (real .screel / .reel.json on disk) ---- */
+  setAppMode(mode) {
+    return ipcRenderer.invoke("scarlet-app:set-mode", mode);
+  },
+  saveCaseFile(payload) {
+    return ipcRenderer.invoke("scarlet-reel:save", payload);
+  },
+  openCaseFile() {
+    return ipcRenderer.invoke("scarlet-reel:open");
   },
 });

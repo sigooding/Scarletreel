@@ -28,6 +28,7 @@ import {
   applyLieCaught,
   applyLieWrong,
   bypassedSceneId,
+  combineItems,
   effectiveChoiceGating,
   evidenceBreaksLie,
   heatBustTarget,
@@ -223,6 +224,7 @@ export function initialSim(story: Story, state: GlobalState, startSceneId?: stri
 /* ------------------------------------------------------------------ */
 
 export type Decision =
+  | { kind: "combine"; sceneId: string; a: string; b: string; label: string }
   /** the player picks a choice (navigating or a conversational reply) */
   | { kind: "choice"; sceneId: string; choiceId: string; label: string; reply: boolean; quickTime: boolean; targetSceneId?: string }
   /** the player lets a quick-time window lapse — deciding by not deciding */
@@ -245,7 +247,7 @@ export type Decision =
   | {
       kind: "minigame";
       sceneId: string;
-      game: "pattern-puzzle" | "ride";
+      game: "pattern-puzzle" | "ride" | "arcade";
       /** the hotspot (puzzle) or choice (ride) that launched it */
       sourceId: string;
       won: boolean;
@@ -265,6 +267,7 @@ export type Decision =
  *  playtest-coverage key shapes so the bot can weight itself with a real
  *  coverage record. */
 export function decisionKey(d: Decision): string {
+  if (d.kind === "combine") return `#combine:${[d.a, d.b].sort().join("+")}`;
   if (d.kind === "choice") return `${d.sceneId}:${d.choiceId}`;
   if (d.kind === "qte-timeout") return `${d.sceneId}:${d.choiceId}#timeout`;
   if (d.kind === "hotspot") {
@@ -401,6 +404,32 @@ export function availableDecisions(story: Story, sim: SimState, episode?: Episod
     if (!hotspotRepeats(hs) && sim.usedHotspots.has(`${sim.sceneId}:${hs.id}`)) continue;
     if (!meetsGating(hs.gating, sim.state)) continue;
 
+    if (hs.action.type === "arcadeGame" && hs.action.arcadeGame) {
+      // Same treatment as the pattern puzzle: the bot can't play a climber,
+      // but winning and losing are ordinary branches with consequences and
+      // optional destinations, so it decides the outcome instead.
+      const cfg = hs.action.arcadeGame;
+      out.push({
+        kind: "minigame",
+        sceneId: sim.sceneId,
+        game: "arcade",
+        sourceId: hs.id,
+        won: true,
+        label: `beat "${cfg.title || hs.label}"`,
+        ...(cfg.targetSceneId ? { targetSceneId: cfg.targetSceneId } : {}),
+      });
+      out.push({
+        kind: "minigame",
+        sceneId: sim.sceneId,
+        game: "arcade",
+        sourceId: hs.id,
+        won: false,
+        label: `lose "${cfg.title || hs.label}"`,
+        ...(cfg.loseTargetSceneId ? { targetSceneId: cfg.loseTargetSceneId } : {}),
+      });
+      continue;
+    }
+
     if (hs.action.type === "patternPuzzle" && hs.action.patternPuzzle) {
       // The bot can't drag rows around, but both OUTCOMES of the puzzle are
       // ordinary branches (reward/wrong consequences, a target scene), so it
@@ -470,6 +499,14 @@ export function availableDecisions(story: Story, sim: SimState, episode?: Episod
           targetSceneId: res.action.type === "showText" ? undefined : res.action.targetSceneId,
         });
       }
+    }
+  }
+
+  // Crafting is real gameplay, not a dead end behind an unmodelled item.
+  const inventory = sim.state.inventory;
+  for (let i = 0; i < inventory.length; i++) {
+    for (let j = i + 1; j < inventory.length; j++) {
+      if (combineItems(story, inventory[i], inventory[j])) out.push({ kind: "combine", sceneId: sim.sceneId, a: inventory[i].id, b: inventory[j].id, label: `combine ${inventory[i].name} + ${inventory[j].name}` });
     }
   }
 
@@ -635,6 +672,15 @@ export function applyDecision(story: Story, sim: SimState, decision: Decision): 
   };
 
   switch (decision.kind) {
+    case "combine": {
+      const a = next.state.inventory.find((i) => i.id === decision.a);
+      const b = next.state.inventory.find((i) => i.id === decision.b);
+      const result = a && b && combineItems(story, a, b);
+      if (!a || !b || !result) return { sim: next, moved: false, coverage, notes: ["no matching recipe"] };
+      next = { ...next, state: applyConsequences(story, { removeItems: [a.id, b.id], addItems: [result.id] }, next.state) };
+      return { sim: next, moved: false, coverage, notes: [`crafted ${result.name}`] };
+    }
+
     case "heat-bust": {
       notes.push(`heat bust → ${decision.targetSceneId}`);
       move(decision.targetSceneId);
@@ -690,7 +736,8 @@ export function applyDecision(story: Story, sim: SimState, decision: Decision): 
 
     case "minigame": {
       if (decision.game === "pattern-puzzle") {
-        const hs = (scene?.hotspots ?? []).find((h) => h.id === decision.sourceId);
+        const raw = (scene?.hotspots ?? []).find((h) => h.id === decision.sourceId);
+        const hs = raw && resolveHotspot(raw, next.state);
         const cfg = hs?.action.patternPuzzle;
         if (!cfg) return { sim: next, moved: false, coverage, notes: ["missing puzzle"] };
         const cons = decision.won ? cfg.rewardConsequences : cfg.wrongSubmissionConsequences;
@@ -706,6 +753,28 @@ export function applyDecision(story: Story, sim: SimState, decision: Decision): 
         }
         notes.push(`pattern puzzle "${cfg.title}" ${decision.won ? "solved" : "failed"}`);
         const dest = decision.won ? cfg.targetSceneId : cfg.wrongTargetSceneId;
+        if (dest && sceneById(story, dest)) {
+          move(dest);
+          return { sim: next, moved: true, coverage, notes };
+        }
+        return { sim: next, moved: false, coverage, notes };
+      }
+      if (decision.game === "arcade") {
+        const raw = (scene?.hotspots ?? []).find((h) => h.id === decision.sourceId);
+        const hs = raw && resolveHotspot(raw, next.state);
+        const cfg = hs?.action.arcadeGame;
+        if (!cfg) return { sim: next, moved: false, coverage, notes: ["missing arcade cabinet"] };
+        const cons = decision.won ? cfg.rewardConsequences : cfg.loseConsequences;
+        next = { ...next, state: applyConsequences(story, cons, next.state) };
+        coverage.push({ kind: "marker", id: `${sim.sceneId}:${hs!.id}` });
+        // Only WINNING spends the cabinet. Losing an arcade game must leave it
+        // playable — walking away and putting another quarter in is the whole
+        // idea, and a one-shot marker would strand a flag behind a lost run.
+        if (decision.won && !hotspotRepeats(hs!)) {
+          next = { ...next, usedHotspots: new Set(next.usedHotspots).add(`${sim.sceneId}:${hs!.id}`) };
+        }
+        notes.push(`arcade "${cfg.title || hs!.label}" ${decision.won ? "beaten" : "lost"}`);
+        const dest = decision.won ? cfg.targetSceneId : cfg.loseTargetSceneId;
         if (dest && sceneById(story, dest)) {
           move(dest);
           return { sim: next, moved: true, coverage, notes };

@@ -1,15 +1,48 @@
 import type { Story } from "../types";
+import { FAMILY_GUY } from "./familyGuy";
+import { MOONLIGHTING } from "./moonlighting";
 import { NOBODYS_WITNESS_FLAGSHIP } from "./nobodysWitnessFlagship";
 import { LAST_CALL_ON_PIER_7 } from "./lastCallOnPier7";
 import { QTE_DEMO } from "./qteDemo";
 import { PERK_RANGE } from "./perkRange";
 import { PATTERN_PUZZLE_DEMO } from "./patternPuzzleDemo";
+import { MAP_DEMO } from "./mapDemo";
+import { TINTIN_MERIDIAN } from "./tintinMeridian";
+import { RAIN_SECTOR } from "./rainSector";
+import { KINGFISHER_JOB } from "./kingfisherJob";
+import { BUMPY_NIGHT } from "./allAboutEve";
 import { NOBODYS_WITNESS_DRAFT } from "./nobodysWitnessDraft";
+import { NOBODYS_WITNESS_NEW } from "./nobodysWitnessNew";
+import { NOBODYS_WITNESS_FINAL } from "./nobodysWitnessFinal";
 import { SCREENING_ROOM } from "./screeningRoom";import { STUDIO_TUTORIAL } from "./studioTutorial";
 import { NEON_DINER } from "./neonDiner";
+import { DEMO_LIE } from "./demoLie";
+import { DEMO_ART_ROOM } from "./demoArtRoom";
 import { DEMO_CONVERSATION } from "./demoConversation";
 import { DEMO_SCENE_CRAFT } from "./demoSceneCraft";
 import { DEMO_STRUCTURE } from "./demoStructure";
+import { THE_LATE_SHIFT } from "./theLateShift";
+import { THE_LATE_SHIFT_REIMAGINED } from "./theLateShiftReimagined";
+import { THE_LATE_SHIFT_REDUX } from "./theLateShiftRedux";
+import { NOBODYS_WITNESS_TRUE } from "./nobodysWitnessTrue";
+import { NOBODYS_WITNESS_DRAFT_3 } from "./nobodysWitnessDraft3";
+import { SCOOBY_RAVENSWOOD } from "./scoobyRavenswood";
+import { INSPECTOR_GADGET } from "./inspectorGadget";
+import { SOUTH_PARK } from "./southPark";
+import { MOONLIGHTING_WELCOME_BACK } from "./moonlightingWelcomeBack";
+import { WHATS_OWED } from "./whatsOwed";
+import { NEON_SALT } from "./neonSalt";
+import { GRAPHIC_NOVEL_TEMPLATE } from "./graphicNovelTemplate";
+import { POINT_CLICK_TEMPLATE } from "./pointClickTemplate";
+import { SLEDGE_HAMMER } from "./sledgeHammer";
+import { CINEMATIC_PLATFORM_TEMPLATE } from "./cinematicPlatformTemplate";
+import { THE_LAST_STOP } from "./twilightZone";
+import { THE_STATIC_HOUSE } from "./staticHouse";
+import { HOLLOW_SIGNAL } from "./hollowSignal";
+import { MATT_THE_ACCOUNTANT } from "./mattTheAccountant";
+import undertowReel from "../../undertow.reel.json";
+
+const UNDERTOW = undertowReel as unknown as Story;
 
 /**
  * The playable catalogue.
@@ -38,6 +71,16 @@ import { DEMO_STRUCTURE } from "./demoStructure";
  * - DEMO_STRUCTURE ("Demo Lab: Branching Reel") — consequences & meters,
  *   exclusive groups, gating with hints, quick-time timeout branches, part
  *   breaks, acts, ending tiers and the heat bust.
+ * - DEMO_LIE ("Demo Lab: Press the Lie") — the contradiction verb: a 🎯
+ *   "press them on that" beat where the player must present the evidence
+ *   that proves a claim false. Teaches breaking-evidence vs red herrings,
+ *   the caught/bluff beats, wrong-evidence limits, trust/heat swings, and a
+ *   lie inside an interrogation (composureDamage cracks the suspect).
+ * - DEMO_ART_ROOM ("Demo Lab: The Art Room") — the MEDIA pipeline the other
+ *   labs assume is already done: background removal (edge flood vs colour key,
+ *   and why a busy plate cannot be keyed at all), the flat-plate contract,
+ *   auto-building a sprite sheet, the animation names the engine looks up, and
+ *   why on-screen size is an authored SCALE rather than the frame height.
  *
  * The other story files still live in src/data/ and every image, video and
  * audio asset is untouched in public/ — to bring one back, import it here and
@@ -50,10 +93,36 @@ import { DEMO_STRUCTURE } from "./demoStructure";
  * VELVET_STING, satin, neon, sandbox, velvet, waltz, bulletDark.
  */
 export const STORIES: Story[] = [
+  FAMILY_GUY,
+  MATT_THE_ACCOUNTANT,
+  THE_STATIC_HOUSE,
+  CINEMATIC_PLATFORM_TEMPLATE,
+  HOLLOW_SIGNAL,
+  POINT_CLICK_TEMPLATE,
+  GRAPHIC_NOVEL_TEMPLATE,
+  SLEDGE_HAMMER,
+  UNDERTOW,
+  WHATS_OWED,
+  NEON_SALT,
+  MOONLIGHTING,
+  MOONLIGHTING_WELCOME_BACK,
+  SOUTH_PARK,
+  RAIN_SECTOR,
+  INSPECTOR_GADGET,
+  SCOOBY_RAVENSWOOD,
+  NOBODYS_WITNESS_TRUE,
+  NOBODYS_WITNESS_DRAFT_3,
+  NOBODYS_WITNESS_FINAL,
+  NOBODYS_WITNESS_NEW,
+  THE_LATE_SHIFT_REDUX,
+  THE_LATE_SHIFT_REIMAGINED,
+  THE_LATE_SHIFT,
   STUDIO_TUTORIAL,
   DEMO_CONVERSATION,
   DEMO_SCENE_CRAFT,
   DEMO_STRUCTURE,
+  DEMO_LIE,
+  DEMO_ART_ROOM,
   NEON_DINER,
   NOBODYS_WITNESS_FLAGSHIP,
   LAST_CALL_ON_PIER_7,
@@ -62,4 +131,9 @@ export const STORIES: Story[] = [
   QTE_DEMO,
   PERK_RANGE,
   PATTERN_PUZZLE_DEMO,
+  MAP_DEMO,
+  TINTIN_MERIDIAN,
+  KINGFISHER_JOB,
+  BUMPY_NIGHT,
+  THE_LAST_STOP,
 ];

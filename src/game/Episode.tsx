@@ -36,7 +36,10 @@ function avatarNode(character: Character | undefined) {
     return <span className="flex h-10 w-10 items-center justify-center border border-gold/40 bg-noir-900 text-xl">{url.slice(6)}</span>;
   }
   if (!url) return null;
-  return <img src={url} alt="" className="h-10 w-10 border border-gold/40 object-cover" />;
+  // object-top, not the default centre crop: cast refs are tall 2:3 portraits,
+  // and centring a 2:3 image in a square box crops to the chest — a wall of
+  // headless avatars. Anchoring the crop to the top keeps the face.
+  return <img src={url} alt="" className="h-10 w-10 border border-gold/40 object-cover object-top" />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,7 +192,7 @@ export function EpisodeRecap({
 }) {
   const lines = useMemo(() => resolveRecap(episode, state), [episode, state]);
   // Memory-driven beats: replay the player's own words back at them, which is
-  // the single most Telltale thing a recap can do.
+  // the single most gratifying thing a recap can do.
   const memoryLines = useMemo(() => {
     if (!episode.recapFromMemories) return [];
     return Object.entries(state.memories).map(([tag, said]) => ({
@@ -433,7 +436,7 @@ export function NextTimeCard({
 /*  episode ending card                                                */
 /* ------------------------------------------------------------------ */
 
-/** Telltale-style end-of-episode card: how this chapter closed, the standout
+/** End-of-episode card: how this chapter closed, the standout
  * choices the player made in it, and the handoff to the next episode. */
 export function EpisodeEndCard({
   story,

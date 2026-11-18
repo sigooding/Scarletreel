@@ -1,4 +1,5 @@
 import { assetUrl } from "./assetPath";
+import { mediaPreloader } from "./mediaPreload";
 import type { AudioTrack } from "./types";
 
 export type MixChannel = "master" | "music" | "ambient" | "voice" | "sfx";
@@ -72,6 +73,13 @@ class AudioEngine {
     // buses, so re-apply its effective volume live when voice/master change.
     if ((ch === "voice" || ch === "master") && this.clip) {
       this.clip.volume = Math.min(1, this.volumes.voice * this.volumes.master);
+    }
+    // Same for in-flight effects: they are plain Audio elements outside the
+    // WebAudio graph, so a live sfx/master change must be applied by hand.
+    if (ch === "sfx" || ch === "master") {
+      for (const el of this.sfxPlaying) {
+        el.volume = Math.min(1, this.volumes.sfx * this.volumes.master);
+      }
     }
   }
 
@@ -497,10 +505,60 @@ class AudioEngine {
 
   /* ------------------------- narration ------------------------- */
 
+  /**
+   * SPEECH KEEPALIVE — the Chromium "long utterance dies at ~15 seconds" bug.
+   *
+   * Chromium's speech-dispatcher bridge silently stops a synthesis job that
+   * has been running for roughly 15s. `onend` never fires, so nothing in the
+   * app can tell the line was truncated: the narration simply cuts out
+   * mid-sentence and the music duck stays down until something else speaks.
+   *
+   * The only reliable workaround is to poke the queue while it is speaking:
+   * a paired pause()/resume() resets the watchdog without audibly seaming
+   * the audio. We tick every 10s (comfortably inside the ~15s window) and
+   * only while `speaking` is true — poking an empty queue on some builds
+   * makes a LATER utterance start paused, which is a much worse failure.
+   *
+   * Any line under ~14s never trips the bug, but the tick is harmless there
+   * and the guard below stops it as soon as the queue drains.
+   */
+  private speechKeepAlive: ReturnType<typeof setInterval> | null = null;
+
+  private startSpeechKeepAlive() {
+    this.stopSpeechKeepAlive();
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    this.speechKeepAlive = setInterval(() => {
+      const s = window.speechSynthesis;
+      // Queue drained (or the line was cancelled) — stop poking.
+      if (!s.speaking) {
+        this.stopSpeechKeepAlive();
+        return;
+      }
+      // Don't fight a deliberate pause (none today, but be defensive).
+      if (s.paused) return;
+      try {
+        s.pause();
+        s.resume();
+      } catch {
+        /* a browser that refuses the poke is one that doesn't need it */
+      }
+    }, 10000);
+  }
+
+  private stopSpeechKeepAlive() {
+    if (this.speechKeepAlive !== null) {
+      clearInterval(this.speechKeepAlive);
+      this.speechKeepAlive = null;
+    }
+  }
+
+  private speechEpoch = 0;
+
   speak(text: string, persona?: string, override?: { voiceName?: string; pitch?: number; rate?: number }) {
+    this.stopSpeech(); // A TTS line supersedes recorded voice too.
+    const epoch = this.speechEpoch;
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     if (this.volumes.voice <= 0.01) return;
-    window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const personaHash = persona ? [...persona].reduce((sum, char) => sum + char.charCodeAt(0), 0) : 0;
     u.rate = override?.rate ?? 0.88;
@@ -517,11 +575,18 @@ class AudioEngine {
     // Duck the music for the life of this line. A cancel() from a newer
     // line surfaces as a 'canceled' error — that line's own voiceStarted()
     // already re-armed the duck, so only a natural end releases it.
-    u.onend = () => this.voiceEnded();
+    u.onend = () => {
+      if (this.speechEpoch !== epoch) return;
+      this.stopSpeechKeepAlive();
+      this.voiceEnded();
+    };
     u.onerror = (e) => {
+      if (this.speechEpoch !== epoch) return;
+      this.stopSpeechKeepAlive();
       if (e.error !== "canceled") this.voiceEnded();
     };
     window.speechSynthesis.speak(u);
+    this.startSpeechKeepAlive();
     this.voiceStarted();
   }
 
@@ -553,10 +618,12 @@ class AudioEngine {
     void el
       .play()
       .then(() => {
-        if (this.clip === el) this.clearPendingNarration();
+        if (this.clip !== el) { el.pause(); return; }
+        this.clearPendingNarration();
         this.voiceStarted();
       })
       .catch((err) => {
+        if (this.clip !== el) return;
         const name = (err as DOMException | undefined)?.name;
         if (name === "NotAllowedError" || name === "AbortError") {
           // Still blocked — stay armed for the next gesture.
@@ -570,18 +637,82 @@ class AudioEngine {
       });
   }
 
+  /* ------------------------------------------------------------------ *
+   *  SOUND EFFECTS FROM A FILE                                          *
+   *                                                                     *
+   *  Distinct from playClip() on purpose. playClip is the VOICE channel:  *
+   *  it stops speech, ducks the music and holds the narration slot, which *
+   *  is right for a recorded line and wrong for a door creak. An effect   *
+   *  must be able to fire WHILE a line is being read, overlap with itself *
+   *  (two shell casings), and never interrupt anything.                   *
+   *                                                                       *
+   *  So each call gets its own Audio element on the sfx mix, fire and     *
+   *  forget. Concurrency is capped so a mashed hotspot can't spawn a      *
+   *  hundred decoders.                                                    *
+   * ------------------------------------------------------------------ */
+  private sfxPlaying = new Set<HTMLAudioElement>();
+  private static readonly MAX_CONCURRENT_SFX = 8;
+
+  /** Play a one-shot sound effect from a URL on the sfx bus.
+   *  `volume` is 0..1 relative to the sfx channel (default 1). */
+  playSfx(url: string, volume = 1): void {
+    if (!url) return;
+    // Too many at once = audio mush and decoder pressure. Drop the oldest.
+    if (this.sfxPlaying.size >= AudioEngine.MAX_CONCURRENT_SFX) {
+      const oldest = this.sfxPlaying.values().next().value;
+      if (oldest) {
+        try {
+          oldest.pause();
+        } catch {
+          /* already gone */
+        }
+        this.sfxPlaying.delete(oldest);
+      }
+    }
+    let el: HTMLAudioElement;
+    try {
+      el = new Audio(assetUrl(url));
+    } catch {
+      return;
+    }
+    el.preload = "auto";
+    el.volume = Math.min(1, Math.max(0, volume) * this.volumes.sfx * this.volumes.master);
+    this.sfxPlaying.add(el);
+    const done = () => {
+      this.sfxPlaying.delete(el);
+      el.removeEventListener("ended", done);
+      el.removeEventListener("error", done);
+    };
+    el.addEventListener("ended", done);
+    el.addEventListener("error", done);
+    // A blocked effect is not worth surfacing: unlike narration, a missing
+    // door creak should never interrupt play or log noise at the player.
+    void el.play().catch(() => done());
+  }
+
+  /** Stop every in-flight sound effect (scene change, mute). */
+  stopSfx(): void {
+    for (const el of this.sfxPlaying) {
+      try {
+        el.pause();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.sfxPlaying.clear();
+  }
+
   private clipEndHandler: (() => void) | null = null;
 
   playClip(url: string, prepared?: HTMLAudioElement): Promise<boolean> {
     this.stopSpeech();
-    const a = prepared ?? new Audio(assetUrl(url));
+    const a = prepared ?? mediaPreloader.takeAudio(url) ?? new Audio(assetUrl(url));
     a.preload = "auto";
     a.volume = Math.min(1, this.volumes.voice * this.volumes.master);
     this.clip = a;
     // Release the music duck when this clip finishes (the prepared element
     // may be reused for a later clip — swap the handler, don't stack them).
-    if (this.clipEndHandler) a.removeEventListener("ended", this.clipEndHandler);
-    const endHandler = () => this.voiceEnded();
+    const endHandler = () => { if (this.clip === a) this.voiceEnded(); };
     this.clipEndHandler = endHandler;
     a.addEventListener("ended", endHandler);
     // Opening prose can be "primed" inside the user's Play click. If it is
@@ -596,11 +727,13 @@ class AudioEngine {
       .play()
       .then(() => {
         // An earlier blocked attempt for this same clip is now obsolete.
-        if (this.clip === a) this.clearPendingNarration();
+        if (this.clip !== a) { a.pause(); return false; }
+        this.clearPendingNarration();
         this.voiceStarted();
         return true;
       })
       .catch((err) => {
+        if (this.clip !== a) return false; // A newer line / dismissal won.
         // Don't fail silently: a missing file or a browser autoplay block used
         // to look exactly like "the prose audio didn't play". Keep the UI calm,
         // but leave a useful breadcrumb in dev tools.
@@ -614,17 +747,43 @@ class AudioEngine {
             this.clip = null;
           }
         }
-        console.warn("Recorded narration couldn't be played.", err);
+        if (name !== "NotAllowedError" && name !== "AbortError") console.warn("Recorded narration couldn't be played.", err);
         return false;
       });
   }
 
+  /**
+   * Tidy up after a line WITHOUT truncating one that is still talking.
+   *
+   * Callers that are merely "done displaying" (a caption bar fading on its
+   * own timer) want the music duck released and the slot freed, but must not
+   * chop the narration in half — the spoken line is usually much longer than
+   * the subtitle's dwell time. If speech or a clip is still running, this
+   * leaves it alone; their own `onend`/`ended` handlers release the duck.
+   *
+   * Use `stopSpeech()` when the line is genuinely superseded (new beat, scene
+   * change, player pressed Continue).
+   */
+  stopSpeechIfIdle() {
+    const speaking =
+      typeof window !== "undefined" &&
+      "speechSynthesis" in window &&
+      (window.speechSynthesis.speaking || window.speechSynthesis.pending);
+    const clipPlaying = !!this.clip && !this.clip.paused && !this.clip.ended;
+    if (speaking || clipPlaying) return;
+    this.stopSpeech();
+  }
+
   stopSpeech() {
+    this.speechEpoch++;
+    this.stopSpeechKeepAlive();
     if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
     // A pending autoplay retry belongs to the clip being dismissed — cancel it
     // so an old narration can't start after the player moved on.
     this.clearPendingNarration();
     if (this.clip) {
+      if (this.clipEndHandler) this.clip.removeEventListener("ended", this.clipEndHandler);
+      this.clipEndHandler = null;
       this.clip.pause();
       this.clip = null;
     }

@@ -108,12 +108,23 @@ export const DEMO_LIE: Story = {
         "② Each hotspot below is a 'take' marker with action Give item; the stage draws them as gold reticles at the zone's base and the character walks to them. " +
         "③ There are THREE items on purpose: the 🎟 Pawn Ticket breaks lie #1, the 🧾 Bar Tab breaks lie #2, and the 🔥 Matchbook is a RED HERRING — it shows in the evidence bag but proves nothing. " +
         "④ The exit is a DOOR MARKER: a hotspot with action '→ Go to scene' (cursor 'go') — on a stage node choices only appear after a conversation, so exits must be walk-to markers. " +
-        "⑤ The lesson: handing the player every clue doesn't make it easy; they still have to pick the one that matters. ▶ Play: walk the floor, grab all three, then walk out the door to confront her.",
+        "⑤ The lesson: handing the player every clue doesn't make it easy; they still have to pick the one that matters. " +
+        "⑥ The walker here uses stage.playerSheet — ONE sprite-sheet image sliced into a frame grid with named 'walk'/'idle' animations (it beats loose walkFrames files: proper standing pose, one download). ▶ Play: walk the floor, grab all three, then walk out the door to confront her.",
       background: "/img/bg-office.jpg",
       ambientAudio: "rain",
       nodeType: "stage",
       stage: {
-        playerImage: "emoji:🕵️",
+        playerImage: "emoji:🕵️", // fallback if the sheet fails to load
+        playerSheet: {
+          image: "/assets/sprites/gumshoe-walk.png",
+          frameWidth: 114,
+          frameHeight: 192,
+          animations: {
+            idle: { frames: [1] },
+            walk: { frames: [0, 1, 2, 3], fps: 8 },
+          },
+          pixelated: true,
+        },
         spawn: { x: 50, y: 88 },
         speed: 20,
         reach: 4,
@@ -174,8 +185,30 @@ export const DEMO_LIE: Story = {
         "STEP 2 — BUILD THE LIE. Open the beat that speaks her alibi (beat 1), then the '🎯 Press the Lie (contradiction)' panel. " +
         "① 'This line is a lie the player can catch.' ② The CLAIM is what gets challenged. ③ BREAKING EVIDENCE = tick ONLY the 🎟 Pawn Ticket — the tab and the matchbook stay un-ticked, so presenting them is a called bluff. " +
         "④ CAUGHT FLAG = dl_pawn_lie_broken; the CAUGHT reaction auto-gates on it. ⑤ Write the BLUFF-CALLED line and set the wrong-limit (2) and consequences (trust −1 / heat +1 on a miss; trust +2 / clever +1 on a catch). " +
-        "⑥ The gold path ('Press her harder') is GATED on dl_pawn_lie_broken — break the lie to advance. The cold path ('walk away') is always open so a failed press can't soft-lock. ▶ Play: press her, try the matchbook first (bluff!), then the ticket.",
+        "⑥ The gold path ('Press her harder') is GATED on dl_pawn_lie_broken — break the lie to advance. The cold path ('walk away') is always open so a failed press can't soft-lock. " +
+        "⑦ Set dressing: the flickering CLUB sign is a 🎬 cinematic FOREGROUND EXTRA animated by a SPRITE SHEET — one image, three frames, a looping 'loop' animation. Any extra can animate this way (neon, rain-lashed flags). ▶ Play: press her, try the matchbook first (bluff!), then the ticket.",
       background: "/img/bg-dressing.jpg",
+      cinematic: {
+        foregroundExtras: [
+          {
+            image: "/assets/sprites/club-neon.png", // static fallback (shows the whole strip only if the sheet is cleared)
+            sheet: {
+              image: "/assets/sprites/club-neon.png",
+              frameWidth: 115,
+              frameHeight: 256,
+              animations: {
+                // lit → lit → dim → lit → dark → lit: an uneven, faulty-tube flicker
+                loop: { frames: [0, 0, 0, 1, 0, 0, 2, 0, 1, 0], fps: 7 },
+              },
+              pixelated: true,
+            },
+            x: 11,
+            y: 46,
+            scale: 0.62,
+            depth: 0.35,
+          },
+        ],
+      },
       ambientAudio: "tension",
       prose:
         "Mara Velle sits at the club bar with a drink she hasn't touched, the picture of a woman who rehearsed this. She doesn't wait for the question.",

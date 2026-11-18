@@ -168,7 +168,7 @@ export function cutsceneStepKey(sceneId: string, hotspotId: string | undefined, 
 
 /** Compare a story against what has been played. Pure — safe to unit test. */
 export function coverageReport(story: Story, cov: PlaytestCoverage | null): CoverageReport {
-  const scenes = story.scenes ?? [];
+  const scenes = (story.scenes ?? []).filter((s) => s.nodeType !== "note");
   const missedScenes: CoverageGap[] = [];
   const missedChoices: CoverageGap[] = [];
   const missedEndings: CoverageGap[] = [];

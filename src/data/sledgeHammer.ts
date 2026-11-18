@@ -390,6 +390,11 @@ export const SLEDGE_HAMMER: Story = {
         // the background itself, clipped, at the depth of their front edge.
         // Walk Sledge up past the desks and the desks cover him from the
         // waist down, which is the whole trick of the LucasArts squad room.
+        //
+        // The furniture obstacles used to sit on y 76–90 and eat the entire
+        // behind-desk band (floor top is 72), so the walker could never get
+        // behind the baseline. Shrink them to the desk FRONT and raise the
+        // depth line into the floor so walking UP actually covers.
         occluders: [
           {
             id: "sh_occ_centre_desk",
@@ -397,11 +402,11 @@ export const SLEDGE_HAMMER: Story = {
             points: [
               { x: 50.0, y: 60 },
               { x: 108.0, y: 60 },
-              { x: 108.0, y: 78 },
-              { x: 50.0, y: 78 },
+              { x: 108.0, y: 86 },
+              { x: 50.0, y: 86 },
             ],
             // front edge of the desk: above this line he's behind it
-            baseline: 78,
+            baseline: 86,
           },
           {
             id: "sh_occ_right_desks",
@@ -409,15 +414,15 @@ export const SLEDGE_HAMMER: Story = {
             points: [
               { x: 134.0, y: 57 },
               { x: 188.0, y: 57 },
-              { x: 188.0, y: 80 },
-              { x: 134.0, y: 80 },
+              { x: 188.0, y: 86 },
+              { x: 134.0, y: 86 },
             ],
-            baseline: 80,
+            baseline: 86,
           },
         ],
         obstacles: [
-          { x: 44.0, y: 76, w: 32.0, h: 14 },
-          { x: 116.0, y: 78, w: 24.0, h: 12 },
+          { x: 50.0, y: 84, w: 58.0, h: 10 },
+          { x: 134.0, y: 84, w: 54.0, h: 10 },
         ],
         enterCaption:
           "MONDAY. A man is dead in an alley behind a pawn shop, and the only detective awake before ten is the one nobody wants awake at all.",

@@ -3,10 +3,13 @@ import { audio, type MixChannel } from "./audio";
 import { STORIES } from "./data/stories";
 import { GamePlayer, LensFlareLayer } from "./game/Game";
 import { clearSession, readSession, writeSession } from "./game/session";
+import { deepLinkFromUrl } from "./game/deepLink";
 import { decodeStory, isEpisodic, latestSave, loadEndings, removeStoryEndings, seasonEpisodes, storySeasonProgress } from "./logic";
 import { assetUrl } from "./assetPath";
 import { Studio } from "./studio/Studio";
+import { CreatorManual } from "./studio/CreatorManual";
 import { resolveAssetReference, resolveStoryMedia, compactStoryMedia, loadStoryAssetsForExport, importStoryAssets, deleteStoryAssets } from "./data/mediaLibrary";
+import { parseCaseBytes } from "./data/screel";
 import type { EndingLog, Story, TitleTheme } from "./types";
 
 type PrimedAudio = { url: string; el: HTMLAudioElement };
@@ -25,6 +28,7 @@ type Mode =
       primedNarration?: PrimedAudio | null;
     }
   | { kind: "studio"; openStoryId?: string; openSceneId?: string }
+  | { kind: "manual" }
   | { kind: "gallery" };
 
 const SETTINGS_KEY = "scarlet-reel-settings-v1";
@@ -37,15 +41,8 @@ const STORY_SNAPSHOT_BUILD_KEY = "scarlet-reel-story-snapshot-build";
 const APP_BUILD_ID = __SCARLET_REEL_BUILD_ID__;
 const STUDIO_PLAY_HASH = "#studio-play=";
 const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
-// Bump whenever a built-in story's content changes in a way that must reach
-// players who already have a Studio draft or published copy cached. The
-// newsstand reads published -> draft -> built-in, so without this a stale
-// snapshot silently shadows the updated story file. Old copies are kept as
-// `-backup-pre-r<n>` keys rather than deleted.
-// r5: Nobody's Witness title sequence (montage, card motion, typeface).
-// r6: catalogue trimmed to the flagship; clears every cached built-in copy,
-//     including ones whose story file no longer ships.
-const CONTENT_REVISION = "35";
+// Content metadata is diagnostic only. App updates must never delete author work.
+const CONTENT_REVISION = "39";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -57,6 +54,9 @@ export function loadGlobalTitleTheme(): TitleTheme {
     tagline: "A Dime-Store Detective Serial",
     bgImageUrl: "/img/bg-alley.jpg",
     neonColor: "#ff2e88",
+    // The newest case gets the front page out of the box, so the featured
+    // strip is visible without having to go and configure it first.
+    featuredStoryIds: ["static-house", "sledge-hammer-caliber"],
   };
 }
 
@@ -95,228 +95,14 @@ function saveCustomStories(stories: Story[]): boolean {
   }
 }
 
-function storySnapshotOwnerId(key: string): string | null {
-  if (key.startsWith("scarlet-reel-published-")) return key.slice("scarlet-reel-published-".length);
-  if (key.startsWith("scarlet-studio-draft-")) return key.slice("scarlet-studio-draft-".length);
-  return null;
-}
-
-/**
- * On a new app build, drop cached Studio/published story snapshots that can
- * shadow the story files shipped in this build. This deliberately does NOT
- * touch save slots, season progress, endings, settings or the IndexedDB media
- * library, so Resume Game keeps working after an update.
- *
- * User-created custom story roots are kept; only their draft/published shadow
- * copies are skipped when the id is an exact custom id. Retired/unknown snapshot
- * keys are removed because they can only be stale catalogue ghosts.
- */
-function clearStaleStorySnapshotsForBuild() {
-  try {
-    if (localStorage.getItem(STORY_SNAPSHOT_BUILD_KEY) === APP_BUILD_ID) return;
-
-    const customIds = new Set(loadCustomStories().map((story) => story.id));
-    const builtInIds = new Set(STORIES.map((story) => story.id));
-    const keys: string[] = [];
-
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      const ownerId = storySnapshotOwnerId(key);
-      if (!ownerId) continue;
-
-      // Preserve exact custom-story snapshots; clear built-ins, retired ids and
-      // old backup snapshots. The save/resume keys have different prefixes.
-      if (builtInIds.has(ownerId) || !customIds.has(ownerId) || key.includes("-backup-")) keys.push(key);
-    }
-
-    keys.forEach((key) => localStorage.removeItem(key));
-    localStorage.setItem(STORY_SNAPSHOT_BUILD_KEY, APP_BUILD_ID);
-  } catch {
-    // Storage unavailable: continue with the built-in catalogue.
-  }
-}
-
-/** Built-in stories whose cached copies this revision must replace. A cached
- * draft/published snapshot always wins over the built-in story file, so an
- * updated built-in is invisible to anyone who ever opened it in Studio unless
- * its stale copy is cleared. Listing ids keeps that surgical: only these
- * stories are reset, and edits to every other story survive the upgrade.
- * Use "*" to clear every cached built-in copy. */
-const REVISION_RESETS: Record<string, string[]> = {
-  // The title sequence, montage and soundtrack live in the story file; a
-  // pre-existing draft would keep showing the old static credits node.
-  "5": ["nobodys-witness-flagship"],
-  // The catalogue was trimmed to the flagship. Cached copies of the removed
-  // stories must go too, so "*" sweeps by key prefix rather than by id —
-  // iterating STORIES would miss every story that no longer ships.
-  "6": ["*"],
-  // Act Three (Parts 5-6) added to the flagship: new scenes, new endings, a
-  // new character. Cached copies would stop at the Part 1 act break.
-  "7": ["nobodys-witness-flagship"],
-  // Act Three Parts 1-4b written in full: the temporary bridge scene is gone,
-  // three new characters, and the spine flag now seeds at the cold open.
-  "8": ["nobodys-witness-flagship"],
-  // Saves gained an ordered `journey` log for the end-of-part flowchart.
-  // Old saves simply have none and the chart is skipped for them.
-  "9": ["nobodys-witness-flagship"],
-  // Episode 3 version 2: Part 5 now forks on the price Jack pays, and the
-  // licence branch adds three scenes and a seventh ending.
-  "10": ["nobodys-witness-flagship"],
-  // Scenes gained partBreak markers so the route chart appears between parts.
-  "11": ["nobodys-witness-flagship"],
-  // Acts are now first-class: Act Two exists, and Act One's closing choice
-  // routes to it. Cached copies would still jump straight to Act Three.
-  "12": ["nobodys-witness-flagship"],
-  // Story-wide filmGrade added; cached copies would render ungraded.
-  "13": ["nobodys-witness-flagship"],
-  // A cached copy was still presenting the flagship as a SEASON ("Begin
-  // Episode One") even though the story file has no episodes — a snapshot old
-  // enough to predate the episodic experiment overrides the built-in story
-  // wholesale and takes its stale scene graph with it. Sweep every cached
-  // built-in copy by key prefix so no such snapshot can survive.
-  "14": ["*"],
-  // The WebGL film-grade layer is gone. Cached copies still carry the
-  // story-wide `filmGrade` object; harmless now that nothing reads it, but
-  // sweep anyway so stored data matches the shipped story exactly.
-  "15": ["nobodys-witness-flagship"],
-  // The title sequence gained 35mm gate weave; a cached copy would still
-  // play the titles locked off.
-  "16": ["nobodys-witness-flagship"],
-  // New story "Last Call on Pier 7" joins the catalogue.
-  "17": ["last-call-pier-7"],
-  // The two demo cases return to the catalogue (the manual's Quick-Time Demo
-  // and Perk Range proving grounds). A player who opened them before the
-  // catalogue was trimmed may still carry a stale draft/published copy —
-  // clear just those so the shipped demos win.
-  "18": ["qte-demo", "perk-range"],
-  // The Draft story gained its canvas layout, the soundtrack (theme at the
-  // titles + finale) and the hard music hand-off into the diner. Cached
-  // copies opened before those fixes would keep playing the leaked theme —
-  // retire just this story's stale snapshot; the layout self-heal covers
-  // anything newer.
-  "19": ["nobodys-witness-draft"],
-  // The Draft became a three-episode season (one per act, curtain endings
-  // at the act breaks). Cached copies from the single-run build would keep
-  // playing without chapters — retire just this story's snapshot again.
-  "20": ["nobodys-witness-draft"],
-  // Episode Two got its own generated art (laundromat, office at 3 a.m.,
-  // the car, the pumps, the apartment, the rental, the yard). Retire the
-  // cached copy once more so the new plates ship.
-  "21": ["nobodys-witness-draft"],
-  // Episodes One and Three got their own art (warehouse, the payphone
-  // curtain, The Call in the strobes, two new season posters).
-  "22": ["nobodys-witness-draft"],
-  // The Draft's Act One branched: four diamond-point choices (D1-A/D1-B/D2/D4)
-  // splitting the shared scenes, plus four alternate Act Two opening chapters
-  // with route-locked unlocks. Cached copies would keep playing the
-  // pre-branch straight line — retire this story's snapshot so the shipped
-  // branching graph wins.
-  "23": ["nobodys-witness-draft"],
-  // Retire again: the v2 rename ships, and a Studio tab left open on the old
-  // graph can re-save the stale draft over revision 23's retirement. A second
-  // pass guarantees the shipped branching copy wins on next load.
-  "24": ["nobodys-witness-draft"],
-  // The four bridges: Act Two split into EP2a (gold front half: laundromat +
-  // threeam) and EP2b (the shared road north, joined by every route). Part 1
-  // 'to be continued' curtains replaced by the bridge chapters; canonical
-  // downstream flag set (rosa_absent, on_payroll, refused_case, vera_held,
-  // david_already_dead, ...) replaces the interim flags.
-  "25": ["nobodys-witness-draft"],
-  // Act Three replaced with the Ending B version ("She Stays"): Parts 3, 4,
-  // 5, 6 rewritten — the mill lot confession, the cost (Rosa's warning
-  // that the leaving version is the good one), the trade (Solomon's
-  // "ability to leave" seed), and the diner ending where the bag goes back
-  // down. Parts 1, 2, 4b and the game-over are unchanged.
-  "26": ["nobodys-witness-draft"],
-  // Ending B demoted from replacement to ALTERNATE ROUTE: the gold Act
-  // Three (Ending A — Vera leaves, the cold coffee) is restored as the
-  // gold spine; the B back half (mill/cost/trade/finale) is a parallel
-  // spine forked at the end of Part 2 and re-forked after the shared Blue
-  // Cue via nwd_ending_a / nwd_ending_b.
-  "27": ["nobodys-witness-draft"],
-  // Act Three ending architecture: the Part 2 A/B fork is gone (routes are
-  // emergent from flags), the trade splits 5a/5b/5c with the hold-still
-  // QTE (any input = violence -> D), the Blue Cue is skippable, the finale
-  // is a resolver dispatching A/B/C/D (+ TELL HER / SAY NOTHING inside A
-  // and B), and Endings C ("A Stopped Watch") and D ("Ten Past Nine")
-  // arrive verbatim.
-  "28": ["nobodys-witness-draft"],
-  // r29: three step-by-step "Demo Lab" teaching cases join the catalogue
-  // (Conversation / Scene Craft / Branching Reel), and the draft's
-  // nwd_sn_p1 background typo (/img/nw2/ -> /img/nwd/) is fixed — retire the
-  // draft snapshot so the corrected asset path reaches cached copies.
-  "29": ["nobodys-witness-draft"],
-  // r30: Scene Craft demo gains the color-grade/film-stock take and the
-  // parallax-depth take; retire its snapshot so the new scenes appear.
-  "30": ["demo-scene-craft-lab"],
-  // r31: after-beat routing fields on dialogue beats + duplicate-story; the
-  // Scene Craft demo uses an after-beat cut. Retire snapshots so they refresh.
-  "31": ["demo-scene-craft-lab"],
-  // r32: tab renames (Beats / Characters / Game Objective / Newsstand Theme)
-  // and multiple stacked foreground images; refresh the Scene Craft demo
-  // snapshot so the new foreground extras appear.
-  "32": ["demo-scene-craft-lab"],
-  // r33: the In-Game Theme tab (HUD palettes, fonts, text size) reads the
-  // same dialogueBox field, so existing snapshots keep working — no reset
-  // required. Listed for migration bookkeeping only.
-  "33": [],
-  // r34: batch ElevenLabs voice generation in the Beats tab — no data
-  // migration needed (no story shape change); bump only for bookkeeping.
-  "34": [],
-  // r35: the Draft was regenerated from the studio export
-  // (nobodys-witness-draft.reel.json) and now ships its media as real files
-  // under public/uploads. A cached Studio snapshot — still holding IndexedDB
-  // `asset:` refs and the pre-update graph — would otherwise shadow the
-  // shipped story, so retire it.
-  "35": ["nobodys-witness-draft"],
-};
-
+/** Track upgrades without deleting drafts or publications. A built-in opened
+ * in Studio is editable author work too; only an explicit Reset may replace
+ * it. Older builds erased these snapshots every time Vite/build restarted. */
 function migrateLegacyStoryStorage() {
   try {
-    clearStaleStorySnapshotsForBuild();
-
-    const seen = localStorage.getItem("scarlet-reel-content-revision");
-    if (seen === CONTENT_REVISION) return;
-
-    const pending = Object.entries(REVISION_RESETS)
-      // Apply every revision the player hasn't seen yet, not just the newest,
-      // so upgrading across several releases at once still lands.
-      .filter(([rev]) => Number(rev) > Number(seen ?? 0))
-      .flatMap(([, ids]) => ids);
-    // Revision 4 and earlier predate the targeted scheme and may be
-    // arbitrarily stale, so they get the full sweep.
-    const sweepAll = !seen || Number(seen) < 4 || pending.includes("*");
-    const targeted = new Set(pending);
-
-    const retire = (key: string) => {
-      const old = localStorage.getItem(key);
-      if (old) localStorage.setItem(`${key}-backup-pre-r${CONTENT_REVISION}`, old);
-      localStorage.removeItem(key);
-    };
-
-    if (sweepAll) {
-      // Walk the keyspace so copies of stories that are no longer in STORIES
-      // (removed from the catalogue) are cleared as well. Snapshot the key list
-      // first — removing entries mutates localStorage's index while iterating.
-      const prefixes = ["scarlet-reel-published-", "scarlet-studio-draft-"];
-      const keys: string[] = [];
-      for (let i = 0; i < localStorage.length; i += 1) {
-        const key = localStorage.key(i);
-        if (!key || key.includes("-backup-pre-r")) continue;
-        if (prefixes.some((p) => key.startsWith(p))) keys.push(key);
-      }
-      keys.forEach(retire);
-    } else {
-      STORIES.forEach((story) => {
-        if (!targeted.has(story.id)) return;
-        [publishedKey(story.id), draftKey(story.id)].forEach(retire);
-      });
-    }
+    localStorage.setItem(STORY_SNAPSHOT_BUILD_KEY, APP_BUILD_ID);
     localStorage.setItem("scarlet-reel-content-revision", CONTENT_REVISION);
-  } catch {
-    // If storage itself is unavailable, the built-in catalogue still works.
-  }
+  } catch { /* Storage unavailable: the built-in catalogue still works. */ }
 }
 
 /**
@@ -337,22 +123,8 @@ function loadPublishedCatalog(): Story[] {
       return null;
     }
   };
-  // Guard against a cached snapshot that contradicts the shipped story's
-  // shape. Episodes are the giveaway: if the built-in is a single continuous
-  // case and the cached copy claims a season, that copy predates a structural
-  // change and its scene graph can no longer be trusted.
-  const usable = (cached: Story | null, builtIn: Story): Story | null => {
-    if (!cached) return null;
-    const cachedEpisodic = Array.isArray(cached.episodes) && cached.episodes.length > 0;
-    const builtInEpisodic = Array.isArray(builtIn.episodes) && builtIn.episodes.length > 0;
-    if (cachedEpisodic !== builtInEpisodic) return null;
-    return cached;
-  };
   const builtIns = STORIES.filter((story) => !hidden.has(story.id)).map(
-    (fallback) =>
-      usable(read(publishedKey(fallback.id)), fallback) ??
-      usable(read(draftKey(fallback.id)), fallback) ??
-      fallback
+    (fallback) => read(publishedKey(fallback.id)) ?? read(draftKey(fallback.id)) ?? fallback
   );
   // A custom-stories entry carrying a BUILT-IN id would shadow the real story
   // forever: it is keyed separately, so no revision sweep ever touched it, and
@@ -415,6 +187,7 @@ export default function App() {
   const [resolvedTitleTheme, setResolvedTitleTheme] = useState<TitleTheme>(loadGlobalTitleTheme);
   const [imported, setImported] = useState<Story | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [infoStory, setInfoStory] = useState<Story | null>(null);
   const [verticalRack, setVerticalRack] = useState(false);
   const [fullscreenOn, setFullscreenOn] = useState(false);
   const [resolutionValue, setResolutionValue] = useState("1440x900");
@@ -505,10 +278,30 @@ export default function App() {
       if (story) setImported(story);
     } else if (location.hash === "#studio" || new URLSearchParams(location.search).get("studio")) {
       setMode({ kind: "studio" });
-    } else if (location.hash === "#play" || new URLSearchParams(location.search).get("play")) {
-      const flagship = STORIES.find((s) => s.id === "nobodys-witness-flagship") ?? STORIES[0];
-      if (flagship) {
-        void resolveStoryMedia(flagship).then((resolved) => {
+    } else if (location.hash === "#manual" || location.hash.startsWith("#manual/") || new URLSearchParams(location.search).get("manual") !== null) {
+      setMode({ kind: "manual" });
+    } else if (
+      location.hash === "#play" ||
+      new URLSearchParams(location.search).get("play") ||
+      // WORLD-STATE DEEP LINK — ?scene=…&flags=…&items=… boots straight into
+      // the game so a collaborator can be handed one specific branch as a URL.
+      // ?story=<id> picks which case; without it the flagship is assumed, so
+      // the short form (?scene=tt_light&flags=tt_caught_lie) just works.
+      // GamePlayer does the resolving; App only has to open the player.
+      deepLinkFromUrl().present
+    ) {
+      const wanted = new URLSearchParams(location.search).get("story");
+      const playableCatalog = loadPublishedCatalog();
+      const target =
+        (wanted ? playableCatalog.find((s) => s.id === wanted) : undefined) ??
+        STORIES.find((s) => s.id === "nobodys-witness-true") ??
+        STORIES.find((s) => s.id === "nobodys-witness-flagship") ??
+        STORIES[0];
+      if (wanted && !playableCatalog.some((s) => s.id === wanted)) {
+        console.warn(`[deep-link] unknown story "${wanted}" — opening the flagship instead`);
+      }
+      if (target) {
+        void resolveStoryMedia(target).then((resolved) => {
           setMode({ kind: "play", story: resolved, primedMusic: null });
         });
       }
@@ -538,7 +331,26 @@ export default function App() {
     if (mode.kind === "studio" || mode.kind === "gallery") audio.setAmbient(null);
   }, [mode.kind, resolvedTitleTheme.musicUrl, startMenuMusic]);
 
-  const stories = useMemo(() => (imported ? [...catalog, imported] : catalog), [catalog, imported]);
+  const allStories = useMemo(() => (imported ? [...catalog, imported] : catalog), [catalog, imported]);
+  /** ★ FEATURED — the big banner cards at the top of the newsstand, in the
+   *  order the author listed them. Unresolvable ids are skipped so a hidden
+   *  or deleted case can't leave a hole on the front page. */
+  const featuredStories = useMemo(() => {
+    const ids = globalTitleTheme.featuredStoryIds ?? [];
+    if (ids.length === 0) return [];
+    const byId = new Map(allStories.map((s) => [s.id, s]));
+    const seen = new Set<string>();
+    return ids
+      .filter((id) => !seen.has(id) && seen.add(id))
+      .map((id) => byId.get(id))
+      .filter((s): s is NonNullable<typeof s> => !!s);
+  }, [allStories, globalTitleTheme.featuredStoryIds]);
+  /** The ordinary grid below — a featured case is NOT repeated in it. */
+  const stories = useMemo(() => {
+    if (featuredStories.length === 0) return allStories;
+    const feat = new Set(featuredStories.map((s) => s.id));
+    return allStories.filter((s) => !feat.has(s.id));
+  }, [allStories, featuredStories]);
 
   const primeOpeningNarration = useCallback((story: Story): PrimedAudio | null => {
     // Recorded prose MP3s are raw <audio> elements. Start-scene autoplay must be
@@ -621,6 +433,10 @@ export default function App() {
   useEffect(() => {
     if (sessionRestored.current) return;
     sessionRestored.current = true;
+    // A world-state deep link is an explicit instruction about where to land.
+    // Restoring the last session on top of it would silently discard the
+    // branch the link was sent to show.
+    if (deepLinkFromUrl().present) return;
     const session = readSession();
     if (!session) return;
     if (session.kind === "studio") {
@@ -631,14 +447,16 @@ export default function App() {
       setMode({ kind: "gallery" });
       return;
     }
-    const story = stories.find((s) => s.id === session.storyId);
+    // allStories, not `stories`: the grid list excludes anything promoted to
+    // the featured strip, and a featured case must still be resumable.
+    const story = allStories.find((s) => s.id === session.storyId);
     // Case deleted or hidden, or no checkpoint to return to — the newsstand is
     // the right place to land, so fall through and leave mode alone.
     if (!story) return;
     const newest = latestSave(story);
     if (!newest) return;
     play(story, newest.slot, newest.episodeId);
-  }, [stories, play]);
+  }, [allStories, play]);
 
   // Persist the current screen. The first run is skipped so the stored session
   // survives long enough for the restore effect above to read it.
@@ -653,10 +471,19 @@ export default function App() {
       clearSession();
     } else if (mode.kind === "play") {
       writeSession({ kind: "play", storyId: mode.story.id });
-    } else {
+    } else if (mode.kind === "studio" || mode.kind === "gallery") {
       writeSession({ kind: mode.kind });
+    } else {
+      clearSession();
     }
   }, [mode]);
+
+  // Native File menu follows this window's screen: Studio gets Save Case /
+  // Open Case, play gets Save Game / Load Game. A no-op in the browser.
+  useEffect(() => {
+    const bridge = typeof window !== "undefined" ? window.scarletReelDesktop : undefined;
+    void bridge?.setAppMode?.(mode.kind);
+  }, [mode.kind]);
 
   // Robust export: try download, always try clipboard too, surface feedback via a
   // banner instead of silent failure (sandboxed previews often block downloads).
@@ -827,10 +654,17 @@ export default function App() {
 
       {mode.kind === "studio" && (
         <Studio
-          baseStories={stories}
+          // allStories, NOT the grid list: `stories` excludes anything
+          // promoted to the featured strip, which is a NEWSSTAND-PRESENTATION
+          // concern only. Passing the filtered list hid featured cases from
+          // Studio entirely — and when every story was featured it arrived
+          // empty, so `baseStories[0].id` threw on mount and the featured
+          // checkbox had no row left to untick.
+          baseStories={allStories}
           initialStoryId={mode.openStoryId}
           initialSceneId={mode.openSceneId}
           onExit={() => setMode({ kind: "menu" })}
+          onOpenManual={() => setMode({ kind: "manual" })}
           onPlay={(s, opts) => {
             if (openStudioPlayWindow(s, opts?.fromSceneId)) {
               say("Playtest opened in a new window.");
@@ -887,6 +721,10 @@ export default function App() {
             setGlobalTitleTheme(theme);
           }}
         />
+      )}
+
+      {mode.kind === "manual" && (
+        <CreatorManual onExit={() => setMode({ kind: "menu" })} onOpenStudio={() => setMode({ kind: "studio" })} />
       )}
 
       {mode.kind === "gallery" && (
@@ -988,16 +826,24 @@ export default function App() {
 
               <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                 <button
-                  onClick={() => play(stories[0] ?? catalog[0])}
+                  // The hero button should open the FRONT of the stand — the
+                  // first featured case if there is one, else the first card.
+                  onClick={() => play(featuredStories[0] ?? stories[0] ?? catalog[0])}
                   className="border-2 border-gold bg-gold/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold shadow-[0_0_20px_rgba(232,178,60,0.3)] hover:bg-gold/25 transition-all hover:scale-105"
                 >
-                  ▶ Play Nobody's Witness (Dynamic Lens Flare)
+                  ▶ Play Nobody's Witness: True Romance Cut
                 </button>
                 <button
                   onClick={() => setMode({ kind: "studio" })}
                   className="border-2 border-cyan-neon bg-cyan-neon/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-cyan-neon shadow-[0_0_20px_rgba(42,217,217,0.3)] hover:bg-cyan-neon/25 transition-all hover:scale-105"
                 >
                   🎬 Open Studio Editor
+                </button>
+                <button
+                  onClick={() => setMode({ kind: "manual" })}
+                  className="border border-gold/70 bg-gold/5 px-5 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold hover:bg-gold/15 transition-all hover:scale-105"
+                >
+                  📓 Creator Manual
                 </button>
               </div>
             </header>
@@ -1020,15 +866,92 @@ export default function App() {
               </button>
             </div>
 
+            {/* ★ FEATURED — the front page of the magazine rack. Set in
+                Studio → Global Title Page Theme → Featured cases. Ids that no
+                longer resolve (hidden or deleted) are dropped rather than
+                leaving a gap, and with none set the stand renders exactly as
+                it always did. */}
+            {featuredStories.length > 0 ? (
+              <div className="mt-4 space-y-4">
+                {featuredStories.map((s) => {
+                  const found = endingsFound(s);
+                  const total = endingsTotal(s);
+                  return (
+                    <div
+                      key={`feat-${s.id}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => play(s)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          play(s);
+                        }
+                      }}
+                      className="group relative cursor-pointer overflow-hidden border-2 border-gold/70 bg-noir-800 text-left shadow-2xl transition-transform hover:-translate-y-1 hover:border-neon focus-visible:border-neon"
+                    >
+                      <div className="relative h-64 w-full overflow-hidden sm:h-80 lg:h-96">
+                        {s.coverImage.startsWith("gradient:") ? (
+                          <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-105" style={coverStyle(s.coverImage)} />
+                        ) : (
+                          <img
+                            src={assetUrl(s.coverImage)}
+                            alt=""
+                            decoding="async"
+                            className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+                          />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-noir-950 via-noir-950/40 to-transparent" />
+                        <div className="absolute left-3 top-3 border border-gold bg-noir-950/90 px-2.5 py-1 font-pulp text-[10px] uppercase tracking-widest text-gold">
+                          ★ Featured
+                        </div>
+                        <div className="absolute inset-x-0 bottom-0 p-4 sm:p-6">
+                          <h2 className="font-pulp text-2xl uppercase leading-none tracking-wide text-paper drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] sm:text-4xl">
+                            {s.title}
+                          </h2>
+                          {s.tagline ? (
+                            <p className="mt-1.5 max-w-2xl font-type text-[12px] italic text-paper/80 sm:text-sm">{s.tagline}</p>
+                          ) : null}
+                          <div className="mt-2 flex items-center gap-3 font-pulp text-[9px] uppercase tracking-widest text-gold/90">
+                            <span>▶ Play</span>
+                            {total > 0 ? (
+                              <span className="text-paper/60">
+                                {found}/{total} endings
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
             <div className={`mt-4 ${verticalRack ? "space-y-4" : "grid gap-5 md:grid-cols-2 xl:grid-cols-3"}`}>
               {stories.map((s, idx) => {
                 const found = endingsFound(s);
                 const total = endingsTotal(s);
                 return (
-                  <button
+                  // Not a <button>: the card contains its own buttons (export,
+                  // import, hide, resume) and nesting interactive elements
+                  // inside a button is invalid HTML — React errors on it and
+                  // the inner file-picker label can misfire. role="button" +
+                  // tabIndex keeps the card keyboard-playable.
+                  <div
                     key={s.id + idx}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => play(s)}
-                    className={`group relative overflow-hidden border-2 border-noir-600 bg-noir-800 text-left shadow-2xl transition-transform hover:-translate-y-1 hover:border-neon focus-visible:border-neon ${
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        play(s);
+                      }
+                    }}
+                    className={`group relative cursor-pointer overflow-hidden border-2 border-noir-600 bg-noir-800 text-left shadow-2xl transition-transform hover:-translate-y-1 hover:border-neon focus-visible:border-neon ${
                       verticalRack ? "flex w-full flex-col" : ""
                     }`}
                   >
@@ -1046,7 +969,9 @@ export default function App() {
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t from-noir-950 via-transparent" />
                       <div className="absolute left-2 top-2 border border-gold/70 bg-noir-950/85 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold">
-                        {s.id === "nobodys-witness"
+                        {s.id === "nobodys-witness-true"
+                          ? "★ Production — True Romance Cut"
+                          : s.id === "nobodys-witness"
                           ? "★ Flagship — Graphic Novel"
                           : s.id === "low-midnight"
                           ? "⭐ New — Neon Noir Horror"
@@ -1054,6 +979,8 @@ export default function App() {
                           ? "⭐ New — Pulp Prehistoric"
                           : s.id === "war-of-the-worlds"
                           ? "⭐ New — Pulp Adaptation, H.G. Wells"
+                          : s.id === "tintin-meridian"
+                          ? "⭐ New — Fan Homage, Ligne Claire"
                           : s.id === "pulp-reel"
                           ? "⭐ New — Fan Homage, Original Dialogue"
                           : s.id === "blackwood-ledger"
@@ -1122,6 +1049,17 @@ export default function App() {
                         </span>
                         <div className="flex items-center gap-1 text-[9px]">
                           <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setInfoStory(s);
+                            }}
+                            className="border border-cyan-neon/40 px-1.5 py-0.5 font-pulp text-cyan-neon hover:bg-cyan-neon/10"
+                            title={`About ${s.title}`}
+                            aria-label={`Info about ${s.title}`}
+                          >
+                            ⓘ Info
+                          </button>
+                          <button
                             onClick={async (e) => {
                               e.stopPropagation();
                               try {
@@ -1145,7 +1083,7 @@ export default function App() {
                             ⤒
                             <input
                               type="file"
-                              accept=".json,.reel.json"
+                              accept=".screel,.json,.reel.json"
                               className="hidden"
                               onChange={async (e) => {
                                 e.stopPropagation();
@@ -1153,20 +1091,16 @@ export default function App() {
                                 e.target.value = "";
                                 if (!file) return;
                                 try {
-                                  const text = await file.text();
-                                  const importedBundle: Story = JSON.parse(text);
-                                  if (!importedBundle.id || !importedBundle.scenes?.length) throw new Error("bad");
-                                  
-                                  if (Array.isArray(importedBundle.assets) && importedBundle.assets.length > 0) {
-                                    await importStoryAssets(importedBundle.id, importedBundle.assets);
+                                  const bytes = new Uint8Array(await file.arrayBuffer());
+                                  const parsed = parseCaseBytes(bytes, file.name);
+                                  if (!parsed.story.id || !parsed.story.scenes?.length) throw new Error("bad");
+                                  if (parsed.assets.length > 0) {
+                                    await importStoryAssets(parsed.story.id, parsed.assets);
                                   }
-                                  
-                                  const { assets, ...cleanedStory } = importedBundle;
-                                  const compacted = await compactStoryMedia(cleanedStory);
-                                  
+                                  const compacted = await compactStoryMedia(parsed.story);
                                   localStorage.setItem(`scarlet-reel-published-${compacted.id}`, JSON.stringify(compacted));
                                   setCatalog(loadPublishedCatalog());
-                                  say(`Imported "${compacted.title}" with ${assets?.length ?? 0} media asset(s).`);
+                                  say(`Imported "${compacted.title}" with ${parsed.assets.length} media asset(s).`);
                                 } catch {
                                   say("Invalid case file or broken bundle.");
                                 }
@@ -1176,7 +1110,10 @@ export default function App() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (stories.length <= 1) {
+                              // Counted across the WHOLE stand (featured cases
+                              // included), or hiding down to one featured card
+                              // would be wrongly blocked/allowed.
+                              if (allStories.length <= 1) {
                                 say("At least one playable case must remain on the newsstand.");
                                 return;
                               }
@@ -1216,10 +1153,63 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
+
+            {infoStory && (
+              <div
+                className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-5 backdrop-blur-sm"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="case-info-title"
+                onClick={() => setInfoStory(null)}
+              >
+                <section
+                  className="relative max-h-[85vh] w-full max-w-xl overflow-y-auto border-2 border-cyan-neon/60 bg-noir-950 p-6 shadow-[0_0_45px_rgba(42,217,217,0.18)]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => setInfoStory(null)}
+                    className="absolute right-3 top-3 border border-paper/30 px-2 py-1 font-pulp text-[10px] text-paper/60 hover:border-crimson hover:text-crimson"
+                    aria-label="Close case info"
+                  >
+                    ✕
+                  </button>
+                  <div className="font-pulp text-[9px] uppercase tracking-[0.35em] text-cyan-neon">Case File · Game Info</div>
+                  <h2 id="case-info-title" className="mt-2 pr-10 font-pulp text-2xl uppercase text-paper">{infoStory.title}</h2>
+                  <p className="mt-1 font-type text-sm italic text-gold/80">{infoStory.tagline}</p>
+                  <div className="mt-5 border-l-2 border-cyan-neon/60 pl-4 font-type text-sm leading-relaxed whitespace-pre-wrap text-paper/80">
+                    {infoStory.briefing?.gameInfo?.trim() || infoStory.briefing?.objective || "No synopsis has been filed for this case yet."}
+                  </div>
+                  {infoStory.briefing?.objective && (
+                    <div className="mt-5 border border-noir-600 bg-noir-900/70 p-3">
+                      <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">Objective</div>
+                      <p className="mt-1 font-type text-xs leading-relaxed text-paper/65">{infoStory.briefing.objective}</p>
+                    </div>
+                  )}
+                  <div className="mt-6 flex justify-end gap-2">
+                    <button
+                      onClick={() => setInfoStory(null)}
+                      className="border border-paper/30 px-4 py-2 font-pulp text-[10px] uppercase tracking-widest text-paper/65 hover:border-paper"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={() => {
+                        const selected = infoStory;
+                        setInfoStory(null);
+                        play(selected);
+                      }}
+                      className="border-2 border-gold bg-gold/10 px-5 py-2 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-gold/20"
+                    >
+                      ▶ Play Case
+                    </button>
+                  </div>
+                </section>
+              </div>
+            )}
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <button
@@ -1233,6 +1223,12 @@ export default function App() {
                 className="border-2 border-paper/30 px-6 py-3 font-pulp text-sm uppercase tracking-[0.2em] text-paper/80 hover:border-cyan-neon hover:text-cyan-neon"
               >
                 🗞 Morgue File — ending gallery
+              </button>
+              <button
+                onClick={() => setMode({ kind: "manual" })}
+                className="border-2 border-cyan-neon/45 px-6 py-3 font-pulp text-sm uppercase tracking-[0.2em] text-cyan-neon hover:bg-cyan-neon/10"
+              >
+                📓 Creator Manual — Studio guide
               </button>
               {/* Import / Export for the entire catalog */}
               <button
@@ -1258,38 +1254,46 @@ export default function App() {
                 ⤒ Import
                 <input
                   type="file"
-                  accept=".json,.reel.json"
+                  accept=".screel,.json,.reel.json"
                   className="hidden"
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     e.target.value = "";
                     if (!file) return;
                     try {
-                      const text = await file.text();
-                      const parsed = JSON.parse(text);
-                      const incoming: Story[] = Array.isArray(parsed) ? parsed : [parsed];
-                      
+                      const bytes = new Uint8Array(await file.arrayBuffer());
+                      let incoming: Story[] = [];
                       let assetCount = 0;
-                      for (const s of incoming) {
-                        if (!s.id || !s.scenes?.length) continue;
-                        
-                        // Restore all bundled assets into IndexedDB
-                        if (Array.isArray(s.assets) && s.assets.length > 0) {
-                          await importStoryAssets(s.id, s.assets);
-                          assetCount += s.assets.length;
+                      try {
+                        const one = parseCaseBytes(bytes, file.name);
+                        incoming = [one.story];
+                        if (one.assets.length) {
+                          await importStoryAssets(one.story.id, one.assets);
+                          assetCount += one.assets.length;
                         }
-                        
-                        // Clean the large assets array from story metadata to avoid blowing localstorage quota
-                        const { assets, ...cleanedStory } = s;
-                        const compacted = await compactStoryMedia(cleanedStory);
+                        const compacted = await compactStoryMedia(one.story);
                         localStorage.setItem(`scarlet-reel-published-${compacted.id}`, JSON.stringify(compacted));
                         localStorage.removeItem(`scarlet-studio-draft-${compacted.id}`);
+                      } catch {
+                        // Catalogue dumps are a JSON array of stories, not a single case.
+                        const parsed = JSON.parse(new TextDecoder().decode(bytes));
+                        incoming = Array.isArray(parsed) ? parsed : [parsed];
+                        for (const s of incoming) {
+                          if (!s.id || !s.scenes?.length) continue;
+                          if (Array.isArray(s.assets) && s.assets.length > 0) {
+                            await importStoryAssets(s.id, s.assets);
+                            assetCount += s.assets.length;
+                          }
+                          const { assets, ...cleanedStory } = s;
+                          const compacted = await compactStoryMedia(cleanedStory);
+                          localStorage.setItem(`scarlet-reel-published-${compacted.id}`, JSON.stringify(compacted));
+                          localStorage.removeItem(`scarlet-studio-draft-${compacted.id}`);
+                        }
                       }
-                      
                       setCatalog(loadPublishedCatalog());
                       say(`Imported ${incoming.length} case(s) with ${assetCount} media asset(s).`);
                     } catch {
-                      say("Invalid .reel.json file or broken bundle.");
+                      say("Invalid case file or broken bundle.");
                     }
                   }}
                 />

@@ -10,7 +10,7 @@
  *
  * Nothing here is redesigned — this is a relocation, byte for byte.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { assetBackground } from "../assetPath";
 
 /** Shared input styling. Used ~260x across the editors. */
@@ -18,10 +18,26 @@ export const inputCls =
   "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
 
 /** A labelled inspector field. The workhorse — used ~570x. */
-export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+export function Field({
+  label,
+  children,
+  tip,
+}: {
+  label: string;
+  children: React.ReactNode;
+  /** Optional hover hint — shown as a gold “?” next to the label. */
+  tip?: string;
+}) {
   return (
-    <label className="block text-[10px] uppercase tracking-wider text-paper/50">
-      {label}
+    <label className="block text-[10px] uppercase tracking-wider text-paper/50" title={tip} data-tip={tip}>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {tip ? (
+          <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gold/50 font-pulp text-[8px] normal-case tracking-normal text-gold/80" aria-hidden>
+            ?
+          </span>
+        ) : null}
+      </span>
       <div className="mt-0.5 normal-case tracking-normal">{children}</div>
     </label>
   );
@@ -37,36 +53,50 @@ export function CommitTextArea({
   className,
   rows = 4,
   placeholder,
+  ariaLabel,
 }: {
   value: string;
   onCommit: (next: string) => void;
   className?: string;
   rows?: number;
   placeholder?: string;
+  ariaLabel?: string;
 }) {
   const [text, setText] = useState(value);
   const ref = useRef<HTMLTextAreaElement | null>(null);
-  // Re-sync only when the external value changes AND we're not focused (e.g.
-  // after an undo, duplicate, or sound-tag insertion elsewhere).
+  const latest = useRef({ text, onCommit });
+  latest.current = { text, onCommit };
+  const committed = useRef(value);
   useEffect(() => {
     if (ref.current && document.activeElement === ref.current) return;
+    committed.current = value;
+    latest.current.text = value;
     setText(value);
   }, [value]);
-  const commit = () => {
-    if (text !== value) onCommit(text);
-  };
+  const commit = useCallback(() => {
+    const { text: next, onCommit: apply } = latest.current;
+    if (next === committed.current) return;
+    committed.current = next; // Ctrl+Enter + blur must commit only once.
+    apply(next);
+  }, []);
+  useEffect(() => () => commit(), [commit]);
+  useEffect(() => {
+    if (text === value) return;
+    const timer = window.setTimeout(commit, 500);
+    return () => window.clearTimeout(timer);
+  }, [text, value, commit]);
   return (
     <textarea
       ref={ref}
+      aria-label={ariaLabel}
       className={className}
       rows={rows}
       value={text}
       placeholder={placeholder}
-      onChange={(e) => setText(e.target.value)}
+      onChange={(e) => { latest.current.text = e.target.value; setText(e.target.value); }}
       onBlur={commit}
-      // Commit on Enter? For dialogue we keep newlines natural, so Enter is a
-      // line break; save happens on blur. Keep a Ctrl/Cmd+Enter to save early.
       onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") commit();
         if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
           e.preventDefault();
           commit();

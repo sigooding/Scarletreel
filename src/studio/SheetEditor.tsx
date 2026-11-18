@@ -122,7 +122,8 @@ export function SheetPreview({ sheet, storyId, height = 96 }: { sheet: SpriteShe
     };
   }, [url]);
 
-  useEffect(() => setStep(0), [animName, anim?.frames.join(",")]);
+  const frameKey = anim?.frames.join(",");
+  useEffect(() => setStep(0), [animName, frameKey]);
   useEffect(() => {
     if (!playing || !anim || anim.frames.length < 2) return;
     const fps = anim.fps && anim.fps > 0 ? anim.fps : 8;
@@ -134,7 +135,7 @@ export function SheetPreview({ sheet, storyId, height = 96 }: { sheet: SpriteShe
       Math.max(30, 1000 / fps),
     );
     return () => window.clearInterval(id);
-  }, [playing, anim?.frames.length, anim?.fps, anim?.loop, animName]);
+  }, [playing, anim, animName]);
 
   if (!url || !dims || !anim) return <p className="font-type text-[9px] italic text-paper/35">Pick an image and add an animation to preview.</p>;
 

@@ -238,25 +238,41 @@ console.log("\n=== WALK-BEHIND REGIONS - the squadroom desks ===");
   check("each region is clipped to its polygon",
     els.every((e) => (e.style.clipPath || "").startsWith("polygon(")));
 
-  // SORTING is the whole feature: the region's z must sit on the same
-  // 50+y scale the walker uses, between "behind" and "in front".
+  // TWO-PASS PAINT: at spawn the feet are in FRONT of the desks, so the
+  // covering pass is off — the slice is painted BEFORE the walker at z 1
+  // so the sprite wins even if sibling z-index is ignored. Walking UP
+  // past the baseline flips the covering pass on (z 160, after the party).
   const zs = els.map((e) => Number(e.style.zIndex));
-  check("regions carry a depth-sorted z-index", zs.every((z) => Number.isFinite(z) && z > 50), JSON.stringify(zs));
-  const deeper = authored.map((o) => 50 + (o.baseline ?? Math.max(...o.points.map((p) => p.y))) + 0.5);
-  check("each z matches its authored depth line", JSON.stringify(zs) === JSON.stringify(deeper),
-    JSON.stringify(zs) + " vs " + JSON.stringify(deeper));
+  check("at spawn the covering pass is off (feet in front of the desks)",
+    els.every((e) => e.getAttribute("data-stage-occluder-cover") === "0"),
+    els.map((e) => e.getAttribute("data-stage-occluder-cover")).join(","));
+  check("in-front slices sit under the walker (z 1)",
+    zs.every((z) => z === 1), JSON.stringify(zs));
 
-  // A walker standing at the room's spawn (in front of the desks) must
-  // out-sort them; one standing at the far wall must not.
   const player = container.querySelector("[data-stage-player]");
   check("the walker is on the same z scale", !!player && Number(player.style.zIndex) > 50,
     player ? player.style.zIndex : "no walker");
-  const near = 50 + scene.stage.spawn.y;
-  check("at the spawn the walker sorts IN FRONT of the desks (feet below the line)",
-    zs.every((z) => near > z), "walker " + near + " vs " + JSON.stringify(zs));
-  const far = 50 + scene.stage.floor.top;
-  check("at the back wall the walker sorts BEHIND the desks",
-    zs.every((z) => far < z), "walker " + far + " vs " + JSON.stringify(zs));
+  // Flattened siblings: a wrapping `inset-0` box was its own stacking
+  // context, so every occluder z-index only sorted INSIDE it — always
+  // under the walker. They must share a parent with the character.
+  check("walk-behinds share the walker's parent (same stacking context)",
+    !!player && els.length > 0 && els.every((e) => e.parentElement === player.parentElement),
+    player && els[0] ? `player parent=${player.parentElement?.className} occ parent=${els[0].parentElement?.className}` : "missing");
+  check("at the spawn the walker sorts IN FRONT of the desks",
+    !!player && zs.every((z) => Number(player.style.zIndex) > z),
+    "walker " + (player ? player.style.zIndex : "?") + " vs " + JSON.stringify(zs));
+
+  // Authoring: the depth line sits inside the floor so walking UP covers,
+  // and the furniture obstacles leave a walkable strip behind the desks
+  // (they used to eat y 76–90 and pin the walker in front forever).
+  check("desk baselines sit inside the floor band so walking up covers",
+    authored.every((o) => {
+      const b = o.baseline ?? Math.max(...o.points.map((p) => p.y));
+      return b > scene.stage.floor.top && b < scene.stage.floor.bottom;
+    }));
+  check("obstacles leave a walkable strip above the desk front",
+    (scene.stage.obstacles || []).every((o) => o.y > scene.stage.floor.top + 8),
+    JSON.stringify((scene.stage.obstacles || []).map((o) => ({ y: o.y, h: o.h }))));
 
   // Asserted on the INLINE style, not the computed one: the guarantee must
   // not depend on the stylesheet having loaded (this layer covers the walker

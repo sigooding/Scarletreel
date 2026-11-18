@@ -1,15 +1,16 @@
 @import "tailwindcss";
+@import "./fonts.css";
 @import "@xyflow/react/dist/style.css";
 
 @theme {
-  --font-pulp: "Alfa Slab One", serif;
-  --font-type: "Newsreader", Georgia, serif;
-  --font-ui: "Oswald", sans-serif;
+  --font-pulp: "Alfa Slab One", "Noto Emoji Variable", serif;
+  --font-type: "Newsreader", Georgia, "Noto Emoji Variable", serif;
+  --font-ui: "Oswald", "Noto Emoji Variable", sans-serif;
   /* Title-sequence faces, selectable per credits node. */
-  --font-poster: "Bebas Neue", "Oswald", sans-serif;
-  --font-elegant: "Playfair Display", Georgia, serif;
-  --font-epic: "Cinzel", "Times New Roman", serif;
-  --font-modern: "Josefin Sans", "Helvetica Neue", sans-serif;
+  --font-poster: "Bebas Neue", "Oswald", "Noto Emoji Variable", sans-serif;
+  --font-elegant: "Playfair Display", Georgia, "Noto Emoji Variable", serif;
+  --font-epic: "Cinzel", "Times New Roman", "Noto Emoji Variable", serif;
+  --font-modern: "Josefin Sans", "Helvetica Neue", "Noto Emoji Variable", sans-serif;
   --color-noir-950: #07070c;
   --color-noir-900: #0c0c14;
   --color-noir-800: #14141f;
@@ -160,6 +161,121 @@ body,
 @keyframes sprite-blink {
   0%, 91%, 94.5%, 100% { filter: brightness(1); }
   92%, 94% { filter: brightness(0.55) contrast(1.15); }
+}
+
+/* ---------- Stage 2D walkable character ---------- */
+.stage2d-idle { animation: stage2d-idle 2.6s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes stage2d-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2.5px); }
+}
+.stage2d-walk { animation: stage2d-walk 0.32s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes stage2d-walk {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-4px) rotate(1.5deg); }
+}
+.stage2d-ripple {
+  width: 26px;
+  height: 26px;
+  animation: stage2d-ripple 0.55s ease-out forwards;
+}
+@keyframes stage2d-ripple {
+  0% { opacity: 0.9; box-shadow: 0 0 0 0 rgba(42, 217, 217, 0.5); }
+  100% { opacity: 0; box-shadow: 0 0 0 22px rgba(42, 217, 217, 0); }
+}
+
+/* Cutscene letterbox bars (scripted sequences) — slide in from the edges. */
+.stage-letterbox { animation: stage-letterbox 0.45s ease-out both; }
+@keyframes stage-letterbox {
+  0% { transform: scaleY(0); }
+  100% { transform: scaleY(1); }
+}
+.stage-letterbox:first-child { transform-origin: 50% 0; }
+.stage-letterbox:last-child { transform-origin: 50% 100%; }
+
+/* ---------- Stage node — interaction markers ---------- */
+.stage-marker {
+  /* anchored at the marker point (its bottom-centre sits on the ground) */
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 6px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+/* HINT KEY (H) — every marker + NPC chip pulses so the player can see what
+   is interactive. Filter-only: no transforms, so marker layout never jumps. */
+.stage-marker-flash {
+  animation: stage-flash-pulse 0.55s ease-in-out 4;
+}
+@keyframes stage-flash-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(2) drop-shadow(0 0 8px rgba(232, 178, 60, 0.95)); }
+}
+.stage-marker-reticle {
+  width: 13px;
+  height: 13px;
+  rotate: 45deg;
+  border: 1.5px solid rgba(232, 178, 60, 0.95);
+  background: rgba(232, 178, 60, 0.12);
+  box-shadow: 0 0 10px rgba(232, 178, 60, 0.45), inset 0 0 5px rgba(232, 178, 60, 0.3);
+  animation: stage-marker-breathe 2.2s ease-in-out infinite;
+  transition: transform 0.15s ease;
+}
+.stage-marker:hover .stage-marker-reticle,
+.stage-marker:focus-visible .stage-marker-reticle {
+  transform: scale(1.25);
+  background: rgba(232, 178, 60, 0.35);
+}
+@keyframes stage-marker-breathe {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+.stage-marker-locked .stage-marker-reticle {
+  border-color: rgba(160, 160, 170, 0.75);
+  background: rgba(120, 120, 130, 0.12);
+  box-shadow: 0 0 8px rgba(120, 120, 130, 0.3);
+}
+.stage-marker-label {
+  max-width: 34vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-pulp, sans-serif);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #f3e7c8;
+  background: rgba(7, 7, 12, 0.92);
+  border: 1px solid rgba(232, 178, 60, 0.4);
+  padding: 3px 8px;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  pointer-events: none;
+}
+.stage-marker:hover .stage-marker-label,
+.stage-marker:focus-visible .stage-marker-label,
+.stage-marker-label-on {
+  opacity: 1;
+  transform: translateY(0);
+}
+.stage-marker-locked .stage-marker-label {
+  color: #b9b9c2;
+  border-color: rgba(160, 160, 170, 0.35);
+}
+
+/* ---------- Stage node — caption bar (subtitle line, auto-fades) ---------- */
+.stage-caption {
+  animation: stage-caption-in 0.3s ease-out both;
+}
+@keyframes stage-caption-in {
+  /* The bar lives at the TOP of the plate now — it drops in from above. */
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ---------- neon ---------- */
@@ -332,6 +448,21 @@ body,
 .credits-motion-flicker {
   animation-name: credits-flicker;
   animation-timing-function: steps(1, end);
+}
+
+/* Iris — the 1940s optical matte: a circular wipe opens the card out of
+ * black and closes it back in, exactly like a period title/scene change.
+ * The reveal is the clip-path circle; opacity stays 1 for the whole card
+ * so the matte, not the fade, is what the eye reads. */
+@keyframes credits-iris {
+  0%   { opacity: 1; clip-path: circle(0% at 50% 50%); }
+  20%  { opacity: 1; clip-path: circle(74% at 50% 50%); }
+  76%  { opacity: 1; clip-path: circle(74% at 50% 50%); }
+  100% { opacity: 1; clip-path: circle(0% at 50% 50%); }
+}
+.credits-motion-iris {
+  animation-name: credits-iris;
+  animation-timing-function: cubic-bezier(0.4, 0.05, 0.4, 0.95);
 }
 
 /* Plain dissolve — lets the montage do all the work. */
@@ -1048,7 +1179,7 @@ body,
 
 /* ---------- studio / xyflow tweaks ---------- */
 .react-flow { background: #0c0c14; }
-.react-flow__attribution { display: none; }
+.react-flow__attribution { background: #14141f; color: #a69fb4; font-size: 10px; }
 .react-flow__handle {
   width: 11px;
   height: 11px;
@@ -1101,7 +1232,7 @@ body,
 /* ---------- scene entry transitions & letterbox ---------- */
 
 /* Cinematic location card: the scene title slides into the lower third on
- * entry, holds, then fades — a Telltale-style "big text" moment. Keyed by
+ * entry, holds, then fades — a cinematic "big text" moment. Keyed by
  * sceneId+entrySeq so it replays on every new arrival. */
 @keyframes scene-title-card {
   0%   { opacity: 0; transform: translateY(14px) scale(0.98); letter-spacing: 0.5em; }
@@ -1147,7 +1278,7 @@ body,
 .scene-cut { opacity: 0; }
 .scene-cut[data-transitioning="1"] { opacity: 1; }
 
-/* Letterbox bars (Telltale-style black bands top & bottom). */
+/* Letterbox bars (cinematic black bands top & bottom). */
 .letterbox-bar {
   position: absolute;
   left: 0;
@@ -1160,7 +1291,7 @@ body,
 .letterbox-top { top: 0; }
 .letterbox-bottom { bottom: 0; }
 
-/* Telltale-style "X will remember that" impact card. */
+/* "X will remember that" impact card. */
 @keyframes remember-card {
   0% { opacity: 0; transform: translateY(10px) scale(0.96); filter: blur(2px); }
   12% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
@@ -1996,4 +2127,268 @@ body,
 .ingame-minimal-hud:hover .hud-chrome,
 .ingame-minimal-hud:hover .hud-lead {
   opacity: 1;
+}
+
+/* ================================================================== */
+/*  SPRITE ANIMATION PRESETS — idle motion with no extra art           */
+/*                                                                     */
+/*  Each preset is one CSS class driven by two custom properties the    */
+/*  renderer writes: --anim-dur (the loop period) and --anim-amp        */
+/*  (amplitude). Transform-origin is the sprite's feet, so a sway       */
+/*  leans from the ground instead of pivoting at its middle.           */
+/* ================================================================== */
+.anim-bob,
+.anim-sway,
+.anim-pulse,
+.anim-drift,
+.anim-flutter,
+.anim-float,
+.anim-spin,
+.anim-shake,
+.anim-breathe {
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.anim-flicker,
+.anim-pulse {
+  will-change: opacity, filter;
+}
+
+.anim-bob { animation: anim-bob var(--anim-dur, 3.2s) ease-in-out infinite; }
+@keyframes anim-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(calc(-3px * var(--anim-amp, 1))); }
+}
+
+.anim-sway { animation: anim-sway var(--anim-dur, 4s) ease-in-out infinite; }
+@keyframes anim-sway {
+  0%, 100% { transform: rotate(calc(-2deg * var(--anim-amp, 1))); }
+  50% { transform: rotate(calc(2deg * var(--anim-amp, 1))); }
+}
+
+.anim-pulse { animation: anim-pulse var(--anim-dur, 1.6s) ease-in-out infinite; }
+@keyframes anim-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(calc(1 + 0.04 * var(--anim-amp, 1))); filter: brightness(calc(1 + 0.25 * var(--anim-amp, 1))); }
+}
+
+.anim-drift { animation: anim-drift var(--anim-dur, 9s) ease-in-out infinite; }
+@keyframes anim-drift {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(calc(6px * var(--anim-amp, 1)), calc(-4px * var(--anim-amp, 1))); }
+  50% { transform: translate(calc(2px * var(--anim-amp, 1)), calc(-8px * var(--anim-amp, 1))); }
+  75% { transform: translate(calc(-5px * var(--anim-amp, 1)), calc(-3px * var(--anim-amp, 1))); }
+}
+
+.anim-flutter { animation: anim-flutter var(--anim-dur, 0.5s) ease-in-out infinite; }
+@keyframes anim-flutter {
+  0%, 100% { transform: scaleY(1) rotate(calc(-3deg * var(--anim-amp, 1))); }
+  50% { transform: scaleY(calc(1 - 0.12 * var(--anim-amp, 1))) rotate(calc(3deg * var(--anim-amp, 1))); }
+}
+
+.anim-float { animation: anim-float var(--anim-dur, 6s) ease-in-out infinite; }
+@keyframes anim-float {
+  0%, 100% { transform: translate(0, 0) rotate(calc(-1.5deg * var(--anim-amp, 1))); }
+  33% { transform: translate(calc(3px * var(--anim-amp, 1)), calc(-6px * var(--anim-amp, 1))) rotate(calc(1deg * var(--anim-amp, 1))); }
+  66% { transform: translate(calc(-2px * var(--anim-amp, 1)), calc(-2px * var(--anim-amp, 1))) rotate(calc(2deg * var(--anim-amp, 1))); }
+}
+
+.anim-spin { animation: anim-spin var(--anim-dur, 12s) linear infinite; }
+@keyframes anim-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.anim-shake { animation: anim-shake var(--anim-dur, 0.9s) ease-in-out infinite; }
+@keyframes anim-shake {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(calc(-1.5px * var(--anim-amp, 1)), calc(1px * var(--anim-amp, 1))); }
+  40% { transform: translate(calc(1.5px * var(--anim-amp, 1)), calc(-1px * var(--anim-amp, 1))); }
+  60% { transform: translate(calc(-1px * var(--anim-amp, 1)), 0); }
+  80% { transform: translate(calc(1px * var(--anim-amp, 1)), calc(1px * var(--anim-amp, 1))); }
+}
+
+.anim-breathe { animation: anim-breathe var(--anim-dur, 5s) ease-in-out infinite; }
+@keyframes anim-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(calc(1 + 0.02 * var(--anim-amp, 1))); }
+}
+
+/* Flicker is deliberately irregular: a repeating on/off beat reads as a
+   machine; uneven steps read as a failing tube. */
+.anim-flicker { animation: anim-flicker var(--anim-dur, 5.5s) steps(1, end) infinite; }
+@keyframes anim-flicker {
+  0%, 8%, 10%, 38%, 40%, 62%, 64%, 100% { opacity: 1; filter: brightness(1); }
+  9%, 39%, 63% { opacity: calc(1 - 0.55 * var(--anim-amp, 1)); filter: brightness(0.55); }
+  70% { opacity: calc(1 - 0.25 * var(--anim-amp, 1)); filter: brightness(0.8); }
+  72% { opacity: calc(1 - 0.7 * var(--anim-amp, 1)); filter: brightness(0.4); }
+  74% { opacity: 1; filter: brightness(1); }
+}
+
+/* ---------------------------------------------------------------------
+   INVENTORY CONTAINER ("container" mode) — a pouch / case / saddlebag
+   sprite the items sit INSIDE. The pop is deliberately springy: a bag
+   being opened, not a panel being shown.
+   --------------------------------------------------------------------- */
+.inv-container {
+  animation: inv-pop 240ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+@keyframes inv-pop {
+  0% { opacity: 0; transform: translateY(14px) scale(0.92) rotate(-1.5deg); }
+  60% { opacity: 1; transform: translateY(-2px) scale(1.02) rotate(0.4deg); }
+  100% { opacity: 1; transform: none; }
+}
+.inv-container img { user-select: none; }
+.inv-container button {
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+.inv-container button:hover {
+  transform: translateY(-2px) scale(1.08);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------------------------------------------------------------------
+   RIDE MINIGAME (highway chase) — the scrolling road,
+   the oncoming traffic and the rider's bike are styled here so the
+   RideGame component can stay lean. All motion is CSS/RAF-driven.
+   --------------------------------------------------------------------- */
+.road-scroll {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgb(242 232 213 / 0.22) 0px,
+    rgb(242 232 213 / 0.22) 34px,
+    transparent 34px,
+    transparent 88px
+  );
+  background-size: 100% 88px;
+  animation: road-scroll 0.55s linear infinite;
+}
+@keyframes road-scroll {
+  from { background-position: 0 0; }
+  to { background-position: 0 88px; }
+}
+/* AUTHORED ROAD ART (RideConfig.roadImage) — the same march-toward-you as
+   .road-scroll, but driving a real tiling image. The tile is sized to half
+   the frame height and scrolled exactly one tile per cycle, so a seamless
+   plate loops with no visible jump. Duration is set inline from the ride's
+   `speed`. */
+.ride-road {
+  animation: ride-road-scroll 0.8s linear infinite;
+}
+@keyframes ride-road-scroll {
+  from { background-position: 0 0; }
+  to { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ride-road { animation: none; }
+}
+
+/* Oncoming traffic sways slightly as it bears down on you. */
+.road-traffic {
+  animation: road-sway 0.7s ease-in-out infinite;
+}
+@keyframes road-sway {
+  0%, 100% { transform: translateX(0) scale(1); }
+  50% { transform: translateX(3px) scale(1.05); }
+}
+/* The bike leans into its lane changes. */
+.road-vehicle {
+  transition: transform 150ms ease-out;
+}
+/* The crash: the bike goes over in its lane, then settles. */
+.road-crash {
+  animation: road-crash 0.5s cubic-bezier(0.3, 0, 0.4, 1) both;
+}
+@keyframes road-crash {
+  0% { transform: rotate(0deg) translateY(0); opacity: 1; }
+  40% { transform: rotate(70deg) translateY(8px); opacity: 1; }
+  100% { transform: rotate(95deg) translateY(26px); opacity: 0.55; }
+}
+
+/* ------------------------------------------------------------------ */
+/*  CANVAS NODE RESIZING                                               */
+/*                                                                     */
+/*  The default ReactFlow handles are small white squares pinned at    */
+/*  every corner and edge midpoint. On a dark card they read as        */
+/*  detached dots floating around the node — and at 5px they are a     */
+/*  fiddly target. We drop the visible mark entirely: the node itself  */
+/*  is the affordance, and the handles become invisible oversized      */
+/*  grips so the corners and edges are simply draggable.               */
+/* ------------------------------------------------------------------ */
+
+/* All eight handles: no visible mark at all, just a generous invisible grip.
+   The card's own border already shows where the edges and corners are, so a
+   bead or a bracket on top of it is redundant decoration. Corners get a square
+   grip, edges a long thin one, and every one of them is bigger than the 5px
+   vendor default, so the drag is easier to catch than it was when it was
+   visible. */
+.scarlet-resizer.react-flow__resize-control.handle {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: 1;
+}
+.scarlet-resizer.react-flow__resize-control.handle.top:not(.left):not(.right),
+.scarlet-resizer.react-flow__resize-control.handle.bottom:not(.left):not(.right) {
+  width: 40px;
+  height: 12px;
+}
+.scarlet-resizer.react-flow__resize-control.handle.left:not(.top):not(.bottom),
+.scarlet-resizer.react-flow__resize-control.handle.right:not(.top):not(.bottom) {
+  width: 12px;
+  height: 40px;
+}
+
+/* Studio: readable, keyboard-visible controls and a stacked touch layout. */
+.studio-shell :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid #ff7ac0;
+  outline-offset: 2px;
+}
+.studio-shell .tb-select { max-width: min(290px, 90vw); }
+.studio-shell .tb-input { min-width: 140px; }
+.studio-shell .btn-tool, .studio-shell .btn-go, .studio-shell .btn-ok { min-height: 28px; }
+.studio-inspector [role="tab"] { font-size: 10px; min-height: 32px; }
+.studio-inspector [role="tab"][aria-selected="true"] { box-shadow: inset 0 -2px #ff2e88; }
+@media (max-width: 740px) {
+  .studio-workspace { flex-direction: column; overflow: hidden; }
+  .studio-canvas { flex: 1; min-height: 0; }
+  .studio-inspector { flex: 1; min-height: 0; width: 100% !important; max-width: none !important; }
+  .studio-workspace[data-mobile-pane="editor"] .studio-canvas,
+  .studio-workspace[data-mobile-pane="map"] .studio-inspector,
+  .studio-inspector-resize, .studio-inspector-expand { display: none; }
+  .studio-scene-nav > span:first-child { display: none; }
+  .studio-scene-nav input, .studio-scene-nav select { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-shell *, .studio-shell *::before, .studio-shell *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+.studio-inspector .font-pulp, .studio-scene-nav .font-pulp { font-family: Oswald, ui-sans-serif, system-ui, sans-serif; font-weight: 500; }
+.studio-inspector .font-type { font-family: ui-sans-serif, system-ui, sans-serif; }
+.studio-inspector .text-\[8px\] { font-size: 10px; }
+.studio-inspector .text-\[9px\] { font-size: 11px; }
+.studio-inspector .text-\[10px\] { font-size: 12px; }
+
+.studio-inspector .font-pulp, .studio-scene-nav .font-pulp { font-family: Oswald, "Noto Emoji Variable", sans-serif; }
+.studio-inspector .font-type { font-family: ui-sans-serif, system-ui, "Noto Emoji Variable", sans-serif; }
+
+/* Navigation takes a few compact rows, not most of the authoring surface. */
+.studio-tab-row { display: flex; overflow-x: auto; scrollbar-width: thin; }
+.studio-tab-row [role="tab"] { flex: 1 0 74px; min-height: 36px; line-height: 1.3; }
+.studio-inspector [data-minimized="true"] .studio-coach-kicker,
+.studio-inspector [data-minimized="true"] [aria-label="Game-building progress"] { display: none; }
+.studio-secondary-toolbar { display: contents; }
+.studio-only-mobile, .studio-toolbar > .studio-only-mobile.btn-tool { display: none; }
+@media (max-width: 740px) {
+  .studio-only-desktop { display: none; }
+  .studio-only-mobile, .studio-toolbar > .studio-only-mobile.btn-tool { display: block; }
+  .studio-toolbar > .tb-sep { display: none; }
+  .studio-secondary-toolbar { display: none; }
+  .studio-secondary-toolbar[data-expanded="true"] { display: flex; flex-wrap: wrap; gap: 4px; width: 100%; }
+  .studio-toolbar .tb-status { font-size: 9px; }
+  .studio-save-reminder { gap: 6px; padding: 6px 10px; }
+  .studio-mobile-view { display: flex; gap: 4px; padding: 5px 10px; border-bottom: 1px solid #303040; background: #101018; }
+  .studio-mobile-view button { flex: 1; min-height: 30px; font: 12px/1.3 system-ui, sans-serif; color: #bbb5bf; border: 1px solid #303040; border-radius: 3px; }
+  .studio-mobile-view button[aria-pressed="true"] { color: #ff7ac0; background: #ff2e8810; border-color: #ff2e8870; }
 }

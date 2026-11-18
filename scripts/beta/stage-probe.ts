@@ -603,7 +603,7 @@ async function parts2to4() {
       if (fn()) return true;
       await sleep(120);
     }
-    ok(false, desc, "timed out");
+    ok(false, desc, `timed out; rendered: ${text().slice(0, 1200)}`);
     return false;
   }
   const playerPos = () => {
@@ -913,7 +913,8 @@ async function parts2to4() {
 
     // Number keys still pick choices — back to the street.
     key("1"); await sleep(400);
-    for (let i = 0; i < 8 && process.env.STAGE_BETA_VERBOSE; i++) {
+    // Diagnostic logging must not outwait the caption we assert below.
+    for (let i = 0; i < 3 && process.env.STAGE_BETA_VERBOSE; i++) {
       process.stderr.write(`[P3 after 1 · +${(i + 1) * 1000}ms] player=${!!q("[data-stage-player]")} markers=${qa(".stage-marker").length} caption=${!!q(".stage-caption")} txt=${text().slice(0, 160)}\n`);
       await sleep(1000);
     }
@@ -1037,7 +1038,7 @@ async function parts2to4() {
     key("ArrowRight"); // re-press: the floor lock legitimately dropped the old hold
     const t0 = Date.now();
     let maxX = playerPos()?.x ?? 0;
-    while (Date.now() - t0 < 12000 && !q(".hotspot-box")) {
+    while (Date.now() - t0 < 12000 && q("[data-stage-player]")) {
       maxCam = Math.max(maxCam, camAt());
       maxX = Math.max(maxX, playerPos()?.x ?? 0);
       await sleep(80);
@@ -1045,7 +1046,10 @@ async function parts2to4() {
     keyUp("ArrowRight");
     ok(maxX > 184, "the opened barrier lets the walker cross to the far end", `maxX=${maxX}`);
     ok(maxCam > 90, "the camera pans ahead of the walker to the strip's end", `cam=${maxCam}`);
-    await until("walking off the edge enters the target scene", () => !!q(".hotspot-box") && text().includes("ALIBI-PROSE"), 8000);
+    // Arrival shows the office's prose first. Its interactive hotspots do
+    // not appear until that prose is acknowledged; expecting both at once
+    // only passed in a transient pre-entry render.
+    await until("walking off the edge enters the target scene", () => !q("[data-stage-player]") && text().includes("ALIBI-PROSE"), 8000);
     ok(!q("[data-stage-player]"), "the walker is gone after the edge exit");
   }
 

@@ -58,7 +58,7 @@ export function ActEditor({
   onUpdate: (next: Story) => void;
   onSelectScene: (sceneId: string) => void;
 }) {
-  const acts = story.acts ?? [];
+  const acts = useMemo(() => story.acts ?? [], [story.acts]);
   const resolveMedia = useResolvedMedia(story.id);
   const [openId, setOpenId] = useState<string | null>(acts[0]?.id ?? null);
   // If the act being viewed was removed (delete / reorder), fall back to the

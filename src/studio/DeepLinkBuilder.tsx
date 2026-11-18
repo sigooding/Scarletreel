@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MeterKey, Story } from "../types";
 import { buildDeepLink, METER_NAMES, parseDeepLink, resolveDeepLink } from "../game/deepLink";
 import { collectFlags } from "../logic";
@@ -36,6 +36,9 @@ export function DeepLinkBuilder({ story, selectedSceneId }: { story: Story; sele
   const [trust, setTrust] = useState<Record<string, number>>({});
   const [seed, setSeed] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const linkRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { setSceneId(selectedSceneId ?? ""); }, [selectedSceneId]);
 
   const storyFlags = useMemo(() => collectFlags(story), [story]);
 
@@ -51,7 +54,8 @@ export function DeepLinkBuilder({ story, selectedSceneId }: { story: Story; sele
   // resolved back against this story so the warnings shown here are exactly
   // the warnings the runtime will log on boot.
   const query = buildDeepLink({
-    ...(sceneId ? { sceneId } : {}),
+    storyId: story.id,
+    sceneId: sceneId || story.startSceneId,
     flags,
     items,
     meters,
@@ -61,15 +65,27 @@ export function DeepLinkBuilder({ story, selectedSceneId }: { story: Story; sele
   const origin = typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : "";
   const url = query ? `${origin}${query}` : origin;
   const preview = resolveDeepLink(story, parseDeepLink(query));
-  const empty = !query;
+  const empty = !story.scenes.length;
 
-  const copy = () => {
+  useEffect(() => {
+    setCopied(false);
+    setCopyError("");
+  }, [url]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 2200);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const copy = async () => {
     try {
-      void navigator.clipboard?.writeText(url);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 2200);
+      setCopyError("");
     } catch {
-      /* clipboard blocked — the field below is still selectable */
+      setCopied(false);
+      setCopyError("Clipboard unavailable — the link is selected. Press Ctrl/Cmd+C to copy.");
+      linkRef.current?.focus();
+      linkRef.current?.select();
     }
   };
 
@@ -210,6 +226,8 @@ export function DeepLinkBuilder({ story, selectedSceneId }: { story: Story; sele
       {/* the link */}
       <div className="space-y-1">
         <textarea
+          ref={linkRef}
+          aria-label="Branch link URL"
           readOnly
           value={empty ? "(pick a scene or some state above)" : url}
           rows={2}
@@ -228,7 +246,7 @@ export function DeepLinkBuilder({ story, selectedSceneId }: { story: Story; sele
           <button
             type="button"
             disabled={empty}
-            onClick={() => window.open(url, "_blank")}
+            onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
             className="border border-cyan-neon/50 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon disabled:opacity-40 hover:bg-cyan-neon/15"
           >
             open it ▶
@@ -251,6 +269,8 @@ export function DeepLinkBuilder({ story, selectedSceneId }: { story: Story; sele
         </div>
       </div>
 
+      {copyError && <p role="status" className="font-type text-[10px] text-gold">{copyError}</p>}
+      <p className="font-type text-[9px] text-paper/50">This link opens {story.title}. A collaborator needs the same reel imported; the link does not contain the game or its media.</p>
       {preview.warnings.length > 0 && (
         <div className="space-y-0.5 border border-gold/40 bg-gold/5 p-1">
           {preview.warnings.map((w) => (

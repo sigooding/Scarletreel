@@ -218,3 +218,16 @@ deliberately coarser than `decisionKey`.
 definition, used by both, so the simulation cannot silently drift from the game
 and make every bot result a lie. Three engine checks assert the duplicates
 stay gone.
+
+
+## Studio release regression suite
+
+`npm run test:studio-ship` adds focused coverage for bounded next-room preloading,
+audio ownership, autosave ordering, graph route identity, cloning/deletion and the
+Family Guy test reel. `npm run test:browser` drives the actual Chromium UI and
+observes media requests without speculative playback. Pure simulations do not
+prove pointer hit targets, focus, rendering or real timer behavior; the browser
+suite complements them rather than treating bot completion as a UI guarantee.
+
+See [Studio ship check](studio-ship-check.md) for setup, the 16 browser cases,
+responsive workspace behavior and the annotated Family Guy test route.

@@ -404,8 +404,11 @@ put the specific ones after it:
 
 A state only overrides what you fill in — `label`, `image` (an empty string
 means "no object art in this state"), `cursor`, `action`, and `gating`
-(`null` = always unlocked: the door's *open* state). Everything else —
-identity, zone bounds, verb answers, accepted items, `isRepeatable` — is
+(`null` = always unlocked: the door's *open* state), plus `acceptsItems`
+(`null` or `[]` = no item picker; omitted = inherit). For example, a machine
+that consumes a key can switch to a direct-use puzzle instead of asking for
+that already-consumed key again. Everything else —
+identity, zone bounds, verb answers, `isRepeatable` — is
 shared, so **the marker re-skins in place**: it never duplicates, never
 re-mounts, and the walk animation never resets. That's the whole point: one
 object, one `used` history, many faces.
@@ -432,7 +435,7 @@ The machinery reasons about states everywhere the base object goes:
 
 Studio: the hotspot's inspector has a **🔁 States** section — add states,
 reorder them (↑/↓; order = specificity), and edit each state's label, art,
-cursor, action, `when` gate and lock override. The hotspot's canvas card
+cursor, action, `when` gate, lock override and accepted items. The hotspot's canvas card
 shows a `🔁n` badge. `rainSector.ts` ships reference cases, and
 `npm run test:stage` plays a full locked → opened →
 emptied safe puzzle through the real UI.

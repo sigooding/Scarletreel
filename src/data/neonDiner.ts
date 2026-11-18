@@ -705,16 +705,25 @@ export const NEON_DINER: Story = {
           cursor: "take",
           isRepeatable: false,
           showItemImage: true,
-          action: { type: "giveItem", itemGranted: "burner" },
+          // Carries the Clever point the exit choice used to (see nd_f_out):
+          // a one-shot zone can't be farmed, so the reward is safe here.
+          action: { type: "giveItem", itemGranted: "burner", meterChange: { meter: "Clever", delta: 1 } },
         },
       ],
       choices: [
         {
           id: "nd_f_out",
+          // The freezer is re-enterable from the kitchen, so its only exit
+          // MUST repeat. A choice carrying consequences is one-shot by
+          // default (so meters can't be farmed by looping a scene), which
+          // left the room with no way out on a second visit — a softlock the
+          // playthrough bot hit in ~10% of runs. The Clever point is a
+          // first-visit reward, so it moves onto the ice hotspot (already
+          // one-shot) and the exit becomes pure, repeatable navigation.
+          isRepeatable: true,
           text: "Out. The cold is in your teeth now.",
           targetSceneId: "nd_kitchen",
           attitudeTag: "Clever",
-          consequences: { meterChanges: [{ meter: "Clever", delta: 1 }] },
         },
       ],
     },

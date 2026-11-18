@@ -240,7 +240,7 @@ function RouteMapInner({
       zoomOnDoubleClick={false}
       minZoom={0.25}
       maxZoom={1.4}
-      proOptions={{ hideAttribution: true }}
+      attributionPosition="top-right"
     >
       <Background variant={BackgroundVariant.Dots} gap={26} size={1} color="rgba(232,222,205,0.10)" />
     </ReactFlow>

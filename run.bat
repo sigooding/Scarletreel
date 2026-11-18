@@ -1,1 +1,1 @@
-{\rtf1}
+npm run dev
