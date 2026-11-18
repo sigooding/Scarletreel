@@ -72,7 +72,7 @@ function mediaField(v?: string): string {
 }
 
 /**
- * Episodes tab — pack a story's scene graph into a TV-style season.
+ * Episodes tab — pack a story's scene graph into a Telltale-style season.
  *
  * Everything here writes straight onto `story.episodes`. Scene assignment is
  * the load-bearing part: a scene belongs to exactly one episode, and the
@@ -150,7 +150,7 @@ export function EpisodeEditor({
       <div className="space-y-3">
         <h3 className="font-pulp text-[10px] uppercase tracking-widest text-crimson">🎞 Episodes — pack this case into a season</h3>
         <p className="font-type text-[10px] leading-relaxed text-paper/55">
-          An episodic story is presented like a TV season: a season screen, a{" "}
+          An episodic story is presented like a Telltale season: a season screen, a{" "}
           <b className="text-gold">title card</b> per chapter, a <b className="text-gold">"Previously on…"</b> recap
           built from what the player actually did, <b className="text-gold">its own three save slots</b>, and{" "}
           <b className="text-gold">its own endings</b> that close the chapter and hand off to "Next time on…" instead of

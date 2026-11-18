@@ -183,16 +183,7 @@ body,
   100% { opacity: 0; box-shadow: 0 0 0 22px rgba(42, 217, 217, 0); }
 }
 
-/* Cutscene letterbox bars (scripted sequences) — slide in from the edges. */
-.stage-letterbox { animation: stage-letterbox 0.45s ease-out both; }
-@keyframes stage-letterbox {
-  0% { transform: scaleY(0); }
-  100% { transform: scaleY(1); }
-}
-.stage-letterbox:first-child { transform-origin: 50% 0; }
-.stage-letterbox:last-child { transform-origin: 50% 100%; }
-
-/* ---------- Stage node — interaction markers ---------- */
+/* ---------- Stage node — interaction markers (Telltale-style) ---------- */
 .stage-marker {
   /* anchored at the marker point (its bottom-centre sits on the ground) */
   transform: translate(-50%, -100%);
@@ -204,15 +195,6 @@ body,
   background: transparent;
   border: 0;
   cursor: pointer;
-}
-/* HINT KEY (H) — every marker + NPC chip pulses so the player can see what
-   is interactive. Filter-only: no transforms, so marker layout never jumps. */
-.stage-marker-flash {
-  animation: stage-flash-pulse 0.55s ease-in-out 4;
-}
-@keyframes stage-flash-pulse {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(2) drop-shadow(0 0 8px rgba(232, 178, 60, 0.95)); }
 }
 .stage-marker-reticle {
   width: 13px;
@@ -272,8 +254,7 @@ body,
   animation: stage-caption-in 0.3s ease-out both;
 }
 @keyframes stage-caption-in {
-  /* The bar lives at the TOP of the plate now — it drops in from above. */
-  from { opacity: 0; transform: translateY(-6px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -1216,7 +1197,7 @@ body,
 /* ---------- scene entry transitions & letterbox ---------- */
 
 /* Cinematic location card: the scene title slides into the lower third on
- * entry, holds, then fades — a cinematic "big text" moment. Keyed by
+ * entry, holds, then fades — a Telltale-style "big text" moment. Keyed by
  * sceneId+entrySeq so it replays on every new arrival. */
 @keyframes scene-title-card {
   0%   { opacity: 0; transform: translateY(14px) scale(0.98); letter-spacing: 0.5em; }
@@ -1262,7 +1243,7 @@ body,
 .scene-cut { opacity: 0; }
 .scene-cut[data-transitioning="1"] { opacity: 1; }
 
-/* Letterbox bars (cinematic black bands top & bottom). */
+/* Letterbox bars (Telltale-style black bands top & bottom). */
 .letterbox-bar {
   position: absolute;
   left: 0;
@@ -1275,7 +1256,7 @@ body,
 .letterbox-top { top: 0; }
 .letterbox-bottom { bottom: 0; }
 
-/* "X will remember that" impact card. */
+/* Telltale-style "X will remember that" impact card. */
 @keyframes remember-card {
   0% { opacity: 0; transform: translateY(10px) scale(0.96); filter: blur(2px); }
   12% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
@@ -2111,216 +2092,4 @@ body,
 .ingame-minimal-hud:hover .hud-chrome,
 .ingame-minimal-hud:hover .hud-lead {
   opacity: 1;
-}
-
-/* ================================================================== */
-/*  SPRITE ANIMATION PRESETS — idle motion with no extra art           */
-/*                                                                     */
-/*  Each preset is one CSS class driven by two custom properties the    */
-/*  renderer writes: --anim-dur (the loop period) and --anim-amp        */
-/*  (amplitude). Transform-origin is the sprite's feet, so a sway       */
-/*  leans from the ground instead of pivoting at its middle.           */
-/* ================================================================== */
-.anim-bob,
-.anim-sway,
-.anim-pulse,
-.anim-drift,
-.anim-flutter,
-.anim-float,
-.anim-spin,
-.anim-shake,
-.anim-breathe {
-  transform-origin: 50% 100%;
-  will-change: transform;
-}
-.anim-flicker,
-.anim-pulse {
-  will-change: opacity, filter;
-}
-
-.anim-bob { animation: anim-bob var(--anim-dur, 3.2s) ease-in-out infinite; }
-@keyframes anim-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(calc(-3px * var(--anim-amp, 1))); }
-}
-
-.anim-sway { animation: anim-sway var(--anim-dur, 4s) ease-in-out infinite; }
-@keyframes anim-sway {
-  0%, 100% { transform: rotate(calc(-2deg * var(--anim-amp, 1))); }
-  50% { transform: rotate(calc(2deg * var(--anim-amp, 1))); }
-}
-
-.anim-pulse { animation: anim-pulse var(--anim-dur, 1.6s) ease-in-out infinite; }
-@keyframes anim-pulse {
-  0%, 100% { transform: scale(1); filter: brightness(1); }
-  50% { transform: scale(calc(1 + 0.04 * var(--anim-amp, 1))); filter: brightness(calc(1 + 0.25 * var(--anim-amp, 1))); }
-}
-
-.anim-drift { animation: anim-drift var(--anim-dur, 9s) ease-in-out infinite; }
-@keyframes anim-drift {
-  0%, 100% { transform: translate(0, 0); }
-  25% { transform: translate(calc(6px * var(--anim-amp, 1)), calc(-4px * var(--anim-amp, 1))); }
-  50% { transform: translate(calc(2px * var(--anim-amp, 1)), calc(-8px * var(--anim-amp, 1))); }
-  75% { transform: translate(calc(-5px * var(--anim-amp, 1)), calc(-3px * var(--anim-amp, 1))); }
-}
-
-.anim-flutter { animation: anim-flutter var(--anim-dur, 0.5s) ease-in-out infinite; }
-@keyframes anim-flutter {
-  0%, 100% { transform: scaleY(1) rotate(calc(-3deg * var(--anim-amp, 1))); }
-  50% { transform: scaleY(calc(1 - 0.12 * var(--anim-amp, 1))) rotate(calc(3deg * var(--anim-amp, 1))); }
-}
-
-.anim-float { animation: anim-float var(--anim-dur, 6s) ease-in-out infinite; }
-@keyframes anim-float {
-  0%, 100% { transform: translate(0, 0) rotate(calc(-1.5deg * var(--anim-amp, 1))); }
-  33% { transform: translate(calc(3px * var(--anim-amp, 1)), calc(-6px * var(--anim-amp, 1))) rotate(calc(1deg * var(--anim-amp, 1))); }
-  66% { transform: translate(calc(-2px * var(--anim-amp, 1)), calc(-2px * var(--anim-amp, 1))) rotate(calc(2deg * var(--anim-amp, 1))); }
-}
-
-.anim-spin { animation: anim-spin var(--anim-dur, 12s) linear infinite; }
-@keyframes anim-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.anim-shake { animation: anim-shake var(--anim-dur, 0.9s) ease-in-out infinite; }
-@keyframes anim-shake {
-  0%, 100% { transform: translate(0, 0); }
-  20% { transform: translate(calc(-1.5px * var(--anim-amp, 1)), calc(1px * var(--anim-amp, 1))); }
-  40% { transform: translate(calc(1.5px * var(--anim-amp, 1)), calc(-1px * var(--anim-amp, 1))); }
-  60% { transform: translate(calc(-1px * var(--anim-amp, 1)), 0); }
-  80% { transform: translate(calc(1px * var(--anim-amp, 1)), calc(1px * var(--anim-amp, 1))); }
-}
-
-.anim-breathe { animation: anim-breathe var(--anim-dur, 5s) ease-in-out infinite; }
-@keyframes anim-breathe {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(calc(1 + 0.02 * var(--anim-amp, 1))); }
-}
-
-/* Flicker is deliberately irregular: a repeating on/off beat reads as a
-   machine; uneven steps read as a failing tube. */
-.anim-flicker { animation: anim-flicker var(--anim-dur, 5.5s) steps(1, end) infinite; }
-@keyframes anim-flicker {
-  0%, 8%, 10%, 38%, 40%, 62%, 64%, 100% { opacity: 1; filter: brightness(1); }
-  9%, 39%, 63% { opacity: calc(1 - 0.55 * var(--anim-amp, 1)); filter: brightness(0.55); }
-  70% { opacity: calc(1 - 0.25 * var(--anim-amp, 1)); filter: brightness(0.8); }
-  72% { opacity: calc(1 - 0.7 * var(--anim-amp, 1)); filter: brightness(0.4); }
-  74% { opacity: 1; filter: brightness(1); }
-}
-
-/* ---------------------------------------------------------------------
-   INVENTORY CONTAINER ("container" mode) — a pouch / case / saddlebag
-   sprite the items sit INSIDE. The pop is deliberately springy: a bag
-   being opened, not a panel being shown.
-   --------------------------------------------------------------------- */
-.inv-container {
-  animation: inv-pop 240ms cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
-}
-@keyframes inv-pop {
-  0% { opacity: 0; transform: translateY(14px) scale(0.92) rotate(-1.5deg); }
-  60% { opacity: 1; transform: translateY(-2px) scale(1.02) rotate(0.4deg); }
-  100% { opacity: 1; transform: none; }
-}
-.inv-container img { user-select: none; }
-.inv-container button {
-  transition: transform 140ms ease, box-shadow 140ms ease;
-}
-.inv-container button:hover {
-  transform: translateY(-2px) scale(1.08);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
-}
-
-/* ---------------------------------------------------------------------
-   RIDE MINIGAME (highway chase) — the scrolling road,
-   the oncoming traffic and the rider's bike are styled here so the
-   RideGame component can stay lean. All motion is CSS/RAF-driven.
-   --------------------------------------------------------------------- */
-.road-scroll {
-  background-image: repeating-linear-gradient(
-    to bottom,
-    rgb(242 232 213 / 0.22) 0px,
-    rgb(242 232 213 / 0.22) 34px,
-    transparent 34px,
-    transparent 88px
-  );
-  background-size: 100% 88px;
-  animation: road-scroll 0.55s linear infinite;
-}
-@keyframes road-scroll {
-  from { background-position: 0 0; }
-  to { background-position: 0 88px; }
-}
-/* AUTHORED ROAD ART (RideConfig.roadImage) — the same march-toward-you as
-   .road-scroll, but driving a real tiling image. The tile is sized to half
-   the frame height and scrolled exactly one tile per cycle, so a seamless
-   plate loops with no visible jump. Duration is set inline from the ride's
-   `speed`. */
-.ride-road {
-  animation: ride-road-scroll 0.8s linear infinite;
-}
-@keyframes ride-road-scroll {
-  from { background-position: 0 0; }
-  to { background-position: 0 50%; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ride-road { animation: none; }
-}
-
-/* Oncoming traffic sways slightly as it bears down on you. */
-.road-traffic {
-  animation: road-sway 0.7s ease-in-out infinite;
-}
-@keyframes road-sway {
-  0%, 100% { transform: translateX(0) scale(1); }
-  50% { transform: translateX(3px) scale(1.05); }
-}
-/* The bike leans into its lane changes. */
-.road-vehicle {
-  transition: transform 150ms ease-out;
-}
-/* The crash: the bike goes over in its lane, then settles. */
-.road-crash {
-  animation: road-crash 0.5s cubic-bezier(0.3, 0, 0.4, 1) both;
-}
-@keyframes road-crash {
-  0% { transform: rotate(0deg) translateY(0); opacity: 1; }
-  40% { transform: rotate(70deg) translateY(8px); opacity: 1; }
-  100% { transform: rotate(95deg) translateY(26px); opacity: 0.55; }
-}
-
-/* ------------------------------------------------------------------ */
-/*  CANVAS NODE RESIZING                                               */
-/*                                                                     */
-/*  The default ReactFlow handles are small white squares pinned at    */
-/*  every corner and edge midpoint. On a dark card they read as        */
-/*  detached dots floating around the node — and at 5px they are a     */
-/*  fiddly target. We drop the visible mark entirely: the node itself  */
-/*  is the affordance, and the handles become invisible oversized      */
-/*  grips so the corners and edges are simply draggable.               */
-/* ------------------------------------------------------------------ */
-
-/* All eight handles: no visible mark at all, just a generous invisible grip.
-   The card's own border already shows where the edges and corners are, so a
-   bead or a bracket on top of it is redundant decoration. Corners get a square
-   grip, edges a long thin one, and every one of them is bigger than the 5px
-   vendor default, so the drag is easier to catch than it was when it was
-   visible. */
-.scarlet-resizer.react-flow__resize-control.handle {
-  width: 18px;
-  height: 18px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  opacity: 1;
-}
-.scarlet-resizer.react-flow__resize-control.handle.top:not(.left):not(.right),
-.scarlet-resizer.react-flow__resize-control.handle.bottom:not(.left):not(.right) {
-  width: 40px;
-  height: 12px;
-}
-.scarlet-resizer.react-flow__resize-control.handle.left:not(.top):not(.bottom),
-.scarlet-resizer.react-flow__resize-control.handle.right:not(.top):not(.bottom) {
-  width: 12px;
-  height: 40px;
 }

@@ -769,8 +769,8 @@
    ENDING AUDIT       shows the count of victory-gold / victory-silver /
                       gameover endings and flags any missing outcome.
 
-   6.11  MEDIA TOOLS (tab: 🛠 MEDIA TOOLS)
-   --------------------------------------
+   6.11  MEDIA LIBRARY
+   -------------------
    Upload audio, video and images. Everything you upload is stored once per
    story (and is reusable in any scene/story via the image browser). A storage
    indicator tells you if uploads will survive a reload. Every image field in
@@ -779,23 +779,6 @@
    animation sprites) PLUS all your uploads PLUS gradient presets. Hover any
    name for a full-size rollover preview. Uploaded audio appears in the
    music/narration/voice pickers; uploaded video in the cutscene picker.
-
-   The tab also carries three image tools:
-
-   · 🪄 BACKGROUND REMOVER — drop in ANY image (photo, scan, AI render, an
-     existing sheet) and get a transparent PNG back. No grid to set, nothing
-     to slice. EDGE FLOOD (default) is a magic wand: it floods inward from the
-     border and removes only the backdrop CONNECTED to it, so a pale shirt
-     survives a pale wall. COLOUR KEY removes every pixel near the picked
-     colour — right for flat magenta or green-screen art. Click the preview to
-     sample the backdrop under the cursor, tune tolerance/softness, tick
-     "clean specks" and "trim to subject", then save to the library (📁 cutouts)
-     or download the PNG.
-
-   · 🎞 SHEET SLICER — work out any sheet's grid and name its animations.
-
-   · ✂ SPRITE CUTOUT LAB — the same keying engine with full manual control,
-     for building sprite assets from painted or photographic art.
 
    6.12  AI IMAGES
    ---------------
@@ -807,89 +790,6 @@
    ---------------------------------------
    Global (not per-story): title text, tagline, soundtrack, background image and
    neon colour. Saved under a global settings key and applied instantly.
-   6.14  ADVENTURE MODE — POINT-AND-CLICK ROOMS
-   ---------------------------------------------
-   The toolbar's kind switch (next to the title field) sets what KIND of game the
-   case is:  🕵 Noir Rail  (default — prose + choice rail, the house style) ·
-   🚶 Adventure  (walkable rooms, verb cursors, inventory puzzles) ·
-   🎭 Visual Novel (portraits and dialogue; reserved for now).
-
-   Picking ADVENTURE changes what NEW SCENES look like: every scene you add
-   comes out as a 🚶 walkable STAGE node instead of a prose plate — keyboard on,
-   floor band, spawn point, proximity hints — and the status line tells you the
-   recipe: plate → 🚧 obstacles → 👁 look / ✋ take / 💬 talk / ➜ go hotspots.
-
-   A ROOM IS:
-     background           one painted room (the camera never moves)
-     stage.floor          the strip the walker may stand on  (top..bottom %)
-     stage.spawn          where the player enters
-     stage.obstacles      rectangles {x,y,w,h} the walker ROUTES AROUND
-     stage.playerSheet    the walker's sprite sheet (idle + walk animations)
-     hotspots             the objects, each carrying a VERB CURSOR:
-       look 👁 (showText) · take ✋ (giveItem) · talk 💬 (startDialogue) ·
-       use ⚙ (useItem, consumed) · go ➜ (goToScene)
-   Hotspots can carry their own ART (hotspot.image, or hotspot.sheet + anim for
-   an animated object), so the bike you fix is drawn in the room instead of
-   described in prose. Cinematic foreground extras animate the room: the
-   Roadhouse sign flickers via anim: { preset: "flicker" }.
-
-   When the coin is ON the room is verb-first: only the marker you actually
-   click fires (brushing past the bar on the way out does not talk to the bar),
-   and a marker can answer several verbs — see each hotspot's "🎚 Verb coin —
-   other verbs" box. USE arms an item: pick ⚙ use, click the item in the rail,
-   then click what you want to use it on; objects list what they accept under
-   "🎒 Accepts these items (USE)", and anything else is refused with a line
-   (story-wide defaults: Flags tab → "🎛 Verb coin — refusal lines").
-
-   PERSPECTIVE: "Close-up size" / "Distance size" on the Walkable Stage panel set
-   how big the walker is at the front of the floor band vs the back (walking away
-   also covers less screen per second, so it doesn't read as skating).
-
-   WALK-BEHIND MASKS: on the Cinematic tab, tick "🚶 Draw this OVER the player
-   when they walk behind it" on any foreground image and drag its depth line.
-   While the walker's feet are above that line the cutout hides them — no second
-   mask asset, the cutout's own alpha does the job. Pair it with a barrier so
-   they can't walk through it either.
-
-   NO-GO BARRIERS: the Hotspots tab has a "⌖ Hotspots / 🚧 Barriers (no-go)"
-   switch. In barrier mode drag boxes straight onto the plate — walls, counters,
-   a parked truck — and the walker routes around them; the plate shows the
-   walkable floor band and every barrier. Click a barrier to select it, drag a
-   new box to reshape it.
-
-   INVENTORY DISPLAY (Items tab → "🎒 Inventory display"): Classic (the chip rail
-   every case already has — the default, so nothing changes), Container (a
-   pouch / case / saddlebag sprite that pops open with the items laid out INSIDE
-   it — supply your own transparent art, or use the shipped leather case), or
-   Hidden (no dock). Pick the corner, columns, inset and heading.
-
-   DRAG AND DROP: drag an item onto a scene object to USE it there (in a walkable
-   room the character walks over first, then uses it), or onto another item to
-   combine the two. Works with a mouse or a finger. Objects answer with their own
-   line when they don't accept what you dropped on them.
-
-   PLACING THE PLAYER: Hotspots tab → "🚶 Player start" — click or drag on the
-   plate and the walker stands there (clamped to the walkable floor). The marker
-   shows the real character sprite and stays ghosted while you place hotspots
-   and barriers around them.
-
-   CURSOR ART (🎮 In-game theme tab → "🖱 Cursor art (per verb)"): give any verb
-   its own cursor. A static image becomes the real mouse cursor (keep it under
-   128px); a SPRITE SHEET plays as a little animated sprite that follows the
-   mouse (a reaching hand, a turning key). Set the hotspot point (pointing tip or
-   centred reticle) and the size; "default" covers every verb you leave alone.
-   No art at all = the game's system cursors, so nothing changes unless you opt
-   in. The preview is drawn in your own in-game theme, at real size.
-
-   Inventory puzzles work as always — take things, combine them in the satchel
-   (Item.combinableWith), then USE the result on a hotspot. Replies carrying
-   presentItem: "..." are the "lay it on the bar" verb.
-
-   Worked example: THROTTLE & ASH — THE LONG WAY DOWN (a full five-room case in
-   the catalogue: street, garage, diner, roadhouse, edge of town; three endings).
-   Full write-up, including the eight things the mode still lacks:
-   docs/adventure-mode.md
-
 
 
 ================================================================================
@@ -1011,18 +911,18 @@
 
    MEMORY RECALLS ("the character remembers what you said") — see also Section 10.
 
-   "X WILL REMEMBER THAT" CARD (impact card)
+   "X WILL REMEMBER THAT" CARD (Telltale-style)
    --------------------------------------------
    A Choice can carry an optional rememberLine. After picking such a choice the
    game shows a full-screen impact card that fades in, holds, and fades out
    (e.g. "Lydia will remember that."). It is immediate, explicit feedback that
-   the choice mattered — the classic impact-card beat.
+   the choice mattered — the classic Telltale beat.
    - Set it in Studio (Choices tab → "\"X will remember that\" card").
    - Works on both navigating choices and conversational replies.
 
    LETTERBOX & ENTRY TRANSITION (cinematic polish)
    -----------------------------------------------
-   A Scene can opt into cinematic presentation:
+   A Scene can opt into Telltale-style presentation:
    - LETTERBOX (letterbox): black bars at the top and bottom of the frame.
    - TRANSITION (transition): how the scene enters over the previous one —
      "fade" (dissolve), "fade-black" (dip to black then back), or "cut" (instant).
@@ -1127,7 +1027,7 @@
 
    RELATIONSHIP LEDGER (the "Who trusts / fears you" journal)
    ---------------------------------------------------------
-   A per-character journal. Tap the "🎭 Relationships" button
+   A Telltale-style per-character journal. Tap the "🎭 Relationships" button
    (top-right HUD, next to Case File / Corkboard) to open it. It reads the
    player's CURRENT trust in each met character plus the key flags that mention
    them, and renders a one-line opinion:
@@ -1584,7 +1484,7 @@
      · composureDamage       in an INTERROGATION scene, a proven lie also does
                              this much composure damage (2+ cracks the suspect,
                              running the normal crack/clamp-by-trust resolution).
-     · rememberLine          optional impact card on a successful catch.
+     · rememberLine          optional Telltale-style card on a successful catch.
 
    Play: while the line is on screen a pulsing "🎯 Press them on that" button
    opens the satchel; the player presents evidence. Right clue → caughtBeat +

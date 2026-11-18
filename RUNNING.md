@@ -37,13 +37,13 @@ guessing.
 npm test
 ```
 
-Runs three suites under plain Node. No test framework — the TypeScript bodies are
+Runs two suites under plain Node. No test framework — the TypeScript bodies are
 bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
 
 1. **Engine tests** (`npm run test:engine`) — the pure-logic checks: gating,
    memory/flag recalls, flag collection, the validator, the act-membership
-   walk, playtest coverage, the background-remover keying maths, and full The
-   Neon Diner playthroughs (a gold run and a full-mistake fold run).
+   walk, and full The Neon Diner playthroughs (a gold run and a full-mistake
+   fold run).
 
 2. **Import/export round trip** (`npm run test:media`) — exercises the real
    `src/data/mediaLibrary.ts` against a real IndexedDB
@@ -68,58 +68,6 @@ bundled with the esbuild that ships with Vite, so `npm ci` is all you need.
    `npm run test:media:real` additionally pushes the shipped 45.9 MB
    `nobodys-witness-draft.reel.json` (69 scenes, 86 bundled assets) through the
    same import path and asserts every reference resolves.
-
-3. **DOM smoke test** (`npm run test:dom`) — mounts the real `<App/>` in
-   [happy-dom](https://github.com/capricorn86/happy-dom) (a devDependency) and
-   clicks through the newsstand, the ending gallery, the Studio (including the
-   🛠 Media Tools and ▶ Test tabs), and a real playthrough of Nobody's
-   Witness. Any `console.error`/`console.warn`,
-   uncaught throw, or error-boundary trip on those screens fails the run —
-   this is what catches invalid DOM nesting (React logs it as an error) and
-   mount-time crashes that the pure-logic suites can't see.
-
-4. **Walking-stage beta test** (`npm run test:stage`) — the 🚶 STAGE nodes'
-   dedicated regression net (`scripts/beta/stage-harness.mjs`, same esbuild +
-   happy-dom trick). Part 1 pins the walking engine math from `src/logic.ts`
-   (movement, floor/path clamping, obstacle routing, camera, world edges,
-   legacy `stage2d` normalisation). Parts 2–4 mount the real `<GamePlayer>`
-   and play a synthetic story across the stage ↔ graphic-novel boundary in
-   every direction: WASD/arrow walking, click-to-walk around furniture, the
-   verb coin, remote looks, conversations that lock the floor, wide-world
-   camera pans, walk-off-screen edge exits, a live MULTI-STATE safe puzzle
-   (locked → opened → taken through `Hotspot.states`), a gate-aware DOOR
-   barrier that physically seals the alley until a conversation opens it, the
-   SCUMM sentence line (hover readout + right-click look), and a real stage
-   round-trip through Demo Lab: Press the Lie. The non-interference half
-   asserts the classic novel scenes between stages keep their prose panel,
-   hotspots, exam card, choice keyboard shortcuts (W/S/arrows/digits) and
-   default cursor — no walker, markers, captions or armed coin verb may leak
-   across the boundary. Part 5 mounts the real Studio and drives the 🔁
-   States editor (badge, add, remove) and the plate's 🥾 walk test (a sealed
-   marker reports NO ROUTE with the doors shut; opening them lets the live
-   walker cross and reach it; WASD/arrows drive it). The play phases also
-   pin the interaction QoL — the H marker flash, coin hotkeys 1-9, the
-   double-click jog (timed: a jog crosses the room where a walk can't), and
-   an interactable NPC: clicking the patrolling character gives chase and
-   the conversation fires on catch; N does it with no mouse at all.
-
-### Building a sprite sheet from a generated plate
-
-The AI tab builds sheets in the browser (generate on flat magenta → key the
-backdrop → slice the frames → write the sheet). To do the same headlessly —
-for a rebuild, or for art generated elsewhere — use the command-line twin:
-
-```bash
-node scripts/make-sprite-sheet.mjs \
-  --in plates/tintin-talk.png \
-  --out public/assets/sprites/tt-tintin-talk.png \
-  --key ff00ff --height 384 --frames 3
-```
-
-It prints the `frameWidth × frameHeight` grid to paste into a story's sheet
-config. If a plate's figures bridge (a glow or a crossing arm spans the gap),
-the script recovers automatically — it splits merged runs at the bridge's
-narrowest column and despeckles the cut fringe; see **docs/sprite-sheets.md**.
 
 ### Blank/white screen, or art missing but text showing
 
@@ -182,51 +130,6 @@ exempt from the unreachable / no-exits checks. The placeholder text lives in
 `scene.title` (a dead-end note shows it as its plate instead of a blank
 scene). The inspector offers "Convert to full scene" (clears `nodeType`) once
 the real scene is written.
-
-### Travel map (`story.map`)
-
-The 🗺 Travel Map is a screen of flag-gated destinations (HUD menu → Travel
-map, or T; a hotspot can use action `openMap`). Design contract:
-
-- **Unlocks are derived, never stored.** A pin is open exactly when its
-  `gating` passes `meetsGating` against the live state — the same vocabulary
-  as choices/hotspots (flags, items, meters, trust). Nothing map-related is
-  written to the save, so loads, replays and NG+ can never disagree with the
-  flags that earned access.
-- Locked pins render as "???" with the author's `lockedHint` (or the generic
-  gating hint); `hiddenWhenLocked` pins aren't drawn at all until earned.
-- Travel resolves through `bypassedSceneId` like every other route, so note
-  placeholders pass through.
-- The validator checks every pin (missing target = error, dead-end note
-  target = stranding error, off-map x/y = warning) and seeds reachability
-  with map targets so a map-only location isn't flagged unreachable.
-- `map.backgroundImage` is a media-bearing field: it's wired into
-  `visitStoryMediaRefs` / `resolveStoryMedia` / `compactStoryMedia` and
-  seeded in the import/export round-trip suite. Keep it that way.
-- Panel visibility is AUTO (map shows only when locations exist; corkboard
-  only with a deduction board) with explicit hide overrides in the In-Game
-  Theme tab (`dialogueBox.hideMap` / `hideCorkboard` / `hideCaseProgress`).
-  There is deliberately no "force show" — an empty corkboard or map would
-  only confuse the player.
-- **`map.replaceTravelChoices`** (opt-in, Map tab toggle): the map ABSORBS
-  pure travel choices. A choice whose only job is navigating to a scene an
-  UNLOCKED pin also reaches is hidden in play and the rail shows one
-  "🗺 Open the map" action instead. Hard safety rules, all pinned by engine
-  tests (`mapReplacedChoiceIds` / `choiceIsPureTravel` in src/logic.ts):
-  choices with ANY side effect (consequences, memoryLog, rememberLine,
-  reply, presentItem, timers/QTE, exclusiveGroup, timed-out routing) are
-  never absorbed — map travel applies no consequences, so absorbing them
-  would delete authored effects; a LOCKED pin never absorbs (the choice may
-  be the only way in until the pin is earned); the swap is play-time only —
-  the draft's choice graph (and so the deep-walker and reachability) is
-  untouched. The in-game dead-end detector and "current lead" hint both
-  treat absorbed travel as a live exit. Demo: The Kingfisher Job
-  (`src/data/kingfisherJob.ts`), asserted end-to-end by the DOM smoke's
-  KINGFISHER phase.
-
-The demo case is **Crosstown** (`src/data/mapDemo.ts`): two pins open at
-start, one locked-visible, one hidden, plus parallel gated choices so the
-deep-walker can prove the endings without the map.
 
 ### ElevenLabs model & cost estimate
 

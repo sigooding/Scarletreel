@@ -94,65 +94,7 @@ scene0.hotspots = [
     action: { type: "showText", text: "Round trip." },
     image: await up("image", "scene0-hotspot", png("scene0-hotspot")),
   },
-  // MULTI-STATE + hotspot VOICE media: every state image and every action
-  // clip (base, verb, per-item, per-state) must survive the export →
-  // import → resolve round trip exactly like any other media field.
-  {
-    id: "hs-ie-states",
-    label: "The many-faced drawer",
-    bounds: { x: 40, y: 10, w: 20, h: 20 },
-    cursor: "look",
-    action: {
-      type: "showText",
-      text: "Shut.",
-      audioUrl: await up("audio", "hs-states-base", mp3("hs-states-base")),
-    },
-    verbs: { take: { type: "showText", text: "No.", audioUrl: await up("audio", "hs-states-take", mp3("hs-states-take")) } },
-    itemAudio: { coin: await up("audio", "hs-states-coin", mp3("hs-states-coin")) },
-    states: [
-      {
-        id: "st-open",
-        when: { requiresFlags: ["opened"] },
-        label: "The open drawer",
-        image: await up("image", "scene0-drawer-open", png("scene0-drawer-open")),
-        action: {
-          type: "showText",
-          text: "Empty.",
-          audioUrl: await up("audio", "hs-states-open", mp3("hs-states-open")),
-        },
-      },
-    ],
-  },
 ];
-
-// Stage-node walker media: single sprite, loose walk frames, and the sprite sheet.
-scene0.stage = {
-  ...(scene0.stage ?? {}),
-  playerImage: await up("image", "stage-player", png("stage-player")),
-  walkFrames: [await up("image", "stage-walk0", png("stage-walk0"))],
-  playerSheet: {
-    image: await up("image", "stage-sheet", png("stage-sheet")),
-    frameWidth: 32,
-    frameHeight: 48,
-    animations: { idle: { frames: [0] }, walk: { frames: [0, 1, 2, 3], fps: 10 } },
-  },
-  npcs: [
-    {
-      id: "npc-ie",
-      image: await up("image", "stage-npc", png("stage-npc")),
-      x: 60,
-      y: 88,
-      facing: "left",
-      patrol: [{ x: 72, y: 88, pause: 2 }],
-      sheet: {
-        image: await up("image", "stage-npc-sheet", png("stage-npc-sheet")),
-        frameWidth: 32,
-        frameHeight: 48,
-        animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 8 } },
-      },
-    },
-  ],
-};
 
 // Dialogue beats (incl. a per-beat background override).
 const beats: DialogueBeat[] = [
@@ -169,17 +111,7 @@ const beats: DialogueBeat[] = [
 beats[0].cinematic = {
   foregroundImage: await up("image", "beat0-fg", png("beat0-fg")),
   foregroundAnimation: { mode: "frames", frames: [await up("image", "beat0-frame0", png("beat0-frame0"))] },
-  foregroundExtras: [
-    {
-      image: await up("image", "beat0-extra", png("beat0-extra")),
-      sheet: {
-        image: await up("image", "beat0-xsheet", png("beat0-xsheet")),
-        frameWidth: 32,
-        frameHeight: 32,
-        animations: { loop: { frames: [0, 1, 2], fps: 12 } },
-      },
-    },
-  ],
+  foregroundExtras: [{ image: await up("image", "beat0-extra", png("beat0-extra")) }],
   parallaxLayers: [{ image: await up("image", "beat0-parallax", png("beat0-parallax")), depth: 0.2 }],
 };
 scene1.dialogueBeats = beats;
@@ -205,12 +137,6 @@ story.characters[0] = {
   avatarUrl: await up("image", "char0-avatar", png("char0-avatar")),
   talkingFrames: [await up("image", "char0-talk0", png("char0-talk0"))],
   talkingRest: await up("image", "char0-talkRest", png("char0-talkRest")),
-  talkingSheet: {
-    image: await up("image", "char0-talksheet", png("char0-talksheet")),
-    frameWidth: 64,
-    frameHeight: 64,
-    animations: { rest: { frames: [0] }, talk: { frames: [0, 1], fps: 6 } },
-  },
 };
 story.acts = [
   {
@@ -220,45 +146,6 @@ story.acts = [
 ];
 story.coverImage = await up("image", "cover", png("cover"));
 story.dialogueBox = { ...(story.dialogueBox ?? {}), backgroundImage: await up("image", "dlgbox-bg", png("dlgbox-bg")) };
-story.map = {
-  title: "Round-Trip City",
-  backgroundImage: await up("image", "map-bg", png("map-bg")),
-  locations: [{ id: "rt-loc", label: "The Docks", targetSceneId: scene0.id, x: 50, y: 50 }],
-};
-// Story-wide presentation art (the 🎮 In-Game Theme tab): the inventory
-// container, the story-wide walker and two custom cursors. These used to be
-// MISSING from the media walk — uploaded art previews fine in the Studio but
-// arrived in the game as literal `asset:` refs and rendered nothing.
-story.inventoryDisplay = {
-  mode: "container",
-  image: await up("image", "inv-container", png("inv-container")),
-  sheet: {
-    image: await up("image", "inv-sheet", png("inv-sheet")),
-    frameWidth: 64,
-    frameHeight: 64,
-    animations: { loop: { frames: [0, 1], fps: 6 } },
-  },
-};
-story.playerSprite = {
-  image: await up("image", "walker", png("walker")),
-  sheet: {
-    image: await up("image", "walker-sheet", png("walker-sheet")),
-    frameWidth: 32,
-    frameHeight: 48,
-    animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 10 } },
-  },
-};
-story.cursorArt = {
-  look: { image: await up("image", "cursor-look", png("cursor-look")), size: 32 },
-  talk: {
-    sheet: {
-      image: await up("image", "cursor-talk-sheet", png("cursor-talk-sheet")),
-      frameWidth: 32,
-      frameHeight: 32,
-      animations: { loop: { frames: [0, 1, 2], fps: 8 } },
-    },
-  },
-};
 
 /* ------------------------------------------------------------------ */
 /*  2. compactStoryMedia: data URLs -> asset: refs (localStorage-safe) */
@@ -321,7 +208,7 @@ seeded.push(L0.musicUrl!, L0.sceneAudioUrl!, L0.narrationAudioUrl!);
 L0.cinematic = {
   foregroundImage: raw("s-fg"),
   foregroundAnimation: { mode: "frames", frames: [raw("s-frame")] },
-  foregroundExtras: [{ image: raw("s-extra"), sheet: { image: raw("s-xsheet"), frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0, 1] } } } }],
+  foregroundExtras: [{ image: raw("s-extra") }],
   parallaxLayers: [{ image: raw("s-parallax"), depth: 0.4 }],
 };
 L0.credits = { ...(L0.credits ?? {}), montage: [raw("s-montage")] };
@@ -358,12 +245,6 @@ legacy.characters[0] = {
   avatarUrl: raw("char-avatar"),
   talkingFrames: [raw("char-talk")],
   talkingRest: raw("char-rest"),
-  talkingSheet: {
-    image: raw("char-talksheet"),
-    frameWidth: 64,
-    frameHeight: 64,
-    animations: { talk: { frames: [0, 1] } },
-  },
 };
 legacy.acts = [
   {
@@ -386,16 +267,6 @@ legacy.episodes = [
 seeded.push(legacy.episodes[0].titleCardMusicUrl!);
 legacy.coverImage = raw("cover");
 legacy.dialogueBox = { ...(legacy.dialogueBox ?? {}), backgroundImage: raw("dlgbox") };
-legacy.map = { locations: [{ id: "lg-loc", label: "Old Pier", targetSceneId: legacy.scenes[0].id, x: 20, y: 80 }], backgroundImage: raw("map-bg") };
-legacy.scenes[0].stage = {
-  ...(legacy.scenes[0].stage ?? {}),
-  playerSheet: {
-    image: raw("stage-sheet"),
-    frameWidth: 32,
-    frameHeight: 48,
-    animations: { idle: { frames: [0] }, walk: { frames: [0, 1], fps: 8 } },
-  },
-};
 
 const compactedLegacy = await compactStoryMedia(legacy);
 const legacyJson = JSON.stringify(compactedLegacy);

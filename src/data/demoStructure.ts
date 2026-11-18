@@ -215,7 +215,7 @@ export const DEMO_STRUCTURE: Story = {
       note:
         "STEP 3 — THE QUICK-TIME PROMPT. ① Choices tab: tick 'Quick-time' on the first choice. ② timeLimitSeconds 10 → the big banner (qtePrompt), the countdown ring and the ⏱ readout appear. ③ qteHeartbeat + qteShakyCam: under ~30% left the heartbeat stings and the cinematic swaps to SHAKY CAM. " +
         "④ If the clock EXPIRES it does NOT silently vanish — timedOutTargetSceneId routes to a distinct 'you hesitated' beat, and timedOutConsequences apply (+2 Suspicion here, sets br_hesitated_roof). " +
-        "⑤ rememberLine gives the '…will remember that' impact card. ⑥ This scene is also the ACT TWO start (🎭 Acts tab) — the act title card plays on arrival.",
+        "⑤ rememberLine gives the Telltale-style '…will remember that' card. ⑥ This scene is also the ACT TWO start (🎭 Acts tab) — the act title card plays on arrival.",
       background: "/img/bg-saltflats.jpg",
       ambientAudio: "tension",
       transition: "fade-black",

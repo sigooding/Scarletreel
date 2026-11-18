@@ -1,111 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaAsset, AssetType } from "../types";
-import {
-  loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets,
-  setAssetFolder, getAssetLimits, setAssetLimits, assetLimitsAreCustom,
-  DEFAULT_ASSET_LIMITS, ASSET_LIMIT_CEILING, type AssetLimits,
-} from "../data/mediaLibrary";
+import { loadAssets, deleteAsset, uploadAsset, subscribeAssets, useAllAssets, ASSET_LIMITS, ASSET_TOTAL_LIMIT } from "../data/mediaLibrary";
 import { listVoiceFilesForCharacter, voiceSlug, type VoiceFileEntry } from "./voiceFiles";
 import { ImagePicker } from "./ImagePicker";
 import builtinAudio from "virtual:builtin-audio";
 import { assetUrl } from "../assetPath";
 
 const inputCls = "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
-
-/* ------------------------------------------------------------------ */
-/*  ⚙ Upload limits — the caps are defaults, not laws.                 */
-/*                                                                     */
-/*  The shipped ceilings suit a browser-stored, shareable draft. They  */
-/*  are the wrong ceilings for a desktop author with big painted       */
-/*  plates or source-resolution sheets, so they are editable here.     */
-/*  Stored per-machine (localStorage), never in the story file.        */
-/* ------------------------------------------------------------------ */
-function LimitsEditor({ usedBytes, onChanged }: { usedBytes: number; onChanged: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [limits, setLimits] = useState<AssetLimits>(() => getAssetLimits());
-  const custom = assetLimitsAreCustom();
-  const toMB = (n: number) => Math.round((n / 1024 / 1024) * 10) / 10;
-  const ceilingMB = Math.round(ASSET_LIMIT_CEILING / 1024 / 1024);
-
-  const apply = (key: keyof AssetLimits, mb: number) => {
-    const bytes = Math.max(1, mb) * 1024 * 1024;
-    setLimits(setAssetLimits({ [key]: bytes } as Partial<AssetLimits>));
-    onChanged();
-  };
-
-  const rows: { key: keyof AssetLimits; label: string }[] = [
-    { key: "image", label: "Images" },
-    { key: "audio", label: "Audio" },
-    { key: "video", label: "Video" },
-    { key: "total", label: "Whole library" },
-  ];
-
-  return (
-    <div className="mt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="font-pulp text-[9px] uppercase tracking-widest text-paper/50 hover:text-gold"
-      >
-        ⚙ limits {custom && <span className="text-gold">· customised</span>} {open ? "▲" : "▼"}
-      </button>
-
-      {open && (
-        <div className="mt-1 space-y-1.5 border border-gold/25 bg-noir-950/60 p-2">
-          <p className="font-type text-[9px] leading-snug text-paper/50">
-            These caps are <b>defaults, not hard limits</b> — raise them if you work with big art. They exist because a
-            browser draft keeps every asset in IndexedDB, and an exported <code>.reel.json</code> embeds them as base64,
-            which adds about a third to the size. Bigger library = slower saves and a bulkier file to share. The desktop
-            app copies uploads to a real folder, so it tolerates far more. Saved on this machine only, never in the story.
-          </p>
-          {rows.map(({ key, label }) => (
-            <label key={key} className="flex items-center gap-2 font-type text-[9px] text-paper/70">
-              <span className="w-24 shrink-0">{label}</span>
-              <input
-                type="range"
-                min={1}
-                max={key === "total" ? ceilingMB : Math.round(ceilingMB / 2)}
-                step={1}
-                value={toMB(limits[key])}
-                onChange={(e) => apply(key, Number(e.target.value))}
-                className="w-40 accent-gold"
-              />
-              <input
-                type="number"
-                min={1}
-                max={ceilingMB}
-                value={toMB(limits[key])}
-                onChange={(e) => apply(key, Number(e.target.value) || 1)}
-                className="w-16 border border-noir-600 bg-noir-950 px-1 py-0.5 text-right text-[9px] text-paper/80"
-              />
-              <span className="text-paper/40">MB</span>
-              {limits[key] !== DEFAULT_ASSET_LIMITS[key] && (
-                <span className="text-[8px] text-gold/70">default {toMB(DEFAULT_ASSET_LIMITS[key])}MB</span>
-              )}
-            </label>
-          ))}
-          {usedBytes > limits.total && (
-            <p className="border border-crimson/40 bg-crimson/10 px-2 py-1 font-type text-[9px] text-crimson">
-              ⚠ This library already holds {(usedBytes / 1024 / 1024).toFixed(1)}MB, which is over the cap you just set.
-              Nothing has been deleted — but new uploads are blocked until you raise the cap or remove some files.
-            </p>
-          )}
-          <button
-            type="button"
-            disabled={!custom}
-            onClick={() => {
-              setLimits(setAssetLimits(undefined));
-              onChanged();
-            }}
-            className="border border-noir-600 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-gold/60 hover:text-gold disabled:opacity-30"
-          >
-            ⟲ restore defaults
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** Live-updating list of assets for one story. Refreshes whenever anything
  * (this component, an inline upload button, another dropdown) changes the
@@ -192,7 +93,6 @@ export function AssetDropdown({
   onChange,
   placeholder,
   returnReference = false,
-  preferFolder,
 }: {
   storyId?: string;
   assetType: AssetType;
@@ -201,8 +101,6 @@ export function AssetDropdown({
   placeholder?: string;
   /** return `asset:<id>` instead of a large data URL (for localStorage config) */
   returnReference?: boolean;
-  /** library folder to surface first in the image browser */
-  preferFolder?: string;
 }) {
   const assets = useAllAssets(assetType);
   // Images get the rich browser: every built-in /img asset + all uploads +
@@ -218,7 +116,6 @@ export function AssetDropdown({
         allowClear
         returnReference={returnReference}
         placeholder={placeholder ?? "Pick an image…"}
-        preferFolder={preferFolder}
       />
     );
   }
@@ -236,7 +133,7 @@ export function AssetDropdown({
       </select>
       {selected && assetType === "audio" && <audio controls src={selected.dataUrl} className="h-8 w-full" />}
       {selected && assetType === "video" && <video controls src={selected.dataUrl} className="h-24 w-full object-cover" />}
-      {!assets.length && <p className="font-type text-[9px] text-paper/35">No {assetType} uploaded yet — use Upload above or the 🛠 Media Tools tab.</p>}
+      {!assets.length && <p className="font-type text-[9px] text-paper/35">No {assetType} uploaded yet — use Upload above or the 📦 Media tab.</p>}
     </div>
   );
 }
@@ -465,11 +362,7 @@ export function MediaLibrary({ storyId }: { storyId: string }) {
 
   const totalSize = assets.reduce((sum, a) => sum + a.size, 0);
   const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
-  // Re-read on every limits change so the header reflects the live cap.
-  const [limitsTick, setLimitsTick] = useState(0);
-  const liveLimits = useMemo(() => getAssetLimits(), [limitsTick]);
-  const totalLimitMB = (liveLimits.total / 1024 / 1024).toFixed(0);
-  const usedPct = Math.min(100, (totalSize / liveLimits.total) * 100);
+  const totalLimitMB = (ASSET_TOTAL_LIMIT / 1024 / 1024).toFixed(0);
 
   const groups: { type: AssetType; icon: string; label: string }[] = [
     { type: "audio", icon: "🎵", label: "Audio" },
@@ -481,13 +374,8 @@ export function MediaLibrary({ storyId }: { storyId: string }) {
     <div className="space-y-4">
       <div className="border border-gold/40 bg-gold/5 p-3">
         <div className="mb-2 flex items-center justify-between">
-          <div className="font-pulp text-[11px] uppercase tracking-widest text-gold">🛠 Media Tools — Library</div>
-          <div className="font-type text-[10px] text-paper/60">
-            <span className={usedPct > 90 ? "text-crimson" : usedPct > 70 ? "text-gold" : undefined}>
-              {totalSizeMB}MB
-            </span>{" "}
-            / {totalLimitMB}MB used
-          </div>
+          <div className="font-pulp text-[11px] uppercase tracking-widest text-gold">📦 Media Library</div>
+          <div className="font-type text-[10px] text-paper/60">{totalSizeMB}MB / {totalLimitMB}MB used</div>
         </div>
 
         <label className="flex items-center justify-center cursor-pointer border border-cyan-neon/40 px-4 py-2 font-pulp text-[11px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10">
@@ -497,20 +385,10 @@ export function MediaLibrary({ storyId }: { storyId: string }) {
 
         {error && <div className="mt-2 border border-crimson/40 bg-crimson/10 p-2 font-type text-[10px] text-crimson">⚠ {error}</div>}
 
-        {/* Usage bar — the ceiling should never arrive as a surprise. */}
-        <div className="mt-2 h-1 w-full bg-noir-800">
-          <div
-            className={`h-full transition-all ${usedPct > 90 ? "bg-crimson" : usedPct > 70 ? "bg-gold" : "bg-cyan-neon/70"}`}
-            style={{ width: `${Math.max(usedPct, totalSize > 0 ? 1 : 0)}%` }}
-          />
-        </div>
-
         <p className="mt-2 font-type text-[9px] text-paper/45">
-          Audio up to {(liveLimits.audio / 1024 / 1024).toFixed(0)}MB, video up to {(liveLimits.video / 1024 / 1024).toFixed(0)}MB, images up to{" "}
-          {(liveLimits.image / 1024 / 1024).toFixed(0)}MB. In the desktop app, uploads are copied into the game media folder automatically; in browsers they are stored in IndexedDB.
+          Audio up to {(ASSET_LIMITS.audio / 1024 / 1024).toFixed(0)}MB, video up to {(ASSET_LIMITS.video / 1024 / 1024).toFixed(0)}MB, images up to{" "}
+          {(ASSET_LIMITS.image / 1024 / 1024).toFixed(0)}MB. In the desktop app, uploads are copied into the game media folder automatically; in browsers they are stored in IndexedDB.
         </p>
-
-        <LimitsEditor usedBytes={totalSize} onChanged={() => setLimitsTick((t) => t + 1)} />
       </div>
 
       {groups.map(({ type, icon, label }) => {
@@ -522,53 +400,22 @@ export function MediaLibrary({ storyId }: { storyId: string }) {
               {icon} {label} ({items.length})
             </div>
             <div className="space-y-2">
-              {/* folders first (sprites etc.), then unfiled — so generated
-                  sheets/cutouts are always easy to find again */}
-              {[...new Set(items.map((a) => a.folder ?? ""))]
-                .sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)))
-                .map((folder) => (
-                  <div key={folder || "(unfiled)"} className="space-y-1">
-                    <div className="font-pulp text-[9px] uppercase tracking-widest text-amber-300/80">
-                      {folder ? `📁 ${folder}` : items.some((a) => a.folder) ? "📄 unfiled" : null}
-                    </div>
-                    {items
-                      .filter((a) => (a.folder ?? "") === folder)
-                      .map((asset) => (
-                        <div key={asset.id} className="border border-noir-700 bg-noir-900/50 p-1.5">
-                          <div className="flex items-center gap-2">
-                            {type === "image" && <img src={asset.dataUrl} alt={asset.name} className="h-8 w-8 shrink-0 object-cover" />}
-                            <span className="flex-1 truncate font-type text-[10px] text-paper/80">{asset.name}</span>
-                            <select
-                              className="w-20 shrink-0 border border-noir-600 bg-noir-950 px-1 py-0.5 font-type text-[8px] text-paper/60"
-                              value={asset.folder ?? ""}
-                              title="Move to folder"
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === "__new__") {
-                                  const name = prompt("New folder name:")?.trim();
-                                  if (name) void setAssetFolder(storyId, asset.id, name);
-                                } else void setAssetFolder(storyId, asset.id, v || undefined);
-                              }}
-                            >
-                              <option value="">unfiled</option>
-                              {[...new Set(assets.map((a) => a.folder).filter(Boolean))].map((f) => (
-                                <option key={f} value={f}>📁 {f}</option>
-                              ))}
-                              <option value="__new__">+ new folder…</option>
-                            </select>
-                            <span className="shrink-0 font-type text-[9px] text-paper/40">
-                              {asset.size > 1024 * 1024 ? `${(asset.size / 1024 / 1024).toFixed(1)}MB` : `${(asset.size / 1024).toFixed(0)}KB`}
-                            </span>
-                            <button onClick={() => handleDelete(asset.id)} className="shrink-0 text-[10px] text-crimson hover:underline">
-                              Delete
-                            </button>
-                          </div>
-                          {type === "audio" && <audio controls src={asset.dataUrl} className="mt-1 h-8 w-full" />}
-                          {type === "video" && <video controls src={asset.dataUrl} className="mt-1 h-28 w-full object-cover" />}
-                        </div>
-                      ))}
+              {items.map((asset) => (
+                <div key={asset.id} className="border border-noir-700 bg-noir-900/50 p-1.5">
+                  <div className="flex items-center gap-2">
+                    {type === "image" && <img src={asset.dataUrl} alt={asset.name} className="h-8 w-8 shrink-0 object-cover" />}
+                    <span className="flex-1 truncate font-type text-[10px] text-paper/80">{asset.name}</span>
+                    <span className="shrink-0 font-type text-[9px] text-paper/40">
+                      {asset.size > 1024 * 1024 ? `${(asset.size / 1024 / 1024).toFixed(1)}MB` : `${(asset.size / 1024).toFixed(0)}KB`}
+                    </span>
+                    <button onClick={() => handleDelete(asset.id)} className="shrink-0 text-[10px] text-crimson hover:underline">
+                      Delete
+                    </button>
                   </div>
-                ))}
+                  {type === "audio" && <audio controls src={asset.dataUrl} className="mt-1 h-8 w-full" />}
+                  {type === "video" && <video controls src={asset.dataUrl} className="mt-1 h-28 w-full object-cover" />}
+                </div>
+              ))}
             </div>
           </div>
         );

@@ -370,7 +370,7 @@ export const DEMO_CONVERSATION: Story = {
       note:
         "STEP 4 — THE PRESENT VERB (show an item). ① Choices tab → add a choice. ② Tick 'PRESENT item' and pick the Sealed Envelope. The engine auto-locks it until the item is in the satchel (try ▶ Play without taking it from the office — the choice isn't there). " +
         "③ 'Hands item over' is left UNticked here, so you flash it and keep it; tick it and the item leaves inventory. " +
-        "④ rememberLine = 'Frankie Voss will remember that.' — the impact card after the choice. " +
+        "④ rememberLine = 'Frankie Voss will remember that.' — the Telltale-style card after the choice. " +
         "⑤ The response beat is gated on dc_showed_envelope, which the present choice sets automatically. The {said} in the recall would print the ITEM NAME.",
       background: "/img/bg-dressing.jpg",
       ambientAudio: "tension",

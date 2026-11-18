@@ -14,7 +14,7 @@
  */
 
 /** Where an image came from / how it's charged. */
-export type AiProviderId = "openai" | "gemini" | "stability" | "together" | "a1111" | "comfyui";
+export type AiProviderId = "openai" | "stability" | "together" | "a1111" | "comfyui";
 
 export interface AiProviderSettings {
   id: AiProviderId;
@@ -55,14 +55,6 @@ export const AI_PROVIDERS: {
     blurb: "Cloud. Polished, follows prompts tightly. Pay-per-image. Needs an OpenAI API key (platform.openai.com).",
   },
   {
-    id: "gemini",
-    label: "Google — Gemini (Nano Banana)",
-    kind: "commercial",
-    needsKey: true,
-    blurb:
-      "Cloud. Google's Nano Banana models — excellent prompt adherence and the strongest image EDITING of the cloud options, so it is a good pick for restyling a reference. Generous free tier. Needs a Gemini API key (aistudio.google.com/apikey).",
-  },
-  {
     id: "stability",
     label: "Stability AI — Stable Image Core",
     kind: "commercial",
@@ -99,9 +91,8 @@ export function defaultAiSettings(): AiImageSettings {
     provider: "openai",
     providers: {
       openai: { id: "openai", model: "gpt-image-1", width: 1024, height: 1024 },
-      gemini: { id: "gemini", model: "gemini-2.5-flash-image", aspectRatio: "16:9" },
       stability: { id: "stability", aspectRatio: "16:9" },
-      together: { id: "together", model: "black-forest-labs/FLUX.1-schnell", width: 1024, height: 768 },
+      together: { id: "together", model: "black-forest-labs/FLUX.1-schnell-Free", width: 1024, height: 768 },
       a1111: {
         id: "a1111",
         baseUrl: "http://127.0.0.1:7860",
@@ -133,17 +124,9 @@ export function loadAiSettings(): AiImageSettings {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<AiImageSettings>;
       const defaults = defaultAiSettings();
-      const providers = { ...defaults.providers, ...(parsed.providers ?? {}) };
-      // MIGRATION: Together withdrew the FLUX.1-schnell-Free endpoint from its
-      // serverless API. Anyone who saved it before now has a model id that
-      // 404s on every generate, so move them to the paid schnell endpoint
-      // (same model, same output) rather than leaving a dead setting behind.
-      if (providers.together?.model === "black-forest-labs/FLUX.1-schnell-Free") {
-        providers.together = { ...providers.together, model: "black-forest-labs/FLUX.1-schnell" };
-      }
       return {
         provider: parsed.provider ?? defaults.provider,
-        providers,
+        providers: { ...defaults.providers, ...(parsed.providers ?? {}) },
       };
     }
   } catch {
@@ -168,58 +151,6 @@ export interface GenerateResult {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Valid size strings per OpenAI model. The two model families take
- * DIFFERENT sets and an invalid pair is a hard 400: gpt-image-* speaks
- * 1024x1024 / 1536x1024 / 1024x1536, dall-e-3 speaks 1024x1024 /
- * 1792x1024 / 1024x1792. Exported for the engine tests. */
-export function openaiSizesForModel(model?: string): string[] {
-  return /^gpt-image/.test(model ?? "gpt-image-1")
-    ? ["1024x1024", "1536x1024", "1024x1536"]
-    : ["1024x1024", "1792x1024", "1024x1792"];
-}
-
-/** Build the /v1/images/generations request body. `response_format` is only
- * valid on the dall-e family — gpt-image models always return base64 and
- * REJECT the parameter with a 400 (invalid_request_error / unknown_parameter),
- * which is exactly what "Generate" was hitting with the default model.
- * Exported for the engine tests. */
-export function openaiGenerationBody(model: string, prompt: string, size: string): Record<string, unknown> {
-  const body: Record<string, unknown> = { model, prompt, n: 1, size };
-  if (/^dall-e/.test(model)) body.response_format = "b64_json";
-  return body;
-}
-
-/** Aspect ratios Gemini's image models accept. Anything else is a 400. */
-export const GEMINI_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
-
-/** Build the :generateContent body for a Gemini image request.
- *
- * Two things are easy to get wrong here and both are hard 400s:
- *  · responseModalities MUST include "IMAGE", or the model replies with text
- *    describing the picture it declined to draw.
- *  · the reference image is an inline_data part in the SAME parts array as the
- *    prompt — not a separate field — and its mime type must match the data.
- * Exported so the engine tests can assert the shape without a network call. */
-export function geminiGenerationBody(
-  prompt: string,
-  aspectRatio?: string,
-  reference?: { mimeType: string; base64: string }
-): Record<string, unknown> {
-  const parts: Record<string, unknown>[] = [{ text: prompt }];
-  if (reference) {
-    parts.push({ inline_data: { mime_type: reference.mimeType, data: reference.base64 } });
-  }
-  const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"] };
-  if (aspectRatio) generationConfig.imageConfig = { aspectRatio };
-  return { contents: [{ parts }], generationConfig };
-}
-
-/** Split a data URL into its mime type and bare base64 payload. */
-export function splitDataUrl(dataUrl: string): { mimeType: string; base64: string } {
-  const [head, body = ""] = dataUrl.split(",");
-  return { mimeType: /data:([^;]+)/.exec(head)?.[1] ?? "image/png", base64: body };
-}
-
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -229,71 +160,20 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-function dataUrlToBlob(dataUrl: string): Blob {
-  const [head, b64] = dataUrl.split(",");
-  const mime = /data:([^;]+)/.exec(head)?.[1] ?? "image/png";
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
-}
-
-/** A reference image for style transfer / image-to-image generation.
- * `match` is 0–1: how closely the output should follow the reference
- * (1 = barely change it, 0 = only loosely inspired). */
-export interface AiReferenceImage {
-  dataUrl: string;
-  match: number;
-}
-
-/** Whether a provider can use a reference image, and how:
- * "full" = image + adjustable match strength · "fixed" = image accepted but
- * the model decides how closely to follow it · false = text-only. */
-export function providerReferenceSupport(id: AiProviderId, model?: string): "full" | "fixed" | false {
-  switch (id) {
-    case "openai":
-      // gpt-image-1 has an edits endpoint; dall-e-3 is text-only.
-      return (model || "gpt-image-1") === "gpt-image-1" ? "fixed" : false;
-    case "gemini":
-      // Native multimodal editing: the reference goes in as an inline_data
-      // part alongside the prompt. There is no numeric strength knob — the
-      // model decides how far to move from the source.
-      return "fixed";
-    case "stability":
-      return "full"; // SD3 image-to-image with a strength parameter
-    case "a1111":
-      return "full"; // img2img with denoising_strength
-    case "together":
-    case "comfyui":
-      return false;
-    default:
-      return false;
-  }
-}
-
-/** Generate one image for the configured provider. Returns a PNG data URL.
- * With `reference` set (and a provider that supports it), runs style
- * transfer / image-to-image instead of pure text-to-image. */
-export async function generateAiImage(
-  settings: AiImageSettings,
-  prompt: string,
-  reference?: AiReferenceImage
-): Promise<GenerateResult> {
+/** Generate one image for the configured provider. Returns a PNG data URL. */
+export async function generateAiImage(settings: AiImageSettings, prompt: string): Promise<GenerateResult> {
   const p = settings.providers[settings.provider];
   if (!p) return { ok: false, error: "No provider selected." };
-  const ref = reference && providerReferenceSupport(settings.provider, p.model) ? reference : undefined;
   try {
     switch (settings.provider) {
       case "openai":
-        return await openaiGenerate(p, prompt, ref);
-      case "gemini":
-        return await geminiGenerate(p, prompt, ref);
+        return await openaiGenerate(p, prompt);
       case "stability":
-        return await stabilityGenerate(p, prompt, ref);
+        return await stabilityGenerate(p, prompt);
       case "together":
         return await togetherGenerate(p, prompt);
       case "a1111":
-        return await a1111Generate(p, prompt, ref);
+        return await a1111Generate(p, prompt);
       case "comfyui":
         return await comfyGenerate(p, prompt);
       default:
@@ -314,35 +194,19 @@ export async function generateAiImage(
 
 /* ------------------------------ commercial ------------------------------ */
 
-async function openaiGenerate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
+async function openaiGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
   if (!p.apiKey) return { ok: false, error: "Enter your OpenAI API key first." };
   const size = `${p.width ?? 1024}x${p.height ?? 1024}`;
-  // Style transfer / edit path: gpt-image-1's images/edits takes the
-  // reference image + prompt (the model decides how closely to follow it).
-  if (ref) {
-    const fd = new FormData();
-    fd.append("model", p.model || "gpt-image-1");
-    fd.append("image", dataUrlToBlob(ref.dataUrl), "reference.png");
-    fd.append("prompt", prompt);
-    fd.append("n", "1");
-    fd.append("size", size);
-    const res = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${p.apiKey}` },
-      body: fd,
-    });
-    const json: any = await res.json().catch(() => null);
-    if (!res.ok) return { ok: false, error: json?.error?.message || `OpenAI ${res.status}` };
-    const b64 = json?.data?.[0]?.b64_json;
-    if (!b64) return { ok: false, error: "OpenAI returned no image." };
-    return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
-  }
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
-    // Body built by openaiGenerationBody: response_format goes only to the
-    // dall-e family — gpt-image models 400 on it (they always return base64).
-    body: JSON.stringify(openaiGenerationBody(p.model || "gpt-image-1", prompt, size)),
+    body: JSON.stringify({
+      model: p.model || "gpt-image-1",
+      prompt,
+      n: 1,
+      size,
+      response_format: "b64_json",
+    }),
   });
   const text = await res.text();
   let json: any = null;
@@ -359,68 +223,13 @@ async function openaiGenerate(p: AiProviderSettings, prompt: string, ref?: AiRef
   return { ok: true, dataUrl: `data:image/png;base64,${b64}` };
 }
 
-async function geminiGenerate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
-  if (!p.apiKey) return { ok: false, error: "Enter your Google Gemini API key first." };
-  const model = p.model || "gemini-2.5-flash-image";
-  const body = geminiGenerationBody(prompt, p.aspectRatio, ref ? splitDataUrl(ref.dataUrl) : undefined);
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: "POST",
-      // The key goes in a header, never the query string — a URL-embedded key
-      // leaks into logs and browser history.
-      headers: { "Content-Type": "application/json", "x-goog-api-key": p.apiKey },
-      body: JSON.stringify(body),
-    }
-  );
-  const text = await res.text();
-  let json: any = null;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    /* non-JSON error body */
-  }
-  if (!res.ok) {
-    return { ok: false, error: json?.error?.message || `Gemini ${res.status}: ${text.slice(0, 200)}` };
-  }
-  // A refusal comes back 200 with no image part, so report the reason rather
-  // than a bare "no image" — usually a safety block or a prompt it won't draw.
-  const candidate = json?.candidates?.[0];
-  const parts: any[] = candidate?.content?.parts ?? [];
-  const imagePart = parts.find((part) => part?.inline_data?.data || part?.inlineData?.data);
-  const inline = imagePart?.inline_data ?? imagePart?.inlineData;
-  if (!inline?.data) {
-    const saidWhy =
-      parts.map((part) => part?.text).filter(Boolean).join(" ").trim() ||
-      candidate?.finishReason ||
-      json?.promptFeedback?.blockReason;
-    return {
-      ok: false,
-      error: saidWhy
-        ? `Gemini returned no image — ${String(saidWhy).slice(0, 200)}`
-        : "Gemini returned no image.",
-    };
-  }
-  return { ok: true, dataUrl: `data:${inline.mime_type ?? inline.mimeType ?? "image/png"};base64,${inline.data}` };
-}
-
-async function stabilityGenerate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
+async function stabilityGenerate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
   if (!p.apiKey) return { ok: false, error: "Enter your Stability AI API key first." };
   const fd = new FormData();
   fd.append("prompt", prompt);
   fd.append("output_format", "png");
-  // Image-to-image (style transfer) runs on the SD3 endpoint. Stability's
-  // `strength` is "how much to CHANGE" (0 = identical, 1 = ignore the image),
-  // so it's the inverse of our "match the reference" slider.
-  const endpoint = ref
-    ? "https://api.stability.ai/v2beta/stable-image/generate/sd3"
-    : "https://api.stability.ai/v2beta/stable-image/generate/core";
-  if (ref) {
-    fd.append("mode", "image-to-image");
-    fd.append("image", dataUrlToBlob(ref.dataUrl), "reference.png");
-    fd.append("strength", String(Math.min(1, Math.max(0, 1 - ref.match))));
-  } else if (p.aspectRatio) fd.append("aspect_ratio", p.aspectRatio);
-  const res = await fetch(endpoint, {
+  if (p.aspectRatio) fd.append("aspect_ratio", p.aspectRatio);
+  const res = await fetch("https://api.stability.ai/v2beta/stable-image/generate/core", {
     method: "POST",
     headers: { Authorization: `Bearer ${p.apiKey}`, Accept: "image/*" },
     body: fd,
@@ -447,7 +256,7 @@ async function togetherGenerate(p: AiProviderSettings, prompt: string): Promise<
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
     body: JSON.stringify({
-      model: p.model || "black-forest-labs/FLUX.1-schnell",
+      model: p.model || "black-forest-labs/FLUX.1-schnell-Free",
       prompt,
       n: 1,
       width: p.width ?? 1024,
@@ -465,12 +274,9 @@ async function togetherGenerate(p: AiProviderSettings, prompt: string): Promise<
 
 /* -------------------------------- local -------------------------------- */
 
-async function a1111Generate(p: AiProviderSettings, prompt: string, ref?: AiReferenceImage): Promise<GenerateResult> {
+async function a1111Generate(p: AiProviderSettings, prompt: string): Promise<GenerateResult> {
   const base = (p.baseUrl || "http://127.0.0.1:7860").replace(/\/+$/, "");
-  // img2img for style transfer: denoising_strength is "how much to change"
-  // (0 = identical), so it's the inverse of our "match the reference" slider.
-  const endpoint = ref ? `${base}/sdapi/v1/img2img` : `${base}/sdapi/v1/txt2img`;
-  const res = await fetch(endpoint, {
+  const res = await fetch(`${base}/sdapi/v1/txt2img`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -484,12 +290,6 @@ async function a1111Generate(p: AiProviderSettings, prompt: string, ref?: AiRefe
       seed: -1,
       n_iter: 1,
       batch_size: 1,
-      ...(ref
-        ? {
-            init_images: [ref.dataUrl.split(",")[1] ?? ref.dataUrl],
-            denoising_strength: Math.min(1, Math.max(0, 1 - ref.match)),
-          }
-        : {}),
     }),
   });
   const json: any = await res.json().catch(() => null);

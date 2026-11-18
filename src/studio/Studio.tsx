@@ -6,7 +6,6 @@ import {
   Handle,
   MarkerType,
   MiniMap,
-  NodeResizer,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -26,12 +25,23 @@ import { audio } from "../audio";
 import { CREDITS_PRESETS, CREDITS_PRESET_GROUPS, CREDITS_PRESET_LIST, applyCreditsPreset, creditsLookSummary, matchCreditsPreset } from "../credits";
 import {
   BODY_FONTS,
+  defaultLensFlare,
+  defaultLight,
+  GRADE_PRESETS,
+  GRADE_PRESET_LIST,
   HEADING_FONTS,
   HUD_THEMES,
   HUD_THEME_LIST,
   inGameThemeVars,
+  LENS_FLARE_PRESETS,
+  lightPoints,
+  lightStyle,
+  parallaxStyle,
+  parseGlowColor,
+  resolveLensFlare,
+  resolveLights,
 } from "../cinematic";
-import { ForegroundExtras, ForegroundLayer } from "../game/Game";
+import { cinematicLayer, CinematicOverlays, ForegroundExtras, ForegroundLayer, LensFlareLayer, ParallaxMidLayers, parseAnchor } from "../game/Game";
 import {
   characterOpinion,
   clamp,
@@ -50,50 +60,18 @@ import {
   unassignedScenes,
   seasonEpisodes,
   stageFloor as stageFloorOf,
-  stagePlayerScale,
-  stageWalkPoly,
-  stageWalkDepth,
-  stageRoutePoly,
-  stageMarkerPointPoly,
-  clampToWalkPoly,
-  stepStagePos,
-  stageBlockedPoly,
-  STAGE_GRID_STEP,
   storyEdges,
-  CURSOR_ICON,
-  CURSOR_SLOTS,
-  CORE_VERB_IDS,
-  VERB_ICON,
-  VERB_IDS,
-  VERB_LABEL,
-  verbsForScene,
-  hotspotReachableActions,
   uid,
   validateStory,
   type ValidationIssue,
 } from "../logic";
 import { MediaLibrary, AssetDropdown, MediaUploadButton, CharacterVoiceFiles } from "./MediaLibrary";
 import { ImagePicker } from "./ImagePicker";
-import { EXTRA_PRESET, SheetLab, SpriteSheetControls, TALKING_PRESET, WALKER_PRESET } from "./SheetEditor";
-import { SheetSprite } from "../game/SheetSprite";
-import { sheetDrawable } from "../game/spriteSheet";
-import { SpriteCutoutLab } from "./SpriteCutout";
-import { BackgroundRemover } from "./BackgroundRemover";
-import { PlaytestCoveragePanel } from "./PlaytestCoverage";
-import { DeepLinkBuilder } from "./DeepLinkBuilder";
-import { SpriteBoxEditor } from "./SpriteBoxEditor";
-import { CinematicControls } from "./CinematicControls";
 import { AiImageStudio } from "./AiImageStudio";
 import { EpisodeEditor } from "./EpisodeEditor";
 import { ActEditor, ACT_TINTS } from "./ActEditor";
 import { HelpNote, StudioHelpModal } from "./StudioHelp";
-import {
-  SCENE_CARD_DEFAULT_H,
-  SCENE_CARD_DEFAULT_W,
-  healLayout,
-  sceneCardMinHeight,
-  tidyLayoutPositions,
-} from "./canvas";
+import { healLayout, tidyLayoutPositions } from "./canvas";
 import {
   audioTagsForModel,
   ELEVENLABS_MODELS,
@@ -115,14 +93,6 @@ import {
   saveGeneratedVoice,
   voiceFolderSupported,
 } from "./voiceFiles";
-import {
-  CollapsibleSection,
-  CommitTextArea,
-  Field,
-  inputCls,
-  bgStyle,
-  mediaField,
-} from "./studioLeaves";
 import { scenesInAct } from "../game/routeGraph";
 import { assetBackground, assetUrl } from "../assetPath";
 import {
@@ -139,26 +109,24 @@ import {
 import type {
   Character,
   Choice,
+  CinematicSettings,
   Consequences,
   Contradiction,
   CreditsSettings,
   CursorKind,
-  CursorArt,
+  ForegroundAnimation,
+  ForegroundAnimationMode,
+  ForegroundExtra,
   Gating,
   GlobalState,
   Hotspot,
-  HotspotAction,
-  HotspotState,
-  InventorySettings,
   Item,
-  MapLocation,
+  LensFlareGhostTier,
+  LensFlarePreset,
+  LensFlareSettings,
+  LightPoint,
   MeterKey,
   SceneNode,
-  StageNpc,
-  StageNpcWaypoint,
-  StageObstacle,
-  StageSettings,
-  StageScriptStep,
   Story,
 } from "../types";
 
@@ -214,63 +182,11 @@ const CREDITS_FONT_VAR: Record<string, string> = {
 };
 const METERS: MeterKey[] = ["Sultry", "Aggressive", "Clever", "Suspicion"];
 
-/**
- * VerbMenuPiePreview — the object-first verb menu (the skull pie)
- * rendered at editor scale, so authors can tune it without a playtest: the
- * ring of verb chips + the centrepiece `verbMenuIcon` sprite. Same geometry
- * as Stage.tsx, shrunk.
- */
-function VerbMenuPiePreview({
-  verbs,
-  icon,
-  media,
-  size = 200,
-}: {
-  verbs: CursorKind[];
-  icon?: string;
-  media: (v?: string) => string | undefined;
-  size?: number;
-}) {
-  const n = Math.max(1, verbs.length);
-  const R = size * 0.36; // verb ring radius (in-game 128 / 340 ≈ 0.376)
-  const center = size / 2;
-  return (
-    <div
-      className="relative shrink-0 rounded-full border border-noir-600 bg-noir-950/80"
-      style={{ width: size, height: size, boxShadow: "0 0 30px rgba(232,178,60,0.18)" }}
-    >
-      {verbs.map((v, i) => {
-        const rad = ((i * 360) / n - 90) * (Math.PI / 180);
-        const x = center + R * Math.cos(rad);
-        const y = center + R * Math.sin(rad);
-        return (
-          <div
-            key={v}
-            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-full border border-noir-600 bg-noir-950/95 px-2 py-1"
-            style={{ left: x, top: y }}
-          >
-            <span className="text-base leading-none" aria-hidden>
-              {VERB_ICON[v]}
-            </span>
-            <span className="font-pulp text-[6px] uppercase tracking-widest text-paper/70">{v}</span>
-          </div>
-        );
-      })}
-      {/* centrepiece — the story's verbMenuIcon (or the default skull) */}
-      <div
-        className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-2 border-gold/60 bg-noir-950 shadow-[0_0_18px_rgba(232,178,60,0.35)]"
-        style={{ width: size * 0.31, height: size * 0.31 }}
-      >
-        {icon?.startsWith("emoji:") ? (
-          <span className="text-2xl leading-none">{icon.slice("emoji:".length)}</span>
-        ) : icon ? (
-          <img src={assetUrl(media(icon) ?? icon)} alt="" draggable={false} className="h-full w-full object-cover" />
-        ) : (
-          <span className="text-2xl leading-none">💀</span>
-        )}
-      </div>
-    </div>
-  );
+function bgStyle(bg: string): React.CSSProperties {
+  const resolved = assetBackground(bg);
+  if (resolved.startsWith("gradient:")) return { background: resolved.slice(9) };
+  if (resolved.startsWith("video:")) return { background: "#0c0c14" };
+  return { backgroundImage: `url(${resolved})`, backgroundSize: "cover", backgroundPosition: "center" };
 }
 
 /**
@@ -286,132 +202,25 @@ function StageFloorEditor({
   floor,
   spawn,
   hotspots,
-  player,
   onFloor,
   onSpawn,
   onMoveMarker,
   selectedHotspotId,
   onSelectHotspot,
-  worldWidth,
-  entrySpawns,
-  entrySceneTitles,
-  onEntrySpawn,
-  playerScale,
-  onPlayerScale,
-  obstacles,
-  selectedObstacle,
-  onObstacleDraw,
-  onObstacleSelect,
-  onObstacleDelete,
-  onHotspotDelete,
-  onObstacleMove,
-  floorPoints,
-  onFloorPoints,
-  onResizeProp,
-  pickPoint,
-  onPickPoint,
-  onCancelPick,
 }: {
   background: string;
   media: (v?: string) => string | undefined;
   floor: { top: number; bottom: number };
   spawn: { x: number; y: number };
-  hotspots: {
-    id: string;
-    label: string;
-    cursor: string;
-    bounds: { x: number; y: number; w: number; h: number };
-    /** Scene-object art drawn on the plate at the marker — the NPC or prop
-     *  itself, exactly as the game draws it (feet planted on the marker,
-     *  sized by the zone width). Lets you place characters visually instead
-     *  of by a bare label. */
-    image?: string;
-    sheet?: import("./../game/spriteSheet").SpriteSheet;
-    imageFit?: "contain" | "cover";
-  }[];
-  /** The player's appearance, so the room preview shows the REAL walker (its
-   *  sprite sheet / image / emoji) standing on the plate at spawn — not a
-   *  stand-in 🕵️. See docs/adventure-mode.md §"Placing the character". */
-  player?: { image?: string; sheet?: import("./../game/spriteSheet").SpriteSheet };
-  /** Per-scene character size (stage.playerScale) — the preview walker grows
-   *  and shrinks with it, exactly as the game draws it (clamped 0.15–4× via
-   *  logic.stagePlayerScale). Without this you'd author the size blind. */
-  playerScale?: number;
+  hotspots: { id: string; label: string; cursor: string; bounds: { x: number; y: number; w: number; h: number } }[];
   onFloor: (top: number, bottom: number) => void;
   onSpawn: (x: number, y: number) => void;
   onMoveMarker: (hotspotId: string, cx: number, baseY: number) => void;
   selectedHotspotId?: string | null;
   onSelectHotspot?: (id: string) => void;
-  /** Wide world: world width in viewport-% (100 = single screen). The whole
-   *  strip renders shrunk to the plate, with dashed viewport frames. */
-  worldWidth?: number;
-  /** Extra spawn points keyed by the scene you ARRIVED from (cyan dots). */
-  entrySpawns?: Record<string, { x: number; y: number }>;
-  /** sceneId -> title, for the entry-dot labels. */
-  entrySceneTitles?: Record<string, string>;
-  onEntrySpawn?: (sceneId: string, x: number, y: number) => void;
-  /** In-plate resize: drag the ↕ handle on the walker up/down to change the
-   *  character's size (writes `stage.playerScale`). Called continuously. */
-  onPlayerScale?: (scale: number) => void;
-  /** 🚧 No-go obstacles (walk-around furniture), drawn as hatched crimson
-   *  rectangles on the plate. When "Draw obstacle" is armed, dragging a box
-   *  commits via onObstacleDraw; clicking one selects it (onObstacleSelect),
-   *  and the selected one shows a ✕ (onObstacleDelete). DRAG an obstacle's
-   *  body to move it and pull the ↘ corner of the selected one to resize it
-   *  (both commit through onObstacleMove). All world-%. */
-  obstacles?: StageObstacle[];
-  selectedObstacle?: number | null;
-  onObstacleDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
-  onObstacleSelect?: (index: number | null) => void;
-  onObstacleDelete?: (index: number) => void;
-  /** Delete the SELECTED marker (prop / NPC / plain hotspot) straight from the
-   *  plate. Obstacles already had a ✕; markers did not, so the only way to
-   *  remove a mis-placed prop was to hunt it down in the Hotspots tab. */
-  onHotspotDelete?: (id: string) => void;
-  /** Commit a MOVE/RESIZE of an existing obstacle (drag body / pull the ↘
-   *  corner), so coordinates are placed by eye instead of typed. */
-  onObstacleMove?: (index: number, bounds: { x: number; y: number; w: number; h: number }) => void;
-  /** 🧭 WALK PATH — the walkable polygon (world-%) when the scene is in path
-   *  mode. With ≥3 points the plate shows the polygon with draggable corner
-   *  points + midpoint ⊕ handles to add more, so you can carve a winding
-   *  path instead of a flat band. */
-  floorPoints?: { x: number; y: number }[];
-  onFloorPoints?: (pts: { x: number; y: number }[]) => void;
-  /** 🎬 CUTSCENE RECORDER — armed by a walkTo/npcWalkTo step row: the next
-   *  plain click on the plate becomes that step's x/y instead of dragging. */
-  pickPoint?: { npc: boolean } | null;
-  onPickPoint?: (p: { x: number; y: number }) => void;
-  onCancelPick?: () => void;
-  /** ↕↔ RESIZE A PROP — drag the ↔ handle on an NPC/prop's corner to scale it
-   *  live (feet stay planted on the marker). Writes the hotspot's zone width,
-   *  with x recentred so the marker doesn't drift. */
-  onResizeProp?: (id: string, bounds: { x: number; y: number; w: number; h: number }) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const worldW = Math.max(100, worldWidth ?? 100);
-  /** Editor scale: a wide world is shrunk to fit the plate. */
-  const scale = 100 / worldW;
-  /** Character size as the GAME draws it (same clamp) — the preview walker
-   *  stands on the plate at spawn, so its height must follow playerScale. */
-  const pscale = stagePlayerScale({ playerScale });
-  /** The live scale the ↕ handle is dragging toward (same range as the
-   *  panel slider so the two stay in lock-step). */
-  const SCALE_MIN = 0.3;
-  const SCALE_MAX = 3;
-  const drag = useRef<
-    | { kind: "floor-top" | "floor-bottom" | "spawn"; offX: number }
-    | { kind: "resize"; startY: number; startScale: number }
-    | { kind: { hsId: string }; offX: number }
-    | { kind: { entryId: string }; offX: number }
-    | { kind: { pt: number }; offX: number; offY: number }
-    | { kind: { propResize: string }; offX: number }
-    | { kind: { obMove: number }; offX: number; offY: number }
-    | { kind: { obSize: number }; offX: number; offY: number }
-    | null
-  >(null);
-  /** 🧭 Path mode: the walkable zone is an editable polygon (floorPoints). */
-  const pathMode = (floorPoints?.length ?? 0) >= 3;
-  const pathPts = pathMode ? floorPoints! : [];
+  const drag = useRef<null | { kind: "floor-top" | "floor-bottom" | "spawn" | { hsId: string }; offX: number }>(null);
 
   const pct = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
@@ -426,1007 +235,103 @@ function StageFloorEditor({
     y: h.bounds.y + h.bounds.h,
   });
 
-  // FULL-SCREEN PREVIEW — the plate opens up to (nearly) the whole window so
-  // characters and props can be placed at real size, not squinted at in the
-  // narrow inspector. Esc closes it.
-  const [expanded, setExpanded] = useState(false);
-  useEffect(() => {
-    if (!expanded) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setExpanded(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [expanded]);
-
-  // 🚧 OBSTACLE DRAWING — arm the "Draw obstacle" tool, then drag a box on the
-  // plate to fence off walk-around furniture, right next to the floor and the
-  // characters. Drafting is separate from the floor/spawn/marker drag state.
-  const [obstacleMode, setObstacleMode] = useState(false);
-  const [draftOb, setDraftOb] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const draftObStart = useRef<{ x: number; y: number } | null>(null);
-
-  // 🖌 PAINT THE PATH — click points onto the plate to lay the walk polygon
-  // vertex by vertex (the drag handles then fine-tune it). Each click appends
-  // a vertex in click order; from the third point the polygon is live and the
-  // walker routes through it. "Clear" drops back to the flat floor band.
-  const [drawing, setDrawing] = useState(false);
-
-  // ▶ WALK-CYCLE PREVIEW — play the walker's walk animation on the plate so
-  // the author sees the frames/fps without a playtest. Sheets play their
-  // "walk" animation; image/emoji walkers bob procedurally.
-  const [playWalk, setPlayWalk] = useState(false);
-  const walkFps = player?.sheet?.animations?.walk?.fps;
-
-  /* ---- 🥾 WALK TEST — a LIVE walker on the plate, driven by the REAL
-   * engine router. Click the floor or a marker and the character walks the
-   * exact route the game would take (A* around the authored barriers,
-   * clamped to the authored floor/path); WASD/arrows drive it too. The
-   * dashed polyline is the planned route and the chip is the verdict —
-   * including "no route" when the layout seals a marker off. Gated
-   * barriers (🚪 doors) default to SHUT so the locked layout is what's
-   * tested; toggle them open to prove the unlocked one. */
-  const [walkTest, setWalkTest] = useState(false);
-  const [doorsOpen, setDoorsOpen] = useState(false);
-  const [walkerPos, setWalkerPos] = useState<{ x: number; y: number } | null>(null);
-  const [walkerMoving, setWalkerMoving] = useState(false);
-  const [walkRouteDraw, setWalkRouteDraw] = useState<{ x: number; y: number }[]>([]);
-  const [walkNote, setWalkNote] = useState<{ text: string; ok: boolean } | null>(null);
-  const posRef = useRef<{ x: number; y: number } | null>(null);
-  const routeRef = useRef<{ x: number; y: number }[]>([]);
-  const labelRef = useRef<string | null>(null);
-  const keysRef = useRef(new Set<string>());
-  const EDITOR_WALK_SPEED = 34; // world-%/second — brisk enough to test, slow enough to read
-  const walkPoly = stageWalkPoly({ floor, floorPoints } as StageSettings, worldW);
-  const walkFloor = stageWalkDepth(walkPoly);
-  const solidObstacles = (obstacles ?? []).filter((o) => !(o.gating && doorsOpen));
-  const walkPolyRef = useRef(walkPoly);
-  walkPolyRef.current = walkPoly;
-  const solidRef = useRef(solidObstacles);
-  solidRef.current = solidObstacles;
-
-  const routeWalker = (to: { x: number; y: number }, label?: string) => {
-    const poly = walkPolyRef.current;
-    const from = posRef.current ?? clampToWalkPoly(spawn.x, spawn.y, poly, worldW);
-    posRef.current = from;
-    const dest = clampToWalkPoly(to.x, to.y, poly, worldW);
-    const route = stageRoutePoly(from, dest, solidRef.current, poly, walkFloor, STAGE_GRID_STEP, worldW);
-    labelRef.current = label ?? null;
-    if (!route.length) {
-      routeRef.current = [];
-      setWalkRouteDraw([]);
-      setWalkNote({
-        text: `✗ No route to ${label ?? "that spot"} — the layout seals it off${
-          (obstacles ?? []).some((o) => o.gating) && !doorsOpen ? " (try opening the 🚪 doors)" : ""
-        }`,
-        ok: false,
-      });
-      return;
-    }
-    // A clear path comes back as a SINGLE point (the destination) — only a
-    // detour carries the start as its first point. Drop the start when it's
-    // there, never the destination, or the walker would have nowhere to go.
-    const rest =
-      route.length > 1 && Math.hypot(route[0].x - from.x, route[0].y - from.y) < 0.5
-        ? route.slice(1)
-        : route;
-    routeRef.current = rest.length ? rest : [{ ...dest }];
-    setWalkRouteDraw(route);
-    setWalkNote({ text: `→ ${label ? `walking to ${label}` : "walking"}…`, ok: true });
-  };
-
-  const toggleWalkTest = () => {
-    const next = !walkTest;
-    if (next) {
-      const start = clampToWalkPoly(spawn.x, spawn.y, walkPolyRef.current, worldW);
-      posRef.current = start;
-      routeRef.current = [];
-      setWalkerPos({ ...start });
-      setWalkRouteDraw([]);
-      setWalkNote({ text: "Walker at spawn — click the floor or a marker to send it there · WASD/arrows drive it", ok: true });
-    } else {
-      posRef.current = null;
-      routeRef.current = [];
-      keysRef.current.clear();
-      setWalkerPos(null);
-      setWalkRouteDraw([]);
-      setWalkNote(null);
-    }
-    setWalkTest(next);
-  };
-
-  // The animation loop: route-following + keyboard drive, same movement
-  // rules as the game (aspect-corrected steps, blocked => slide along).
-  useEffect(() => {
-    if (!walkTest) return;
-    let raf = 0;
-    // Seed the clock from the FIRST rAF timestamp, not performance.now() —
-    // the two can be on different time bases (happy-dom), and a negative
-    // first delta would clamp dt to 0 and freeze the walker.
-    let last: number | null = null;
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      if (last === null) last = now;
-      const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
-      last = now;
-      const pos = posRef.current;
-      if (!pos) return;
-      const obs = solidRef.current;
-      const poly = walkPolyRef.current;
-      let moving = false;
-      if (keysRef.current.size) {
-        // Keyboard drive cancels any plotted route, exactly like the game.
-        if (routeRef.current.length) {
-          routeRef.current = [];
-          labelRef.current = null;
-          setWalkRouteDraw([]);
-          setWalkNote(null);
-        }
-        let dx = 0;
-        let dy = 0;
-        if (keysRef.current.has("left")) dx -= 1;
-        if (keysRef.current.has("right")) dx += 1;
-        if (keysRef.current.has("up")) dy -= 1;
-        if (keysRef.current.has("down")) dy += 1;
-        if (dx || dy) {
-          const step = stepStagePos(pos, { x: pos.x + dx, y: pos.y + dy }, EDITOR_WALK_SPEED, dt, 16 / 9);
-          if (!stageBlockedPoly(step.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = step;
-          else if (!stageBlockedPoly(step.x, pos.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: step.x, y: pos.y };
-          else if (!stageBlockedPoly(pos.x, step.y, obs, poly, 16 / 9, worldW)) posRef.current = { x: pos.x, y: step.y };
-          moving = true;
-        }
-      } else if (routeRef.current.length) {
-        const tgt = routeRef.current[0];
-        const step = stepStagePos(pos, tgt, EDITOR_WALK_SPEED, dt, 16 / 9);
-        posRef.current = { x: step.x, y: step.y };
-        moving = !step.arrived;
-        if (step.arrived) {
-          routeRef.current.shift();
-          if (!routeRef.current.length) {
-            setWalkRouteDraw([]);
-            setWalkNote({ text: `✓ ${labelRef.current ? `reached ${labelRef.current}` : "arrived"}`, ok: true });
-          }
-        }
-      }
-      const cur = posRef.current;
-      if (cur) setWalkerPos({ ...cur });
-      setWalkerMoving((m) => (m === moving ? m : moving));
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [walkTest, worldW]);
-
-  // WASD/arrows while the walk test runs (never while typing in a field).
-  useEffect(() => {
-    if (!walkTest) return;
-    const KEYMAP: Record<string, string> = {
-      ArrowLeft: "left", a: "left", A: "left",
-      ArrowRight: "right", d: "right", D: "right",
-      ArrowUp: "up", w: "up", W: "up",
-      ArrowDown: "down", s: "down", S: "down",
-    };
-    const down = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      const k = KEYMAP[e.key];
-      if (!k) return;
-      e.preventDefault();
-      keysRef.current.add(k);
-    };
-    const up = (e: KeyboardEvent) => {
-      const k = KEYMAP[e.key];
-      if (k) keysRef.current.delete(k);
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-      keysRef.current.clear();
-    };
-  }, [walkTest]);
-
-  // The player's drawn height as a % of the plate (clamped so the walker can't
-  // blow through the plate or vanish) — reused by the emoji glyph so IT scales
-  // with the resize handle too, not just sprite/image characters.
-  const playerHPct = Math.min(55, 26 * pscale);
-
-  const plate = (
+  return (
     <div
       ref={ref}
-      className={`relative w-full touch-none select-none overflow-hidden border border-noir-600 ${expanded ? "h-full" : "aspect-video"}`}
-      style={{ ...bgStyle(media(background) ?? background), containerType: "size" } as React.CSSProperties}
+      className="relative aspect-video w-full touch-none select-none overflow-hidden border border-noir-600"
+      style={bgStyle(media(background) ?? background)}
       onPointerDown={(e) => {
-        // `closest()` lets a drag start from anywhere inside a draggable —
-        // the art image, the label text, the diamond — not just the exact
-        // element carrying `data-drag`.
-        const dragEl = (e.target as HTMLElement).closest?.("[data-drag]") as HTMLElement | null;
-        const kind = dragEl?.dataset.drag;
-        // 🥾 Walk test: a press on the plate sends the walker there — the
-        // REAL router plans and walks the route. Takes precedence over the
-        // drawing tools while the test runs.
-        if (!kind && walkTest) {
-          const p = pct(e);
-          routeWalker({ x: p.x / scale, y: p.y });
-          e.preventDefault();
-          return;
-        }
-        // 🎬 Cutscene recorder: an armed pick consumes this click as a plain
-        // point (no drag) — highest precedence on empty plate.
-        if (!kind && pickPoint && onPickPoint) {
-          const p = pct(e);
-          onPickPoint({ x: round1(Math.min(worldW, Math.max(0, p.x / scale))), y: round1(p.y) });
-          e.preventDefault();
-          return;
-        }
-        // 🖌 Paint path: a click on empty plate appends a polygon vertex
-        // (walk test keeps precedence — you can route-test while armed).
-        if (!kind && drawing) {
-          const p = pct(e);
-          const next = [...(floorPoints ?? []), { x: round1(Math.min(worldW, Math.max(0, p.x / scale))), y: round1(p.y) }];
-          onFloorPoints?.(next);
-          e.preventDefault();
-          return;
-        }
-        // 🚧 obstacle tool: a press on empty plate starts a draft box.
-        if (!kind && obstacleMode) {
-          const p = pct(e);
-          const wx = p.x / scale;
-          draftObStart.current = { x: wx, y: p.y };
-          setDraftOb({ x: wx, y: p.y, w: 0, h: 0 });
-          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-          e.preventDefault();
-          return;
-        }
+        const kind = (e.target as HTMLElement).dataset.drag;
         if (!kind) return;
-        if (kind === "resize") {
-          drag.current = { kind: "resize", startY: e.clientY, startScale: pscale };
-        } else if (kind.startsWith("pt:")) {
-          const idx = Number(kind.slice(3));
-          const pt = pathPts[idx];
-          if (!pt) return;
-          drag.current = { kind: { pt: idx }, offX: pt.x - pct(e).x / scale, offY: pt.y - pct(e).y };
-        } else if (kind.startsWith("addpt:")) {
-          // ⊕ on an edge midpoint: insert a vertex right there.
-          const i = Number(kind.slice(6));
-          const a = pathPts[i];
-          const b = pathPts[(i + 1) % pathPts.length];
-          if (!a || !b) return;
-          const mx = round1((a.x + b.x) / 2);
-          const my = round1((a.y + b.y) / 2);
-          const next = [...pathPts.slice(0, i + 1), { x: mx, y: my }, ...pathPts.slice(i + 1)];
-          onFloorPoints?.(next);
-          e.preventDefault();
-          return;
-        } else if (kind.startsWith("propsize:")) {
-          const hs = hotspots.find((h) => h.id === kind.slice(9));
-          if (!hs) return;
-          drag.current = { kind: { propResize: hs.id }, offX: 0 };
-        } else if (kind.startsWith("obsize:")) {
-          // ↘ corner of the selected obstacle: resize w/h from its anchor.
-          const oi = Number(kind.slice(7));
-          if (!(obstacles ?? [])[oi]) return;
-          drag.current = { kind: { obSize: oi }, offX: 0, offY: 0 };
-          onObstacleSelect?.(oi);
-        } else if (kind.startsWith("ob:")) {
-          // Body drag = move the obstacle (grab offset keeps it from
-          // jumping under the cursor); pressing it also selects it.
-          const oi = Number(kind.slice(3));
-          const o = (obstacles ?? [])[oi];
-          if (!o) return;
-          const p = pct(e);
-          drag.current = { kind: { obMove: oi }, offX: o.x - p.x / scale, offY: o.y - p.y };
-          onObstacleSelect?.(oi);
-        } else if (kind.startsWith("hs:")) {
+        if (kind.startsWith("hs:")) {
           const hs = hotspots.find((h) => h.id === kind.slice(3));
           if (!hs) return;
-          // 🥾 Walk test: pressing a MARKER sends the walker to its marker
-          // point — the exact spot the game would stop at — so a marker the
-          // layout can't reach is caught here, not in playtest.
-          if (walkTest) {
-            routeWalker(stageMarkerPointPoly(hs, walkPolyRef.current, worldW), hs.label);
-            e.preventDefault();
-            return;
-          }
-          drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x * scale };
+          drag.current = { kind: { hsId: hs.id }, offX: pct(e).x - marker(hs).x };
           onSelectHotspot?.(hs.id);
-        } else if (kind.startsWith("entry:")) {
-          drag.current = { kind: { entryId: kind.slice(6) }, offX: 0 };
         } else {
           drag.current = { kind: kind as "floor-top" | "floor-bottom" | "spawn", offX: 0 };
         }
-        dragEl!.setPointerCapture?.(e.pointerId);
+        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
         e.preventDefault();
       }}
       onPointerMove={(e) => {
-        // 🚧 obstacle draft is live while dragging out a box.
-        if (draftObStart.current) {
-          const p = pct(e);
-          const x0 = draftObStart.current.x;
-          const y0 = draftObStart.current.y;
-          const x1 = clamp(p.x / scale, 0, worldW);
-          const y1 = clamp(p.y, 0, 100);
-          setDraftOb({ x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) });
-          return;
-        }
         if (!drag.current) return;
         const p = pct(e);
         const d = drag.current;
-        if (d.kind === "resize") {
-          // Drag UP (negative dy) = bigger; drag DOWN = smaller. Sensitivity is
-          // tuned so pulling the handle a quarter-plate doubles the character.
-          const rect = ref.current!.getBoundingClientRect();
-          const dy = (d.startY - e.clientY) / rect.height;
-          const next = clamp(d.startScale * (1 + dy * 4), SCALE_MIN, SCALE_MAX);
-          onPlayerScale?.(Math.round(next * 100) / 100);
-        } else if (typeof d.kind === "object" && "pt" in d.kind) {
-          // 🧭 drag a path vertex: stretch the polygon into a winding path.
-          const dd = d as { kind: { pt: number }; offX: number; offY: number };
-          const nx = clamp(round1(p.x / scale + dd.offX), 0, worldW);
-          const ny = clamp(round1(p.y + dd.offY), 0, 100);
-          onFloorPoints?.(pathPts.map((q, qi) => (qi === dd.kind.pt ? { x: nx, y: ny } : q)));
-        } else if (d.kind === "spawn") {
-          onSpawn(round1(Math.min(99, Math.max(1, p.x / scale))), round1(Math.min(100, Math.max(0, p.y))));
+        if (d.kind === "spawn") {
+          onSpawn(round1(Math.min(99, Math.max(1, p.x))), round1(Math.min(100, Math.max(0, p.y))));
         } else if (d.kind === "floor-top") {
           onFloor(round1(Math.min(floor.bottom - 4, Math.max(0, p.y))), floor.bottom);
         } else if (d.kind === "floor-bottom") {
           onFloor(floor.top, round1(Math.min(100, Math.max(floor.top + 4, p.y))));
-        } else if (typeof d.kind === "object" && "propResize" in d.kind) {
-          // ↕↔ drag the prop's corner handle: width follows the pointer, feet
-          // (the marker) stay planted — x recentres so the prop scales in place.
-          const hs = hotspots.find((h) => h.id === (d.kind as { propResize: string }).propResize);
-          if (!hs) return;
-          const m = marker(hs);
-          const nx = clamp(p.x / scale, 0, worldW);
-          const maxW = 2 * Math.min(m.x, worldW - m.x);
-          const newW = clamp(Math.abs(nx - m.x) * 2, 1.5, Math.max(1.5, maxW));
-          onResizeProp?.(hs.id, { x: round1(m.x - newW / 2), y: hs.bounds.y, w: round1(newW), h: hs.bounds.h });
-        } else if (typeof d.kind === "object" && "obMove" in d.kind) {
-          // Move the obstacle body by its grab offset, clamped on the plate.
-          const dd = d as { kind: { obMove: number }; offX: number; offY: number };
-          const o = (obstacles ?? [])[dd.kind.obMove];
-          if (!o) return;
-          const nx = clamp(round1(p.x / scale + dd.offX), 0, Math.max(0, worldW - o.w));
-          const ny = clamp(round1(p.y + dd.offY), 0, Math.max(0, 100 - o.h));
-          onObstacleMove?.(dd.kind.obMove, { ...o, x: nx, y: ny });
-        } else if (typeof d.kind === "object" && "obSize" in d.kind) {
-          // ↘ corner drag: w/h measured from the obstacle's own anchor.
-          const o = (obstacles ?? [])[d.kind.obSize];
-          if (!o) return;
-          const nw = clamp(round1(p.x / scale - o.x), 1, Math.max(1, worldW - o.x));
-          const nh = clamp(round1(p.y - o.y), 1, Math.max(1, 100 - o.y));
-          onObstacleMove?.(d.kind.obSize, { ...o, w: nw, h: nh });
-        } else if (typeof d.kind === "object" && "hsId" in d.kind) {
+        } else if (typeof d.kind === "object") {
           const hs = hotspots.find((h) => h.id === (d.kind as { hsId: string }).hsId);
           if (!hs) return;
           const w = hs.bounds.w;
-          // Wide worlds: markers may sit anywhere in the strip, not just the
-          // first screen (the x clamp uses the WORLD width, not 100).
-          const cx = Math.min(worldW - w / 2, Math.max(w / 2, p.x / scale - d.offX / scale));
+          const cx = Math.min(100 - w / 2, Math.max(w / 2, p.x - d.offX));
           const baseY = Math.min(100, Math.max(0, p.y));
           onMoveMarker(hs.id, round1(cx), round1(baseY));
-        } else if (typeof d.kind === "object" && "entryId" in d.kind) {
-          onEntrySpawn?.((d.kind as { entryId: string }).entryId, round1(Math.min(99, Math.max(1, p.x / scale))), round1(Math.min(100, Math.max(0, p.y))));
         }
       }}
       onPointerUp={() => {
-        // 🚧 commit a finished draft box (ignore slivers < 1%).
-        if (draftObStart.current) {
-          const d = draftOb;
-          draftObStart.current = null;
-          setDraftOb(null);
-          if (d && d.w >= 1 && d.h >= 1) {
-            onObstacleDraw?.({ x: round1(d.x), y: round1(d.y), w: round1(d.w), h: round1(d.h) });
-          }
-          return;
-        }
         drag.current = null;
       }}
     >
-      {/* above-floor / below-floor shading — band mode only. In 🧭 path mode
-          the polygon itself is the walkable zone (tinted + outlined below). */}
-      {!pathMode ? (
-        <>
-          <div className="pointer-events-none absolute inset-x-0 top-0 bg-black/55" style={{ height: `${floor.top}%` }} />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55" style={{ height: `${100 - floor.bottom}%` }} />
-          <div
-            className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
-            style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
-          />
-        </>
-      ) : (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${worldW} 100`} preserveAspectRatio="none" aria-hidden>
-          <path
-            d={pathPts.length ? `M ${pathPts.map((p) => `${p.x} ${p.y}`).join(" L ")} Z` : ""}
-            fill="rgba(255,46,136,0.06)"
-            stroke="rgba(255,46,136,0.55)"
-            strokeWidth={0.5}
-            strokeDasharray="2 2"
-          />
-        </svg>
-      )}
-      {/* VIEWPORT FRAMES — on a wide world, the dashed lines mark each
-          screen the camera shows; what you see between two lines is what the
-          player sees at once. */}
-      {worldW > 100 ? (
-        <>
-          {Array.from({ length: Math.floor(worldW / 100) }, (_, i) => {
-            const left = i * 100 * scale;
-            return (
-              <div key={i}>
-                <div
-                  className="pointer-events-none absolute inset-y-0 z-[15] border-l-2 border-dashed border-cyan-neon/50"
-                  style={{ left: `${left}%` }}
-                />
-                <span
-                  className="pointer-events-none absolute z-[15] -translate-x-1/2 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/80"
-                  style={{ left: `${left}%`, top: 4 }}
-                >
-                  {i === 0 ? "▶ screen 1" : `▶ screen ${i + 1}`}
-                </span>
-              </div>
-            );
-          })}
-          <span
-            className="pointer-events-none absolute right-1 top-4 z-[15] rounded border border-cyan-neon/40 bg-noir-950/80 px-1 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/80"
-          >
-            world {worldW}% — camera pans {worldW - 100}%
-          </span>
-        </>
-      ) : null}
-      {/* floor edge handles — band mode only */}
-      {!pathMode ? (
-        <>
-          <div
-            data-drag="floor-top"
-            className="absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-ns-resize items-center justify-center"
-            style={{ top: `calc(${floor.top}% - 6px)` }}
-            title="Drag: floor top"
-          >
-            <span className="h-1 w-full bg-neon/70" />
-          </div>
-          <div
-            data-drag="floor-bottom"
-            className="absolute inset-x-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
-            style={{ top: `calc(${floor.bottom}% - 6px)` }}
-            title="Drag: floor bottom"
-          >
-            <span className="h-1 w-full bg-neon/70" />
-          </div>
-        </>
-      ) : (
-        <>
-          {/* 🧭 path vertices — drag to stretch the path into any shape */}
-          {pathPts.map((p, i) => (
-            <div
-              key={`pt-${i}`}
-              data-drag={`pt:${i}`}
-              className="absolute z-[24] flex h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-move items-center justify-center rounded-full border-2 border-neon bg-noir-950"
-              style={{ left: `${p.x * scale}%`, top: `${p.y}%` }}
-              title={`Path point ${i + 1} — drag to stretch${pathPts.length > 3 ? ", ✕ to remove" : ""}`}
-            >
-              <span className="h-1 w-1 rounded-full bg-neon" />
-              {pathPts.length > 3 ? (
-                <button
-                  className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[8px] leading-none text-crimson hover:bg-crimson/30"
-                  title="Remove this point"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    onFloorPoints?.(pathPts.filter((_, j) => j !== i));
-                  }}
-                >
-                  ✕
-                </button>
-              ) : null}
-            </div>
-          ))}
-          {/* ⊕ edge midpoints — click to add a point and pull the path that way */}
-          {pathPts.map((p, i) => {
-            const q = pathPts[(i + 1) % pathPts.length];
-            const mx = (p.x + q.x) / 2;
-            const my = (p.y + q.y) / 2;
-            return (
-              <div
-                key={`mid-${i}`}
-                data-drag={`addpt:${i}`}
-                className="absolute z-[23] flex h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-copy items-center justify-center rounded-full border border-neon/50 bg-noir-950/80 text-[9px] leading-none text-neon/80 hover:bg-neon/20"
-                style={{ left: `${mx * scale}%`, top: `${my}%` }}
-                title="Add a point here"
-              >
-                ⊕
-              </div>
-            );
-          })}
-        </>
-      )}
-      {/* 🚧 NO-GO OBSTACLES — hatched crimson, walk-around furniture. Click to
-          select (ring + ✕ to delete), DRAG the body to move it, pull the ↘
-          corner of the selected one to resize; arm the Draw tool to fence a
-          new one. */}
-      {(obstacles ?? []).map((o, oi) => {
-        const sel = selectedObstacle === oi;
-        return (
-          <div
-            key={oi}
-            data-drag={`ob:${oi}`}
-            className={`absolute z-[14] touch-none border-2 ${
-              onObstacleMove ? "cursor-grab" : "cursor-pointer"
-            } ${sel ? "border-crimson bg-crimson/20" : "border-crimson/60 bg-crimson/10"}`}
-            style={{
-              left: `${o.x * scale}%`,
-              top: `${o.y}%`,
-              width: `${o.w * scale}%`,
-              height: `${o.h}%`,
-              backgroundImage:
-                "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
-            }}
-            title={
-              sel
-                ? `Drag to move ↕↔ (${Math.round(o.x)}, ${Math.round(o.y)}) · pull ↘ to resize (${Math.round(o.w)}×${Math.round(o.h)})`
-                : `${Math.round(o.x)}, ${Math.round(o.y)} · ${Math.round(o.w)}×${Math.round(o.h)} — click to select · drag to move`
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              onObstacleSelect?.(sel ? null : oi);
-            }}
-          >
-            <span className="pointer-events-none absolute left-1 top-0.5 font-pulp text-[7px] uppercase tracking-wider text-crimson">
-              🚧 {Math.round(o.w)}×{Math.round(o.h)}
-            </span>
-            {sel ? (
-              <>
-                <button
-                  className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
-                  title="Delete obstacle"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onObstacleDelete?.(oi);
-                  }}
-                >
-                  ✕
-                </button>
-                {onObstacleMove ? (
-                  <span
-                    data-drag={`obsize:${oi}`}
-                    title={`Pull to resize — ${Math.round(o.w)}×${Math.round(o.h)}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute -bottom-2 -right-2 z-10 flex h-4 w-4 cursor-nwse-resize touch-none items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
-                  >
-                    ↘
-                  </span>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-        );
-      })}
-      {/* 🚧 the draft box, live while dragging out a new obstacle */}
-      {draftOb ? (
-        <div
-          className="pointer-events-none absolute z-[14] border-2 border-dashed border-crimson bg-crimson/15"
-          style={{ left: `${draftOb.x * scale}%`, top: `${draftOb.y}%`, width: `${draftOb.w * scale}%`, height: `${draftOb.h}%` }}
-        />
-      ) : null}
-      {/* 🖌 paint-path hint — live vertex count while arming clicks */}
-      {drawing ? (
-        <span className="pointer-events-none absolute left-1/2 top-1 z-[60] -translate-x-1/2 whitespace-nowrap rounded border border-neon/60 bg-noir-950/90 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon">
-          Paint path — click to add points{(floorPoints ?? []).length < 3 ? ` (${(floorPoints ?? []).length}/3)` : ""}, tool button to finish
-        </span>
-      ) : null}
-      {/* 🎬 recorder banner — armed pick, with cancel */}
-      {pickPoint ? (
-        <span className="absolute left-1/2 top-1 z-[60] flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded border border-neon/60 bg-noir-950/90 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon">
-          Pick {pickPoint.npc ? "NPC" : "player"} walk target — click the plate
-          <button
-            className="ml-1 border border-neon/50 px-1 text-[9px] leading-none hover:bg-neon/20"
-            title="Cancel without setting the target"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onCancelPick?.(); }}
-          >
-            ✕
-          </button>
-        </span>
-      ) : null}
-      {/* markers — one per hotspot, at its zone base (world-scaled on wide
-          worlds). When the hotspot carries object art (image / sheet), the
-          NPC/prop itself is drawn on the plate — feet planted on the marker,
-          sized by the zone width — EXACTLY as the game draws it, so you place
-          characters by eye, not by a bare label. */}
+      {/* above-floor / below-floor shading */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 bg-black/55" style={{ height: `${floor.top}%` }} />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/55" style={{ height: `${100 - floor.bottom}%` }} />
+      <div
+        className="pointer-events-none absolute inset-x-0 border-y border-dashed border-neon/50 bg-neon/[0.04]"
+        style={{ top: `${floor.top}%`, height: `${floor.bottom - floor.top}%` }}
+      />
+      {/* floor edge handles */}
+      <div
+        data-drag="floor-top"
+        className="absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+        style={{ top: `calc(${floor.top}% - 6px)` }}
+        title="Drag: floor top"
+      >
+        <span className="h-1 w-full bg-neon/70" />
+      </div>
+      <div
+        data-drag="floor-bottom"
+        className="absolute inset-x-0 z-10 flex h-3 cursor-ns-resize items-center justify-center"
+        style={{ top: `calc(${floor.bottom}% - 6px)` }}
+        title="Drag: floor bottom"
+      >
+        <span className="h-1 w-full bg-neon/70" />
+      </div>
+      {/* markers — one per hotspot, at its zone base */}
       {hotspots.map((h) => {
         const m = marker(h);
         const sel = selectedHotspotId === h.id;
-        const hasArt = (h.sheet && sheetDrawable(h.sheet)) || !!h.image;
         return (
-          <div key={h.id} className="contents">
-            {/* the object itself (NPC / prop art), feet on the marker */}
-            {hasArt ? (
-              <div
-                data-drag={`hs:${h.id}`}
-                className={`absolute z-[19] cursor-move ${sel ? "ring-1 ring-neon/70 ring-offset-1 ring-offset-noir-950" : ""}`}
-                style={{ left: `${m.x * scale}%`, top: `${m.y}%`, width: `${h.bounds.w * scale}%`, maxWidth: "none", transform: "translate(-50%,-100%)" }}
-                title={`${h.label} — drag to move`}
-              >
-                {h.sheet && sheetDrawable(h.sheet) ? (
-                  <div style={{ width: "100%", aspectRatio: `${Math.max(1, h.sheet.frameWidth)} / ${Math.max(1, h.sheet.frameHeight)}` }}>
-                    <SheetSprite sheet={h.sheet} anim="loop" fallbacks={["idle", "walk"]} height="100%" className="drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]" />
-                  </div>
-                ) : (
-                  <img
-                    src={assetUrl(media(h.image) ?? h.image)}
-                    alt=""
-                    draggable={false}
-                    className={`w-full select-none object-contain object-bottom drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]`}
-                  />
-                )}
-                {/* ↕↔ RESIZE — drag the corner handle to scale the prop/NPC live,
-                    feet planted on the marker (writes the zone width). */}
-                <div
-                  data-drag={`propsize:${h.id}`}
-                  className="absolute -bottom-2 -right-2 z-10 flex h-4 w-4 cursor-ew-resize items-center justify-center rounded-full border border-neon bg-noir-950/95 text-neon shadow-[0_0_6px_rgba(255,46,136,0.5)]"
-                  title="Drag ↔ to resize (feet stay planted)"
-                >
-                  <span className="text-[9px] font-bold leading-none">↔</span>
-                </div>
-                {/* ✕ delete — only on the SELECTED object, mirroring obstacles.
-                    Without this a mis-dropped prop could only be removed by
-                    finding it again in the Hotspots tab. */}
-                {sel && onHotspotDelete ? (
-                  <button
-                    className="absolute -right-2 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[9px] leading-none text-crimson hover:bg-crimson/30"
-                    title={`Delete "${h.label}"`}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onHotspotDelete(h.id);
-                    }}
-                  >
-                    ✕
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            {/* the reticle + label. For art-carrying hotspots the name tag sits
-                BELOW the feet on the ground so it never covers the character;
-                bare hotspots keep the label above the diamond as before. */}
-            {hasArt ? (
-              <div
-                data-drag={`hs:${h.id}`}
-                className={`absolute z-20 flex -translate-x-1/2 cursor-move flex-col items-center ${sel ? "text-neon" : "text-paper/70"}`}
-                style={{ left: `${m.x * scale}%`, top: `${m.y}%` }}
-                title={`${h.label} — drag to move`}
-              >
-                <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
-                <span className="mt-0.5 max-w-[24cqw] truncate rounded bg-noir-950/70 px-1 font-pulp text-[7px] uppercase tracking-wider">
-                  {h.label.slice(0, 22)}
-                </span>
-              </div>
-            ) : (
-              <div
-                data-drag={`hs:${h.id}`}
-                className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
-                  sel ? "text-neon" : "text-gold"
-                }`}
-                style={{ left: `${m.x * scale}%`, top: `${m.y}%` }}
-                title={`${h.label} — drag to move`}
-              >
-                <span className="relative whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
-                  {h.label.slice(0, 22)}
-                  {sel && onHotspotDelete ? (
-                    <button
-                      className="absolute -right-2 -top-2 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-crimson bg-noir-950 text-[8px] leading-none text-crimson hover:bg-crimson/30"
-                      title={`Delete "${h.label}"`}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onHotspotDelete(h.id);
-                      }}
-                    >
-                      ✕
-                    </button>
-                  ) : null}
-                </span>
-                <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
-              </div>
-            )}
+          <div
+            key={h.id}
+            data-drag={`hs:${h.id}`}
+            className={`absolute z-20 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center ${
+              sel ? "text-neon" : "text-gold"
+            }`}
+            style={{ left: `${m.x}%`, top: `${m.y}%` }}
+            title={`${h.label} — drag to move`}
+          >
+            <span className="whitespace-nowrap border border-current bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider">
+              {h.label.slice(0, 22)}
+            </span>
+            <span className="h-2.5 w-2.5 rotate-45 border border-current bg-black/30" />
           </div>
         );
       })}
-      {/* 🥾 WALK TEST — the live walker: same art as the spawn dummy, minus
-          its handles. Routed by the real engine router (see routeWalker). */}
-      {walkTest && walkerPos ? (
-        <div
-          data-walktest-walker
-          className="pointer-events-none absolute z-[32] flex -translate-x-1/2 -translate-y-full flex-col items-center"
-          style={{ left: `${walkerPos.x * scale}%`, top: `${walkerPos.y}%`, height: `${playerHPct}%` }}
-          title="Walk-test walker — click the floor or a marker to send it there"
-        >
-          {player && sheetDrawable(player.sheet) ? (
-            <SheetSprite
-              sheet={player.sheet!}
-              anim={walkerMoving ? "walk" : "idle"}
-              fallbacks={["walk", "idle", "loop"]}
-              height="100%"
-              freezeOnFallback={!walkerMoving}
-            />
-          ) : player?.image && !player.image.startsWith("emoji:") ? (
-            <img
-              src={assetUrl(media(player.image) ?? player.image)}
-              alt=""
-              className={`h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] ${walkerMoving ? "stage2d-walk" : ""}`}
-              draggable={false}
-            />
-          ) : (
-            <span
-              className={`block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] ${walkerMoving ? "stage2d-walk" : ""}`}
-              style={{ fontSize: `${playerHPct * 0.8}cqh` }}
-            >
-              {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
-            </span>
-          )}
-          <span className="mt-0.5 rounded bg-noir-950/85 px-1 font-pulp text-[7px] uppercase tracking-wider text-gold">🥾 test</span>
-          <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
-        </div>
-      ) : null}
-      {/* 🥾 the planned route, dashed gold — what the router intends */}
-      {walkTest && walkRouteDraw.length > 1 ? (
-        <svg className="pointer-events-none absolute inset-0 z-[27] h-full w-full" viewBox={`0 0 ${worldW} 100`} preserveAspectRatio="none" aria-hidden>
-          <polyline
-            points={walkRouteDraw.map((pt) => `${pt.x},${pt.y}`).join(" ")}
-            fill="none"
-            stroke="#e8b23c"
-            strokeWidth={1.5}
-            strokeDasharray="5 4"
-            vectorEffect="non-scaling-stroke"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            opacity={0.85}
-          />
-        </svg>
-      ) : null}
-      {/* 🥾 the verdict chip — route found / arrived / walled off */}
-      {walkTest && walkNote ? (
-        <div
-          data-walktest-note
-          className={`pointer-events-none absolute left-2 top-2 z-[40] max-w-[75%] rounded border px-2 py-1 font-type text-[10px] shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${
-            walkNote.ok ? "border-gold/60 bg-noir-950/90 text-gold" : "border-crimson/70 bg-noir-950/90 text-crimson"
-          }`}
-        >
-          {walkNote.text}
-        </div>
-      ) : null}
-      {/* ENTRY SPAWNS — cyan dots: where the walker appears when arriving
-          from another room (drag to move; scene entrySpawns in the panel) */}
-      {Object.entries(entrySpawns ?? {}).map(([fromId, p]) => (
-        <div
-          key={fromId}
-          data-drag={`entry:${fromId}`}
-          className="absolute z-[18] flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
-          style={{ left: `${p.x * scale}%`, top: `${p.y}%` }}
-          title={`Entry from ${entrySceneTitles?.[fromId] ?? fromId} — drag to move`}
-        >
-          <span className="whitespace-nowrap border border-cyan-neon/60 bg-noir-950/90 px-1 text-[8px] uppercase tracking-wider text-cyan-neon">
-            from {entrySceneTitles?.[fromId] ?? fromId}
-          </span>
-          <span className="h-2.5 w-2.5 rotate-45 border border-cyan-neon bg-black/30" />
-        </div>
-      ))}
-      {/* spawn — the REAL walker standing on the plate, at the scene's
-          character size (playerScale): scale 1 = the old 26%-tall figure,
-          2× = twice as tall on the plate, exactly as the game draws it. */}
+      {/* spawn dot */}
       <div
         data-drag="spawn"
-        className="absolute z-30 flex -translate-x-1/2 -translate-y-full cursor-move flex-col items-center"
-        style={{ left: `${spawn.x * scale}%`, top: `${spawn.y}%`, height: `${playerHPct}%` }}
+        className="absolute z-30 flex h-6 w-6 -translate-x-1/2 -translate-y-full cursor-move items-end justify-center"
+        style={{ left: `${spawn.x}%`, top: `${spawn.y}%` }}
         title="Drag: character spawn point"
       >
-        {/* ↕ RESIZE — drag up/down to scale the character live, straight on the
-            plate (writes stage.playerScale). Up = bigger, down = smaller. */}
-        <div
-          data-drag="resize"
-          className="absolute -right-2.5 -top-1.5 z-40 flex h-5 w-5 cursor-ns-resize items-center justify-center rounded-full border border-cyan-neon bg-noir-950/95 text-cyan-neon shadow-[0_0_8px_rgba(42,217,217,0.4)]"
-          title="Drag ↕ to resize the character"
-        >
-          <span className="text-[11px] font-bold leading-none">↕</span>
-        </div>
-        <span className="absolute -left-1.5 -top-1.5 z-40 rounded border border-noir-600 bg-noir-950/95 px-1 font-pulp text-[8px] uppercase tracking-wider text-cyan-neon">
-          {pscale.toFixed(2)}×
-        </span>
-        {player && sheetDrawable(player.sheet) ? (
-          <SheetSprite
-            sheet={player.sheet!}
-            anim={playWalk ? "walk" : "idle"}
-            fallbacks={["walk", "idle", "loop"]}
-            height="100%"
-            freezeOnFallback={!playWalk}
-          />
-        ) : player?.image && !player.image.startsWith("emoji:") ? (
-          <img
-            src={assetUrl(media(player.image) ?? player.image)}
-            alt=""
-            className={`h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] ${playWalk ? "stage2d-walk" : ""}`}
-            draggable={false}
-          />
-        ) : (
-          <span
-            className={`block leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] ${playWalk ? "stage2d-walk" : ""}`}
-            style={{ fontSize: `${playerHPct * 0.8}cqh` }}
-          >
-            {player?.image?.startsWith("emoji:") ? player.image.slice("emoji:".length) : "🕵️"}
-          </span>
-        )}
-        {/* ▶ walk indicator + fps while the cycle preview plays */}
-        {playWalk ? (
-          <span className="absolute -top-6 right-0 z-40 rounded border border-gold/50 bg-noir-950/90 px-1 font-pulp text-[7px] uppercase tracking-wider text-gold">
-            ▶ walk{walkFps ? ` ${walkFps}fps` : ""}
-          </span>
-        ) : null}
-        <span className="mx-auto mt-1 block h-1.5 w-10 rounded-[100%] bg-black/40 blur-[2px]" />
+        <span className="text-lg leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">🕵️</span>
       </div>
     </div>
-  );
-
-  const obstacleToolBtn = (
-    <button
-      onClick={() => {
-        setObstacleMode((v) => !v);
-        if (!obstacleMode) { onObstacleSelect?.(null); setDrawing(false); }
-      }}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        obstacleMode ? "border-crimson bg-crimson/20 text-crimson" : "border-crimson/40 bg-noir-900 text-crimson/80 hover:bg-crimson/10"
-      }`}
-      title={obstacleMode ? "Click to stop drawing obstacles" : "Arm the draw tool, then drag a box on the plate to fence off walk-around furniture"}
-    >
-      🚧 Draw obstacle{obstacleMode ? " (on)" : ""}
-    </button>
-  );
-
-  // 🧭 Toggle the walkable zone between a flat band and an editable path
-  // polygon. Switching TO path seeds a rectangle from the current band; the
-  // point handles then stretch it into any shape. Switching back collapses it
-  // to the polygon's bounding band.
-  const pathToolBtn = (
-    <button
-      onClick={() => {
-        if (pathMode) {
-          onFloorPoints?.([]);
-        } else {
-          onFloorPoints?.([
-            { x: 0, y: floor.top },
-            { x: worldW, y: floor.top },
-            { x: worldW, y: floor.bottom },
-            { x: 0, y: floor.bottom },
-          ]);
-        }
-      }}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        pathMode ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
-      }`}
-      title={pathMode ? "Back to a flat floor band" : "Turn the walkable zone into an editable path — stretch its points into any shape"}
-    >
-      🧭 {pathMode ? "Path (on)" : "Make path"}
-    </button>
-  );
-
-  // 🖌 Paint mode: click vertices straight onto the plate. Complements the
-  // seeded rectangle (pathToolBtn) and the draggable/midpoint handles.
-  const drawPtsBtn = (
-    <button
-      onClick={() => {
-        const next = !drawing;
-        setDrawing(next);
-        if (next) {
-          setObstacleMode(false);
-          onObstacleSelect?.(null);
-        }
-      }}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        drawing ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
-      }`}
-      title="Click points on the plate to paint the walk polygon vertex by vertex — from the third point it's live"
-    >
-      {drawing ? "Paint path (on)" : "Paint path"}
-    </button>
-  );
-
-  // ▶ Walk-cycle preview — play the walker's walk animation on the plate so
-  // the author sees the frames and fps without a playtest.
-  // 🥾 WALK TEST — live walker + real router on the plate (see the state
-  // block near the walk-cycle preview). While on, a 🚪 doors toggle rides
-  // along: gated barriers shut (the locked layout) or open.
-  const walkTestBtn = (
-    <button
-      data-walktest-btn
-      onClick={toggleWalkTest}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        walkTest ? "border-gold bg-gold/20 text-gold" : "border-gold/40 bg-noir-900 text-gold/80 hover:bg-gold/10"
-      }`}
-      title="Put a live walker on the plate — click the floor or a marker and it walks the REAL route (around barriers, along the path). WASD/arrows drive it too."
-    >
-      🥾 Walk test{walkTest ? " (on)" : ""}
-    </button>
-  );
-  const doorsBtn = walkTest ? (
-    <button
-      data-walktest-doors
-      onClick={() => setDoorsOpen((v) => !v)}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        doorsOpen ? "border-emerald-400 bg-emerald-400/15 text-emerald-300" : "border-crimson/50 bg-noir-900 text-crimson/90 hover:bg-crimson/10"
-      }`}
-      title="Gated barriers (🚪 doors) during the test: shut = the locked layout, open = the unlocked one"
-    >
-      🚪 Doors: {doorsOpen ? "open" : "shut"}
-    </button>
-  ) : null;
-
-  const walkToolBtn = (
-    <button
-      onClick={() => setPlayWalk((v) => !v)}
-      className={`border px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-        playWalk ? "border-gold bg-gold/20 text-gold" : "border-gold/40 bg-noir-900 text-gold/80 hover:bg-gold/10"
-      }`}
-      title={playWalk ? "Stop the walk-cycle preview" : "Play the character's walk animation on the plate"}
-    >
-      {playWalk ? "⏸ Walk" : "▶ Walk"}
-    </button>
-  );
-
-  return (
-    <>
-      {expanded ? (
-        <div
-          className="fixed inset-0 z-[100] flex flex-col bg-noir-950/[0.97] p-3 backdrop-blur-sm"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setExpanded(false);
-          }}
-        >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="font-pulp text-[11px] uppercase tracking-widest text-cyan-neon">
-              🚶 Walkable Stage — full-screen preview
-            </span>
-            <div className="flex items-center gap-3">
-              <span className="hidden font-type text-[10px] text-paper/50 xl:block">
-                drag floor edges · spawn · markers · <b className="text-cyan-neon">↕</b> resize · <b className="text-neon">🧭</b> path · <b className="text-crimson">🚧</b> obstacles · <b className="text-gold">▶</b> walk
-              </span>
-              {pathToolBtn}
-              {drawPtsBtn}
-              {obstacleToolBtn}
-              {walkToolBtn}
-              {walkTestBtn}
-              {doorsBtn}
-              <button
-                onClick={() => setExpanded(false)}
-                className="border border-gold/40 bg-noir-900 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
-              >
-                ✕ Close (Esc)
-              </button>
-            </div>
-          </div>
-          <div className="min-h-0 flex-1">{plate}</div>
-        </div>
-      ) : (
-        <div>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/40">Stage plate</span>
-            <div className="flex items-center gap-1.5">
-              {pathToolBtn}
-              {drawPtsBtn}
-              {obstacleToolBtn}
-              {walkToolBtn}
-              {walkTestBtn}
-              {doorsBtn}
-              <button
-                onClick={() => setExpanded(true)}
-                className="border border-cyan-neon/40 bg-noir-900 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-              >
-                ⛶ Full screen
-              </button>
-            </div>
-          </div>
-          {plate}
-        </div>
-      )}
-    </>
   );
 }
 
@@ -1454,9 +359,6 @@ function clearStaleStorageBackups() {
 
 type SceneNodeData = {
   scene: SceneNode;
-  /** Author-set card size from Story.layout (absent = default width). */
-  cardW?: number;
-  cardH?: number;
   isStart: boolean;
   issueCount: number;
   /** which episode owns this scene, when the story is packed into a season */
@@ -1487,7 +389,7 @@ type SceneNodeData = {
 const MediaResolverContext = createContext<(v?: string) => string | undefined>(() => undefined);
 
 const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
-  const { scene, isStart, issueCount, backgroundRef, episodeNumber, episodeTitle, isEpisodeStart, actLabel, actTitle, actDot, isActStart, actConflict, onPath, cardW, cardH } = data as SceneNodeData;
+  const { scene, isStart, issueCount, backgroundRef, episodeNumber, episodeTitle, isEpisodeStart, actLabel, actTitle, actDot, isActStart, actConflict, onPath } = data as SceneNodeData;
   const resolveMedia = useContext(MediaResolverContext);
   const backgroundPreview = resolveMedia(backgroundRef) ?? backgroundRef;
   const isEnd = !!scene.isEnding;
@@ -1541,42 +443,6 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
     setEditing(false);
   };
 
-  // MEASURED MINIMUM HEIGHT. Declared here, ABOVE the note-node early return,
-  // so the hook order is identical on every render path — React requires it.
-  // A pixel estimate can only approximate real rendered text (a choice that
-  // wraps to two lines is taller than any formula thinks), so measure the card
-  // itself: scrollHeight exceeds clientHeight exactly when content is clipped.
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const [measuredOverflow, setMeasuredOverflow] = useState(0);
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    // MEASURE THE OVERFLOW, NOT THE HEIGHT — and never ratchet.
-    //
-    // This used to record `scrollHeight` and only ever grow ("lowering the
-    // floor would fight the author's drag"). But the background preview is
-    // `flex-1` on a resized card: it EXPANDS to fill whatever height you drag
-    // to, so scrollHeight equals the card's current height. Growing a card
-    // therefore raised its own minimum to the new size, and the floor could
-    // never come back down — once you pulled a card out far enough for the
-    // plate to reach its full aspect ratio, it was stuck there permanently.
-    // The ratchet also outlived the content: deleting six choices left the
-    // tall floor behind.
-    //
-    // What actually matters is whether content is CLIPPED, which is the gap
-    // between scrollHeight and clientHeight. That is zero on a comfortably
-    // sized card at any size, so the floor falls back to the content-derived
-    // minimum and the card shrinks freely.
-    const measure = () => {
-      const over = Math.max(0, el.scrollHeight - el.clientHeight);
-      setMeasuredOverflow((prev) => (prev === over ? prev : over));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scene.choices?.length, scene.hotspots?.length, scene.note, scene.title, actLabel, episodeNumber, cardW]);
-
   // ---- note placeholder node -------------------------------------------
   // An author marker ("Missing Scene Here") that wires into the graph on both
   // sides but is BYPASSED in play. One clickable body (type what belongs
@@ -1584,31 +450,9 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
   if (scene.nodeType === "note") {
     const route = (scene.choices ?? [])[0];
     return (
-      <div
-        className={`scene-card ${cardW ? "" : "w-56"} flex h-full flex-col border-2 border-dashed border-gold/70 bg-[#171410] text-paper shadow-[0_0_14px_rgba(232,178,60,0.2)]`}
-        style={
-          cardW
-            ? {
-                width: Math.max(SCENE_CARD_DEFAULT_W, cardW),
-                height: cardH,
-                minWidth: SCENE_CARD_DEFAULT_W,
-                minHeight: SCENE_CARD_DEFAULT_H,
-              }
-            : undefined
-        }
-      >
-      {/* RESIZE — drag any edge/corner. Only shows on the selected card so a
-          busy canvas stays clean. Width/height land in Story.layout via the
-          onNodesChange "dimensions" branch. A card with no authored size keeps
-          the default w-56, so untouched stories look exactly as before. */}
-      <NodeResizer
-        minWidth={SCENE_CARD_DEFAULT_W}
-        minHeight={SCENE_CARD_DEFAULT_H}
-        lineClassName="!border-gold/40"
-        handleClassName="scarlet-resizer"
-      />
+      <div className="scene-card w-56 border-2 border-dashed border-gold/70 bg-[#171410] text-paper shadow-[0_0_14px_rgba(232,178,60,0.2)]">
         <Handle type="target" position={Position.Left} style={{ background: "#e8b23c" }} />
-        <div className="flex shrink-0 items-center justify-between gap-1 border-b border-dashed border-gold/30 px-2 py-1">
+        <div className="flex items-center justify-between gap-1 border-b border-dashed border-gold/30 px-2 py-1">
           <span className="min-w-0 flex-1 truncate font-pulp text-[10px] uppercase tracking-wider text-gold">
             📝 Note — bypassed in play
           </span>
@@ -1637,7 +481,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
             ref={(el) => {
               titleInputRef.current = el;
             }}
-            className="nodrag nopan m-1 min-h-[64px] flex-1 resize-none overflow-auto border border-gold/70 bg-noir-950 p-2 font-type text-[11px] leading-snug text-paper outline-none focus:border-gold"
+            className="nodrag nopan m-1 min-h-[64px] resize-none border border-gold/70 bg-noir-950 p-2 font-type text-[11px] leading-snug text-paper outline-none focus:border-gold"
             value={draftTitle}
             onChange={(e) => setDraftTitle(e.target.value)}
             onBlur={commitRename}
@@ -1653,7 +497,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           />
         ) : (
           <div
-            className="m-1 min-h-[64px] flex-1 cursor-text overflow-auto whitespace-pre-wrap break-words rounded border border-dashed border-gold/25 bg-noir-950/40 p-2 font-type text-[11px] leading-snug text-paper/85 hover:border-gold/50"
+            className="m-1 min-h-[64px] cursor-text rounded border border-dashed border-gold/25 bg-noir-950/40 p-2 font-type text-[11px] leading-snug text-paper/85 hover:border-gold/50"
             title="Click to type what belongs here · drag to move the note"
             onClick={() => {
               setDraftTitle(scene.title);
@@ -1664,7 +508,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
             {scene.title || <span className="italic text-paper/35">Missing Scene Here</span>}
           </div>
         )}
-        <div className="relative shrink-0 border-t border-dashed border-gold/30 px-2 py-1 text-[9px] italic text-gold/70">
+        <div className="relative border-t border-dashed border-gold/30 px-2 py-1 text-[9px] italic text-gold/70">
           {route?.targetSceneId ? "route out → wired" : "drag from here to route out →"}
           <Handle
             type="source"
@@ -1677,58 +521,10 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
     );
   }
 
-  // MINIMUM HEIGHT FROM CONTENT — see sceneCardMinHeight(). A single constant
-  // can't serve both an empty ending and a scene with eight exits: too low and
-  // the busy card clips its own connection handles (an invisible row is an
-  // unwireable one), too high and a sparse card can't be shrunk.
-  const minCardH = sceneCardMinHeight({
-    isEnding: isEnd,
-    choices: scene.choices?.length ?? 0,
-    linkedHotspots: (scene.hotspots ?? []).filter((h) => h.action.targetSceneId).length,
-    hasAutoAdvance: !!scene.autoAdvanceTargetSceneId,
-    hasEpisodeBand: episodeNumber !== undefined,
-    hasActBand: !!actLabel,
-    hasNote: !!scene.note,
-  });
-
-
-  // The floor is what the CONTENT needs: the computed minimum, plus anything
-  // still clipped beyond it. Both terms shrink again when the content does.
-  // Never below the default card either: a resize should only ever make a card
-  // BIGGER than the one you started with. Dragging under the default was what
-  // squashed the "drag to add choice" row out of the bottom of the card.
-  const floorH = Math.max(SCENE_CARD_DEFAULT_H, minCardH + measuredOverflow);
-
   return (
-    <div
-      ref={cardRef}
-      className={`scene-card ${cardW ? "" : "w-56"} flex h-full flex-col border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}
-      // Clamp on RENDER too, not just in the resizer: a card sized before its
-      // scene grew (or by an older build with a lower floor) would otherwise
-      // stay clipped forever. minHeight lets it push back out on its own.
-      style={
-        cardW
-          ? {
-              width: Math.max(SCENE_CARD_DEFAULT_W, cardW),
-              height: cardH,
-              minWidth: SCENE_CARD_DEFAULT_W,
-              minHeight: floorH,
-            }
-          : undefined
-      }
-    >
-      {/* RESIZE — drag any edge/corner. Only shows on the selected card so a
-          busy canvas stays clean. Width/height land in Story.layout via the
-          onNodesChange "dimensions" branch. A card with no authored size keeps
-          the default w-56, so untouched stories look exactly as before. */}
-      <NodeResizer
-        minWidth={SCENE_CARD_DEFAULT_W}
-        minHeight={floorH}
-        lineClassName="!border-gold/40"
-        handleClassName="scarlet-resizer"
-      />
+    <div className={`scene-card w-56 border-2 shadow-xl text-paper ${cardBorder} bg-noir-800`}>
       {!isStart && <Handle type="target" position={Position.Left} style={{ background: "#8b8b9e" }} />}
-      <div className="flex shrink-0 items-center justify-between gap-1 border-b border-noir-600 px-2 py-1">
+      <div className="flex items-center justify-between gap-1 border-b border-noir-600 px-2 py-1">
         {editing ? (
           <input
             ref={(el) => {
@@ -1756,7 +552,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           >
             {scene.nodeType === "credits" && "🎬 CREDITS · "}
             {scene.nodeType === "cutscene" && "🎥 CUTSCENE · "}
-            {scene.nodeType === "stage" && (scene.hideHud ? "🚶 STAGE · NO HUD · " : "🚶 STAGE · ")}
+            {scene.nodeType === "stage" && "🚶 STAGE · "}
             {isStart && "★ START · "}
             {isEnd && !isStart && !scene.nodeType && "🏁 END · "}
             {scene.title}
@@ -1790,13 +586,7 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
           </button>
         </span>
       </div>
-      <div
-        // On a hand-resized card the preview takes the leftover height (that is
-        // the point of making a card bigger); otherwise it keeps its fixed
-        // 56px strip. min-h-14 stops it collapsing when the exits are tall.
-        className={`relative w-full ${cardH ? "min-h-14 flex-1" : "h-14 shrink-0"}`}
-        style={bgStyle(backgroundPreview ?? scene.background)}
-      >
+      <div className="relative h-14 w-full" style={bgStyle(backgroundPreview ?? scene.background)}>
         {scene.background.startsWith("video:") && (
           <span className="absolute inset-0 flex items-center justify-center text-2xl" title="Video cutscene">🎥</span>
         )}
@@ -1827,13 +617,13 @@ const SceneFlowNode = memo(function SceneFlowNode({ data }: NodeProps) {
       {scene.note && (
         <div className="border-b border-gold/25 bg-gold/10 px-2 py-1" title={scene.note}>
           <span className="font-pulp text-[8px] uppercase tracking-widest text-gold">📝 note · </span>
-          <span className={`font-type text-[8px] leading-tight text-paper/70 ${cardH ? "line-clamp-6" : "line-clamp-2"}`}>{scene.note}</span>
+          <span className="font-type text-[8px] leading-tight text-paper/70 line-clamp-2">{scene.note}</span>
         </div>
       )}
-      <div className="shrink-0 px-2 py-1 text-[9px] text-paper/50">
+      <div className="px-2 py-1 text-[9px] text-paper/50">
         ⌖ {scene.hotspots?.length ?? 0} hotspots · 💬 {scene.dialogueBeats?.length ?? 0} beats
       </div>
-      <div className="shrink-0 divide-y divide-noir-600/60 border-t border-noir-600">
+      <div className="divide-y divide-noir-600/60 border-t border-noir-600">
         {!isEnd &&
           (scene.choices ?? []).map((c) => (
             <div key={c.id} className="relative px-2 py-1 pr-4 text-[9px] leading-tight text-paper/75">
@@ -1938,413 +728,2006 @@ const edgeTypes = { removable: RemovableEdge };
 /*  small form helpers                                                 */
 /* ------------------------------------------------------------------ */
 
-/* ------------------------------------------------------------------ */
-/* SCRIPTED SEQUENCES — the compact step-list editor shared by the      */
-/* runScript hotspot action and the stage tab's room-entry script.      */
-/* One row per step: pick what it does, fill in the fields that kind    */
-/* needs. Stage-only by design — classic scenes never see scripts.      */
-
-const SCRIPT_STEP_KINDS: { v: StageScriptStep["do"]; label: string }[] = [
-  { v: "walkTo", label: "🚶 Player walks to" },
-  { v: "face", label: "↔ Player faces" },
-  { v: "pose", label: "🧍 Player pose" },
-  { v: "say", label: "💬 Say line" },
-  { v: "wait", label: "⏱ Wait" },
-  { v: "npcWalkTo", label: "🚶 NPC walks to" },
-  { v: "npcMotion", label: "🎭 NPC motion" },
-  { v: "setFlag", label: "🚩 Set flag" },
-  { v: "goToScene", label: "→ Go to scene (ends script)" },
-];
-
-/** A fresh step of the given kind with sensible defaults. */
-function defaultScriptStep(kind: StageScriptStep["do"], npcIds: string[], sceneId: string): StageScriptStep {
-  switch (kind) {
-    case "walkTo":
-      return { do: "walkTo", x: 50, y: 80 };
-    case "face":
-      return { do: "face", dir: "left" };
-    case "pose":
-      return { do: "pose" };
-    case "say":
-      return { do: "say", text: "" };
-    case "wait":
-      return { do: "wait", seconds: 1 };
-    case "npcWalkTo":
-      return { do: "npcWalkTo", npcId: npcIds[0] ?? "", x: 50, y: 80 };
-    case "npcMotion":
-      return { do: "npcMotion", npcId: npcIds[0] ?? "" };
-    case "setFlag":
-      return { do: "setFlag", flag: "" };
-    case "goToScene":
-      return { do: "goToScene", targetSceneId: sceneId };
-  }
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block text-[10px] uppercase tracking-wider text-paper/50">
+      {label}
+      <div className="mt-0.5 normal-case tracking-normal">{children}</div>
+    </label>
+  );
 }
 
-function ScriptEditor({
-  steps,
-  onChange,
-  npcIds,
-  scenes,
-  onPickPoint,
-  picking,
+/** Local-state text area that only commits to the story on blur / Enter /
+ *  unmount. Keeping text in component state means typing doesn't re-render
+ *  the inspector or clone the whole story on every keystroke — which was
+ *  causing the beat line to drop focus / reject typing mid-edit. */
+function CommitTextArea({
+  value,
+  onCommit,
+  className,
+  rows = 4,
+  placeholder,
 }: {
-  steps: StageScriptStep[];
-  onChange: (next: StageScriptStep[]) => void;
-  /** Ambient NPC ids in this scene (for the NPC step targets). */
-  npcIds: string[];
-  scenes: { id: string; title: string }[];
-  /** Armed from a row: the next plate click becomes that step's x/y
-   *  (the cutscene recorder — no hand-typed coordinates). */
-  onPickPoint?: (index: number, npc: boolean) => void;
-  /** Which row is currently waiting for its plate click. */
-  picking?: { index: number; npc: boolean } | null;
+  value: string;
+  onCommit: (next: string) => void;
+  className?: string;
+  rows?: number;
+  placeholder?: string;
 }) {
-  const upd = (i: number, patch: Record<string, unknown>) =>
-    onChange(steps.map((s, si) => (si === i ? ({ ...s, ...patch } as StageScriptStep) : s)));
-  const swap = (i: number, j: number) => {
-    if (j < 0 || j >= steps.length) return;
-    const next = steps.slice();
-    [next[i], next[j]] = [next[j], next[i]];
-    onChange(next);
-  };
-  const num = (v: string, fallback: number) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : fallback;
+  const [text, setText] = useState(value);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  // Re-sync only when the external value changes AND we're not focused (e.g.
+  // after an undo, duplicate, or sound-tag insertion elsewhere).
+  useEffect(() => {
+    if (ref.current && document.activeElement === ref.current) return;
+    setText(value);
+  }, [value]);
+  const commit = () => {
+    if (text !== value) onCommit(text);
   };
   return (
-    <div className="space-y-1">
-      {steps.map((st, i) => (
-        <div key={i} className="rounded border border-noir-700 bg-noir-950/60 p-1.5">
-          <div className="flex items-center gap-1">
-            <span className="w-4 text-right font-type text-[9px] text-paper/40">{i + 1}</span>
-            <select
-              className={`${inputCls} flex-1`}
-              value={st.do}
-              onChange={(e) => onChange(steps.map((s, si) => (si === i ? defaultScriptStep(e.target.value as StageScriptStep["do"], npcIds, scenes[0]?.id ?? "") : s)))}
-            >
-              {SCRIPT_STEP_KINDS.map((k) => (
-                <option key={k.v} value={k.v}>{k.label}</option>
-              ))}
-            </select>
-            <button className="px-1 text-[10px] text-paper/50 hover:text-paper" title="Move up" onClick={() => swap(i, i - 1)}>▲</button>
-            <button className="px-1 text-[10px] text-paper/50 hover:text-paper" title="Move down" onClick={() => swap(i, i + 1)}>▼</button>
-            <button className="px-1 text-[10px] text-red-300/70 hover:text-red-300" title="Remove step" onClick={() => onChange(steps.filter((_, si) => si !== i))}>✕</button>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1 pl-5">
-            {(st.do === "npcWalkTo" || st.do === "npcMotion" || (st.do === "say" && npcIds.length > 0)) && (
-              <select
-                className={`${inputCls} w-auto min-w-[90px] flex-none`}
-                value={("npcId" in st ? st.npcId : "") ?? ""}
-                onChange={(e) => upd(i, { npcId: e.target.value || undefined })}
-                title="Which actor"
-              >
-                {st.do === "say" ? <option value="">player</option> : null}
-                {npcIds.map((id) => (
-                  <option key={id} value={id}>{id}</option>
-                ))}
-              </select>
-            )}
-            {(st.do === "walkTo" || st.do === "npcWalkTo") && (
-              <>
-                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.x} title="x % of the walkable world" onChange={(e) => upd(i, { x: num(e.target.value, st.x) })} />
-                <input className={`${inputCls} w-16 flex-none`} type="number" value={st.y} title="y % of the stage floor" onChange={(e) => upd(i, { y: num(e.target.value, st.y) })} />
-                {onPickPoint ? (
-                  <button
-                    onClick={() => onPickPoint(i, st.do === "npcWalkTo")}
-                    className={`flex-none border px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest ${
-                      picking?.index === i ? "border-neon bg-neon/20 text-neon" : "border-neon/40 bg-noir-900 text-neon/80 hover:bg-neon/10"
-                    }`}
-                    title={picking?.index === i ? "Waiting for a plate click — pick again to cancel" : "Click the stage plate to set this target visually"}
-                  >
-                    {picking?.index === i ? "Picking…" : "Pick on plate"}
-                  </button>
-                ) : null}
-              </>
-            )}
-            {st.do === "face" && (
-              <select className={`${inputCls} w-auto flex-none`} value={st.dir} onChange={(e) => upd(i, { dir: e.target.value })}>
-                <option value="left">left</option>
-                <option value="right">right</option>
-              </select>
-            )}
-            {st.do === "pose" && (
-              <input className={`${inputCls} flex-1`} value={st.pose ?? ""} placeholder="pose animation name (empty = back to idle)" onChange={(e) => upd(i, { pose: e.target.value || undefined })} />
-            )}
-            {st.do === "say" && (
-              <input className={`${inputCls} flex-1`} value={st.text} placeholder="the spoken line" onChange={(e) => upd(i, { text: e.target.value })} />
-            )}
-            {st.do === "wait" && (
-              <>
-                <input className={`${inputCls} w-16 flex-none`} type="number" step="0.1" min="0" value={st.seconds} onChange={(e) => upd(i, { seconds: Math.max(0, num(e.target.value, st.seconds)) })} />
-                <span className="text-[9px] text-paper/40">seconds</span>
-              </>
-            )}
-            {st.do === "npcMotion" && (
-              <>
-                <input className={`${inputCls} w-24 flex-none`} value={st.anim ?? ""} placeholder="motion" title="Named sheet animation" onChange={(e) => upd(i, { anim: e.target.value || undefined })} />
-                <input className={`${inputCls} flex-1`} value={st.say ?? ""} placeholder="say line" onChange={(e) => upd(i, { say: e.target.value || undefined })} />
-                <select className={`${inputCls} w-auto flex-none`} value={st.facing ?? ""} title="Face" onChange={(e) => upd(i, { facing: e.target.value || undefined })}>
-                  <option value="">face —</option>
-                  <option value="left">left</option>
-                  <option value="right">right</option>
-                </select>
-              </>
-            )}
-            {st.do === "setFlag" && (
-              <input className={`${inputCls} flex-1`} value={st.flag} placeholder="flag id" onChange={(e) => upd(i, { flag: e.target.value })} />
-            )}
-            {st.do === "goToScene" && (
-              <select className={`${inputCls} flex-1`} value={st.targetSceneId} onChange={(e) => upd(i, { targetSceneId: e.target.value })}>
-                {scenes.map((s) => (
-                  <option key={s.id} value={s.id}>{s.title}</option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-      ))}
-      <button
-        className="rounded border border-noir-600 px-2 py-0.5 text-[10px] text-paper/70 hover:border-neon hover:text-neon"
-        onClick={() => onChange([...steps, defaultScriptStep(steps.length ? "say" : "walkTo", npcIds, scenes[0]?.id ?? "")])}
-      >
-        ＋ add step
-      </button>
+    <textarea
+      ref={ref}
+      className={className}
+      rows={rows}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      // Commit on Enter? For dialogue we keep newlines natural, so Enter is a
+      // line break; save happens on blur. Keep a Ctrl/Cmd+Enter to save early.
+      onKeyDown={(e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          commit();
+          ref.current?.blur();
+        }
+      }}
+    />
+  );
+}
+
+const inputCls =
+  "w-full border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-neon outline-none";
+
+/** Media fields store compact `asset:<id>` references (not base64 data URLs), so
+ * the text input should stay blank for those and only show real paths/URLs. */
+function mediaField(v?: string): string {
+  if (!v) return "";
+  if (v.startsWith("data:") || v.startsWith("asset:") || v.startsWith("video:asset:")) return "";
+  return v;
+}
+
+const sectionStateKey = (id: string) => `scarlet-studio-section-${id}`;
+
+/** A collapsible inspector section. The open/closed state is persisted per-id in
+ * localStorage, so authors can minimise the panels they rarely touch (the
+ * workflow/readiness summaries, camera, foreground, lighting…) and keep the
+ * inspector from getting cramped — their choices survive reloads.
+ *
+ * Sections default to MINIMISED so the inspector starts compact (authors expand
+ * only what they need). `headerRight` lets callers render a small action (e.g.
+ * a delete button) in the header without nesting a button inside the toggle. */
+function CollapsibleSection({
+  id,
+  title,
+  children,
+  defaultOpen = false,
+  hint,
+  titleClass = "text-cyan-neon",
+  className = "border border-noir-600/70 bg-noir-900/40",
+  headerRight,
+  controlledOpen,
+  onToggle,
+  draggable,
+  dragOver,
+  onDragStartHandle,
+  onDragEnterHandle,
+  onDragOverHandle,
+  onDropHandle,
+  onDragEndHandle,
+}: {
+  id: string;
+  title: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  hint?: string;
+  titleClass?: string;
+  className?: string;
+  headerRight?: React.ReactNode;
+  /** when supplied, open state is owned by the parent (no localStorage) */
+  controlledOpen?: boolean;
+  onToggle?: (next: boolean) => void;
+  /** enable drag-to-reorder: true while a drag is over this card */
+  draggable?: boolean;
+  dragOver?: boolean;
+  onDragStartHandle?: (e: React.DragEvent) => void;
+  onDragEnterHandle?: (e: React.DragEvent) => void;
+  onDragOverHandle?: (e: React.DragEvent) => void;
+  onDropHandle?: (e: React.DragEvent) => void;
+  onDragEndHandle?: (e: React.DragEvent) => void;
+}) {
+  const [localOpen, setLocalOpen] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(sectionStateKey(id));
+      if (raw === "0") return false;
+      if (raw === "1") return true;
+    } catch {
+      /* storage unavailable — fall back to the default */
+    }
+    return defaultOpen;
+  });
+  const open = controlledOpen !== undefined ? controlledOpen : localOpen;
+  const toggle = () => {
+    const next = !open;
+    if (controlledOpen !== undefined) {
+      onToggle?.(next);
+      return;
+    }
+    setLocalOpen(next);
+    try {
+      localStorage.setItem(sectionStateKey(id), next ? "1" : "0");
+    } catch {
+      /* storage unavailable — state still toggles for this session */
+    }
+  };
+  return (
+    <div
+      className={`${className} ${dragOver ? "ring-2 ring-gold bg-gold/10" : ""}`}
+      onDragEnter={onDragEnterHandle}
+      onDragOver={onDragOverHandle}
+      onDrop={onDropHandle}
+    >
+      <div className="flex w-full items-center justify-between gap-2 px-2 py-1.5 hover:bg-noir-800/60">
+        {draggable && (
+          <span
+            draggable
+            onDragStart={onDragStartHandle}
+            onDragEnd={onDragEndHandle}
+            title="Drag to reorder"
+            className="flex cursor-grab touch-none select-none items-center text-paper/35 hover:text-gold active:cursor-grabbing"
+            aria-label="Drag to reorder"
+          >
+            <svg width="8" height="14" viewBox="0 0 8 14" aria-hidden>
+              <circle cx="2" cy="2.5" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="2.5" r="1.3" fill="currentColor" />
+              <circle cx="2" cy="7" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="7" r="1.3" fill="currentColor" />
+              <circle cx="2" cy="11.5" r="1.3" fill="currentColor" />
+              <circle cx="6" cy="11.5" r="1.3" fill="currentColor" />
+            </svg>
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          title={open ? "Minimise this section" : "Maximise this section"}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span className={`min-w-0 truncate font-pulp text-[9px] uppercase tracking-widest ${titleClass}`}>{title}</span>
+          {hint && <span className="shrink-0 font-type text-[8px] uppercase tracking-wider text-paper/40">{hint}</span>}
+          <span className="shrink-0 text-paper/50" aria-hidden>
+            {open ? "▾" : "▸"}
+          </span>
+        </button>
+        {headerRight && <div className="flex shrink-0 items-center gap-1">{headerRight}</div>}
+      </div>
+      {open && <div className="space-y-2 p-2">{children}</div>}
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* NPC PLATE PREVIEW — the room plate with every ambient NPC's spawn    */
-/* and patrol route drawn on it. Drag the actor (spawn) or a numbered   */
-/* stop to place it; click an actor to highlight their route. Purely a  */
-/* placement aid — spawn/waypoint numbers in the panel stay the truth.  */
-
-function NpcPlatePreview({
-  bg,
-  worldWidth,
-  floor,
-  npcs,
-  onMoveSpawn,
-  onMoveWp,
-  onScale,
+/** Live animated preview of the chosen cinematic — the same camera layer the
+ * player sees, so authors can watch the motion instead of guessing. */
+function CinematicPreview({
+  cinematic,
+  url,
+  media,
 }: {
-  bg: React.CSSProperties;
-  worldWidth?: number;
-  floor: { top: number; bottom: number };
-  npcs: {
-    id: string;
-    x: number;
-    y: number;
-    /** What to draw. A SHEET wins when there is one — an ambient NPC is
-     *  usually sheet-only (no `image`), and this preview used to ignore
-     *  `sheet` entirely and fall back to the 🚶 emoji, so the plate showed
-     *  placeholder walkers instead of the actual cast. */
-    art: { emoji?: string; url?: string; sheet?: import("./../game/spriteSheet").SpriteSheet };
-    patrol?: StageNpcWaypoint[];
-    /** Authored size (StageNpc.scale). 1 = the ambient default height. */
-    scale?: number;
-  }[];
-  onMoveSpawn: (i: number, x: number, y: number) => void;
-  onMoveWp: (i: number, wi: number, x: number, y: number) => void;
-  /** Resize an actor by dragging the ↕ handle over its head — writes
-   *  StageNpc.scale, which is what the GAME reads (Stage.tsx: npc.scale).
-   *  Without this the plate could move an actor but never size one, so a
-   *  bystander authored at the wrong height could only be fixed by finding
-   *  the numeric field further down the panel. */
-  onScale?: (i: number, scale: number) => void;
+  cinematic: CinematicSettings | undefined;
+  url: string;
+  media: (v?: string) => string | undefined;
+}) {
+  if (url.startsWith("video:")) {
+    return (
+      <div className="flex aspect-video w-full items-center justify-center border border-gold/30 bg-noir-950 font-pulp text-[8px] uppercase tracking-widest text-paper/40">
+        🎥 video cutscene — camera motion doesn't apply
+      </div>
+    );
+  }
+  const { className, style } = cinematicLayer(cinematic, url);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const pOn = (cinematic?.parallaxDepth ?? 0) > 0;
+  // Pointer parallax in the preview — write the same --par-x / --par-y vars the
+  // game uses so the preview is live and truthful.
+  const onPreviewMove = (e: React.PointerEvent) => {
+    const el = previewRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--par-x", (((e.clientX - r.left) / r.width) * 2 - 1).toFixed(3));
+    el.style.setProperty("--par-y", (((e.clientY - r.top) / r.height) * 2 - 1).toFixed(3));
+  };
+  const onPreviewLeave = () => {
+    previewRef.current?.style.removeProperty("--par-x");
+    previewRef.current?.style.removeProperty("--par-y");
+  };
+  return (
+    <div
+      ref={previewRef}
+      onPointerMove={pOn ? onPreviewMove : undefined}
+      onPointerLeave={pOn ? onPreviewLeave : undefined}
+      className="relative aspect-video w-full overflow-hidden border border-gold/30 bg-noir-950"
+      style={pOn ? parallaxStyle(cinematic) : undefined}
+    >
+      <div className={`absolute inset-0 ${pOn ? "parallax-plate" : ""}`} style={pOn ? parallaxStyle(cinematic) : undefined}>
+        <div className={`absolute inset-0 ${className}`} style={style}>
+          {resolveLights(cinematic).map((l, i) => (
+            <div key={i} className="cin-light" style={lightStyle(l)} />
+          ))}
+          <LensFlareLayer cinematic={cinematic} />
+          <CinematicOverlays cinematic={cinematic} />
+        </div>
+      </div>
+      {pOn && <ParallaxMidLayers cinematic={cinematic} resolve={media} />}
+      <div className={pOn ? "parallax-fg absolute inset-0" : "absolute inset-0"}>
+        <ForegroundExtras cinematic={cinematic} resolve={media} />
+        <ForegroundLayer cinematic={cinematic} resolve={media} />
+      </div>
+      <span className="pointer-events-none absolute bottom-1 right-1 z-[5] rounded bg-noir-950/70 px-1 py-0.5 font-pulp text-[7px] uppercase tracking-widest text-gold/70">
+        {cinematic?.mode ?? "pan"}
+        {cinematic?.colorGrade ? ` · ${GRADE_PRESETS[cinematic.colorGrade]?.name?.split(" — ")[0] ?? ""}` : ""}
+        {pOn ? " · parallax" : ""}
+      </span>
+    </div>
+  );
+}
+
+/** Drag-to-place editor for the foreground overlay. Shows the actual scene
+ * background with the foreground subject (and any keyframe animation) overlaid
+ * at its current scale / fit / position, so authors can drag the subject's
+ * anchor point anywhere in the frame — or click a spot on the image to set the
+ * zoom focus (anchor) — exactly as it will appear in the game. Renders the real
+ * ForegroundLayer, so the preview is pixel-truthful. */
+function ForegroundPositionEditor({
+  previewUrl,
+  cinematic,
+  media,
+  x,
+  y,
+  anchor,
+  replayEpoch,
+  onChange,
+  onAnchorAt,
+}: {
+  previewUrl: string;
+  cinematic?: CinematicSettings;
+  media: (v?: string) => string | undefined;
+  x: number;
+  y: number;
+  anchor: string;
+  /** bump to restart the foreground zoom animation in this preview */
+  replayEpoch?: number;
+  onChange: (x: number, y: number) => void;
+  /** click-to-anchor: pin this image point at this frame position (no jump) */
+  onAnchorAt: (anchor: string, x: number, y: number) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const worldW = Math.max(100, worldWidth ?? 100);
-  /** world-% → plate-% (a wide strip is shrunk to fit the preview). */
-  const k = 100 / worldW;
-  const [sel, setSel] = useState(0);
-  /** Live drag: which marker (wp -1 = the spawn) and where it currently is.
-   *  The story is only written on release — one undo step per drag. */
-  const [drag, setDrag] = useState<{ n: number; wp: number; x: number; y: number } | null>(null);
-  /** Live resize: which actor, the pointer y it started at, and the scale it
-   *  started from. Committed on release like the position drags. */
-  const [sizing, setSizing] = useState<{ n: number; startY: number; startScale: number; scale: number } | null>(null);
-  const pct = (e: React.PointerEvent) => {
-    const r = ref.current!.getBoundingClientRect();
-    return {
-      x: Math.min(worldW, Math.max(0, (((e.clientX - r.left) / r.width) * 100) / k)),
-      y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
+  const moving = useRef(false);
+  const movedRef = useRef(false);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  // Measured preview size drives the pixel-offset readouts and sliders, so the
+  // X/Y controls show concrete pixels (offset from centre) instead of abstract
+  // percentages. The stored value stays a %, so scenes still scale responsively.
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Same guard as the player's frame observer: skip no-op writes and defer
+    // to the next frame, so resizing never re-enters the observation pass.
+    const update = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     };
-  };
-  const round1 = (v: number) => Math.round(v * 10) / 10;
-  const grab = (n: number, wp: number, x: number, y: number) => (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    setSel(n);
-    setDrag({ n, wp, x, y });
-  };
-  const move = (e: React.PointerEvent) => {
-    // Resize wins while it is active: dragging the handle must not also drag
-    // the actor underneath it.
-    if (sizing) {
-      const r = ref.current!.getBoundingClientRect();
-      // Drag UP = bigger. Same sensitivity as the walker's ↕ handle, so the
-      // two feel identical.
-      const dy = (sizing.startY - e.clientY) / r.height;
-      const next = Math.min(3, Math.max(0.1, sizing.startScale * (1 + dy * 4)));
-      setSizing({ ...sizing, scale: Math.round(next * 100) / 100 });
-      return;
+    update();
+    if (typeof ResizeObserver !== "undefined") {
+      let raf = 0;
+      const ro = new ResizeObserver(() => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(update);
+      });
+      ro.observe(el);
+      return () => {
+        cancelAnimationFrame(raf);
+        ro.disconnect();
+      };
     }
-    if (!drag) return;
-    const p = pct(e);
-    setDrag({ ...drag, x: p.x, y: p.y });
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const toPx = (p: number, axis: "x" | "y") => Math.round(((p - 50) / 100) * (axis === "x" ? size.w : size.h));
+  const fromPx = (px: number, axis: "x" | "y") => {
+    const half = axis === "x" ? size.w : size.h;
+    if (!half) return 50;
+    return clamp(50 + (px / half) * 100, 0, 100);
   };
-  const drop = () => {
-    if (sizing) {
-      onScale?.(sizing.n, sizing.scale);
-      setSizing(null);
-      return;
-    }
-    if (!drag) return;
-    if (drag.wp < 0) onMoveSpawn(drag.n, round1(drag.x), round1(drag.y));
-    else onMoveWp(drag.n, drag.wp, round1(drag.x), round1(drag.y));
-    setDrag(null);
+  const offsetX = toPx(x, "x");
+  const offsetY = toPx(y, "y");
+
+  const moveTo = (clientX: number, clientY: number) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    onChange(
+      Math.round(clamp(((clientX - r.left) / r.width) * 100, 0, 100)),
+      Math.round(clamp(((clientY - r.top) / r.height) * 100, 0, 100))
+    );
   };
-  /** The size an actor should draw at right now (live while resizing). */
-  const scaleOf = (i: number, authored?: number) =>
-    sizing && sizing.n === i ? sizing.scale : (authored ?? 1);
-  const posOf = (n: number, wp: number, x: number, y: number) =>
-    drag && drag.n === n && drag.wp === wp ? { x: drag.x, y: drag.y } : { x, y };
+
+  /** Click = define the anchor: the clicked point ON THE SUBJECT becomes the
+   * zoom-focus anchor, and it is pinned at the clicked frame position, so the
+   * subject doesn't jump — the clicked spot just becomes the pivot. */
+  const anchorAt = (clientX: number, clientY: number) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const box = ref.current?.querySelector("[data-fg-anchor-box]");
+    const br = box?.getBoundingClientRect();
+    const fx = Math.round(clamp(((clientX - r.left) / r.width) * 100, 0, 100));
+    const fy = Math.round(clamp(((clientY - r.top) / r.height) * 100, 0, 100));
+    if (!br || br.width <= 0 || br.height <= 0) return;
+    // Only anchor when the click lands on the subject itself.
+    if (clientX < br.left || clientX > br.right || clientY < br.top || clientY > br.bottom) return;
+    const ax = Math.round(clamp(((clientX - br.left) / br.width) * 100, 0, 100));
+    const ay = Math.round(clamp(((clientY - br.top) / br.height) * 100, 0, 100));
+    onAnchorAt(`${ax}% ${ay}%`, fx, fy);
+  };
+
+  const a = parseAnchor(anchor);
+
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/45">Position &amp; focus point</span>
+        <span className="rounded bg-noir-950/70 px-1 font-type text-[8px] text-gold">focus {a.ax}% {a.ay}%</span>
+      </div>
       <div
         ref={ref}
-        className="relative aspect-video w-full select-none overflow-hidden rounded border border-teal-400/30"
-        style={{ ...bg, touchAction: "none" }}
+        className="relative aspect-video w-full cursor-move touch-none overflow-hidden border border-gold/30"
+        style={{ ...bgStyle(previewUrl) }}
+        title="Click a point on the subject to set the zoom focus · drag to move it"
+        onPointerDown={(e) => {
+          moving.current = true;
+          movedRef.current = false;
+          startRef.current = { x: e.clientX, y: e.clientY };
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          if (!moving.current) return;
+          if (!movedRef.current && startRef.current) {
+            const d = Math.hypot(e.clientX - startRef.current.x, e.clientY - startRef.current.y);
+            if (d < 6) return; // still a click
+            movedRef.current = true;
+          }
+          moveTo(e.clientX, e.clientY);
+        }}
+        onPointerUp={() => {
+          if (!moving.current) return;
+          moving.current = false;
+          const start = startRef.current;
+          startRef.current = null;
+          if (!movedRef.current && start) anchorAt(start.x, start.y);
+        }}
+        onPointerCancel={() => {
+          moving.current = false;
+          startRef.current = null;
+        }}
       >
-        {/* floor band, so routes get placed on the walkable ground */}
-        {[floor.top, floor.bottom].map((y, i) => (
-          <div key={i} className="pointer-events-none absolute inset-x-0 border-t border-dashed border-neon/30" style={{ top: `${y}%` }} />
-        ))}
-        {/* viewport seams of a wide world */}
-        {worldW > 100
-          ? Array.from({ length: Math.ceil(worldW / 100) - 1 }, (_, i) => (
-              <div key={i} className="pointer-events-none absolute inset-y-0 border-l border-dashed border-paper/25" style={{ left: `${(i + 1) * 100 * k}%` }} />
-            ))
-          : null}
-        {/* routes under the markers */}
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
-          {npcs.map((n, i) => {
-            const pts = [posOf(i, -1, n.x, n.y), ...(n.patrol ?? []).map((w, wi) => posOf(i, wi, w.x, w.y))];
-            if (pts.length < 2) return null;
-            return (
-              <polyline
-                key={n.id + i}
-                points={pts.map((p) => `${p.x * k},${p.y}`).join(" ")}
-                fill="none"
-                stroke={sel === i ? "#2dd4bf" : "#2dd4bf55"}
-                strokeWidth={sel === i ? 0.5 : 0.3}
-                strokeDasharray="1.4 1"
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
-        </svg>
-        {/* numbered stops */}
-        {npcs.map((n, i) =>
-          (n.patrol ?? []).map((w, wi) => {
-            const p = posOf(i, wi, w.x, w.y);
-            return (
-              <div
-                key={`${i}-${wi}`}
-                className={`absolute z-10 flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border font-pulp text-[8px] leading-none ${
-                  sel === i ? "border-teal-200 bg-teal-500/90 text-noir-950" : "border-teal-400/50 bg-noir-950/70 text-teal-300/70"
-                }`}
-                style={{ left: `${p.x * k}%`, top: `${p.y}%` }}
-                title={`${n.id} · stop ${wi + 1} — drag to move${w.scale ? ` · size ×${w.scale}` : ""}`}
-                onPointerDown={grab(i, wi, w.x, w.y)}
-                onPointerMove={move}
-                onPointerUp={drop}
-              >
-                {wi + 1}
-                {w.scale ? (
-                  <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap font-type text-[7px] text-teal-200/90 [text-shadow:0_1px_2px_#000]">×{w.scale}</span>
-                ) : null}
-              </div>
-            );
-          }),
-        )}
-        {/* the actors themselves at spawn */}
-        {npcs.map((n, i) => {
-          const p = posOf(i, -1, n.x, n.y);
-          const sc = scaleOf(i, n.scale);
-          const live = sizing?.n === i;
-          return (
-            <div
-              key={n.id + i}
-              className="absolute z-20 -translate-x-1/2 -translate-y-full cursor-grab"
-              style={{ left: `${p.x * k}%`, top: `${p.y}%` }}
-              title={`${n.id} — drag to move the spawn${sc !== 1 ? ` · size ×${sc}` : ""}`}
-              onPointerDown={grab(i, -1, n.x, n.y)}
-              onPointerMove={move}
-              onPointerUp={drop}
-            >
-              <div className={`relative flex flex-col items-center ${sel === i ? "" : "opacity-70"}`}>
-                {/* The art scales from the FEET, matching the game: an actor
-                    grows upward from the floor rather than about its middle. */}
-                <div style={{ transform: `scale(${sc})`, transformOrigin: "50% 100%" }}>
-                  {n.art.sheet ? (
-                    // The real actor, idling exactly as the game draws it.
-                    <SheetSprite
-                      sheet={n.art.sheet}
-                      anim="idle"
-                      fallbacks={["walk", "rest"]}
-                      height={40}
-                      className="drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]"
-                    />
-                  ) : n.art.url ? (
-                    <img src={n.art.url} alt="" draggable={false} className="h-10 w-auto object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]" />
-                  ) : (
-                    <span className="block text-2xl leading-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">{n.art.emoji ?? "🚶"}</span>
-                  )}
+        <div key={replayEpoch ?? 0}>
+          <ForegroundLayer cinematic={cinematic} resolve={media} />
+        </div>
+        {/* crosshair marker at the anchor / focus point (also the pin) */}
+        <div
+          className="pointer-events-none absolute z-[2] h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-gold shadow-[0_0_10px_#e8b23c]"
+          style={{ left: `${x}%`, top: `${y}%` }}
+        />
+        <p className="pointer-events-none absolute inset-x-0 bottom-1 z-[2] text-center font-pulp text-[8px] uppercase tracking-widest text-paper/70">
+          Click the subject to set the focus point · drag to move
+        </p>
+      </div>
+
+      {/* Offset from centre, in pixels of this preview — concrete numbers the
+          author can read against the scene, stored as % so it stays responsive. */}
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[10px] uppercase tracking-wider text-paper/50">
+          Horizontal offset <span className="text-paper/70">{offsetX >= 0 ? "+" : ""}{offsetX}px</span>
+          <input
+            type="range"
+            min={size.w ? -Math.round(size.w / 2) : -400}
+            max={size.w ? Math.round(size.w / 2) : 400}
+            step={1}
+            value={offsetX}
+            className="mt-0.5 w-full accent-pink-500"
+            aria-label="Horizontal offset (pixels from centre)"
+            onChange={(e) => onChange(fromPx(Number(e.target.value), "x"), y)}
+          />
+        </label>
+        <label className="block text-[10px] uppercase tracking-wider text-paper/50">
+          Vertical offset <span className="text-paper/70">{offsetY >= 0 ? "+" : ""}{offsetY}px</span>
+          <input
+            type="range"
+            min={size.h ? -Math.round(size.h / 2) : -72}
+            max={size.h ? Math.round(size.h / 2) : 72}
+            step={1}
+            value={offsetY}
+            className="mt-0.5 w-full accent-pink-500"
+            aria-label="Vertical offset (pixels from centre)"
+            onChange={(e) => onChange(x, fromPx(Number(e.target.value), "y"))}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/** Reusable cinematic camera/lighting controls (mode, motion, focal point, dim,
+ * lights) bound to one image. Used for the scene background and for each
+ * dialogue beat with a replacement background image. */
+function CinematicControls({
+  cinematic,
+  previewUrl,
+  storyId,
+  media,
+  onChange,
+}: {
+  cinematic: CinematicSettings | undefined;
+  previewUrl: string;
+  storyId: string;
+  media: (v?: string) => string | undefined;
+  onChange: (next: CinematicSettings | undefined) => void;
+}) {
+  const c = cinematic ?? {};
+  const set = (patch: Partial<CinematicSettings>) => onChange({ ...c, ...patch });
+  const isActive = !!cinematic;
+  const mode = c.mode ?? "pan";
+  // Editable light list — legacy single-light fields merge into the first entry
+  // so old drafts keep their glow and migrate to the `lights` array on edit.
+  const points = lightPoints(c);
+  const commitPoints = (next: LightPoint[]) =>
+    set({ lights: next.length ? next : undefined, lightSource: undefined, lightColor: undefined, lightRadius: undefined });
+  // Roll defaults to intensity-derived so existing shake scenes keep their look
+  // until the author explicitly overrides it.
+  const shake = c.shakeAmount ?? 0.5;
+  const shakeRot = c.shakeRotation ?? Math.round(shake * 0.7 * 100) / 100;
+  // Dynamic lens flare state
+  const flare = resolveLensFlare(c);
+  const hasFlare = !!(c.lensFlare && c.lensFlare.enabled !== false);
+  const setFlare = (patch: Partial<LensFlareSettings>) => {
+    const base = flare ?? defaultLensFlare("anamorphic-blue", points[0] ? { x: points[0].x, y: points[0].y } : undefined);
+    set({ lensFlare: { ...base, ...patch } });
+  };
+  const flareGlow = parseGlowColor(flare?.color);
+  const flareSecGlow = parseGlowColor(flare?.secondaryColor);
+  // Foreground keyframe animation state.
+  const animMode: ForegroundAnimationMode | "none" = c.foregroundAnimation?.mode ?? "none";
+  const frames = c.foregroundAnimation?.frames ?? [];
+  const hasForeground = !!(c.foregroundImage || frames.length);
+  // Bump to restart the foreground zoom animation in the position preview.
+  const [zoomEpoch, setZoomEpoch] = useState(0);
+  const setAnim = (patch: Partial<ForegroundAnimation>) =>
+    set({ foregroundAnimation: { mode: "frames", frames: [], ...(c.foregroundAnimation ?? {}), ...patch } });
+  // Uploaded images for this story — used to display each keyframe's real file
+  // name and populate the "pick an uploaded keyframe" pulldown. Reads the
+  // GLOBAL library so a keyframe pointing at an image uploaded anywhere
+  // resolves its name (consistent with the global asset pickers).
+  const imageAssets = useAllAssets("image");
+  const frameName = (f: string): string => {
+    if (!f) return "";
+    if (f.startsWith("asset:")) return imageAssets.find((a) => `asset:${a.id}` === f)?.name ?? f;
+    if (f.startsWith("data:")) return "(embedded image)";
+    return f;
+  };
+
+  return (
+    <div className="space-y-3">
+      <Field label="Camera mode">
+        <select
+          className={inputCls}
+          value={mode}
+          onChange={(e) => set({ mode: e.target.value as CinematicSettings["mode"] })}
+        >
+          <option value="pan">🎞 Slow pan — gentle drift across the frame</option>
+          <option value="zoom-hold">🔍 Zoom to subject — zooms in and holds on the focal point</option>
+          <option value="shake">📹 Shaky cam — handheld jitter</option>
+          <option value="dolly">🛤 Rail / dolly track — slides across a wide image</option>
+          <option value="dolly-zoom">🌀 Dolly zoom — vertigo push-pull</option>
+          <option value="static">🖼 Static — no movement, locked frame</option>
+        </select>
+      </Field>
+
+      <CollapsibleSection id="cin-camera" title="📷 Camera" hint="live preview">
+        <CinematicPreview cinematic={cinematic} url={previewUrl} media={media} />
+
+        {mode !== "static" && (
+          <>
+            {mode === "shake" && (
+            <div className="space-y-2">
+              <Field label={`Shake intensity ${Math.round(shake * 100)}%`}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={shake}
+                    className="flex-1 accent-pink-500"
+                    onChange={(e) => set({ shakeAmount: Number(e.target.value) })}
+                  />
+                  <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round(shake * 100)}%</span>
                 </div>
-                <span className={`mt-0.5 h-1.5 w-1.5 rounded-full ${sel === i ? "bg-teal-300 ring-2 ring-teal-300/40" : "bg-teal-400/50"}`} />
-                {sel === i ? (
-                  <span className="mt-0.5 whitespace-nowrap font-pulp text-[8px] uppercase tracking-wider text-teal-200 [text-shadow:0_1px_2px_#000]">{n.id}</span>
-                ) : null}
-                {/* ↕ RESIZE — only on the selected actor, so the plate stays
-                    readable with a crowd on it. Writes StageNpc.scale. */}
-                {sel === i && onScale ? (
-                  <span
-                    className="absolute -top-2 left-1/2 z-30 flex h-4 w-4 -translate-x-1/2 cursor-ns-resize touch-none items-center justify-center rounded-full border border-teal-200 bg-noir-950/95 text-[9px] font-bold leading-none text-teal-200 shadow-[0_0_6px_rgba(45,212,191,0.5)]"
-                    title={`Drag ↕ to resize — ×${sc.toFixed(2)} (feet stay planted)`}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                      setSizing({ n: i, startY: e.clientY, startScale: n.scale ?? 1, scale: n.scale ?? 1 });
-                    }}
-                    onPointerMove={move}
-                    onPointerUp={drop}
-                  >
-                    ↕
-                  </span>
-                ) : null}
-                {live ? (
-                  <span className="absolute -right-6 top-0 whitespace-nowrap rounded bg-noir-950/90 px-1 font-pulp text-[8px] text-teal-200">×{sc.toFixed(2)}</span>
-                ) : null}
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label={`Roll ${shakeRot.toFixed(2)}°`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={3}
+                      step={0.05}
+                      value={shakeRot}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ shakeRotation: Number(e.target.value) })}
+                    />
+                    <span className="w-7 text-right font-type text-[10px] text-paper/70">{shakeRot.toFixed(1)}°</span>
+                  </div>
+                </Field>
+                <Field label={`Jitter speed ${(c.shakeDuration ?? 0.5).toFixed(2)}s`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0.15}
+                      max={1.5}
+                      step={0.05}
+                      value={c.shakeDuration ?? 0.5}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ shakeDuration: Number(e.target.value) })}
+                    />
+                    <span className="w-7 text-right font-type text-[10px] text-paper/70">{(c.shakeDuration ?? 0.5).toFixed(2)}s</span>
+                  </div>
+                </Field>
               </div>
+              <p className="font-type text-[9px] text-paper/40">
+                Intensity = jitter size · Roll = camera twist · Speed = how fast it trembles (lower = faster, more panicked).
+              </p>
+            </div>
+          )}
+
+          {mode === "dolly" && (
+            <div className="space-y-2">
+              <Field label="Dolly direction">
+                <select
+                  className={inputCls}
+                  value={c.dollyDirection ?? "right"}
+                  onChange={(e) => set({ dollyDirection: e.target.value as CinematicSettings["dollyDirection"] })}
+                >
+                  <option value="right">Travel right →</option>
+                  <option value="left">Travel left ←</option>
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label={`Distance ${c.dollyDistance ?? 8}%`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={2}
+                      max={20}
+                      step={1}
+                      value={c.dollyDistance ?? 8}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ dollyDistance: Number(e.target.value) })}
+                    />
+                    <span className="w-7 text-right font-type text-[10px] text-paper/70">{c.dollyDistance ?? 8}%</span>
+                  </div>
+                </Field>
+                <Field label={`Vertical drift ${c.dollyVertical ?? 0}%`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={8}
+                      step={0.5}
+                      value={c.dollyVertical ?? 0}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ dollyVertical: Number(e.target.value) })}
+                    />
+                    <span className="w-7 text-right font-type text-[10px] text-paper/70">{c.dollyVertical ?? 0}%</span>
+                  </div>
+                </Field>
+              </div>
+              <Field label="Duration (seconds per pass)">
+                <input
+                  type="number"
+                  min={3}
+                  max={60}
+                  step={1}
+                  className={inputCls}
+                  value={c.dollyDuration ?? 10}
+                  onChange={(e) => set({ dollyDuration: Number(e.target.value) || 10 })}
+                />
+              </Field>
+              <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[9px] text-paper/55">
+                The camera travels sideways, so use a <b className="text-cyan-neon">wide panoramic image</b>. Add{" "}
+                <b className="text-cyan-neon">vertical drift</b> to tilt the track into a diagonal crane pan.
+              </p>
+            </div>
+          )}
+
+          {mode === "dolly-zoom" && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label={`Background zoom ${(c.dollyZoomAmount ?? 1.35).toFixed(2)}×`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={1}
+                      max={2}
+                      step={0.05}
+                      value={c.dollyZoomAmount ?? 1.35}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ dollyZoomAmount: Number(e.target.value) })}
+                    />
+                    <span className="w-9 text-right font-type text-[10px] text-paper/70">{(c.dollyZoomAmount ?? 1.35).toFixed(2)}×</span>
+                  </div>
+                </Field>
+                <Field label={`Cycle ${c.dollyZoomDuration ?? 8}s`}>
+                  <input
+                    type="number"
+                    min={2}
+                    max={30}
+                    step={1}
+                    className={inputCls}
+                    value={c.dollyZoomDuration ?? 8}
+                    onChange={(e) => set({ dollyZoomDuration: Number(e.target.value) || 8 })}
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Zoom direction">
+                  <select
+                    className={inputCls}
+                    value={c.dollyZoomDirection ?? "both"}
+                    onChange={(e) => set({ dollyZoomDirection: e.target.value as CinematicSettings["dollyZoomDirection"] })}
+                  >
+                    <option value="both">Push &amp; pull — in and back, looping</option>
+                    <option value="push">Push in — zoom in and hold</option>
+                    <option value="pull">Pull out — zoom out and hold</option>
+                  </select>
+                </Field>
+                <Field label={`Background blur ${(c.dollyZoomBlur ?? 0).toFixed(1)}px`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      step={0.5}
+                      value={c.dollyZoomBlur ?? 0}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ dollyZoomBlur: Number(e.target.value) })}
+                    />
+                    <span className="w-9 text-right font-type text-[10px] text-paper/70">{(c.dollyZoomBlur ?? 0).toFixed(1)}px</span>
+                  </div>
+                </Field>
+              </div>
+
+              <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[9px] text-paper/55">
+                The classic <b className="text-cyan-neon">Hitchcock vertigo</b>: push in, pull out, or breathe both ways. Add{" "}
+                <b className="text-cyan-neon">blur</b> to soften the moving background — pair it with a{" "}
+                <b className="text-cyan-neon">foreground overlay</b> so the subject stays sharp, which is what sells the vertigo.
+              </p>
+            </div>
+          )}
+
+          {mode === "pan" && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Pan direction">
+                  <select
+                    className={inputCls}
+                    value={c.panDirection ?? "right"}
+                    onChange={(e) => set({ panDirection: e.target.value as CinematicSettings["panDirection"] })}
+                  >
+                    <option value="right">Drift right →</option>
+                    <option value="left">Drift left ←</option>
+                  </select>
+                </Field>
+                <Field label={`Pan drift ${c.panDistance ?? 0}%`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={12}
+                      step={1}
+                      value={c.panDistance ?? 0}
+                      className="flex-1 accent-pink-500"
+                      onChange={(e) => set({ panDistance: Number(e.target.value) })}
+                    />
+                    <span className="w-7 text-right font-type text-[10px] text-paper/70">{c.panDistance ?? 0}%</span>
+                  </div>
+                </Field>
+              </div>
+              <p className="font-type text-[9px] text-paper/40">
+                Pan drift slides the frame while it eases in — 0% keeps the gentle push-in only.
+              </p>
+            </div>
+          )}
+
+          {mode === "zoom-hold" && (
+            <Field label="Zoom duration (seconds before it holds)">
+              <input
+                type="number"
+                min={2}
+                max={30}
+                step={1}
+                className={inputCls}
+                value={c.zoomDuration ?? 8}
+                onChange={(e) => set({ zoomDuration: Number(e.target.value) || 8 })}
+              />
+            </Field>
+          )}
+
+          {(mode === "pan" || mode === "zoom-hold") && (
+            <Field label="Focal point (where camera looks — CSS % e.g. '60% 40%' for upper right)">
+              <div className="space-y-1">
+                <input
+                  className={inputCls}
+                  placeholder="50% 50%"
+                  value={c.focalPoint ?? ""}
+                  onChange={(e) => set({ focalPoint: e.target.value || undefined })}
+                />
+                <p className="font-type text-[9px] text-paper/40">
+                  X% Y% — top-left is 0% 0%, bottom-right is 100% 100%, centre is 50% 50%.
+                </p>
+                {/* click-to-set focal point on a live preview */}
+                <div
+                  className="relative mt-1 aspect-video w-full cursor-crosshair overflow-hidden border border-gold/30"
+                  style={{ ...bgStyle(previewUrl) }}
+                  title="Click to set focal point"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const x = Math.round(((e.clientX - r.left) / r.width) * 100);
+                    const y = Math.round(((e.clientY - r.top) / r.height) * 100);
+                    set({ focalPoint: `${x}% ${y}%` });
+                  }}
+                >
+                  {c.focalPoint && (() => {
+                    const [px, py] = c.focalPoint.split(" ").map((v) => parseFloat(v));
+                    return (
+                      <div
+                        className="absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neon shadow-[0_0_10px_#ff2e88]"
+                        style={{ left: `${px}%`, top: `${py}%` }}
+                      />
+                    );
+                  })()}
+                  <p className="pointer-events-none absolute inset-0 flex items-end justify-center pb-1 font-pulp text-[8px] uppercase tracking-widest text-paper/60">
+                    Click to set focal point
+                  </p>
+                </div>
+              </div>
+            </Field>
+          )}
+          </>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-grade" title="🎨 Color grade & film stock" titleClass="text-neon">
+        <Field label="Director / stock grade">
+          <select
+            className={inputCls}
+            value={c.colorGrade ?? ""}
+            onChange={(e) => set({ colorGrade: (e.target.value || undefined) as CinematicSettings["colorGrade"] })}
+          >
+            <option value="">— no grade (straight plate) —</option>
+            {GRADE_PRESET_LIST.map((g) => (
+              <option key={g.id} value={g.id}>{g.badge} {g.name}</option>
+            ))}
+          </select>
+        </Field>
+        {c.colorGrade && (
+          <p className="border border-neon/20 bg-neon/5 p-2 font-type text-[9px] leading-snug text-paper/55">
+            <b className="text-neon">{GRADE_PRESETS[c.colorGrade]?.name}</b> — {GRADE_PRESETS[c.colorGrade]?.tagline}{" "}
+            The grade works on every camera mode and on insert-shot beat backgrounds.
+          </p>
+        )}
+        <label className="flex items-start gap-2 border border-gold/25 bg-gold/5 px-2 py-1.5 text-[10px] uppercase tracking-wider text-paper/70">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={!!c.filmGrade}
+            onChange={(e) => set({ filmGrade: e.target.checked || undefined })}
+          />
+          <span>
+            🎞 Film grade — 35mm print emulation
+            <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
+              Animated grain (heavier than the ambient grain), gate weave, highlight halation bloom, light flicker and the
+              occasional scratch/dust pass. Sits above the color grade like the physical print of the graded image.
+            </span>
+          </span>
+        </label>
+        {c.filmGrade && (
+          <Field label={`Film strength ${Math.round((c.filmGradeStrength ?? 0.7) * 100)}%`}>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0.15}
+                max={1}
+                step={0.05}
+                value={c.filmGradeStrength ?? 0.7}
+                className="flex-1 accent-pink-500"
+                onChange={(e) => set({ filmGradeStrength: Number(e.target.value) })}
+              />
+              <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round((c.filmGradeStrength ?? 0.7) * 100)}%</span>
+            </div>
+          </Field>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-parallax" title="🌆 Parallax depth" titleClass="text-cyan-neon">
+        <Field label={`Depth ${Math.round((c.parallaxDepth ?? 0) * 100)}%`}>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={c.parallaxDepth ?? 0}
+              className="flex-1 accent-cyan-400"
+              onChange={(e) => set({ parallaxDepth: Number(e.target.value) || undefined })}
+            />
+            <span className="w-8 text-right font-type text-[10px] text-paper/70">{Math.round((c.parallaxDepth ?? 0) * 100)}%</span>
+          </div>
+        </Field>
+        <p className="font-type text-[9px] leading-snug text-paper/45">
+          The camera subtly follows the cursor — the plate drifts slowest, mid planes and the foreground subject faster,
+          like a diorama. A gentle idle sway plays when the mouse is still. Move your mouse over the live preview above to
+          feel it.
+        </p>
+        <Field label="Mid-ground depth planes (transparent cutouts)">
+          {(c.parallaxLayers ?? []).map((layer, i) => (
+            <div key={i} className="mb-2 space-y-1 border border-cyan-neon/20 bg-cyan-neon/5 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <AssetDropdown
+                  assetType="image"
+                  value={layer.image}
+                  returnReference
+                  storyId={storyId}
+                  placeholder="Pick a transparent plane image…"
+                  onChange={(v) => {
+                    const layers = [...(c.parallaxLayers ?? [])];
+                    layers[i] = { ...layer, image: v ?? "" };
+                    set({ parallaxLayers: layers.filter((l) => l.image) });
+                  }}
+                />
+                <button
+                  className="shrink-0 border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                  onClick={() => set({ parallaxLayers: (c.parallaxLayers ?? []).filter((_, j) => j !== i) })}
+                >
+                  ✕
+                </button>
+              </div>
+              <Field label={`Depth ${Math.round(layer.depth * 100)}% (0=far / 1=near)`}>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={layer.depth}
+                  className="w-full accent-cyan-400"
+                  onChange={(e) => {
+                    const layers = [...(c.parallaxLayers ?? [])];
+                    layers[i] = { ...layer, depth: Number(e.target.value) };
+                    set({ parallaxLayers: layers });
+                  }}
+                />
+              </Field>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <MediaUploadButton
+              accept="image/*"
+              storyId={storyId}
+              label="⤒ Upload plane"
+              onUploaded={(_url, assetId) =>
+                set({ parallaxLayers: [...(c.parallaxLayers ?? []), { image: `asset:${assetId}`, depth: 0.5 }] })
+              }
+            />
+            <button
+              className="shrink border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+              onClick={() => set({ parallaxLayers: [...(c.parallaxLayers ?? []), { image: "gradient:linear-gradient(180deg, rgba(10,12,20,0) 40%, rgba(10,12,20,0.55) 100%)", depth: 0.35 }] })}
+              title="Add a gradient fog plane (uses the picker above to swap for an image)"
+            >
+              ＋ Fog plane
+            </button>
+          </div>
+        </Field>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-foreground" title="🧍 Foreground overlay">
+        <p className="font-type text-[9px] text-paper/40">
+          Layers a fixed image over the scene, in front of any camera motion — great for a character, prop or frame. Works with every
+          camera mode (and static).
+        </p>
+
+        <Field label="Foreground image (transparent PNG works best)">
+          <div className="flex gap-1">
+            <input
+              className={inputCls}
+              placeholder="/img/foreground.png"
+              value={mediaField(c.foregroundImage)}
+              onChange={(e) => set({ foregroundImage: e.target.value || undefined })}
+            />
+            <MediaUploadButton
+              storyId={storyId}
+              accept="image/*"
+              label="⇧"
+              onUploaded={(_url, assetId) => set({ foregroundImage: `asset:${assetId}` })}
+            />
+          </div>
+          <div className="mt-1">
+            <AssetDropdown
+              storyId={storyId}
+              assetType="image"
+              returnReference
+              value={c.foregroundImage}
+              onChange={(url) => set({ foregroundImage: url ?? undefined })}
+              placeholder="Or pick an uploaded image..."
+            />
+          </div>
+        </Field>
+
+        {hasForeground && (
+          <>
+            <ForegroundPositionEditor
+              previewUrl={previewUrl}
+              cinematic={cinematic}
+              media={media}
+              x={c.foregroundX ?? 50}
+              y={c.foregroundY ?? 50}
+              anchor={c.foregroundAnchor ?? "50% 50%"}
+              replayEpoch={zoomEpoch}
+              onChange={(x, y) => set({ foregroundX: x, foregroundY: y })}
+              onAnchorAt={(anchor, x, y) => set({ foregroundAnchor: anchor, foregroundX: x, foregroundY: y })}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Field label={`Scale ${(c.foregroundScale ?? 1).toFixed(2)}×`}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0.25}
+                    max={2.5}
+                    step={0.05}
+                    value={c.foregroundScale ?? 1}
+                    className="flex-1 accent-pink-500"
+                    onChange={(e) => set({ foregroundScale: Number(e.target.value) })}
+                  />
+                  <span className="w-9 text-right font-type text-[10px] text-paper/70">{(c.foregroundScale ?? 1).toFixed(2)}×</span>
+                </div>
+              </Field>
+              <Field label="Fit">
+                <select
+                  className={inputCls}
+                  value={c.foregroundFit ?? "contain"}
+                  onChange={(e) => set({ foregroundFit: e.target.value as CinematicSettings["foregroundFit"] })}
+                >
+                  <option value="contain">Contain — whole image fits</option>
+                  <option value="cover">Cover — fill the frame, crop edges</option>
+                  <option value="fill">Fill — stretch to fill the frame</option>
+                  <option value="native">Native — draw at its real size</option>
+                </select>
+              </Field>
+            </div>
+            <p className="border border-gold/25 bg-gold/5 p-2 font-type text-[9px] leading-snug text-paper/55">
+              The <b className="text-gold">focus point</b> is set by <b className="text-gold">clicking the spot on the subject</b> in the
+              preview above — it stays fixed while the foreground zoom plays. Drag to move the subject.
+            </p>
+            <div className="space-y-2 border border-gold/25 bg-gold/5 p-2">
+              <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">🔍 Foreground zoom</span>
+              {/* Direction quick-set: push in (multiplier >1), pull out (multiplier <1), or off (1×). */}
+              <div className="flex gap-1">
+                <button
+                  onClick={() => set({ foregroundZoom: 1.25 })}
+                  className={`flex-1 border py-1 font-pulp text-[9px] uppercase tracking-widest ${(c.foregroundZoom ?? 1) > 1 ? "border-gold bg-gold/15 text-gold" : "border-paper/30 text-paper/70 hover:border-gold hover:text-gold"}`}
+                  title="Push in — zoom toward the anchor"
+                >
+                  ↗ Push in
+                </button>
+                <button
+                  onClick={() => set({ foregroundZoom: 0.8 })}
+                  className={`flex-1 border py-1 font-pulp text-[9px] uppercase tracking-widest ${(c.foregroundZoom ?? 1) < 1 ? "border-gold bg-gold/15 text-gold" : "border-paper/30 text-paper/70 hover:border-gold hover:text-gold"}`}
+                  title="Pull out — zoom away from the anchor"
+                >
+                  ↘ Pull out
+                </button>
+                <button
+                  onClick={() => set({ foregroundZoom: undefined })}
+                  className={`flex-1 border py-1 font-pulp text-[9px] uppercase tracking-widest ${(c.foregroundZoom ?? 1) === 1 ? "border-paper/40 text-paper" : "border-paper/30 text-paper/50 hover:border-paper/60 hover:text-paper"}`}
+                  title="No zoom — leave the foreground at its base scale"
+                >
+                  Off
+                </button>
+              </div>
+              <Field label={`Zoom ${(c.foregroundZoom ?? 1) === 1 ? "off (1.00×)" : `${(c.foregroundZoom ?? 1) < 1 ? "1.00× → pull to " : "1.00× → push to "}${(c.foregroundZoom ?? 1).toFixed(2)}×`}`}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={3}
+                    step={0.05}
+                    value={c.foregroundZoom ?? 1}
+                    className="flex-1 accent-pink-500"
+                    aria-label="Foreground zoom amount (below 1× = pull out, above 1× = push in)"
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      set({ foregroundZoom: Math.abs(v - 1) < 0.001 ? undefined : v });
+                    }}
+                  />
+                  <span className="w-12 text-right font-type text-[10px] text-paper/70">
+                    {(c.foregroundZoom ?? 1) === 1 ? "off" : `${(c.foregroundZoom ?? 1).toFixed(2)}×`}
+                  </span>
+                </div>
+              </Field>
+              {(c.foregroundZoom ?? 1) !== 1 && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Zoom duration ${Math.round(c.foregroundZoomDuration ?? 8)}s`}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      step={1}
+                      className={inputCls}
+                      value={c.foregroundZoomDuration ?? 8}
+                      onChange={(e) => set({ foregroundZoomDuration: Math.max(1, Number(e.target.value) || 8) })}
+                    />
+                  </Field>
+                  <div className="flex items-end">
+                    <button
+                      onClick={() => setZoomEpoch((n) => n + 1)}
+                      className="w-full border border-gold/50 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
+                      title="Replay the zoom animation in the preview"
+                    >
+                      ↺ Replay zoom
+                    </button>
+                  </div>
+                </div>
+              )}
+              <p className="font-type text-[9px] text-paper/45">
+                A slow push-in (or pull-out, below 1×) that stays focused on the anchor point. The anchor is pinned at the offset set in the preview above.
+              </p>
+            </div>
+
+            {/* ---- keyframe animation ---- */}
+            <div className="space-y-2 border border-cyan-neon/25 bg-cyan-neon/5 p-2">
+              <span className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Keyframe animation</span>
+              <Field label="Animation style">
+                <select
+                  className={inputCls}
+                  value={animMode}
+                  onChange={(e) => {
+                    const mode = e.target.value as ForegroundAnimationMode | "none";
+                    if (mode === "none") {
+                      set({ foregroundAnimation: undefined });
+                      return;
+                    }
+                    const next: ForegroundAnimation = {
+                      ...(c.foregroundAnimation ?? { frames: [] }),
+                      mode,
+                    };
+                    if (!next.frames.length && c.foregroundImage) next.frames = [c.foregroundImage];
+                    set({ foregroundAnimation: next });
+                  }}
+                >
+                  <option value="none">🖼 Static — single pose (no animation)</option>
+                  <option value="dissolve">🌫 Dissolve — cross-fade between poses</option>
+                  <option value="frames">🎞 Keyframes — hard sprite swap (Ace Attorney style)</option>
+                </select>
+              </Field>
+
+              {animMode !== "none" && (
+                <>
+                  <Field label={`Keyframes (${frames.length}) — played in order`}>
+                    <div className="space-y-1">
+                      {frames.map((f, i) => (
+                        <div key={i} className="space-y-1 border border-noir-700/60 p-1.5">
+                          <div className="flex items-center gap-1">
+                            <span className="w-4 shrink-0 text-center font-pulp text-[10px] text-paper/50">{i + 1}</span>
+                            <input
+                              className={inputCls}
+                              placeholder={`/img/frame${i + 1}.png`}
+                              value={frameName(f)}
+                              title={f}
+                              onChange={(e) => {
+                                const next = [...frames];
+                                next[i] = e.target.value;
+                                setAnim({ frames: next });
+                              }}
+                            />
+                            <MediaUploadButton
+                              storyId={storyId}
+                              accept="image/*"
+                              label="⇧"
+                              onUploaded={(_url, assetId) => {
+                                const next = [...frames];
+                                next[i] = `asset:${assetId}`;
+                                setAnim({ frames: next });
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const next = [...frames];
+                                next.splice(i, 1);
+                                if (next.length) setAnim({ frames: next });
+                                else set({ foregroundAnimation: undefined });
+                              }}
+                              className="shrink-0 border border-crimson/40 px-1.5 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                              title="Remove this frame"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <AssetDropdown
+                            storyId={storyId}
+                            assetType="image"
+                            returnReference
+                            value={f.startsWith("asset:") || f.startsWith("data:") ? f : undefined}
+                            onChange={(url) => {
+                              const next = [...frames];
+                              if (url) next[i] = url;
+                              else next.splice(i, 1);
+                              if (next.length) setAnim({ frames: next });
+                              else set({ foregroundAnimation: undefined });
+                            }}
+                            placeholder="📁 Pick an uploaded keyframe…"
+                          />
+                        </div>
+                      ))}
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setAnim({ frames: [...frames, frames[frames.length - 1] ?? c.foregroundImage ?? ""] })}
+                          className="border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+                        >
+                          ＋ Add frame
+                        </button>
+                        {c.foregroundImage && !frames.includes(c.foregroundImage) && (
+                          <button
+                            onClick={() => setAnim({ frames: [...frames, c.foregroundImage!] })}
+                            className="border border-paper/30 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
+                            title="Append the static foreground image as another keyframe"
+                          >
+                            ＋ Use foreground image
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label={`Frame time ${(c.foregroundAnimation?.frameDuration ?? 0.2).toFixed(2)}s`}>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0.05}
+                          max={1.5}
+                          step={0.05}
+                          value={c.foregroundAnimation?.frameDuration ?? 0.2}
+                          className="flex-1 accent-pink-500"
+                          onChange={(e) => setAnim({ frameDuration: Number(e.target.value) })}
+                        />
+                        <span className="w-9 text-right font-type text-[10px] text-paper/70">
+                          {(c.foregroundAnimation?.frameDuration ?? 0.2).toFixed(2)}s
+                        </span>
+                      </div>
+                    </Field>
+                    {animMode === "dissolve" ? (
+                      <Field
+                        label={`Fade time ${(c.foregroundAnimation?.fadeDuration ?? c.foregroundAnimation?.frameDuration ?? 0.2).toFixed(2)}s`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range"
+                            min={0}
+                            max={1.5}
+                            step={0.05}
+                            value={c.foregroundAnimation?.fadeDuration ?? c.foregroundAnimation?.frameDuration ?? 0.2}
+                            className="flex-1 accent-pink-500"
+                            onChange={(e) => setAnim({ fadeDuration: Number(e.target.value) })}
+                          />
+                          <span className="w-9 text-right font-type text-[10px] text-paper/70">
+                            {(c.foregroundAnimation?.fadeDuration ?? c.foregroundAnimation?.frameDuration ?? 0.2).toFixed(2)}s
+                          </span>
+                        </div>
+                      </Field>
+                    ) : (
+                      <Field label="Playback">
+                        <select
+                          className={inputCls}
+                          value={(c.foregroundAnimation?.loops ?? 0) <= 0 ? "loop" : String(c.foregroundAnimation?.loops)}
+                          onChange={(e) => setAnim({ loops: e.target.value === "loop" ? undefined : Number(e.target.value) })}
+                        >
+                          <option value="loop">∞ Loop forever</option>
+                          <option value="1">▶ Play once — hold last frame</option>
+                          <option value="2">▶▶ Play twice</option>
+                          <option value="3">▶▶▶ Play 3×</option>
+                        </select>
+                      </Field>
+                    )}
+                  </div>
+                  {animMode === "dissolve" && (
+                    <div className="grid grid-cols-1">
+                      <Field label="Playback">
+                        <select
+                          className={inputCls}
+                          value={(c.foregroundAnimation?.loops ?? 0) <= 0 ? "loop" : String(c.foregroundAnimation?.loops)}
+                          onChange={(e) => setAnim({ loops: e.target.value === "loop" ? undefined : Number(e.target.value) })}
+                        >
+                          <option value="loop">∞ Loop forever</option>
+                          <option value="1">▶ Play once — hold last frame</option>
+                          <option value="2">▶▶ Play twice</option>
+                          <option value="3">▶▶▶ Play 3×</option>
+                        </select>
+                      </Field>
+                    </div>
+                  )}
+                  <p className="font-type text-[9px] text-paper/45">
+                    {animMode === "dissolve"
+                      ? "Each pose holds for the frame time, then cross-fades into the next — smooth, dreamlike (a neutral pose melting into a head-turned shock)."
+                      : "Keyframes swap instantly, one per frame time — traditional comic-panel / limited-frame animation, the Ace Attorney & Hotel Dusk look."}
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => set({ foregroundX: 50, foregroundY: 50, foregroundAnchor: undefined, foregroundZoom: undefined, foregroundZoomDuration: undefined })}
+                className="flex-1 border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
+              >
+                ⟲ Center foreground
+              </button>
+              <button
+                onClick={() =>
+                  set({
+                    foregroundImage: undefined,
+                    foregroundScale: undefined,
+                    foregroundFit: undefined,
+                    foregroundX: undefined,
+                    foregroundY: undefined,
+                    foregroundAnchor: undefined,
+                    foregroundZoom: undefined,
+                    foregroundZoomDuration: undefined,
+                    foregroundAnimation: undefined,
+                  })
+                }
+                className="flex-1 border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+              >
+                ✕ Remove foreground
+              </button>
+            </div>
+          </>
+        )}
+      </CollapsibleSection>
+
+      {/* ---- additional foreground images (stacked extras) ---- */}
+      <CollapsibleSection id="cin-foreground-extras" title="👥 Additional foreground images" titleClass="text-neon">
+        <p className="font-type text-[9px] text-paper/40">
+          Layer more characters, props or frames on top of the plate, each independently positioned, scaled and
+          mirrored. They render just behind the primary foreground above and parallax by their own depth.
+        </p>
+        {(c.foregroundExtras ?? []).map((extra: ForegroundExtra, i: number) => {
+          const update = (patch: Partial<ForegroundExtra>) => {
+            const n = [...(c.foregroundExtras ?? [])];
+            n[i] = { ...extra, ...patch };
+            set({ foregroundExtras: n });
+          };
+          const remove = () => set({ foregroundExtras: (c.foregroundExtras ?? []).filter((_: ForegroundExtra, j: number) => j !== i) });
+          return (
+          <div key={i} className="space-y-1.5 border border-neon/20 bg-neon/5 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-pulp text-[9px] uppercase tracking-widest text-neon">Image {i + 1}{!extra.image ? " — choose an image" : ""}</span>
+              <button
+                className="shrink-0 border border-crimson/50 px-2 py-0.5 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
+                onClick={remove}
+              >
+                ✕
+              </button>
+            </div>
+            <AssetDropdown
+              storyId={storyId}
+              assetType="image"
+              returnReference
+              value={extra.image || undefined}
+              placeholder="Pick a transparent image…"
+              onChange={(url) => update({ image: url ?? "" })}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Field label={`Position X ${extra.x ?? 50}% · Y ${extra.y ?? 80}%`}>
+                <div className="space-y-1">
+                  <input type="range" min={0} max={100} step={1} value={extra.x ?? 50} className="w-full accent-pink-500"
+                    onChange={(e) => update({ x: Number(e.target.value) })} />
+                  <input type="range" min={0} max={100} step={1} value={extra.y ?? 80} className="w-full accent-pink-500"
+                    onChange={(e) => update({ y: Number(e.target.value) })} />
+                </div>
+              </Field>
+              <Field label={`Scale ${(extra.scale ?? 1).toFixed(2)}×`}>
+                <input type="range" min={0.2} max={2.5} step={0.05} value={extra.scale ?? 1} className="w-full accent-pink-500"
+                  onChange={(e) => update({ scale: Number(e.target.value) })} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Fit">
+                <select className={inputCls} value={extra.fit ?? "contain"} onChange={(e) => update({ fit: e.target.value as never })}>
+                  <option value="contain">Contain (whole fits)</option>
+                  <option value="cover">Cover (fill frame)</option>
+                  <option value="fill">Fill (stretch)</option>
+                  <option value="native">Native size</option>
+                </select>
+              </Field>
+              <Field label={`Parallax depth ${Math.round((extra.depth ?? 0) * 100)}%`}>
+                <input type="range" min={0} max={1} step={0.05} value={extra.depth ?? 0} className="w-full accent-cyan-400"
+                  onChange={(e) => update({ depth: Number(e.target.value) || undefined })} />
+              </Field>
+            </div>
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+              <input type="checkbox" checked={!!extra.flip} onChange={(e) => update({ flip: e.target.checked || undefined })} />
+              ↔ Flip horizontally (face the other way)
+            </label>
+          </div>
+          );
+        })}
+        <div className="flex gap-2">
+          <button
+            className="flex-1 border border-neon/50 py-1.5 font-pulp text-[9px] uppercase tracking-widest text-neon hover:bg-neon/10"
+            onClick={() =>
+              set({
+                foregroundExtras: [
+                  ...(c.foregroundExtras ?? []),
+                  { image: "", x: 50, y: 80, scale: 1, fit: "contain", anchor: "50% 100%", depth: 0.6 },
+                ],
+              })
+            }
+          >
+            ＋ Add foreground image
+          </button>
+          <MediaUploadButton
+            storyId={storyId}
+            accept="image/*"
+            label="⤒ Upload new"
+            onUploaded={(_url, assetId) =>
+              set({
+                foregroundExtras: [
+                  ...(c.foregroundExtras ?? []),
+                  { image: `asset:${assetId}`, x: 50, y: 80, scale: 1, fit: "contain", anchor: "50% 100%", depth: 0.6 },
+                ],
+              })
+            }
+          />
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="cin-lighting" title="💡 Lighting" titleClass="text-gold">
+        <Field label="Image dimming (0 = full brightness, 1 = fully dark)">
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0}
+              max={0.9}
+              step={0.05}
+              value={c.dimAmount ?? 0}
+              className="flex-1 accent-pink-500"
+              onChange={(e) => set({ dimAmount: Number(e.target.value) || undefined })}
+            />
+            <span className="w-8 text-right font-type text-[10px] text-paper/70">
+              {((c.dimAmount ?? 0) * 100).toFixed(0)}%
+            </span>
+          </div>
+        </Field>
+
+        <div className="border-t border-gold/20 pt-2 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="font-pulp text-[9px] uppercase tracking-wider text-gold">
+            💡 Light glows {points.length ? `· ${points.length}` : ""}
+          </div>
+          <button
+            onClick={() => commitPoints([...points, defaultLight()])}
+            className="border border-gold/50 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/10"
+          >
+            ＋ Add light
+          </button>
+        </div>
+
+        {points.length === 0 && (
+          <p className="font-type text-[9px] text-paper/45">
+            No lights yet. Add one to make a lamp, window, or neon sign feel alive — each glows additively (screen blend) and
+            breathes on a smooth sine wave.
+          </p>
+        )}
+
+        {points.map((light, i) => {
+          const glow = parseGlowColor(light.color);
+          const upd = (patch: Partial<typeof light>) =>
+            commitPoints(points.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+          return (
+            <div key={i} className="space-y-1.5 border border-noir-600 p-2">
+              <div className="flex items-center justify-between">
+                <span className="font-pulp text-[9px] uppercase text-gold">Light {i + 1}</span>
+                <button
+                  onClick={() => commitPoints(points.filter((_, idx) => idx !== i))}
+                  className="text-[9px] uppercase text-crimson hover:underline"
+                >
+                  ✕ remove
+                </button>
+              </div>
+
+              {/* click-to-place preview showing every light, this one ringed.
+                  The dim overlay sits BELOW the light glows — a light source
+                  stays bright when the image darkens — so only the image dims. */}
+              <div
+                className="relative aspect-video w-full cursor-crosshair overflow-hidden isolate border border-gold/30"
+                style={{ ...bgStyle(previewUrl) }}
+                title="Click to move this light"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  upd({ x: Math.round(((e.clientX - r.left) / r.width) * 100), y: Math.round(((e.clientY - r.top) / r.height) * 100) });
+                }}
+              >
+                <div
+                  className="pointer-events-none absolute inset-0 z-[1] bg-black"
+                  style={{ opacity: c.dimAmount ?? 0 }}
+                />
+                {resolveLights(c).map((l, li) => (
+                  <div key={li} className="cin-light" style={lightStyle(l)} />
+                ))}
+                <LensFlareLayer cinematic={c} />
+                <div
+                  className="pointer-events-none absolute z-[4] h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neon shadow-[0_0_8px_#ff2e88]"
+                  style={{ left: `${light.x}%`, top: `${light.y}%` }}
+                />
+                <p className="pointer-events-none absolute inset-0 z-[4] flex items-end justify-center pb-1 font-pulp text-[8px] uppercase tracking-widest text-paper/60">
+                  Click to move light {i + 1}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Colour">
+                  <input
+                    type="color"
+                    className="h-8 w-full border border-noir-600 bg-noir-950 cursor-pointer"
+                    value={glow.hex}
+                    onChange={(e) => upd({ color: e.target.value })}
+                  />
+                </Field>
+                <Field label={`Size ${light.size ?? 40}%`}>
+                  <input
+                    type="range"
+                    min={10}
+                    max={90}
+                    step={1}
+                    className="w-full accent-pink-500"
+                    value={light.size ?? 40}
+                    onChange={(e) => upd({ size: Number(e.target.value) })}
+                  />
+                </Field>
+              </div>
+
+              <Field label={`Brightness ${Math.round((light.intensity ?? 0.5) * 100)}%`}>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={1}
+                  className="w-full accent-pink-500"
+                  value={Math.round((light.intensity ?? 0.5) * 100)}
+                  onChange={(e) => upd({ intensity: Number(e.target.value) / 100 })}
+                />
+              </Field>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Field label={`Position X ${light.x}%`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    className="w-full accent-pink-500"
+                    value={light.x}
+                    onChange={(e) => upd({ x: Number(e.target.value) })}
+                  />
+                </Field>
+                <Field label={`Position Y ${light.y}%`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    className="w-full accent-pink-500"
+                    value={light.y}
+                    onChange={(e) => upd({ y: Number(e.target.value) })}
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <Field label={`Pulse speed ${(light.pulseSeconds ?? 2.8).toFixed(1)}s`}>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={8}
+                    step={0.1}
+                    className="w-full accent-pink-500"
+                    value={light.pulseSeconds ?? 2.8}
+                    onChange={(e) => upd({ pulseSeconds: Number(e.target.value) })}
+                  />
+                </Field>
+                <Field label={`Pulse depth ${Math.round((light.pulseAmount ?? 1) * 100)}%`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    className="w-full accent-pink-500"
+                    value={Math.round((light.pulseAmount ?? 1) * 100)}
+                    onChange={(e) => upd({ pulseAmount: Number(e.target.value) / 100 })}
+                  />
+                </Field>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFlare({
+                    x: light.x,
+                    y: light.y,
+                    color: glow.hex,
+                    preset: "warm-amber",
+                    intensity: Math.max(0.6, light.intensity ?? 0.75),
+                  });
+                }}
+                className="w-full border border-cyan-neon/40 bg-cyan-neon/5 py-1 font-pulp text-[8px] uppercase tracking-wider text-cyan-neon hover:bg-cyan-neon/15 transition-colors"
+              >
+                ✨ Cast dynamic lens flare from Light {i + 1}
+              </button>
             </div>
           );
         })}
-      </div>
-      <p className="font-type text-[8px] italic leading-snug text-paper/40">
-        Drag an actor to move their spawn, or a numbered stop to move that waypoint (positions commit on release —
-        one undo step per drag). Click an actor to highlight their route, then pull the <b className="text-teal-200">↕</b>{" "}
-        over their head to resize them (writes their size, feet planted). Dashed lines: the floor band and, on wide
-        rooms, the screen seams.
-      </p>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="cin-lensflare"
+        title="✨ Dynamic Lens Flare"
+        titleClass="text-cyan-neon"
+        hint={hasFlare && flare ? (LENS_FLARE_PRESETS[flare.preset]?.name ?? flare.preset) : undefined}
+      >
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-pulp text-[10px] uppercase tracking-wider text-paper/90">
+                Dynamic Lens Flare
+              </span>
+              <p className="font-type text-[9px] text-paper/45">
+                Simulates optical anamorphic laser streaks, diffraction starbursts, and chromatic ghost reflections along the optical axis.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (hasFlare) {
+                  set({ lensFlare: undefined });
+                } else {
+                  const firstLight = points[0];
+                  set({
+                    lensFlare: defaultLensFlare(
+                      "anamorphic-blue",
+                      firstLight ? { x: firstLight.x, y: firstLight.y } : undefined
+                    ),
+                  });
+                }
+              }}
+              className={`border px-2.5 py-1 font-pulp text-[9px] uppercase tracking-widest transition-colors ${
+                hasFlare
+                  ? "border-crimson/50 text-crimson hover:bg-crimson/10"
+                  : "border-cyan-neon bg-cyan-neon/10 text-cyan-neon hover:bg-cyan-neon/20 shadow-[0_0_8px_rgba(42,217,217,0.3)]"
+              }`}
+            >
+              {hasFlare ? "✕ Remove flare" : "＋ Enable lens flare"}
+            </button>
+          </div>
+
+          {hasFlare && flare && (
+            <>
+              {/* Presets Grid */}
+              <div className="space-y-1.5 border border-noir-600 bg-noir-900/60 p-2">
+                <span className="font-pulp text-[9px] uppercase tracking-wider text-cyan-neon">
+                  Optical Profiles & Presets
+                </span>
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  {(Object.keys(LENS_FLARE_PRESETS) as LensFlarePreset[]).map((pkey) => {
+                    const pr = LENS_FLARE_PRESETS[pkey];
+                    const isSel = (flare.preset ?? "anamorphic-blue") === pkey;
+                    return (
+                      <button
+                        key={pkey}
+                        type="button"
+                        onClick={() => {
+                          const base = defaultLensFlare(pkey, { x: flare.x, y: flare.y });
+                          setFlare({ ...base, x: flare.x, y: flare.y });
+                        }}
+                        className={`flex flex-col items-start rounded border p-1.5 text-left transition-all ${
+                          isSel
+                            ? "border-cyan-neon bg-cyan-neon/15 shadow-[0_0_8px_rgba(42,217,217,0.3)]"
+                            : "border-noir-700 bg-noir-950/70 hover:border-paper/40 hover:bg-noir-800"
+                        }`}
+                      >
+                        <div className="flex w-full items-center justify-between">
+                          <span className="font-pulp text-[8.5px] font-semibold text-paper truncate">
+                            {pr.name}
+                          </span>
+                          <span
+                            className="h-2 w-2 rounded-full border border-black/40 shrink-0"
+                            style={{ backgroundColor: pr.color, boxShadow: `0 0 4px ${pr.color}` }}
+                          />
+                        </div>
+                        <span className="mt-0.5 font-type text-[7.5px] text-paper/50 truncate w-full">
+                          {pr.badge}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="font-type text-[8.5px] text-paper/50 italic pt-0.5">
+                  {LENS_FLARE_PRESETS[flare.preset]?.tagline ?? ""}
+                </p>
+              </div>
+
+              {/* Click-to-Place Interactive Preview */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-pulp text-[9px] uppercase tracking-wider text-gold">
+                    Position ({flare.x}%, {flare.y}%)
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setFlare({ x: 50, y: 50 })}
+                      className="border border-paper/20 px-1.5 py-0.5 font-pulp text-[7.5px] uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
+                    >
+                      ⟲ Center
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFlare({ x: 25, y: 20 })}
+                      className="border border-paper/20 px-1.5 py-0.5 font-pulp text-[7.5px] uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
+                    >
+                      ↖ Top-L
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFlare({ x: 75, y: 20 })}
+                      className="border border-paper/20 px-1.5 py-0.5 font-pulp text-[7.5px] uppercase tracking-widest text-paper/70 hover:border-gold hover:text-gold"
+                    >
+                      ↗ Top-R
+                    </button>
+                    {points.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const l = points[0];
+                          if (l) setFlare({ x: l.x, y: l.y, color: l.color });
+                        }}
+                        className="border border-cyan-neon/40 bg-cyan-neon/10 px-1.5 py-0.5 font-pulp text-[7.5px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/20"
+                        title="Snap flare to light 1 position and color"
+                      >
+                        🔗 Snap to Light 1
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className="relative aspect-video w-full cursor-crosshair overflow-hidden isolate border border-cyan-neon/40 shadow-inner"
+                  style={{ ...bgStyle(previewUrl) }}
+                  title="Click to place the lens flare light source"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const nx = Math.round(((e.clientX - r.left) / r.width) * 100);
+                    const ny = Math.round(((e.clientY - r.top) / r.height) * 100);
+                    setFlare({ x: clamp(nx, 0, 100), y: clamp(ny, 0, 100) });
+                  }}
+                >
+                  <div
+                    className="pointer-events-none absolute inset-0 z-[1] bg-black"
+                    style={{ opacity: c.dimAmount ?? 0 }}
+                  />
+                  {resolveLights(c).map((l, li) => (
+                    <div key={li} className="cin-light" style={lightStyle(l)} />
+                  ))}
+
+                  {/* Real-time Lens Flare Preview */}
+                  <LensFlareLayer flareOverride={flare} />
+
+                  {/* Optical Axis line */}
+                  <svg className="pointer-events-none absolute inset-0 h-full w-full z-[5] opacity-40">
+                    <line
+                      x1={`${flare.x}%`}
+                      y1={`${flare.y}%`}
+                      x2={`${100 - flare.x}%`}
+                      y2={`${100 - flare.y}%`}
+                      stroke="#2ad9d9"
+                      strokeWidth="1"
+                      strokeDasharray="3 3"
+                    />
+                    <circle cx="50%" cy="50%" r="3" fill="#2ad9d9" />
+                  </svg>
+
+                  {/* Light Source Target Ring */}
+                  <div
+                    className="pointer-events-none absolute z-[6] h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-cyan-neon shadow-[0_0_10px_#2ad9d9]"
+                    style={{ left: `${flare.x}%`, top: `${flare.y}%` }}
+                  >
+                    <div className="absolute inset-1 rounded-full bg-cyan-neon/30 animate-ping" />
+                  </div>
+
+                  <p className="pointer-events-none absolute bottom-1 inset-x-0 z-[6] flex justify-center font-pulp text-[8px] uppercase tracking-widest text-paper/70 bg-black/40 py-0.5">
+                    Click to move flare source · Optical axis lines up across center
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Position X: ${flare.x}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="w-full accent-cyan-400"
+                      value={flare.x}
+                      onChange={(e) => setFlare({ x: Number(e.target.value) })}
+                    />
+                  </Field>
+                  <Field label={`Position Y: ${flare.y}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="w-full accent-cyan-400"
+                      value={flare.y}
+                      onChange={(e) => setFlare({ y: Number(e.target.value) })}
+                    />
+                  </Field>
+                </div>
+              </div>
+
+              {/* Colors & Overall Intensity */}
+              <div className="space-y-2 border-t border-noir-700 pt-2">
+                <Field label={`Overall Intensity: ${Math.round(flare.intensity * 100)}%`}>
+                  <input
+                    type="range"
+                    min={5}
+                    max={100}
+                    step={1}
+                    className="w-full accent-cyan-400"
+                    value={Math.round(flare.intensity * 100)}
+                    onChange={(e) => setFlare({ intensity: Number(e.target.value) / 100 })}
+                  />
+                </Field>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Primary Flare Color">
+                    <input
+                      type="color"
+                      className="h-8 w-full border border-noir-600 bg-noir-950 cursor-pointer"
+                      value={flareGlow.hex}
+                      onChange={(e) => setFlare({ color: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Secondary / Ghost Tint">
+                    <input
+                      type="color"
+                      className="h-8 w-full border border-noir-600 bg-noir-950 cursor-pointer"
+                      value={flareSecGlow.hex}
+                      onChange={(e) => setFlare({ secondaryColor: e.target.value })}
+                    />
+                  </Field>
+                </div>
+              </div>
+
+              {/* Anamorphic Streak Controls */}
+              <div className="space-y-2 border-t border-noir-700 pt-2">
+                <div className="font-pulp text-[9px] uppercase tracking-wider text-cyan-neon">
+                  🎬 Anamorphic Streak Beam
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Beam Intensity: ${Math.round(flare.streakIntensity * 100)}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="w-full accent-cyan-400"
+                      value={Math.round(flare.streakIntensity * 100)}
+                      onChange={(e) => setFlare({ streakIntensity: Number(e.target.value) / 100 })}
+                    />
+                  </Field>
+                  <Field label={`Beam Thickness: ${flare.streakWidth.toFixed(1)}×`}>
+                    <input
+                      type="range"
+                      min={0.2}
+                      max={3.0}
+                      step={0.1}
+                      className="w-full accent-cyan-400"
+                      value={flare.streakWidth}
+                      onChange={(e) => setFlare({ streakWidth: Number(e.target.value) })}
+                    />
+                  </Field>
+                </div>
+                <Field label={`Streak Angle: ${flare.streakAngle}° (0° = horizontal)`}>
+                  <input
+                    type="range"
+                    min={-45}
+                    max={45}
+                    step={1}
+                    className="w-full accent-cyan-400"
+                    value={flare.streakAngle}
+                    onChange={(e) => setFlare({ streakAngle: Number(e.target.value) })}
+                  />
+                </Field>
+              </div>
+
+              {/* Optical Ghost Reflections */}
+              <div className="space-y-2 border-t border-noir-700 pt-2">
+                <div className="font-pulp text-[9px] uppercase tracking-wider text-cyan-neon">
+                  🔮 Optical Ghost Reflections
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Ghost Brightness: ${Math.round(flare.ghostIntensity * 100)}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="w-full accent-cyan-400"
+                      value={Math.round(flare.ghostIntensity * 100)}
+                      onChange={(e) => setFlare({ ghostIntensity: Number(e.target.value) / 100 })}
+                    />
+                  </Field>
+                  <Field label={`Axis Spread: ${flare.ghostSpread.toFixed(2)}×`}>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={2.0}
+                      step={0.05}
+                      className="w-full accent-cyan-400"
+                      value={flare.ghostSpread}
+                      onChange={(e) => setFlare({ ghostSpread: Number(e.target.value) })}
+                    />
+                  </Field>
+                </div>
+
+                <Field label="Ghost Reflection Detail">
+                  <select
+                    className={inputCls}
+                    value={flare.ghostCount}
+                    onChange={(e) => setFlare({ ghostCount: e.target.value as LensFlareGhostTier })}
+                  >
+                    <option value="subtle">Subtle — 4 key aperture rings & discs</option>
+                    <option value="standard">Standard — 8 chromatic elements & rainbow halo</option>
+                    <option value="rich">Rich — 12 multi-spectral cinema optical elements</option>
+                  </select>
+                </Field>
+              </div>
+
+              {/* Starburst Diffraction & Core Size */}
+              <div className="space-y-2 border-t border-noir-700 pt-2">
+                <div className="font-pulp text-[9px] uppercase tracking-wider text-cyan-neon">
+                  ⭐ Starburst Diffraction & Core Halo
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Starburst Intensity: ${Math.round(flare.starburstIntensity * 100)}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="w-full accent-cyan-400"
+                      value={Math.round(flare.starburstIntensity * 100)}
+                      onChange={(e) => setFlare({ starburstIntensity: Number(e.target.value) / 100 })}
+                    />
+                  </Field>
+                  <Field label="Starburst Rays">
+                    <select
+                      className={inputCls}
+                      value={flare.starburstRays}
+                      onChange={(e) => setFlare({ starburstRays: Number(e.target.value) })}
+                    >
+                      <option value={4}>4 Rays (Classic Cross)</option>
+                      <option value={6}>6 Rays (Cinema Star)</option>
+                      <option value={8}>8 Rays (Sunburst)</option>
+                      <option value={12}>12 Rays (Fine Diffraction)</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <Field label={`Core Glow & Corona Diameter: ${flare.coreSize}%`}>
+                  <input
+                    type="range"
+                    min={15}
+                    max={85}
+                    step={1}
+                    className="w-full accent-cyan-400"
+                    value={flare.coreSize}
+                    onChange={(e) => setFlare({ coreSize: Number(e.target.value) })}
+                  />
+                </Field>
+              </div>
+
+              {/* Dynamic Shimmer & Motion */}
+              <div className="space-y-2 border-t border-noir-700 pt-2">
+                <div className="font-pulp text-[9px] uppercase tracking-wider text-cyan-neon">
+                  🌊 Dynamic Shimmer & Camera Reactivity
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label={`Shimmer Speed: ${flare.pulseSeconds.toFixed(1)}s`}>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={8.0}
+                      step={0.1}
+                      className="w-full accent-cyan-400"
+                      value={flare.pulseSeconds}
+                      onChange={(e) => setFlare({ pulseSeconds: Number(e.target.value) })}
+                    />
+                  </Field>
+                  <Field label={`Shimmer Depth: ${Math.round(flare.pulseAmount * 100)}%`}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="w-full accent-cyan-400"
+                      value={Math.round(flare.pulseAmount * 100)}
+                      onChange={(e) => setFlare({ pulseAmount: Number(e.target.value) / 100 })}
+                    />
+                  </Field>
+                </div>
+
+                <Field label={`Camera Parallax Reactivity: ${flare.reactivity.toFixed(1)}×`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={2.0}
+                    step={0.1}
+                    className="w-full accent-cyan-400"
+                    value={flare.reactivity}
+                    onChange={(e) => setFlare({ reactivity: Number(e.target.value) })}
+                  />
+                </Field>
+              </div>
+            </>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      {isActive && (
+        <button
+          onClick={() => onChange(undefined)}
+          className="w-full border border-crimson/40 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
+        >
+          Reset all cinematic settings
+        </button>
+      )}
     </div>
   );
 }
-
-
 
 function resizeImageFile(file: File, maxSize = 512): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -2367,137 +2750,6 @@ function resizeImageFile(file: File, maxSize = 512): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
-}
-
-/* ---------- cursor art (in-game theme) ---------- */
-/** Per-verb cursor art. Lives on the 🎮 In-game theme tab and previews in the
- *  case's own theme, at real size, over a scrap of the plate — because a cursor
- *  is the one piece of UI the player touches literally everywhere. */
-function CursorArtEditor({
-  story,
-  onUpdate,
-  media,
-  themeVars,
-}: {
-  story: Story;
-  onUpdate: (next: Story) => void;
-  media: (v?: string) => string | undefined;
-  themeVars: React.CSSProperties;
-}) {
-  const [openSlot, setOpenSlot] = useState<string | null>(null);
-  const art = story.cursorArt ?? {};
-  const setSlot = (slot: string, patch: Partial<CursorArt>) => {
-    const next = deepClone(story);
-    next.cursorArt = { ...(next.cursorArt ?? {}) };
-    (next.cursorArt as Record<string, CursorArt>)[slot] = { ...((art as Record<string, CursorArt>)[slot] ?? {}), ...patch };
-    onUpdate(next);
-  };
-  const clearSlot = (slot: string) => {
-    const next = deepClone(story);
-    next.cursorArt = { ...(next.cursorArt ?? {}) };
-    delete (next.cursorArt as Record<string, CursorArt | undefined>)[slot];
-    if (!Object.keys(next.cursorArt).length) next.cursorArt = undefined;
-    onUpdate(next);
-  };
-  return (
-    <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2" style={themeVars}>
-      <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🖱 Cursor art (per verb)</div>
-      <p className="font-type text-[9px] leading-snug text-paper/45">
-        Replace the system cursors with art: a pointing hand for <b>take</b>, an eye for <b>look</b>, a turning key
-        for <b>use</b>. Give a verb a static <b>image</b> and it becomes the real mouse cursor; give it a <b>sprite
-        sheet</b> and it animates as it follows the mouse. <b>default</b> is the plain arrow everywhere else. Nothing
-        here is required — no art means the game keeps its system cursors.
-      </p>
-      {CURSOR_SLOTS.map((slot) => {
-        const a = (art as Record<string, CursorArt | undefined>)[slot];
-        const size = a?.size ?? 32;
-        const open = openSlot === slot;
-        const preview = (() => {
-          if (a && sheetDrawable(a.sheet)) return <SheetSprite sheet={a.sheet!} anim="loop" fallbacks={["idle"]} height={Math.min(48, size)} />;
-          if (a?.image) return <img src={assetUrl(media(a.image) ?? a.image)} alt="" className="w-auto object-contain" style={{ height: Math.min(48, size) }} />;
-          return <span className="font-type text-[9px] uppercase tracking-widest text-paper/35">system cursor</span>;
-        })();
-        return (
-          <div key={slot} className="border border-noir-700/70">
-            <button
-              className="flex w-full items-center gap-2 px-1.5 py-1 text-left hover:bg-noir-800/40"
-              onClick={() => setOpenSlot(open ? null : slot)}
-            >
-              {/* the preview is a scrap of the plate, in the case's own theme */}
-              <span className="relative flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden border border-gold/30 bg-noir-950">
-                <span className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(232,178,60,0.12),transparent_70%)]" aria-hidden />
-                {preview}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-pulp text-[9px] uppercase tracking-widest text-gold">
-                  {CURSOR_ICON[slot] ?? "➤"} {slot}
-                </span>
-                <span className="block truncate font-type text-[9px] text-paper/45">
-                  {a ? (sheetDrawable(a.sheet) ? "animated sprite sheet" : a.image ? "static image" : "empty") : "system cursor"}
-                  {a ? ` · ${size}px · ${a.anchor === "center" ? "centred" : "tip: top-left"}` : ""}
-                </span>
-              </span>
-              <span className="shrink-0 font-pulp text-[9px] text-paper/40">{open ? "▾" : "▸"}</span>
-            </button>
-            {open ? (
-              <div className="space-y-1.5 border-t border-noir-700/70 p-1.5">
-                <Field label="Static image (transparent PNG/WebP, ≤128px)">
-                  <ImagePicker
-                    preferFolder="sprites"
-                    value={a?.image || undefined}
-                    placeholder="Pick cursor art from the library…"
-                    includeGradients={false}
-                    onChange={(url) => setSlot(slot, { image: url ?? undefined, sheet: undefined })}
-                  />
-                </Field>
-                {a?.image ? (
-                  <div className="flex items-center gap-1">
-                    <img src={assetUrl(media(a.image) ?? a.image)} alt="" className="h-8 w-auto object-contain" />
-                    <button
-                      className="border border-crimson/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                      onClick={() => setSlot(slot, { image: undefined })}
-                    >
-                      ✕ remove
-                    </button>
-                  </div>
-                ) : null}
-                <div className="space-y-1 border border-cyan-neon/25 bg-cyan-neon/5 p-1.5">
-                  <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Animated cursor (sprite sheet)</div>
-                  <p className="font-type text-[9px] leading-snug text-paper/45">
-                    A looping sprite that follows the mouse — a reaching hand, a blinking eye. Beats the 128px CSS
-                    cursor limit and can be any size.
-                  </p>
-                  <SpriteSheetControls
-                    value={a?.sheet}
-                    storyId={story.id}
-                    preset={EXTRA_PRESET}
-                    onChange={(sheet) => setSlot(slot, { sheet, image: sheet ? undefined : a?.image })}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-1">
-                  <Field label="Hotspot point">
-                    <select className={inputCls} value={a?.anchor ?? "top-left"} onChange={(e) => setSlot(slot, { anchor: e.target.value as CursorArt["anchor"] })}>
-                      <option value="top-left">top-left (pointing)</option>
-                      <option value="center">centre (reticle)</option>
-                    </select>
-                  </Field>
-                  <Field label={`Size ${size}px`}>
-                    <input type="range" min={16} max={96} step={2} className="w-full accent-gold" value={size} onChange={(e) => setSlot(slot, { size: Number(e.target.value) })} />
-                  </Field>
-                </div>
-                <button
-                  className="w-full border border-paper/30 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/50 hover:text-crimson"
-                  onClick={() => clearSlot(slot)}
-                >
-                  ⟲ back to the system cursor
-                </button>
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 /* ---------- character editor ---------- */
@@ -2946,16 +3198,17 @@ function CharacterEditor({
                 onUpdate(next);
               }}
             />
-            <ImagePicker
-              value={c.avatarUrl.startsWith("emoji:") ? undefined : c.avatarUrl}
-              onChange={(v) => {
+            <AssetDropdown
+              storyId={story.id}
+              assetType="image"
+              value={c.avatarUrl.startsWith("data:") || c.avatarUrl.startsWith("asset:") ? c.avatarUrl : undefined}
+              returnReference
+              onChange={(url) => {
                 const next = deepClone(story);
-                next.characters.find((x) => x.id === c.id)!.avatarUrl = v ?? "emoji:👤";
+                next.characters.find((x) => x.id === c.id)!.avatarUrl = url ?? "emoji:👤";
                 onUpdate(next);
               }}
-              placeholder="🖼 pick a portrait from the image library…"
-              preferFolder="sprites"
-              includeGradients={false}
+              placeholder="Or pick uploaded portrait..."
             />
             <input
               className={inputCls}
@@ -3107,98 +3360,6 @@ function CharacterEditor({
                 <span className="font-type text-[9px] text-paper/40">Live preview — this is how it animates in-game while they speak.</span>
               </div>
 
-              {/* ---- one-image sprite sheet (takes over from the keyframes while set) ---- */}
-              <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
-                <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet portrait</div>
-                <p className="font-type text-[9px] leading-snug text-paper/45">
-                  One image holding all the mouth/pose frames in a grid instead of loose files. Name a
-                  "talk" animation (plays while speaking) and a "rest" pose (held otherwise — a missing
-                  "rest" holds talk frame 1). While a sheet is set it takes over from the keyframes below;
-                  your keyframes stay saved and come back the moment you clear it. Position, scale and flip
-                  still use the sliders below.
-                </p>
-                <SpriteSheetControls
-                  value={c.talkingSheet}
-                  storyId={story.id}
-                  preset={TALKING_PRESET}
-                  onChange={(sheet) => {
-                    const next = deepClone(story);
-                    next.characters.find((x) => x.id === c.id)!.talkingSheet = sheet;
-                    onUpdate(next);
-                  }}
-                />
-                {/* ---- alternate sheets: outfits / moods / poses ---- */}
-                {(c.talkingSheet || (c.talkingSheets ?? []).length > 0) && (
-                  <div className="mt-1 space-y-1 border border-purple-400/25 bg-purple-400/5 p-1.5">
-                    <div className="font-pulp text-[9px] uppercase tracking-widest text-purple-300">🎭 Alternate sheets (outfits · moods · poses)</div>
-                    <p className="font-type text-[8px] leading-snug text-paper/45">
-                      Give a variant a name (e.g. <b>raincoat</b>, <b>furious</b>), then type that same name into a
-                      dialogue beat's <b>expression</b> field — while this character speaks that beat, the variant's
-                      sheet takes over. Every other beat uses the main sheet above.
-                    </p>
-                    {(c.talkingSheets ?? []).map((v, vi) => (
-                      <div key={vi} className="space-y-1 border border-noir-700 p-1.5">
-                        <div className="flex items-center gap-1">
-                          <input
-                            className="flex-1 border border-noir-600 bg-noir-950 px-2 py-1 text-xs text-paper focus:border-purple-300 outline-none"
-                            value={v.name}
-                            placeholder="variant name (matches beat expression)…"
-                            onChange={(e) => {
-                              const next = deepClone(story);
-                              next.characters.find((x) => x.id === c.id)!.talkingSheets![vi].name = e.target.value;
-                              onUpdate(next);
-                            }}
-                          />
-                          <button
-                            className="shrink-0 border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10"
-                            onClick={() => {
-                              const next = deepClone(story);
-                              const ch = next.characters.find((x) => x.id === c.id)!;
-                              ch.talkingSheets = (ch.talkingSheets ?? []).filter((_, j) => j !== vi);
-                              if (!ch.talkingSheets.length) delete ch.talkingSheets;
-                              onUpdate(next);
-                            }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                        <SpriteSheetControls
-                          value={v.sheet}
-                          storyId={story.id}
-                          preset={TALKING_PRESET}
-                          onChange={(sheet) => {
-                            const next = deepClone(story);
-                            const ch = next.characters.find((x) => x.id === c.id)!;
-                            if (sheet) ch.talkingSheets![vi].sheet = sheet;
-                            else {
-                              ch.talkingSheets = (ch.talkingSheets ?? []).filter((_, j) => j !== vi);
-                              if (!ch.talkingSheets.length) delete ch.talkingSheets;
-                            }
-                            onUpdate(next);
-                          }}
-                        />
-                      </div>
-                    ))}
-                    <button
-                      className="border border-purple-400/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-purple-300 hover:bg-purple-400/10"
-                      onClick={() => {
-                        const next = deepClone(story);
-                        const ch = next.characters.find((x) => x.id === c.id)!;
-                        const seed = ch.talkingSheet ?? ch.talkingSheets?.[0]?.sheet;
-                        if (!seed) return;
-                        ch.talkingSheets = [
-                          ...(ch.talkingSheets ?? []),
-                          { name: `variant ${(ch.talkingSheets?.length ?? 0) + 1}`, sheet: deepClone(seed) },
-                        ];
-                        onUpdate(next);
-                      }}
-                    >
-                      ＋ Add alternate sheet
-                    </button>
-                  </div>
-                )}
-              </div>
-
               <Field label="Resting pose (shown when they're on scene but NOT speaking)">
                 <div className="flex gap-1">
                   <ImagePicker
@@ -3297,32 +3458,6 @@ function CharacterEditor({
                 />
               </div>
 
-              {/* Live preview over the opening scene — drag to place, corner-drag to resize. */}
-              <SpriteBoxEditor
-                mode="talking"
-                backgroundUrl={(() => {
-                  const bg = story.scenes.find((s) => s.id === story.startSceneId)?.background;
-                  return bg ? media(bg) ?? bg : undefined;
-                })()}
-                image={(() => {
-                  const f = c.talkingRest ?? (c.talkingFrames ?? []).find(Boolean);
-                  return f ? media(f) ?? f : undefined;
-                })()}
-                sheet={c.talkingSheet}
-                resolve={media}
-                x={c.talkingX ?? 50}
-                y={c.talkingY ?? 0}
-                scale={c.talkingScale ?? 1}
-                flip={!!c.talkingFlip}
-                onChange={(p) => {
-                  const next = deepClone(story);
-                  const ch = next.characters.find((x) => x.id === c.id)!;
-                  if (p.x !== undefined) ch.talkingX = p.x;
-                  if (p.y !== undefined) ch.talkingY = p.y;
-                  if (p.scale !== undefined) ch.talkingScale = p.scale;
-                  onUpdate(next);
-                }}
-              />
               <div className="grid grid-cols-2 gap-2">
                 <Field label={`Position X ${c.talkingX ?? 50}%`}>
                   <input type="range" min={0} max={100} step={1} className="w-full accent-pink-500" value={c.talkingX ?? 50}
@@ -3339,14 +3474,6 @@ function CharacterEditor({
                 <Field label={`Frame time ${(c.talkingFrameDuration ?? 0.16).toFixed(2)}s`}>
                   <input type="range" min={0.04} max={0.6} step={0.02} className="w-full accent-pink-500" value={c.talkingFrameDuration ?? 0.16}
                     onChange={(e) => { const next = deepClone(story); next.characters.find((x) => x.id === c.id)!.talkingFrameDuration = Number(e.target.value); onUpdate(next); }} />
-                </Field>
-                <Field label={`Visibility when NOT speaking ${Math.round((c.talkingDim ?? 0.72) * 100)}% (100% = never fades)`}>
-                  <input type="range" min={0.2} max={1} step={0.02} className="w-full accent-pink-500" value={c.talkingDim ?? 0.72}
-                    onChange={(e) => {
-                      const next = deepClone(story);
-                      next.characters.find((x) => x.id === c.id)!.talkingDim = Number(e.target.value);
-                      onUpdate(next);
-                    }} />
                 </Field>
               </div>
               <label className="flex items-center gap-2 text-[9px] text-paper/55">
@@ -3731,164 +3858,31 @@ function GatingEditor({
 /*  hotspot drawer preview                                             */
 /* ------------------------------------------------------------------ */
 
-type ZoneBounds = { x: number; y: number; w: number; h: number };
-type ZoneHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
-
 function HotspotCanvas({
   scene,
   items = [],
   selectedId,
   onSelect,
   onDraw,
-  onMove,
   media,
-  barrierMode,
-  behindMode,
-  occluders,
-  selectedOccluder,
-  onOccluderSelect,
-  onOccluderDraw,
-  onOccluderPoints,
-  barriers = [],
-  selectedBarrier,
-  onBarrierSelect,
-  onBarrierDraw,
-  onBarrierMove,
-  spawn,
-  spawnMode,
-  onSpawnMove,
-  player,
-  stageNpcs = [],
 }: {
   scene: SceneNode;
   items?: Item[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onDraw: (bounds: { x: number; y: number; w: number; h: number }) => void;
-  /** Commit a MOVE/RESIZE of an existing hotspot (drag body / pull handles). */
-  onMove?: (id: string, bounds: { x: number; y: number; w: number; h: number }) => void;
   media: (v?: string) => string | undefined;
-  /** Draw NO-GO BARRIERS instead of hotspots (🚶 stage rooms). */
-  barrierMode?: boolean;
-  /** WALK-BEHIND draw mode — the desk/counter regions that cover the walker. */
-  behindMode?: boolean;
-  occluders?: { id?: string; points: { x: number; y: number }[]; baseline?: number; label?: string; visible?: boolean }[];
-  selectedOccluder?: number | null;
-  onOccluderSelect?: (i: number | null) => void;
-  onOccluderDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
-  /** Corner editing — replaces one region's whole point list. */
-  onOccluderPoints?: (i: number, points: { x: number; y: number }[]) => void;
-  /** The room's no-go rectangles, always shown faintly as context. */
-  barriers?: { x: number; y: number; w: number; h: number }[];
-  selectedBarrier?: number | null;
-  onBarrierSelect?: (i: number | null) => void;
-  onBarrierDraw?: (bounds: { x: number; y: number; w: number; h: number }) => void;
-  /** Commit a MOVE/RESIZE of an existing barrier (drag body / pull handles). */
-  onBarrierMove?: (i: number, bounds: { x: number; y: number; w: number; h: number }) => void;
-  /** 🚶 where the player character starts (scene %), drawn on the plate. */
-  spawn?: { x: number; y: number };
-  /** Dragging on the plate moves the player instead of drawing a box. */
-  spawnMode?: boolean;
-  onSpawnMove?: (p: { x: number; y: number }) => void;
-  /** The walker art, so the marker is the actual character. */
-  player?: { image?: string; sheet?: import("./../game/spriteSheet").SpriteSheet; scale?: number };
-  /** AMBIENT CAST — drawn as ghosts on the plate so hotspots and barriers can
-   *  be placed around the actors who will actually be standing there. */
-  stageNpcs?: {
-    id: string;
-    x: number;
-    y: number;
-    scale?: number;
-    image?: string;
-    sheet?: import("./../game/spriteSheet").SpriteSheet;
-  }[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
-  const floorBand = scene.stage?.floor;
-  const onBarrierDrawRef = useRef(onBarrierDraw);
-  onBarrierDrawRef.current = onBarrierDraw;
-  const onOccluderDrawRef = useRef(onOccluderDraw);
-  onOccluderDrawRef.current = onOccluderDraw;
-  const onSpawnMoveRef = useRef(onSpawnMove);
-  onSpawnMoveRef.current = onSpawnMove;
-  const onMoveRef = useRef(onMove);
-  onMoveRef.current = onMove;
-  const onBarrierMoveRef = useRef(onBarrierMove);
-  onBarrierMoveRef.current = onBarrierMove;
-  /** MOVE/RESIZE an existing zone: drag its body to move it, pull the square
-   *  handles on the selected one to resize. `drag` holds the gesture; `live`
-   *  is the in-flight bounds drawn while the pointer is still down (committed
-   *  once, on pointer-up). */
-  const drag = useRef<{
-    target: "hs" | "bar";
-    id: string;
-    index: number;
-    mode: "move" | ZoneHandle;
-    start: { x: number; y: number };
-    orig: ZoneBounds;
-  } | null>(null);
-  const [live, setLive] = useState<{ target: "hs" | "bar"; id: string; index: number; b: ZoneBounds } | null>(null);
-  /** True once the pointer actually travelled — suppresses the click that
-   *  follows a drag so it doesn't toggle the selection. */
-  const movedRef = useRef(false);
-  /** WIDE WORLD: the canvas shows the whole strip shrunk to fit; pointer
-   *  positions are scaled up to world-% and rendering scaled back down. */
-  const worldW = Math.max(100, scene.stage?.worldWidth ?? 100);
-  const scale = 100 / worldW;
-
-  /** Live CORNER drag on a walk-behind: which region/vertex and where it is
-   *  now. Committed on release, so one drag = one undo step. */
-  const [occDrag, setOccDrag] = useState<{ oi: number; pi: number; x: number; y: number } | null>(null);
 
   const pct = (e: React.PointerEvent) => {
     const r = ref.current!.getBoundingClientRect();
     return {
-      x: Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)) / scale,
+      x: Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)),
       y: Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)),
     };
-  };
-
-  /** Turn the current pointer position into new bounds for the zone being
-   *  moved/resized, clamped to the plate and a 2% minimum size. */
-  const applyDrag = (p: { x: number; y: number }): ZoneBounds => {
-    const d = drag.current!;
-    const dx = p.x - d.start.x;
-    const dy = p.y - d.start.y;
-    const MIN = 2;
-    if (d.mode === "move") {
-      return {
-        x: Math.min(Math.max(0, d.orig.x + dx), Math.max(0, worldW - d.orig.w)),
-        y: Math.min(Math.max(0, d.orig.y + dy), Math.max(0, 100 - d.orig.h)),
-        w: d.orig.w,
-        h: d.orig.h,
-      };
-    }
-    let L = d.orig.x;
-    let T = d.orig.y;
-    let R = d.orig.x + d.orig.w;
-    let Bt = d.orig.y + d.orig.h;
-    if (d.mode.includes("w")) L = Math.max(0, Math.min(L + dx, R - MIN));
-    if (d.mode.includes("e")) R = Math.min(worldW, Math.max(R + dx, L + MIN));
-    if (d.mode.includes("n")) T = Math.max(0, Math.min(T + dy, Bt - MIN));
-    if (d.mode.includes("s")) Bt = Math.min(100, Math.max(Bt + dy, T + MIN));
-    return { x: L, y: T, w: R - L, h: Bt - T };
-  };
-
-  const startZoneDrag = (
-    e: React.PointerEvent,
-    target: "hs" | "bar",
-    id: string,
-    index: number,
-    mode: "move" | ZoneHandle,
-    orig: ZoneBounds
-  ) => {
-    e.stopPropagation();
-    movedRef.current = false;
-    drag.current = { target, id, index, mode, start: pct(e), orig: { ...orig } };
-    setLive({ target, id, index, b: { ...orig } });
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   };
 
   return (
@@ -3896,23 +3890,14 @@ function HotspotCanvas({
       ref={ref}
       className="relative aspect-video w-full cursor-crosshair overflow-hidden border border-noir-600"
       style={bgStyle(media(scene.background) ?? scene.background)}
+      onPointerDown={(e) => {
+        if ((e.target as HTMLElement).dataset.hs) return;
+        start.current = pct(e);
+        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      }}
       onPointerMove={(e) => {
-        // MOVE/RESIZE in flight — track the pointer, commit on release.
-        if (drag.current) {
-          const p = pct(e);
-          if (Math.abs(p.x - drag.current.start.x) + Math.abs(p.y - drag.current.start.y) > 0.3) movedRef.current = true;
-          const d = drag.current;
-          setLive({ target: d.target, id: d.id, index: d.index, b: applyDrag(p) });
-          return;
-        }
         if (!start.current) return;
         const p = pct(e);
-        // 🚶 player start: dragging moves the character (clamped to the floor
-        // band, because that's where they can actually stand).
-        if (spawnMode) {
-          onSpawnMoveRef.current?.({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 });
-          return;
-        }
         setDraft({
           x: Math.min(start.current.x, p.x),
           y: Math.min(start.current.y, p.y),
@@ -3920,69 +3905,14 @@ function HotspotCanvas({
           h: Math.abs(p.y - start.current.y),
         });
       }}
-      onPointerDown={(e) => {
-        if (drag.current) return;
-        // In spawn mode a plain click places the character too.
-        if (spawnMode && !(e.target as HTMLElement).dataset.bar && !(e.target as HTMLElement).dataset.hs) {
-          start.current = pct(e);
-          onSpawnMoveRef.current?.({ x: Math.round(start.current.x * 10) / 10, y: Math.round(start.current.y * 10) / 10 });
-          return;
-        }
-        if ((e.target as HTMLElement).dataset.hs) return;
-        if ((e.target as HTMLElement).dataset.bar) return;
-        // A press that lands on a walk-behind shape or one of its corner
-        // handles is editing THAT region — it must not also start drawing a
-        // brand new one under the cursor.
-        if ((e.target as HTMLElement).dataset.occ) return;
-        start.current = pct(e);
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-      }}
       onPointerUp={() => {
-        // Commit a MOVE/RESIZE (only if the bounds actually changed).
-        if (drag.current) {
-          const d = drag.current;
-          const b = live && live.target === d.target && live.id === d.id && live.index === d.index ? live.b : d.orig;
-          const r = {
-            x: Math.round(b.x * 10) / 10,
-            y: Math.round(b.y * 10) / 10,
-            w: Math.round(b.w * 10) / 10,
-            h: Math.round(b.h * 10) / 10,
-          };
-          const o = d.orig;
-          const changed =
-            r.x !== Math.round(o.x * 10) / 10 ||
-            r.y !== Math.round(o.y * 10) / 10 ||
-            r.w !== Math.round(o.w * 10) / 10 ||
-            r.h !== Math.round(o.h * 10) / 10;
-          if (changed) {
-            if (d.target === "hs") {
-              onMoveRef.current?.(d.id, r);
-              onSelect(d.id);
-            } else {
-              onBarrierMoveRef.current?.(d.index, r);
-              onBarrierSelect?.(d.index);
-              onSelect("");
-            }
-          }
-          drag.current = null;
-          setLive(null);
-          return;
-        }
-        if (spawnMode) {
-          start.current = null;
-          setDraft(null);
-          return;
-        }
         if (draft && draft.w > 2 && draft.h > 2) {
-          const bounds = {
+          onDraw({
             x: Math.round(draft.x * 10) / 10,
             y: Math.round(draft.y * 10) / 10,
             w: Math.round(draft.w * 10) / 10,
             h: Math.round(draft.h * 10) / 10,
-          };
-          if (behindMode) onOccluderDrawRef.current?.(bounds);
-          else if (barrierMode) onBarrierDrawRef.current?.(bounds);
-          else onDraw(bounds);
+          });
         }
         start.current = null;
         setDraft(null);
@@ -3997,290 +3927,18 @@ function HotspotCanvas({
           autoPlay
         />
       )}
-      {/* the walkable floor band — where the character may stand, and so
-          where a barrier actually means something */}
-      {floorBand ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 border-y border-dashed border-cyan-neon/40 bg-cyan-neon/5"
-          style={{ top: `${floorBand.top}%`, height: `${Math.max(0, floorBand.bottom - floorBand.top)}%` }}
-        >
-          <span className="absolute left-1 top-0 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/70">walkable floor</span>
-        </div>
-      ) : null}
-      {/* WIDE WORLD: dashed viewport frames — what the player's camera
-          shows at once. */}
-      {worldW > 100 ? (
-        <>
-          {Array.from({ length: Math.floor(worldW / 100) }, (_, i) => {
-            const left = i * 100 * scale;
-            return (
-              <div key={i}>
-                <div className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-cyan-neon/40" style={{ left: `${left}%` }} />
-                <span className="pointer-events-none absolute z-[15] -translate-x-1/2 font-pulp text-[7px] uppercase tracking-widest text-cyan-neon/70" style={{ left: `${left}%`, top: 4 }}>
-                  {i === 0 ? "▶ screen 1" : `▶ screen ${i + 1}`}
-                </span>
-              </div>
-            );
-          })}
-        </>
-      ) : null}
-      {/* 🚶 THE PLAYER — where they start. Bright and named in spawn mode,
-          a ghost in the other modes so you can place things around them. */}
-      {spawn ? (
-        <div
-          className={`pointer-events-none absolute flex flex-col items-center ${spawnMode ? "" : "opacity-40"}`}
-          style={{ left: `${spawn.x * scale}%`, top: `${spawn.y}%`, transform: "translate(-50%,-100%)", height: "28%" }}
-          title="Player start"
-        >
-          {player && sheetDrawable(player.sheet) ? (
-            <SheetSprite sheet={player.sheet!} anim="idle" fallbacks={["walk", "loop"]} height="100%" freezeOnFallback />
-          ) : player?.image ? (
-            <img src={assetUrl(media(player.image) ?? player.image)} alt="" className="h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]" />
-          ) : (
-            <span className="text-2xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]">🚶</span>
-          )}
-          <span className={`mt-0.5 whitespace-nowrap font-pulp text-[7px] uppercase tracking-widest ${spawnMode ? "text-cyan-neon" : "text-paper/60"}`}>
-            {spawnMode ? "🚶 player start — drag to move" : "🚶 start"}
-          </span>
-        </div>
-      ) : null}
-      {/* 🎭 THE AMBIENT CAST — the NPCs who will be standing in this room.
-          Ghosted like the player start: the point is to place hotspots and
-          barriers around the actors rather than discovering in playtest that
-          a marker is behind someone's head. Not interactive here — the NPC
-          tab owns positioning (drag them on its own plate). */}
-      {stageNpcs.map((n, i) => (
-        <div
-          key={`npc-${n.id}-${i}`}
-          className="pointer-events-none absolute flex flex-col items-center opacity-40"
-          style={{
-            left: `${n.x * scale}%`,
-            top: `${n.y}%`,
-            transform: "translate(-50%,-100%)",
-            height: `${24 * (n.scale ?? 1)}%`,
-          }}
-          title={`${n.id} (ambient NPC — position it on the 🎭 NPCs tab)`}
-        >
-          {sheetDrawable(n.sheet) ? (
-            <SheetSprite sheet={n.sheet!} anim="idle" fallbacks={["walk", "rest"]} height="100%" freezeOnFallback />
-          ) : n.image && !n.image.startsWith("emoji:") ? (
-            <img src={assetUrl(media(n.image) ?? n.image)} alt="" className="h-full w-auto object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)]" />
-          ) : (
-            <span className="text-2xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)]">{n.image?.startsWith("emoji:") ? n.image.slice(6) : "🚶"}</span>
-          )}
-          <span className="mt-0.5 whitespace-nowrap font-pulp text-[7px] uppercase tracking-widest text-teal-300/70">
-            🎭 {n.id}
-          </span>
-        </div>
-      ))}
-      {/* NO-GO BARRIERS — hatched crimson. Click to select (then redraw to
-          reshape); visible in both modes because they place the hotspots. */}
-      {/* WALK-BEHIND regions — drawn as a violet wash with the depth line
-          marked, so an author can see BOTH the shape and where "behind" ends.
-          The plate can't show the real effect (the cutout is the background
-          itself), so the baseline is what actually needs to be visible. */}
-      {(occluders ?? []).map((o, oi) => {
-        // Live drag preview: the dragged vertex follows the pointer while the
-        // rest stay put, so the shape deforms under the cursor.
-        const pts =
-          occDrag && occDrag.oi === oi
-            ? o.points.map((p, pi) => (pi === occDrag.pi ? { x: occDrag.x, y: occDrag.y } : p))
-            : o.points;
-        const xs = pts.map((p) => p.x);
-        const ys = pts.map((p) => p.y);
-        const x0 = Math.min(...xs), x1 = Math.max(...xs);
-        const y0 = Math.min(...ys), y1 = Math.max(...ys);
-        const base = o.baseline ?? y1;
-        const sel = selectedOccluder === oi;
-        return (
-          <button
-            key={`occ-${oi}`}
-            data-occ="1"
-            onClick={() => {
-              if (movedRef.current) {
-                movedRef.current = false;
-                return;
-              }
-              onOccluderSelect?.(sel ? null : oi);
-              onSelect("");
-            }}
-            className={`absolute border-2 ${sel ? "border-violet-400" : behindMode ? "border-violet-400/70" : "border-violet-400/25"} text-[8px] uppercase tracking-wider text-violet-300 ${o.visible === false ? "opacity-30" : ""}`}
-            style={{
-              left: `${x0 * scale}%`,
-              top: `${y0}%`,
-              width: `${(x1 - x0) * scale}%`,
-              height: `${y1 - y0}%`,
-              clipPath: `polygon(${pts
-                .map((p) => `${(((p.x - x0) / Math.max(0.001, x1 - x0)) * 100).toFixed(2)}% ${(((p.y - y0) / Math.max(0.001, y1 - y0)) * 100).toFixed(2)}%`)
-                .join(", ")})`,
-              backgroundImage:
-                "repeating-linear-gradient(-45deg, rgba(167,139,250,0.35) 0 6px, rgba(167,139,250,0.08) 6px 12px)",
-            }}
-            title={`Walk-behind ${o.label ?? oi + 1} — the walker is covered while their feet are above ${Math.round(base)}%`}
-          >
-            <span className="absolute left-1 top-0.5 truncate">
-              {behindMode || sel ? `🪟 ${o.label ?? "behind"}` : ""}
-            </span>
-          </button>
-        );
-      })}
-      {/* CORNER HANDLES — only on the selected region, and only in walk-behind
-          mode. A dragged rectangle starts as four points, but the engine clips
-          to any polygon, so pulling corners is what makes an L-shaped counter
-          or a curved bar possible without hand-editing coordinates.
-          Rendered OUTSIDE the clipped shape above: a handle sitting on the
-          polygon's edge would be half-clipped and hard to grab. */}
-      {behindMode && selectedOccluder != null && (occluders ?? [])[selectedOccluder]
-        ? (() => {
-            const oi = selectedOccluder;
-            const o = occluders![oi];
-            const pts =
-              occDrag && occDrag.oi === oi
-                ? o.points.map((p, pi) => (pi === occDrag.pi ? { x: occDrag.x, y: occDrag.y } : p))
-                : o.points;
-            return pts.map((p, pi) => (
-              <div
-                key={`occ-h-${oi}-${pi}`}
-                data-occ="1"
-                className="absolute z-30 h-3 w-3 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 border-violet-200 bg-violet-500 shadow-[0_1px_4px_rgba(0,0,0,0.8)]"
-                style={{ left: `${p.x * scale}%`, top: `${p.y}%`, touchAction: "none" }}
-                title={`Corner ${pi + 1} — drag to reshape · double-click to remove`}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                  setOccDrag({ oi, pi, x: p.x, y: p.y });
-                }}
-                onPointerMove={(e) => {
-                  if (!occDrag) return;
-                  e.stopPropagation();
-                  const q = pct(e);
-                  setOccDrag({ oi, pi, x: Math.round(q.x * 10) / 10, y: Math.round(q.y * 10) / 10 });
-                }}
-                onPointerUp={(e) => {
-                  e.stopPropagation();
-                  if (!occDrag) return;
-                  movedRef.current = true;
-                  onOccluderPoints?.(
-                    oi,
-                    o.points.map((q, qi) => (qi === occDrag.pi ? { x: occDrag.x, y: occDrag.y } : q))
-                  );
-                  setOccDrag(null);
-                }}
-                onDoubleClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  // A polygon needs 3 points; refuse to cut below that rather
-                  // than silently producing an un-renderable shape.
-                  if (o.points.length <= 3) return;
-                  onOccluderPoints?.(oi, o.points.filter((_q, qi) => qi !== pi));
-                }}
-              />
-            ));
-          })()
-        : null}
-      {/* EDGE MIDPOINTS — click one to ADD a corner there. This is how a
-          4-point box becomes an L: split the edge, then drag the new point. */}
-      {behindMode && selectedOccluder != null && (occluders ?? [])[selectedOccluder]
-        ? (() => {
-            const oi = selectedOccluder;
-            const o = occluders![oi];
-            return o.points.map((p, pi) => {
-              const q = o.points[(pi + 1) % o.points.length];
-              const mx = (p.x + q.x) / 2;
-              const my = (p.y + q.y) / 2;
-              return (
-                <button
-                  key={`occ-m-${oi}-${pi}`}
-                  data-occ="1"
-                  className="absolute z-30 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-200/70 bg-noir-950/80 hover:scale-150 hover:bg-violet-400"
-                  style={{ left: `${mx * scale}%`, top: `${my}%` }}
-                  title="Add a corner here"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const next = [...o.points];
-                    next.splice(pi + 1, 0, { x: Math.round(mx * 10) / 10, y: Math.round(my * 10) / 10 });
-                    onOccluderPoints?.(oi, next);
-                  }}
-                />
-              );
-            });
-          })()
-        : null}
-      {/* the depth lines, OUTSIDE the clipped shape so they're never cut off */}
-      {(occluders ?? []).map((o, oi) => {
-        const ys = o.points.map((p) => p.y);
-        const base = o.baseline ?? Math.max(...ys);
-        if (!behindMode && selectedOccluder !== oi) return null;
-        return (
-          <div
-            key={`occ-base-${oi}`}
-            className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-violet-300/80"
-            style={{ top: `${base}%` }}
-          >
-            <span className="absolute right-1 -top-3 font-type text-[8px] text-violet-300/90">
-              behind above {Math.round(base)}%
-            </span>
-          </div>
-        );
-      })}
-      {barriers.map((b, bi) => {
-        const bb = live && live.target === "bar" && live.index === bi ? live.b : b;
-        return (
-        <button
-          key={`bar-${bi}`}
-          data-bar="1"
-          onClick={() => {
-            if (movedRef.current) {
-              movedRef.current = false;
-              return;
-            }
-            onBarrierSelect?.(selectedBarrier === bi ? null : bi);
-            onSelect("");
-          }}
-          onPointerDown={(e) => {
-            if (!barrierMode || behindMode) return;
-            startZoneDrag(e, "bar", "", bi, "move", b);
-          }}
-          className={`absolute border-2 ${selectedBarrier === bi ? "border-crimson" : barrierMode ? "border-crimson/70" : "border-crimson/25"} ${barrierMode ? "cursor-move" : ""} text-[8px] uppercase tracking-wider text-crimson`}
-          style={{
-            left: `${bb.x * scale}%`,
-            top: `${bb.y}%`,
-            width: `${bb.w * scale}%`,
-            height: `${bb.h}%`,
-            backgroundImage:
-              "repeating-linear-gradient(45deg, rgba(226,59,78,0.35) 0 6px, rgba(226,59,78,0.08) 6px 12px)",
-          }}
-          title={`No-go barrier ${bi + 1} — drag to move; select it and pull the square handles to resize`}
-        >
-          <span className="absolute left-1 top-0.5 truncate">{barrierMode || selectedBarrier === bi ? "🚧 no-go" : ""}</span>
-        </button>
-        );
-      })}
       {(scene.hotspots ?? []).map((h) => {
         const grantedItem = h.showItemImage && h.action.itemGranted ? items.find((i) => i.id === h.action.itemGranted) : undefined;
-        const hb = live && live.target === "hs" && live.id === h.id ? live.b : h.bounds;
         return (
           <button
             key={h.id}
             data-hs="1"
-            onClick={() => {
-              if (movedRef.current) {
-                movedRef.current = false;
-                return;
-              }
-              onSelect(h.id);
-            }}
-            onPointerDown={(e) => {
-              if (barrierMode || spawnMode || behindMode) return;
-              startZoneDrag(e, "hs", h.id, -1, "move", h.bounds);
-            }}
+            onClick={() => onSelect(h.id)}
             className={`absolute border-2 text-[8px] uppercase tracking-wider ${
               selectedId === h.id ? "border-neon bg-neon/20 text-neon" : "border-gold/70 bg-gold/10 text-gold"
-            } ${barrierMode || behindMode ? "pointer-events-none opacity-40" : spawnMode ? "" : "cursor-move"}`}
-            style={{ left: `${hb.x * scale}%`, top: `${hb.y}%`, width: `${hb.w * scale}%`, height: `${hb.h}%` }}
-            title={`${h.label} — drag to move; select it and pull the square handles to resize`}
+            }`}
+            style={{ left: `${h.bounds.x}%`, top: `${h.bounds.y}%`, width: `${h.bounds.w}%`, height: `${h.bounds.h}%` }}
+            title={h.label}
           >
             {h.image ? (
               <>
@@ -4292,7 +3950,7 @@ function HotspotCanvas({
                   }`}
                 />
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-noir-950/75 px-1 py-0.5 text-[7px]">
-                  {h.remote ? "🔭 " : ""}{h.label}
+                  {h.label}
                 </span>
               </>
             ) : grantedItem ? (
@@ -4302,52 +3960,15 @@ function HotspotCanvas({
                 <span className="pointer-events-none text-xl">{grantedItem.icon}</span>
               )
             ) : (
-              `${h.remote ? "🔭 " : ""}${h.label.slice(0, 12)}`
+              h.label.slice(0, 12)
             )}
           </button>
         );
       })}
-      {/* RESIZE HANDLES — eight squares on the selected zone's edges/corners.
-          Pull one to resize; the body itself drags to move. */}
-      {(() => {
-        const selHs = !barrierMode && !spawnMode && !behindMode && selectedId ? (scene.hotspots ?? []).find((h) => h.id === selectedId) : undefined;
-        const selBarB = barrierMode && selectedBarrier != null ? barriers[selectedBarrier] : undefined;
-        if (!selHs && !selBarB) return null;
-        const target: "hs" | "bar" = selHs ? "hs" : "bar";
-        const id = selHs?.id ?? "";
-        const index = selHs ? -1 : (selectedBarrier as number);
-        const base = selHs ? selHs.bounds : (selBarB as ZoneBounds);
-        const cur = live && live.target === target && live.id === id && live.index === index ? live.b : base;
-        const color = target === "hs" ? "border-neon" : "border-crimson";
-        const HANDLES: { m: ZoneHandle; fx: number; fy: number; c: string }[] = [
-          { m: "nw", fx: 0, fy: 0, c: "nwse-resize" },
-          { m: "n", fx: 0.5, fy: 0, c: "ns-resize" },
-          { m: "ne", fx: 1, fy: 0, c: "nesw-resize" },
-          { m: "e", fx: 1, fy: 0.5, c: "ew-resize" },
-          { m: "se", fx: 1, fy: 1, c: "nwse-resize" },
-          { m: "s", fx: 0.5, fy: 1, c: "ns-resize" },
-          { m: "sw", fx: 0, fy: 1, c: "nesw-resize" },
-          { m: "w", fx: 0, fy: 0.5, c: "ew-resize" },
-        ];
-        return HANDLES.map((hd) => (
-          <div
-            key={hd.m}
-            data-hd="1"
-            className={`absolute z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 border-2 bg-noir-950 ${color}`}
-            style={{
-              left: `${(cur.x + cur.w * hd.fx) * scale}%`,
-              top: `${cur.y + cur.h * hd.fy}%`,
-              cursor: hd.c,
-            }}
-            onPointerDown={(e) => startZoneDrag(e, target, id, index, hd.m, base)}
-            title="Drag to resize"
-          />
-        ));
-      })()}
       {draft && (
         <div
-          className={`absolute border-2 border-dashed ${behindMode ? "border-violet-400 bg-violet-400/10" : barrierMode ? "border-crimson bg-crimson/10" : "border-cyan-neon bg-cyan-neon/10"}`}
-          style={{ left: `${draft.x * scale}%`, top: `${draft.y}%`, width: `${draft.w * scale}%`, height: `${draft.h}%` }}
+          className="absolute border-2 border-dashed border-cyan-neon bg-cyan-neon/10"
+          style={{ left: `${draft.x}%`, top: `${draft.y}%`, width: `${draft.w}%`, height: `${draft.h}%` }}
         />
       )}
     </div>
@@ -4540,175 +4161,6 @@ function Playtester({ story, scene }: { story: Story; scene: SceneNode | null })
 /*  main studio                                                        */
 /* ------------------------------------------------------------------ */
 
-/** 🔊 VOICE A SPOKEN ACTION LINE — the hotspot/verb version of a beat's
- *  audio widgets: pick an upload, upload a file, or press 🎙 to synthesize
- *  the line with any character's ElevenLabs voice (spends credits, so it
- *  confirms first). The clip plays when the action's line shows, in place of
- *  the text-to-speech reader. Shared by the hotspot's own reply, each 🎚
- *  verb action, and each per-item reply line. */
-function HotspotVoiceControls({
-  story,
-  sceneId,
-  assetKey,
-  line,
-  value,
-  onChange,
-}: {
-  story: Story;
-  sceneId: string;
-  /** naming key for generated assets (hotspot/verb/item id) */
-  assetKey: string;
-  /** the line the clip must read — the 🎙 button stays off while blank */
-  line: string;
-  value?: string;
-  onChange: (url: string | undefined) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [voicePick, setVoicePick] = useState("");
-  const [note, setNote] = useState<string | null>(null);
-  const voiced = story.characters.filter((c) => c.elevenVoiceId);
-  const voice = voiced.find((c) => c.id === voicePick) ?? voiced[0];
-  // asset:<id> refs resolve through the library so ▶ can audition uploads too.
-  const uploads = useAllAssets("audio");
-  const auditionSrc = value?.startsWith("asset:")
-    ? uploads.find((a) => `asset:${a.id}` === value)?.dataUrl
-    : value;
-  return (
-    <div className="mt-1 space-y-1">
-      <div className="flex items-center gap-1">
-        <span className="shrink-0 font-type text-[9px] text-paper/40" title="A recorded clip plays instead of the text-to-speech reader when this line shows">
-          🔊
-        </span>
-        <AssetDropdown
-          storyId={story.id}
-          assetType="audio"
-          returnReference
-          value={value}
-          onChange={(url) => onChange(url ?? undefined)}
-          placeholder="voice clip (mp3) — optional…"
-        />
-        <MediaUploadButton
-          storyId={story.id}
-          accept="audio/*"
-          label="⇧"
-          onUploaded={(_u, assetId) => onChange(`asset:${assetId}`)}
-        />
-        {value && (
-          <>
-            <button
-              type="button"
-              title="Audition the clip"
-              className="shrink-0 border border-paper/30 px-1.5 py-0.5 font-pulp text-[9px] text-paper/70 hover:text-gold"
-              onClick={() => {
-                if (auditionSrc) void new Audio(assetUrl(auditionSrc)).play();
-              }}
-            >
-              ▶
-            </button>
-            <button
-              type="button"
-              title="Remove the clip (the line falls back to the text-to-speech reader)"
-              className="shrink-0 border border-crimson/40 px-1.5 py-0.5 font-pulp text-[9px] text-crimson hover:bg-crimson/10"
-              onClick={() => onChange(undefined)}
-            >
-              ✕
-            </button>
-          </>
-        )}
-      </div>
-      {voiced.length > 0 && (
-        <div className="flex items-center gap-1">
-          <select
-            className="w-24 shrink-0 border border-noir-600 bg-noir-950 px-1 py-0.5 font-type text-[9px] text-paper/80"
-            value={voice?.id ?? ""}
-            title="Which character's ElevenLabs voice reads this line"
-            onChange={(e) => setVoicePick(e.target.value)}
-          >
-            {voiced.map((c) => (
-              <option key={c.id} value={c.id}>{c.avatarUrl?.startsWith("emoji:") ? c.avatarUrl.slice(6) + " " : ""}{c.name}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={busy || !line.trim() || !voice}
-            title={
-              !line.trim()
-                ? "Write the line first, then synthesize it"
-                : `Synthesize this line as ${voice?.name ?? "?"} with ElevenLabs — spends credits, you'll be asked to confirm`
-            }
-            onClick={async () => {
-              if (!voice || !line.trim()) return;
-              if (!window.confirm(convertConfirmMessage(`${voice.name} — hotspot line`, voice.elevenVoiceId!, getElevenModel(), line.trim()))) return;
-              setBusy(true);
-              setNote(null);
-              try {
-                const { dataUrl, blob } = await synthesizeElevenLabs(line.trim(), voice.elevenVoiceId!, getElevenModel());
-                const saved = await saveGeneratedVoice({
-                  storyId: story.id,
-                  characterId: voice.id,
-                  sceneId,
-                  beatId: assetKey,
-                  blob,
-                  dataUrl,
-                  assetName: `voice-${assetKey}`,
-                });
-                onChange(saved.url);
-                setNote(saved.note);
-                void new Audio(dataUrl).play();
-              } catch (err) {
-                window.alert((err as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-            className="min-w-0 flex-1 border border-neon/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-40"
-          >
-            {busy ? "Converting…" : value ? "↺ Regenerate MP3 (ElevenLabs)" : "🎙 Generate MP3 (ElevenLabs)"}
-          </button>
-        </div>
-      )}
-      {note && (
-        <p className="font-type text-[8px] leading-snug text-gold/90" title={note}>
-          {note}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Guard rails for the In-game theme's custom accent/danger ink: these two
- *  colours take over --color-gold / --color-crimson EVERYWHERE (nameplates,
- *  choice focus, gate badges), so a too-dark or near-identical pick makes UI
- *  states look broken or invisible in play. Returns readable warnings; the
- *  colours still save — it's advice, not a block. */
-function themeColorWarnings(accent?: string, danger?: string): string[] {
-  const rgb = (hex?: string) => {
-    if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
-    return { r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex.slice(3, 5), 16), b: parseInt(hex.slice(5, 7), 16) };
-  };
-  /** relative luminance — the frame is near-black, so ink needs lum to read. */
-  const lum = (c: { r: number; g: number; b: number }) => {
-    const f = (v: number) => {
-      const s = v / 255;
-      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-    };
-    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
-  };
-  const out: string[] = [];
-  const a = rgb(accent);
-  const d = rgb(danger);
-  // Built-in gold lum ≈ 0.5, built-in crimson ≈ 0.2 — warn well below those.
-  if (a && lum(a) < 0.15) out.push("The custom accent is very dark — highlights, nameplates and the choice focus ring will be hard to see on the noir frame.");
-  if (d && lum(d) < 0.08) out.push("The custom danger colour is nearly black — fail gates and HEAT warnings will be invisible.");
-  if (a && d) {
-    const dist = Math.sqrt((a.r - d.r) ** 2 + (a.g - d.g) ** 2 + (a.b - d.b) ** 2);
-    // Built-in gold↔crimson separation ≈ 120 — anything much closer blurs
-    // the good/bad distinction the player relies on.
-    if (dist < 60) out.push("Accent and danger are nearly the same colour — bad gates and HEAT will look like normal UI.");
-  }
-  return out;
-}
-
 function StudioInner({
   baseStories,
   initialStoryId,
@@ -4719,7 +4171,6 @@ function StudioInner({
   onDeleteStory,
   onCreateStory,
   onUpdateTitleTheme,
-  onOpenManual,
 }: {
   baseStories: Story[];
   /** open on this story (e.g. "edit this scene in Studio" from the game) */
@@ -4732,7 +4183,6 @@ function StudioInner({
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
   onUpdateTitleTheme: (theme: TitleTheme) => void;
-  onOpenManual?: () => void;
 }) {
   const loadDraft = (id: string): Story => {
     try {
@@ -4833,27 +4283,12 @@ function StudioInner({
     setElevenModel(id);
   };
   const [selectedHotspot, setSelectedHotspot] = useState<string | null>(null);
-  /** Hotspots tab: drawing hotspots, or drawing 🚧 no-go barriers. */
-  const [zoneMode, setZoneMode] = useState<"hotspot" | "barrier" | "spawn" | "behind">("hotspot");
-  const [selectedBarrier, setSelectedBarrier] = useState<number | null>(null);
-  const [selectedOccluder, setSelectedOccluder] = useState<number | null>(null);
-  // Cutscene recorder: the walkTo/npcWalkTo step row waiting for a plate
-  // click. `origin` routes the picked point back to the right script (the
-  // stage tab's room-entry script or a hotspot's runScript); arming from a
-  // hotspot row jumps to the stage tab so the plate is on screen.
-  const [scriptPick, setScriptPick] = useState<{ index: number; npc: boolean; origin: "enter" | "hotspot"; hotspotId?: string } | null>(null);
   const [focusedChoiceId, setFocusedChoiceId] = useState<string | null>(null);
   const [focusedBeatId, setFocusedBeatId] = useState<string | null>(null);
   // Which single beat is maximised in the Beats tab. Beats default to
   // minimised and at most one is open at a time: expanding a beat collapses
   // whichever was open before (accordion). Adding a beat opens just that one.
   const [expandedBeatId, setExpandedBeatId] = useState<string | null>(null);
-  /** ✂ Beat extraction: the set of beats ticked for moving/copying out to a
-   *  new scene. Keyed by beat id, scoped to one scene — switching scenes
-   *  clears it (see the effect below) so a stale tick can't move a beat the
-   *  author has stopped looking at. */
-  const [pickedBeats, setPickedBeats] = useState<Set<string>>(new Set());
-  const [beatPickMode, setBeatPickMode] = useState(false);
   // Drag-and-drop beat reordering: the beat id being dragged and the one
   // currently dragged over.
   const [dragBeatId, setDragBeatId] = useState<string | null>(null);
@@ -4872,7 +4307,7 @@ function StudioInner({
       beats.splice(to, 0, moved);
     });
   };
-  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "stage" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle" | "map">("scene");
+  const [tab, setTab] = useState<"scene" | "beats" | "hotspots" | "choices" | "test" | "characters" | "audio" | "items" | "flags" | "briefing" | "acts" | "episodes" | "media" | "ai" | "dialogueBox" | "globalTitle">("scene");
   // Storage is the source of truth for the ElevenLabs model (the Characters
   // tab can change it elsewhere), so re-read it whenever the tab changes.
   useEffect(() => {
@@ -4892,13 +4327,6 @@ function StudioInner({
     };
   });
   const [showValidator, setShowValidator] = useState(true);
-  // The validator drawer is pinned to the bottom of the canvas and the minimap
-  // and zoom controls are ReactFlow panels pinned to the same edge, so the
-  // drawer used to sit straight on top of them. Measure the drawer (it grows
-  // with the note count up to max-h-40, so a constant would be wrong) and lift
-  // the panels clear of it.
-  const validatorRef = useRef<HTMLDivElement | null>(null);
-  const [validatorH, setValidatorH] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; fx: number; fy: number } | null>(null);
   const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; sceneId: string } | null>(null);
@@ -4945,45 +4373,6 @@ function StudioInner({
   // Inspector panel width — user-resizable (drag the divider between canvas and
   // inspector) and expandable via the header button. Persisted so the chosen
   // size survives reloads.
-  /** MINI MAP — on by default, but a big canvas sometimes wants the corner
-   *  back. Persisted per machine like the other studio view prefs. */
-  useEffect(() => {
-    const el = validatorRef.current;
-    if (!showValidator || !el) {
-      setValidatorH(0);
-      return;
-    }
-    const measure = () => {
-      const h = el.getBoundingClientRect().height;
-      setValidatorH((prev) => (Math.abs(prev - h) < 1 ? prev : h));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // No issue-count dep: the ResizeObserver already reports the drawer
-    // growing as notes are added.
-  }, [showValidator]);
-
-  const [showMiniMap, setShowMiniMap] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("scarlet-studio-minimap") !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const toggleMiniMap = () => {
-    setShowMiniMap((v) => {
-      const next = !v;
-      try {
-        localStorage.setItem("scarlet-studio-minimap", next ? "1" : "0");
-      } catch {
-        /* storage unavailable — still toggles for this session */
-      }
-      return next;
-    });
-  };
-
   const [inspectorWidth, setInspectorWidth] = useState<number>(() => {
     try {
       const saved = Number(localStorage.getItem("scarlet-studio-inspector-width"));
@@ -5021,67 +4410,10 @@ function StudioInner({
   const toggleInspectorWidth = () => setInspectorWidth((w) => (w >= 640 ? 420 : 720));
 
   const scene = story.scenes.find((s) => s.id === selectedId) ?? null;
-  // The 🚶 Stage tab only exists for walkable-stage nodes. If the selection (or
-  // the node's type) moves away from a stage while the tab is open, fall back to
-  // the Scene tab so the inspector never points at an empty panel.
-  useEffect(() => {
-    if (tab === "stage" && scene?.nodeType !== "stage") setTab("scene");
-  }, [tab, scene]);
-  // A beat pick belongs to ONE scene. Switching scenes must drop it, or a
-  // stale tick could move a beat the author is no longer looking at.
-  useEffect(() => {
-    setPickedBeats(new Set());
-    setBeatPickMode(false);
-  }, [selectedId]);
-  // Every asset currently in the library (any type) — lets the validator flag
-  // references to uploads that have since been deleted. Without this the
-  // dangling-media check is skipped and behaviour is unchanged.
-  const allLibraryAssets = useAllAssets();
-  const knownAssetIds = useMemo(
-    () => new Set(allLibraryAssets.map((a) => a.id)),
-    [allLibraryAssets],
-  );
-  // Assets load asynchronously. Running the check against an empty set on the
-  // first render would flag EVERY uploaded reference as missing, so hold the
-  // check until the library has actually reported in.
-  const libraryReady = allLibraryAssets.length > 0;
-  const issues = useMemo(
-    () => validateStory(story, libraryReady ? { knownAssetIds } : undefined),
-    [story, knownAssetIds, libraryReady],
-  );
+  const issues = useMemo(() => validateStory(story), [story]);
   // Every flag referenced anywhere in the story — the source list for the flag
   // dropdowns so authors can pick (and keep track of) existing flag names.
   const allFlags = useMemo(() => collectFlags(story), [story]);
-  // FLAGS TAB — "checked ok" marks. Purely an authoring aid (it never ships in
-  // the story), so it lives in localStorage per story rather than in the doc:
-  // a flag you've read, written a note for and confirmed is wired right.
-  const [flagFilter, setFlagFilter] = useState("");
-  const [flagsOnlyTodo, setFlagsOnlyTodo] = useState(false);
-  // Which flag rows are expanded. Collapsed by default: the old tab rendered
-  // every flag's textarea at once, which buried a 60-flag story.
-  const [flagsOpen, setFlagsOpen] = useState<Set<string>>(new Set());
-  const flagOkKey = `screel:flagsOk:${story.id}`;
-  const [flagsOk, setFlagsOk] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(flagOkKey);
-      setFlagsOk(new Set(raw ? (JSON.parse(raw) as string[]) : []));
-    } catch {
-      setFlagsOk(new Set());
-    }
-  }, [flagOkKey]);
-  const toggleFlagOk = (flag: string) =>
-    setFlagsOk((prev) => {
-      const next = new Set(prev);
-      if (next.has(flag)) next.delete(flag);
-      else next.add(flag);
-      try {
-        localStorage.setItem(flagOkKey, JSON.stringify([...next]));
-      } catch {
-        /* storage unavailable — the marks still hold for this session */
-      }
-      return next;
-    });
   // Every Choice.memoryLog tag — the dropdown source for the "Remembers" gate
   // and the memory-recall editor on dialogue beats.
   const memoryTags = useMemo(() => collectMemoryTags(story), [story]);
@@ -5232,50 +4564,25 @@ function StudioInner({
   const addScene = (fx: number, fy: number) => {
     const id = `scene_${uid()}`;
     const isFirstScene = story.scenes.length === 0;
-    // An author who sketches the ENDINGS first (🏁 End before any playable
-    // scene) still needs a start: the first playable scene claims the start
-    // marker whenever the story has none ("" only before one exists or after
-    // the last scene was deleted — deleteScene already re-points it).
-    const needsStart = !story.startSceneId;
-    // 🧭 Mode switch: in an ADVENTURE case a new room is a walkable stage
-    // (🚶 node) by default, not a prose plate — that IS the mode.
-    const adv = story.gameKind === "adventure";
     mutate((d) => {
       d.scenes.push({
         id,
-        title: isFirstScene ? "Opening Scene" : (adv ? "New Room" : "New Scene"),
+        title: isFirstScene ? "Opening Scene" : "New Scene",
         background: BACKGROUNDS[8],
         ambientAudio: "drone",
-        prose: adv
-          ? ""
-          : isFirstScene
-            ? "Your story starts here. Set the mood, introduce the problem, and give the detective a reason to keep looking."
-            : "The scene opens on...",
-        ...(adv
-          ? {
-              nodeType: "stage" as const,
-              stage: {
-                keyboard: true,
-                speed: 15,
-                reach: 4,
-                depthScale: 0.3,
-                hints: "proximity" as const,
-                floor: { top: 66, bottom: 95 },
-                spawn: { x: 50, y: 90 },
-              },
-            }
-          : {}),
+        prose: isFirstScene
+          ? "Your story starts here. Set the mood, introduce the problem, and give the detective a reason to keep looking."
+          : "The scene opens on...",
         choices: [],
         hotspots: [],
         dialogueBeats: [],
       });
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
-      if (isFirstScene || needsStart) d.startSceneId = id;
+      if (isFirstScene) d.startSceneId = id;
     });
     setSelectedId(id);
-    setTab(adv ? "stage" : "scene");
-    if ((isFirstScene || needsStart) && !adv) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
-    if (adv) say("Room created as a 🚶 walkable stage. Put a plate on it, draw 🚧 obstacles, then hang 👁 look / ✋ take / 💬 talk / ➜ go hotspots on it.");
+    setTab("scene");
+    if (isFirstScene) say("Opening scene created and marked as your start scene — no input connection needed. Add exits from here.");
     audio.pickup();
   };
 
@@ -5387,13 +4694,10 @@ function StudioInner({
         dialogueBeats: [],
       });
       d.layout = { ...(d.layout ?? {}), [id]: { x: fx, y: fy } };
-      // First playable scene claims the start marker even when the author
-      // sketched 🏁 endings first (same rule as addScene).
-      if (!d.startSceneId) d.startSceneId = id;
     });
     setSelectedId(id);
-    setTab("stage");
-    say("Walkable Stage created — a free-roam exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
+    setTab("scene");
+    say("Walkable Stage created — a Telltale-style exploration scene. No prose panel: the player walks the floor, walks up to markers to interact, and conversations play via 🗣 Start-conversation hotspots. Wire the exit marker's target.");
     audio.pickup();
   };
 
@@ -5451,89 +4755,6 @@ function StudioInner({
     copy.hotspots = (copy.hotspots ?? []).map((h) => ({ ...h, id: `hs_${uid()}` }));
     copy.dialogueBeats = (copy.dialogueBeats ?? []).map((b) => ({ ...b, id: `b_${uid()}` }));
     return copy;
-  };
-
-  /* ---------- ✂ extract beats into a new scene ----------
-   * Takes the ticked beats OUT of `fromId` (in play order, never the order
-   * they were ticked) and drops them into a brand-new scene placed to the
-   * right of the source on the canvas.
-   *
-   * `link` decides how the two scenes relate afterwards:
-   *   "chain"  — the source gains a choice pointing at the new scene, so the
-   *              conversation still plays end to end. This is the common case:
-   *              a scene grew too long and wants splitting in half.
-   *   "loose"  — the new scene is left unconnected, for reordering by hand.
-   * `copy` leaves the originals in place instead of moving them.
-   *
-   * Deliberately conservative about what it carries across: the new scene
-   * inherits the source's PRESENTATION (background, audio, cinematic, layout
-   * type) so the extracted lines look the same as they did, but none of its
-   * hotspots, choices or endings — those belong to the source's structure and
-   * silently duplicating them would create phantom exits and duplicate ids. */
-  const extractBeats = (
-    fromId: string,
-    beatIds: string[],
-    opts: { link: "chain" | "loose"; copy: boolean; title?: string },
-  ) => {
-    const src = story.scenes.find((s) => s.id === fromId);
-    if (!src || !beatIds.length) return;
-    const picked = new Set(beatIds);
-    // Play order, not click order.
-    const taken = (src.dialogueBeats ?? []).filter((b) => picked.has(b.id));
-    if (!taken.length) return;
-
-    const newId = `scene_${uid()}`;
-    const base = story.layout?.[fromId] ?? { x: 60, y: 60 };
-    const title = opts.title?.trim() || `${src.title} (cont.)`;
-
-    mutate((d) => {
-      const from = d.scenes.find((x) => x.id === fromId)!;
-      // Fresh beat ids when copying, so the two scenes never share an id;
-      // when moving, the ids travel with the beats and stay stable (voice
-      // clips and deep links keyed to them keep working).
-      const moved = taken.map((b) =>
-        opts.copy ? { ...deepClone(b), id: `b_${uid()}` } : deepClone(b),
-      );
-      const next: SceneNode = {
-        id: newId,
-        title,
-        // Presentation follows the lines so the split is invisible in play.
-        background: from.background,
-        ...(from.nodeType ? { nodeType: from.nodeType } : {}),
-        ...(from.ambientAudio ? { ambientAudio: from.ambientAudio } : {}),
-        ...(from.musicUrl ? { musicUrl: from.musicUrl } : {}),
-        ...(from.letterbox ? { letterbox: from.letterbox } : {}),
-        ...(from.transition ? { transition: from.transition } : {}),
-        ...(from.cinematic ? { cinematic: deepClone(from.cinematic) } : {}),
-        ...(from.hideHud ? { hideHud: from.hideHud } : {}),
-        prose: "",
-        dialogueBeats: moved,
-        hotspots: [],
-        choices: [],
-      };
-      d.scenes.push(next);
-      d.layout = { ...(d.layout ?? {}), [newId]: { x: base.x + 360, y: base.y } };
-
-      if (!opts.copy) {
-        from.dialogueBeats = (from.dialogueBeats ?? []).filter((b) => !picked.has(b.id));
-      }
-      if (opts.link === "chain") {
-        from.choices = [
-          ...(from.choices ?? []),
-          { id: `c_${uid()}`, text: "Continue", targetSceneId: newId, attitudeTag: "Neutral" },
-        ];
-      }
-    });
-
-    setPickedBeats(new Set());
-    setBeatPickMode(false);
-    setSelectedId(newId);
-    setTab("scene");
-    say(
-      `${opts.copy ? "Copied" : "Moved"} ${taken.length} beat${taken.length === 1 ? "" : "s"} into "${title}"` +
-        (opts.link === "chain" ? " and wired a Continue choice to it." : " — unconnected, wire its exits when ready."),
-    );
-    audio.pickup();
   };
 
   const duplicateScene = (id: string, at?: { x: number; y: number }) => {
@@ -5674,14 +4895,8 @@ function StudioInner({
         type: "scene",
         position: story.layout?.[sc.id] ?? { x: 0, y: 0 },
         selected: sc.id === selectedId,
-        // Only set width/height when the author has actually resized this card;
-        // leaving them undefined lets ReactFlow measure the default-width card.
-        ...(story.layout?.[sc.id]?.w ? { width: story.layout[sc.id].w } : {}),
-        ...(story.layout?.[sc.id]?.h ? { height: story.layout[sc.id].h } : {}),
         data: {
           scene: sc,
-          cardW: story.layout?.[sc.id]?.w,
-          cardH: story.layout?.[sc.id]?.h,
           isStart: sc.id === story.startSceneId,
           issueCount: issueCountByScene[sc.id] ?? 0,
           backgroundRef: sc.background,
@@ -5735,34 +4950,7 @@ function StudioInner({
     (changes: NodeChange[]) => {
       changes.forEach((ch) => {
         if (ch.type === "position" && ch.position) {
-          // SPREAD THE EXISTING ENTRY: a card's authored w/h lives in the same
-          // layout record, so replacing it wholesale here would silently reset
-          // every resized card the moment it was dragged.
-          setStory((s) => ({
-            ...s,
-            layout: {
-              ...(s.layout ?? {}),
-              [ch.id]: { ...(s.layout?.[ch.id] ?? {}), x: ch.position!.x, y: ch.position!.y },
-            },
-          }));
-        } else if (ch.type === "dimensions" && ch.dimensions && ch.resizing) {
-          // Persist a RESIZE. Guarded on `resizing` so we only store sizes the
-          // author dragged — ReactFlow also emits dimensions changes when it
-          // first measures a card, and recording those would freeze every node
-          // at its default size and defeat the auto-width.
-          const { width, height } = ch.dimensions;
-          setStory((s) => ({
-            ...s,
-            layout: {
-              ...(s.layout ?? {}),
-              [ch.id]: {
-                x: s.layout?.[ch.id]?.x ?? 0,
-                y: s.layout?.[ch.id]?.y ?? 0,
-                w: Math.round(width),
-                h: Math.round(height),
-              },
-            },
-          }));
+          setStory((s) => ({ ...s, layout: { ...(s.layout ?? {}), [ch.id]: { x: ch.position!.x, y: ch.position!.y } } }));
         } else if (ch.type === "select" && ch.selected) {
           setSelectedId(ch.id);
         } else if (ch.type === "remove") {
@@ -5994,33 +5182,10 @@ function StudioInner({
       }
 
       if (!sc.isEnding) {
-        // Mirror the validator's exit accounting (storyEdges): edge exits,
-        // after-beat routes, entry scripts and puzzle branches are all ways
-        // out too. Counting only choices/hotspots would "repair" a healthy
-        // stage room whose door is a walk-off edge arrow by injecting a
-        // bogus choice into it.
         const exits = [
           ...(sc.autoAdvanceTargetSceneId ? [{ gated: false }] : []),
           ...(sc.choices ?? []).map((c) => ({ gated: !!effectiveChoiceGating(c) })),
-          ...(sc.hotspots ?? [])
-            .filter((h) =>
-              hotspotReachableActions(h).some(
-                (a) =>
-                  !!a.targetSceneId ||
-                  (!!a.patternPuzzle && (!!a.patternPuzzle.targetSceneId || !!a.patternPuzzle.wrongTargetSceneId)) ||
-                  (a.script ?? []).some((st) => st.do === "goToScene")
-              )
-            )
-            .map((h) => ({ gated: !!h.gating })),
-          ...(sc.dialogueBeats ?? [])
-            .filter((b) => b.afterBeatTargetSceneId)
-            .map((b) => ({ gated: !!b.conditionRule })),
-          ...Object.values(sc.stage?.exitEdges ?? {})
-            .filter((e) => e?.targetSceneId)
-            .map((e) => ({ gated: !!e.gating })),
-          ...(sc.stage?.enterScript ?? []).some((st) => st.do === "goToScene")
-            ? [{ gated: false }]
-            : [],
+          ...(sc.hotspots ?? []).filter((h) => h.action.targetSceneId).map((h) => ({ gated: !!h.gating })),
         ];
         const hasOpenExit = exits.some((e) => !e.gated);
         if (!hasOpenExit) {
@@ -6043,83 +5208,6 @@ function StudioInner({
           delete item.combinableWith;
           fixes.push(`removed broken recipe on "${item.name}"`);
         }
-      }
-    });
-
-    /* ---- scene links that live OUTSIDE the scene list ---- */
-    // Stage rooms: walk-off edge exits, entry-script/run-script goToScene
-    // steps, and entry spawns keyed by the incoming scene.
-    next.scenes.forEach((sc) => {
-      if (!sc.stage) return;
-      for (const edge of ["left", "right"] as const) {
-        const ex = sc.stage.exitEdges?.[edge];
-        if (ex?.targetSceneId && !sceneIds.has(ex.targetSceneId)) {
-          ex.targetSceneId = start;
-          fixes.push(`re-pointed ${edge} edge exit in "${sc.title}"`);
-        }
-      }
-      const fixScript = (steps: StageScriptStep[] | undefined, label: string) => {
-        (steps ?? []).forEach((st) => {
-          if (st.do === "goToScene" && !sceneIds.has(st.targetSceneId)) {
-            st.targetSceneId = start;
-            fixes.push(`re-pointed ${label} step in "${sc.title}"`);
-          }
-        });
-      };
-      fixScript(sc.stage.enterScript, "entry script");
-      sc.hotspots?.forEach((h) => fixScript(h.action.script, `"${h.label}" script`));
-      if (sc.stage.entrySpawns) {
-        for (const fromId of Object.keys(sc.stage.entrySpawns)) {
-          if (!sceneIds.has(fromId)) {
-            delete sc.stage.entrySpawns[fromId];
-            fixes.push(`removed stale entry spawn in "${sc.title}"`);
-          }
-        }
-      }
-    });
-    // Travel map: a pin on a deleted scene re-lands on the start scene.
-    (next.map?.locations ?? []).forEach((loc) => {
-      if (!sceneIds.has(loc.targetSceneId)) {
-        loc.targetSceneId = start;
-        fixes.push(`re-pointed map location "${loc.label || loc.id}"`);
-      }
-    });
-    // Episodes: drop deleted scenes from chapter lists; a chapter left with
-    // no scenes can never finish, so it goes too (its siblings renumber).
-    if (next.episodes?.length) {
-      next.episodes.forEach((ep) => {
-        const before = ep.sceneIds.length;
-        ep.sceneIds = ep.sceneIds.filter((id) => sceneIds.has(id));
-        if (ep.sceneIds.length !== before) fixes.push(`removed deleted scene(s) from episode "${ep.title}"`);
-        if (ep.startSceneId && !sceneIds.has(ep.startSceneId)) {
-          ep.startSceneId = ep.sceneIds[0] ?? "";
-          fixes.push(`reset opening scene of episode "${ep.title}"`);
-        } else if (!ep.startSceneId && ep.sceneIds.length) {
-          ep.startSceneId = ep.sceneIds[0];
-          fixes.push(`set opening scene of episode "${ep.title}"`);
-        }
-      });
-      const empty = next.episodes.filter((ep) => !ep.sceneIds.length);
-      if (empty.length) {
-        next.episodes = next.episodes.filter((ep) => ep.sceneIds.length);
-        // keep the unlock/handoff graph consistent with the new episode list
-        const kept = new Set(next.episodes.map((e) => e.id));
-        next.episodes.forEach((ep) => {
-          ep.unlockAfter = ep.unlockAfter?.filter((u) => kept.has(u.episodeId));
-          if (ep.nextEpisodeByEnding) {
-            for (const k of Object.keys(ep.nextEpisodeByEnding)) {
-              if (!kept.has(ep.nextEpisodeByEnding![k])) delete ep.nextEpisodeByEnding![k];
-            }
-          }
-        });
-        fixes.push(`removed emptied episode(s): ${empty.map((e) => e.title).join(", ")}`);
-      }
-    }
-    // Acts: a title card that opens on a deleted scene opens on the start.
-    (next.acts ?? []).forEach((act) => {
-      if (act.startSceneId && !sceneIds.has(act.startSceneId)) {
-        act.startSceneId = start;
-        fixes.push(`re-pointed act "${act.label || act.title}"`);
       }
     });
 
@@ -6236,10 +5324,6 @@ function StudioInner({
       sceneIdMap.set(s.id, `${s.id}_copy_${uid().slice(0, 5)}`);
     });
     const remap = (id?: string) => (id ? sceneIdMap.get(id) ?? id : id);
-    // Stage scripts (enter scripts, hotspot runScripts) can navigate with
-    // goToScene steps — those targets are scene references too.
-    const remapScript = (steps: StageScriptStep[] | undefined): StageScriptStep[] | undefined =>
-      steps?.map((st) => (st.do === "goToScene" ? { ...st, targetSceneId: remap(st.targetSceneId) ?? st.targetSceneId } : st));
 
     const copy: Story = {
       ...src,
@@ -6268,7 +5352,6 @@ function StudioInner({
           action: {
             ...h.action,
             targetSceneId: remap(h.action.targetSceneId),
-            script: remapScript(h.action.script),
             patternPuzzle: h.action.patternPuzzle
               ? {
                   ...h.action.patternPuzzle,
@@ -6284,32 +5367,7 @@ function StudioInner({
           afterBeatTargetSceneId: remap(b.afterBeatTargetSceneId),
         })),
         onEnterActions: s.onEnterActions,
-        stage: s.stage
-          ? {
-              ...s.stage,
-              // Walk-off edge exits lead into other rooms — point the copy's
-              // arrows at the copy's rooms, not the original's.
-              exitEdges: Object.fromEntries(
-                Object.entries(s.stage.exitEdges ?? {}).map(([edge, ex]) => [
-                  edge,
-                  ex ? { ...ex, targetSceneId: remap(ex.targetSceneId) ?? ex.targetSceneId } : ex,
-                ])
-              ) as typeof s.stage.exitEdges,
-              // Entry spawns are keyed by the INCOMING scene's id.
-              entrySpawns: Object.fromEntries(
-                Object.entries(s.stage.entrySpawns ?? {}).map(([fromId, p]) => [remap(fromId) ?? fromId, p])
-              ),
-              enterScript: remapScript(s.stage.enterScript),
-            }
-          : s.stage,
       })),
-      // Travel-map pins land on scenes — remap them like every other link.
-      map: src.map
-        ? {
-            ...src.map,
-            locations: src.map.locations.map((l) => ({ ...l, targetSceneId: remap(l.targetSceneId) ?? l.targetSceneId })),
-          }
-        : src.map,
       acts: src.acts?.map((a) => ({ ...a, id: `act_${uid()}`, startSceneId: remap(a.startSceneId) ?? a.startSceneId })),
       // Episodes are rebuilt with new ids below where the episode-id map exists.
       episodes: src.episodes?.map((e) => ({
@@ -6353,14 +5411,7 @@ function StudioInner({
     setSelectedId(null);
     setSelectedHotspot(null);
     setFocusedChoiceId(null);
-    try {
-      // Guarded like every other write: the duplicate is already committed at
-      // this point, so a storage failure here must not throw past the success
-      // toast and leave the author staring at a crash after a working copy.
-      localStorage.setItem("scarlet-studio-last-story", compact.id);
-    } catch {
-      /* storage unavailable — the copy still opened, it just won't reopen next session */
-    }
+    localStorage.setItem("scarlet-studio-last-story", compact.id);
     say(`Duplicated "${src.title}" as "${compact.title}" — a fully independent copy.`);
     audio.success();
   };
@@ -6555,11 +5606,6 @@ function StudioInner({
   };
 
   const importJson = async (file: File) => {
-    // Snapshot the story being edited when the import started. Reading the
-    // file + compacting its media is async (IndexedDB round-trips); anything
-    // the author does in between (add a scene, switch story, ＋ New Story)
-    // must NOT be silently clobbered by the late import commit.
-    const storyAtStart = storyRef.current;
     try {
       const text = await file.text();
       const storyBundle: Story = JSON.parse(text);
@@ -6572,15 +5618,7 @@ function StudioInner({
       const { assets, ...cleanedStory } = storyBundle;
       // Old exports carried the bolt-on `stage2d` layer; imports map it to the
       // stage NODE so those cases keep walking.
-      const compacted = await compactStoryMedia(normalizeLegacyStory(cleanedStory));
-      if (storyAtStart !== storyRef.current) {
-        // The reel moved on while the file was reading — importing now would
-        // throw away the newer edits. Cancel loudly instead of losing work.
-        say("The case changed while the file was reading — import cancelled. Try again.");
-        audio.fail();
-        return;
-      }
-      commit(compacted);
+      commit(await compactStoryMedia(normalizeLegacyStory(cleanedStory)));
       say(`Imported "${cleanedStory.title}" with ${assets?.length ?? 0} assets.`);
     } catch {
       say("That file isn't a valid reel. Tragic.");
@@ -6617,28 +5655,6 @@ function StudioInner({
           onChange={(e) => commit({ ...story, title: e.target.value })}
           aria-label="Story title"
         />
-        <select
-          className="tb-select"
-          value={story.gameKind ?? "noir-rail"}
-          onChange={(e) => {
-            const kind = e.target.value as "noir-rail" | "adventure" | "vn";
-            commit({ ...story, gameKind: kind });
-            say(
-              kind === "adventure"
-                ? "Adventure mode: new scenes come out as 🚶 walkable rooms, and they open on the dedicated 🚶 Stage tab."
-                : kind === "vn"
-                  ? "Visual novel mode: build around portraits and dialogue beats."
-                  : "Noir rail mode: prose + choice rail, the house style.",
-            );
-            audio.pickup();
-          }}
-          aria-label="Kind of game"
-          title="What kind of game this case is — decides what a new scene looks like and which tooling Studio surfaces."
-        >
-          <option value="noir-rail">🕵 Noir Rail</option>
-          <option value="adventure">🚶 Adventure</option>
-          <option value="vn">🎭 Visual Novel</option>
-        </select>
         <span className="tb-sep" />
         <button onClick={undo} disabled={!past.current.length} className="btn-tool" title="Undo (Ctrl+Z)">
           ↶ Undo
@@ -6704,7 +5720,7 @@ function StudioInner({
         <button
           onClick={() => addStageScene(80 + Math.random() * 200, 80 + Math.random() * 200)}
           className="btn-tool"
-          title="Add a walkable stage — the player walks a character around the floor and interacts by approaching markers"
+          title="Add a Telltale-style walkable stage — the player walks a character around the floor and interacts by approaching markers"
         >
           🚶 Stage
         </button>
@@ -7031,49 +6047,19 @@ function StudioInner({
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#2b2b3f" />
-            {showMiniMap ? (
-              <MiniMap
-                pannable
-                zoomable
-                // Endings keep gold; everything else takes its act's tint, so
-                // the minimap reads as the film's act structure at a glance.
-                // A node has to READ against the map's near-black backdrop.
-                // The old fallback (#2b2b3f, the canvas dot colour) sat at
-                // 1.4:1 contrast — invisible — so any story without acts drew
-                // an empty map. Slate is ~5:1 and still recedes behind the
-                // meaningful tints.
-                nodeColor={(n) => {
-                  const d = n.data as SceneNodeData;
-                  if (d.scene.isEnding) return "#e8b23c";
-                  if (d.isStart) return "#7fd1c1";
-                  if (d.actDot) return d.actDot;
-                  // #6b5b34 was 1.18:1 once the 75% viewport mask was
-                  // composited over it — notes simply vanished outside the
-                  // viewport rectangle. Lifted to stay legible masked.
-                  if (d.scene.nodeType === "note") return "#a08a4e";
-                  return "#8b8b9e";
-                }}
-                // The START scene and the SELECTED one are the two you hunt for
-                // on a big reel, so give them a visible outline in the map.
-                nodeStrokeColor={(n) => {
-                  const d = n.data as SceneNodeData;
-                  if (n.selected) return "#ff2e88";
-                  if (d.isStart) return "#e8b23c";
-                  return "transparent";
-                }}
-                nodeStrokeWidth={6}
-                // The mask is composited over BOTH the node and the map
-                // backdrop, so a heavy alpha crushes every node to ~1.4:1 and
-                // the off-screen part of the reel reads as blank. 0.45 keeps
-                // the viewport rectangle obvious while leaving masked nodes
-                // at 2.5-3.9:1 — still visibly recessed, but readable.
-                maskColor="rgba(7,7,12,0.45)"
-                // Sit above the validator drawer instead of underneath it.
-                style={{ background: "#0c0c14", bottom: validatorH }}
-                className="!border !border-noir-600"
-              />
-            ) : null}
-            <Controls showInteractive={false} style={{ bottom: validatorH }} />
+            <MiniMap
+              pannable
+              zoomable
+              // Endings keep gold; everything else takes its act's tint, so
+              // the minimap reads as the film's act structure at a glance.
+              nodeColor={(n) => {
+                const d = n.data as SceneNodeData;
+                return d.scene.isEnding ? "#e8b23c" : d.actDot ?? "#2b2b3f";
+              }}
+              maskColor="rgba(7,7,12,0.75)"
+              style={{ background: "#0c0c14" }}
+            />
+            <Controls showInteractive={false} />
           </ReactFlow>
 
           {menu && (
@@ -7170,17 +6156,6 @@ function StudioInner({
               <button
                 role="menuitem"
                 className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700"
-                title="Show or hide the mini map in the bottom-right corner"
-                onClick={() => {
-                  toggleMiniMap();
-                  setMenu(null);
-                }}
-              >
-                {showMiniMap ? "🗺 Hide mini map" : "🗺 Show mini map"}
-              </button>
-              <button
-                role="menuitem"
-                className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700"
                 title="Re-flow every card into act rows — repairs a piled-up canvas"
                 onClick={() => {
                   // Tidy layout: one row band per act (when the story has
@@ -7241,23 +6216,6 @@ function StudioInner({
                   onClick={() => { duplicateScene(target.id); setNodeMenu(null); }}>
                   ⧉ Duplicate node
                 </button>
-                {/* A resized card can only be shrunk back by hand, and dragging
-                    it to the exact default is fiddly — so offer the reset. */}
-                {(story.layout?.[target.id]?.w || story.layout?.[target.id]?.h) ? (
-                  <button role="menuitem" className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700"
-                    title="Drop the authored size and go back to the default card width"
-                    onClick={() => {
-                      mutate((d) => {
-                        const e = d.layout?.[target.id];
-                        if (!e) return;
-                        delete e.w;
-                        delete e.h;
-                      });
-                      setNodeMenu(null);
-                    }}>
-                    ⤢ Reset node size
-                  </button>
-                ) : null}
                 <button role="menuitem" className="block w-full px-4 py-1.5 text-left text-xs hover:bg-noir-700"
                   onClick={() => { copyScene(target.id); setNodeMenu(null); }}>
                   ⎘ Copy node
@@ -7299,10 +6257,7 @@ function StudioInner({
 
           {/* validator drawer */}
           {showValidator && (
-            <div
-              ref={validatorRef}
-              className="absolute bottom-0 left-0 right-0 z-30 max-h-40 overflow-y-auto border-t border-noir-600 bg-noir-950/95 px-3 py-2 backdrop-blur"
-            >
+            <div className="absolute bottom-0 left-0 right-0 z-30 max-h-40 overflow-y-auto border-t border-noir-600 bg-noir-950/95 px-3 py-2 backdrop-blur">
               <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/50 mb-1">
                 Continuity Department — {issues.length ? `${issues.length} note(s)` : "spotless reel 🎉"}
                 <span className="ml-2 font-type text-[8px] normal-case tracking-normal text-paper/35">
@@ -7365,38 +6320,34 @@ function StudioInner({
                 (Game Objective → Characters → Items → Flags), then STRUCTURE
                 (Acts → Episodes) and the in-game look, then ASSETS, then ▶
                 Test. Story-wide tabs sit above the scene panels as before. */}
-            {(["scene", "beats", "hotspots", "stage", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "map", "dialogueBox", "globalTitle", "media", "ai", "test"] as const)
-              .filter((t) => t !== "stage" || scene?.nodeType === "stage")
-              .map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`border-b border-r border-noir-700 px-1 py-2 font-pulp text-[9px] uppercase tracking-wider ${
-                    tab === t ? "bg-noir-800 text-neon" : "text-paper/50 hover:text-paper"
-                  }`}
-                >
-                  {{
-                    scene: "Scene",
-                    beats: "Beats",
-                    hotspots: "Hotspots",
-                    stage: "🚶 Stage",
-                    choices: "Choices",
-                    audio: "🔊 Audio",
-                    briefing: "🎯 Game Objective",
-                    characters: "Characters",
-                    items: "Items",
-                    flags: "🏷 Flags",
-                    acts: "🎭 Acts",
-                    episodes: "🎞 Episodes",
-                    media: "🛠 Media Tools",
-                    ai: "🎨 AI Images",
-                    map: "🗺 Map",
-                    dialogueBox: "🎮 In-Game Theme",
-                    globalTitle: "🎼 Newsstand Theme",
-                    test: "▶ Test",
-                  }[t]}
-                </button>
-              ))}
+            {(["scene", "beats", "hotspots", "choices", "audio", "briefing", "characters", "items", "flags", "acts", "episodes", "dialogueBox", "globalTitle", "media", "ai", "test"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`border-b border-r border-noir-700 px-1 py-2 font-pulp text-[9px] uppercase tracking-wider ${
+                  tab === t ? "bg-noir-800 text-neon" : "text-paper/50 hover:text-paper"
+                }`}
+              >
+                {{
+                  scene: "Scene",
+                  beats: "Beats",
+                  hotspots: "Hotspots",
+                  choices: "Choices",
+                  audio: "🔊 Audio",
+                  briefing: "🎯 Game Objective",
+                  characters: "Characters",
+                  items: "Items",
+                  flags: "🏷 Flags",
+                  acts: "🎭 Acts",
+                  episodes: "🎞 Episodes",
+                  media: "📦 Media",
+                  ai: "🎨 AI Images",
+                  dialogueBox: "🎮 In-Game Theme",
+                  globalTitle: "🎼 Newsstand Theme",
+                  test: "▶ Test",
+                }[t]}
+              </button>
+            ))}
           </div>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
             <CollapsibleSection id="workflow" title="Creator workflow" className="border border-cyan-neon/30 bg-cyan-neon/5">
@@ -7486,14 +6437,6 @@ function StudioInner({
                   ledger will display in-game.
                 </HelpNote>
                 <Playtester story={story} scene={scene} />
-                <PlaytestCoveragePanel
-                  story={story}
-                  onSelectScene={(sceneId) => {
-                    setSelectedId(sceneId);
-                    setTab("scene");
-                  }}
-                />
-                <DeepLinkBuilder story={story} selectedSceneId={scene?.id} />
               </>
             )}
             {tab === "characters" && (
@@ -7511,120 +6454,14 @@ function StudioInner({
               <>
                 <HelpNote id="items-tab" title="Items">
                   Mark a clue with <b>📌 is clue</b> so it appears on the corkboard. Set a <b>recipe</b> (partner +
-                  result) to let players drag one item onto another in the inventory and combine them. Anything a gate
+                  result) to let players drag one item onto another in the satchel and combine them. Anything a gate
                   requires must be granted somewhere — by a hotspot, a choice's reward, or a recipe result — or the
                   validator flags it as an impossible gate.
                 </HelpNote>
-                {/* ---- how the inventory is PRESENTED (per case) ---- */}
-                {(() => {
-                  const inv = story.inventoryDisplay ?? {};
-                  const setInv = (patch: Partial<InventorySettings>) =>
-                    commit({ ...story, inventoryDisplay: { ...inv, ...patch } });
-                  const mode = inv.mode ?? "classic";
-                  return (
-                    <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
-                      <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎒 Inventory display</h3>
-                      <p className="font-type text-[9px] leading-snug text-paper/45">
-                        How the player's inventory LOOKS in this case. Every case defaults to <b>Classic</b> — the chip
-                        rail it already has — so nothing changes until you opt in. Pick <b>Container</b> for a pouch,
-                        case or saddlebag sprite with the items inside it, and drop in your own art; <b>Hidden</b> for
-                        no dock at all.
-                      </p>
-                      <Field label="Mode">
-                        <select className={inputCls} value={mode} onChange={(e) => setInv({ mode: e.target.value as InventorySettings["mode"] })}>
-                          <option value="classic">Classic — chip rail (default, unchanged)</option>
-                          <option value="container">Container — a bag/case sprite with items inside</option>
-                          <option value="hidden">Hidden — no on-screen inventory</option>
-                        </select>
-                      </Field>
-                      {mode !== "hidden" ? (
-                        <>
-                          <Field label="Heading (e.g. Satchel, Saddlebags, Case File)">
-                            <input
-                              className={inputCls}
-                              value={inv.label ?? ""}
-                              placeholder="Inventory"
-                              onChange={(e) => setInv({ label: e.target.value })}
-                            />
-                          </Field>
-                          <Field label="Corner">
-                            <select className={inputCls} value={inv.anchor ?? "bottom-left"} onChange={(e) => setInv({ anchor: e.target.value as InventorySettings["anchor"] })}>
-                              <option value="bottom-left">bottom-left</option>
-                              <option value="bottom-right">bottom-right</option>
-                              <option value="top-left">top-left</option>
-                              <option value="top-right">top-right</option>
-                            </select>
-                          </Field>
-                          {mode === "container" ? (
-                            <>
-                              <Field label="Container art (transparent PNG — a bag, a case, a tool roll)">
-                                <ImagePicker
-                                  preferFolder="sprites"
-                                  value={inv.image || undefined}
-                                  placeholder="Pick art from the library (default: the house leather case)…"
-                                  includeGradients={false}
-                                  onChange={(url) => setInv({ image: url ?? undefined })}
-                                />
-                              </Field>
-                              <div className="flex flex-wrap items-center gap-1">
-                                <button
-                                  className="border border-gold/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-gold hover:bg-gold/10"
-                                  onClick={() => setInv({ image: "/assets/ui/inventory-case.png" })}
-                                >
-                                  👜 use the leather case
-                                </button>
-                                {inv.image ? (
-                                  <button
-                                    className="border border-crimson/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                                    onClick={() => setInv({ image: undefined })}
-                                  >
-                                    ✕ clear art (house panel)
-                                  </button>
-                                ) : null}
-                              </div>
-                              {inv.image ? (
-                                <img src={assetUrl(media(inv.image) ?? inv.image)} alt="" className="h-24 w-auto object-contain" />
-                              ) : (
-                                <p className="font-type text-[9px] text-paper/40">No art set — the dock draws a stitched leather panel.</p>
-                              )}
-                              <div className="grid grid-cols-3 gap-1">
-                                <Field label={`Columns ${inv.columns ?? 4}`}>
-                                  <input type="range" min={1} max={8} step={1} className="w-full accent-gold" value={inv.columns ?? 4} onChange={(e) => setInv({ columns: Number(e.target.value) })} />
-                                </Field>
-                                <Field label={`Inset ${inv.inset ?? 14}%`}>
-                                  <input type="range" min={0} max={45} step={1} className="w-full accent-gold" value={inv.inset ?? 14} onChange={(e) => setInv({ inset: Number(e.target.value) })} />
-                                </Field>
-                                <Field label={`Height ${inv.height ?? 260}px`}>
-                                  <input type="range" min={140} max={460} step={10} className="w-full accent-gold" value={inv.height ?? 260} onChange={(e) => setInv({ height: Number(e.target.value) })} />
-                                </Field>
-                              </div>
-                              <label className="flex items-center gap-1 font-type text-[10px] text-paper/60">
-                                <input type="checkbox" checked={!!inv.startClosed} onChange={(e) => setInv({ startClosed: e.target.checked || undefined })} />
-                                Start collapsed (just the heading and the count)
-                              </label>
-                            </>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </div>
-                  );
-                })()}
                 <ItemEditor story={story} onUpdate={commit} />
               </>
             )}
-            {tab === "flags" && (() => {
-              const okCount = allFlags.filter((f) => flagsOk.has(f)).length;
-              const q = flagFilter.trim().toLowerCase();
-              const shown = allFlags.filter((flag) => {
-                if (flagsOnlyTodo && flagsOk.has(flag)) return false;
-                if (!q) return true;
-                return (
-                  flag.toLowerCase().includes(q) ||
-                  prettyFlagName(flag).toLowerCase().includes(q) ||
-                  (story.flagNotes?.[flag] ?? "").toLowerCase().includes(q)
-                );
-              });
-              return (
+            {tab === "flags" && (
               <div className="space-y-2">
                 <HelpNote id="flags-tab" title="Flags">
                   Every flag used anywhere in the story — choices, gating, hotspots, quick-time
@@ -7633,57 +6470,12 @@ function StudioInner({
                   as content: a dialogue beat can <b>recall a flag</b> (pick the flag name in
                   “Memories recalled”) and echo the note where <code>{`{said}`}</code> would go, and
                   the player’s <b>Story so far</b> (Case Progress panel) lists each set flag with its
-                  note. Tick <b>✓ ok</b> once you’ve checked a flag reads right and is wired
-                  correctly — the marks are an authoring aid and never ship with the story.
+                  note. Gating’s <b>Remembers</b> picker accepts flag names too — “she remembers you
+                  saw the body” without needing a memory tag.
                 </HelpNote>
-
-                {/* ---- header: progress + filter, so a 60-flag story stays workable ---- */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">
-                    🏷 Story flags ({allFlags.length})
-                  </h3>
-                  {allFlags.length > 0 && (
-                    <span className={`font-type text-[9px] uppercase tracking-wider ${okCount === allFlags.length ? "text-emerald-300" : "text-paper/45"}`}>
-                      {okCount === allFlags.length ? "✓ all checked" : `${okCount}/${allFlags.length} checked`}
-                    </span>
-                  )}
-                </div>
-                {allFlags.length > 1 && (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <input
-                      className={`${inputCls} h-6 flex-1 min-w-[120px] font-type text-[10px]`}
-                      placeholder="Filter flags, names or notes…"
-                      value={flagFilter}
-                      onChange={(e) => setFlagFilter(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      title="Show only the flags you haven't ticked ✓ ok yet"
-                      aria-pressed={flagsOnlyTodo}
-                      className={`border px-1.5 py-0.5 font-type text-[9px] uppercase tracking-wider ${flagsOnlyTodo ? "border-gold bg-gold/15 text-gold" : "border-noir-600 text-paper/50 hover:text-paper/80"}`}
-                      onClick={() => setFlagsOnlyTodo((v) => !v)}
-                    >
-                      unchecked only
-                    </button>
-                    <button
-                      type="button"
-                      title="Expand every flag"
-                      className="border border-noir-600 px-1.5 py-0.5 font-type text-[9px] uppercase tracking-wider text-paper/50 hover:text-paper/80"
-                      onClick={() => setFlagsOpen(new Set(allFlags))}
-                    >
-                      ⤢ all
-                    </button>
-                    <button
-                      type="button"
-                      title="Collapse every flag"
-                      className="border border-noir-600 px-1.5 py-0.5 font-type text-[9px] uppercase tracking-wider text-paper/50 hover:text-paper/80"
-                      onClick={() => setFlagsOpen(new Set())}
-                    >
-                      ⤡ none
-                    </button>
-                  </div>
-                )}
-
+                <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">
+                  🏷 Story flags ({allFlags.length})
+                </h3>
                 {allFlags.length === 0 && (
                   <p className="font-type text-[10px] leading-relaxed text-paper/45">
                     No flags yet — set one on a choice (“Sets flags”), a hotspot (Set flag action), a
@@ -7691,121 +6483,37 @@ function StudioInner({
                     deduction, and it appears here with a note box.
                   </p>
                 )}
-                {allFlags.length > 0 && shown.length === 0 && (
-                  <p className="font-type text-[10px] leading-relaxed text-paper/45">
-                    {flagsOnlyTodo && okCount === allFlags.length
-                      ? "Every flag is ticked ✓ ok."
-                      : "No flag matches that filter."}
-                  </p>
-                )}
-
-                {/* ---- one collapsed row per flag: name, note preview, ✓ ok ---- */}
-                {shown.map((flag) => {
-                  const ok = flagsOk.has(flag);
-                  const open = flagsOpen.has(flag);
-                  const note = story.flagNotes?.[flag] ?? "";
+                {allFlags.map((flag) => {
                   const sources = flagSetSources(story, flag);
                   return (
-                    <div
-                      key={flag}
-                      className={`border ${ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-noir-600"}`}
-                    >
-                      <div className="flex items-center gap-1.5 px-1.5 py-1">
-                        <button
-                          type="button"
-                          aria-expanded={open}
-                          title={open ? "Minimise this flag" : "Maximise this flag"}
-                          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                          onClick={() =>
-                            setFlagsOpen((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(flag)) next.delete(flag);
-                              else next.add(flag);
-                              return next;
-                            })
-                          }
-                        >
-                          <span className="shrink-0 text-paper/50" aria-hidden>{open ? "▾" : "▸"}</span>
-                          <span className="shrink-0 font-mono text-[11px] text-gold" title={flag}>{flag}</span>
-                          {!open && (
-                            <span className="min-w-0 truncate font-type text-[9px] text-paper/40" title={note || prettyFlagName(flag)}>
-                              {note || `“${prettyFlagName(flag)}” — no note yet`}
-                            </span>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          aria-pressed={ok}
-                          title={ok ? "Checked — click to clear" : "Mark this flag checked ok"}
-                          className={`shrink-0 border px-1.5 py-0.5 font-type text-[9px] uppercase tracking-wider ${ok ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200" : "border-noir-600 text-paper/40 hover:text-paper/80"}`}
-                          onClick={() => toggleFlagOk(flag)}
-                        >
-                          {ok ? "✓ ok" : "✓"}
-                        </button>
+                    <div key={flag} className="border border-noir-600 p-2">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-mono text-[11px] text-gold" title={flag}>{flag}</span>
+                        <span className="truncate font-type text-[9px] uppercase tracking-wider text-paper/35" title={prettyFlagName(flag)}>
+                          “{prettyFlagName(flag)}”
+                        </span>
                       </div>
-                      {open && (
-                        <div className="border-t border-noir-700/70 p-1.5">
-                          <div className="font-type text-[9px] uppercase tracking-wider text-paper/35">
-                            “{prettyFlagName(flag)}”
-                          </div>
-                          {sources.length > 0 && (
-                            <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">
-                              Set: {sources.slice(0, 4).join(" · ")}{sources.length > 4 ? ` · +${sources.length - 4} more` : ""}
-                            </p>
-                          )}
-                          <textarea
-                            className={`${inputCls} mt-1.5 h-14 font-type`}
-                            placeholder="What does this flag mean? (Echoed when a beat recalls it, and shown in the player's Story so far.)"
-                            value={note}
-                            onChange={(e) => {
-                              const notes = { ...(story.flagNotes ?? {}) };
-                              if (e.target.value.trim()) notes[flag] = e.target.value;
-                              else delete notes[flag];
-                              commit({ ...story, flagNotes: Object.keys(notes).length ? notes : undefined });
-                            }}
-                          />
-                        </div>
+                      {sources.length > 0 && (
+                        <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">
+                          Set: {sources.slice(0, 4).join(" · ")}{sources.length > 4 ? ` · +${sources.length - 4} more` : ""}
+                        </p>
                       )}
-                    </div>
-                  );
-                })}
-
-                {/* ---- verb coin: the story's "that doesn't work" lines ---- */}
-                <CollapsibleSection
-                  id="flags-verb-refusals"
-                  title="🎛 Verb coin — refusal lines"
-                  titleClass="text-gold"
-                  className="mt-3 border border-gold/30 bg-gold/5"
-                  hint={`${VERB_IDS.filter((v) => (story.verbResponses?.[v] ?? []).length).length}/${VERB_IDS.length} set`}
-                >
-                  <p className="font-type text-[9px] leading-snug text-paper/45">
-                    What the player is told when they try a verb an object doesn't answer to (or use the wrong item
-                    on it) in a room with the 🎛 verb coin on. One line per row — the engine varies them, so a failed
-                    verb doesn't read like a stuck record. A hotspot's own “Refusal line” beats these.
-                  </p>
-                  {VERB_IDS.map((v) => (
-                    <div key={v} className="mt-1">
-                      <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">
-                        <span aria-hidden>{VERB_ICON[v]}</span> {VERB_LABEL[v]}
-                      </div>
                       <textarea
-                        className={`${inputCls} h-14 font-type`}
-                        placeholder="One refusal line per row…"
-                        value={(story.verbResponses?.[v] ?? []).join("\n")}
+                        className={`${inputCls} mt-1.5 h-14 font-type`}
+                        placeholder="What does this flag mean? (Echoed when a beat recalls it, and shown in the player's Story so far.)"
+                        value={story.flagNotes?.[flag] ?? ""}
                         onChange={(e) => {
-                          const lines = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
-                          const next = { ...(story.verbResponses ?? {}) };
-                          if (lines.length) next[v] = lines;
-                          else delete next[v];
-                          commit({ ...story, verbResponses: Object.keys(next).length ? next : undefined });
+                          const notes = { ...(story.flagNotes ?? {}) };
+                          if (e.target.value.trim()) notes[flag] = e.target.value;
+                          else delete notes[flag];
+                          commit({ ...story, flagNotes: Object.keys(notes).length ? notes : undefined });
                         }}
                       />
                     </div>
-                  ))}
-                </CollapsibleSection>
+                  );
+                })}
               </div>
-              );
-            })()}
+            )}
             {tab === "acts" && (
               <ActEditor
                 story={story}
@@ -7815,9 +6523,6 @@ function StudioInner({
                   setTab("scene");
                 }}
               />
-            )}
-            {tab === "map" && (
-              <MapEditor story={story} onUpdate={commit} />
             )}
             {tab === "episodes" && (
               <EpisodeEditor
@@ -7831,16 +6536,13 @@ function StudioInner({
             )}
             {tab === "media" && (
               <>
-                <HelpNote id="media-tab" title="Media tools">
+                <HelpNote id="media-tab" title="Media library">
                   Uploads are stored once per story and reused everywhere via the asset dropdowns (images in
                   background/foreground pickers, audio in music/narration/voice pickers, video in cutscenes). Drafts
                   keep compact <code>asset:</code> references so big files don't blow the local storage quota — the
                   indicator tells you whether uploads will survive a reload.
                 </HelpNote>
                 <MediaLibrary storyId={story.id} />
-                <BackgroundRemover storyId={story.id} />
-                <SheetLab storyId={story.id} />
-                <SpriteCutoutLab storyId={story.id} />
               </>
             )}
             {tab === "ai" && <AiImageStudio storyId={story.id} />}
@@ -7885,9 +6587,6 @@ function StudioInner({
                           onChange={(e) => setBox({ dangerColor: e.target.value })} />
                       </Field>
                     </div>
-                    {themeColorWarnings(dbox.accentColor, dbox.dangerColor).map((w, i) => (
-                      <p key={i} className="font-type text-[9px] leading-snug text-amber-400/90">⚠ {w}</p>
-                    ))}
                     {(dbox.accentColor || dbox.dangerColor) && (
                       <button
                         className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
@@ -7903,170 +6602,6 @@ function StudioInner({
                       <span>Minimal HUD
                         <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
                           Fades scene-label/lead readouts until you hover — a cleaner, more cinematic frame.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-
-                  {/* ---- CURSOR ART (per verb) ---- */}
-                  <CursorArtEditor story={story} onUpdate={commit} media={media} themeVars={inGameThemeVars(dbox)} />
-
-                  {/* ---- VERB MENU (skull pie) — opt-in, live preview + icon ---- */}
-                  {(() => {
-                    const icon = story.verbMenuIcon;
-                    const enabled = story.verbMenuEnabled !== false;
-                    // Preview verbs: the union of every stage room's coin so the
-                    // author sees the fullest ring (or the core five).
-                    const stageScenes = story.scenes.filter((s) => s.nodeType === "stage");
-                    const pieVerbs = verbsForScene({ stage: { ...(stageScenes[0]?.stage ?? {}) }, hotspots: (stageScenes[0]?.hotspots ?? []) as Hotspot[] });
-                    const previewVerbs = pieVerbs.length ? pieVerbs : CORE_VERB_IDS;
-                    return (
-                      <div className="border border-gold/30 bg-gold/5 p-2 space-y-2" style={inGameThemeVars(dbox)}>
-                        <div className="flex items-center justify-between">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">💀 Verb menu (skull pie)</div>
-                          <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-paper/70">
-                            <input
-                              type="checkbox"
-                              checked={enabled}
-                              onChange={(e) => commit({ ...story, verbMenuEnabled: e.target.checked ? undefined : false })}
-                            />
-                            <span className={enabled ? "text-gold" : "text-paper/40"}>{enabled ? "On" : "Off (never shown)"}</span>
-                          </label>
-                        </div>
-                        <p className="font-type text-[9px] leading-snug text-paper/45">
-                          The object-first verb menu — the skull pie. <b>Opt-in</b>: it only appears on a
-                          Walkable Stage whose <b>Object-first verb menu</b> is on (see that panel). This switch is the
-                          story-wide kill-switch: off = it never shows, in any scene. The sprite below sits at the
-                          centre of the ring.
-                        </p>
-                        <div className="flex items-start gap-3">
-                          <VerbMenuPiePreview verbs={previewVerbs} icon={icon} media={media} size={168} />
-                          <div className="min-w-0 flex-1 space-y-2">
-                            <Field label="Menu icon (centrepiece)">
-                              <ImagePicker
-                                value={icon && !icon.startsWith("emoji:") ? icon : undefined}
-                                onChange={(v) => commit({ ...story, verbMenuIcon: v })}
-                                placeholder="Pick an image… (or type an emoji below)"
-                                preferFolder="sprites"
-                              />
-                            </Field>
-                            <div className="flex items-center gap-2">
-                              <input
-                                className={`${inputCls} min-w-0 flex-1`}
-                                value={icon ?? ""}
-                                placeholder="…or an emoji: 💀 ☠️ 👁 🕹"
-                                onChange={(e) => commit({ ...story, verbMenuIcon: e.target.value || undefined })}
-                              />
-                              {icon ? (
-                                <button
-                                  className="shrink-0 border border-paper/30 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:text-gold"
-                                  onClick={() => commit({ ...story, verbMenuIcon: undefined })}
-                                >
-                                  ⟲ default 💀
-                                </button>
-                              ) : null}
-                            </div>
-                            <p className="font-type text-[9px] leading-snug text-paper/40">
-                              Make it any sprite: pick an uploaded image, or cut one out in the{" "}
-                              <b className="text-paper/60">🎞 Sprite sheet editor</b> /{" "}
-                              <b className="text-paper/60">Background remover</b> and pick it here. A transparent PNG
-                              reads best in the ring.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* ---- PLAYER CHARACTER (story-wide walker) ---- */}
-                  {(() => {
-                    const ps = story.playerSprite ?? {};
-                    const setPs = (patch: Partial<typeof ps>) =>
-                      commit({ ...story, playerSprite: Object.keys({ ...ps, ...patch }).length ? { ...ps, ...patch } : undefined });
-                    return (
-                      <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
-                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🚶 Player character (story-wide walker)</div>
-                        <p className="font-type text-[9px] leading-snug text-paper/45">
-                          The walker every 🚶 stage scene uses unless that scene sets its own sprite in the
-                          <b> Walkable Stage</b> panel. Define the protagonist ONCE here. Leave empty to keep
-                          the per-scene default.
-                        </p>
-                        <Field label="Character image (pick from the library — or type an emoji)">
-                          <input
-                            className={inputCls}
-                            value={ps.image ?? ""}
-                            placeholder="emoji:🏍 — or pick art below"
-                            onChange={(e) => setPs({ image: e.target.value || undefined })}
-                          />
-                          <div className="mt-1">
-                            <ImagePicker
-                              value={ps.image && !ps.image.startsWith("emoji:") ? ps.image : undefined}
-                              onChange={(v) => setPs({ image: v || undefined })}
-                              placeholder="…or pick art from your image library"
-                              preferFolder="sprites"
-                            />
-                          </div>
-                        </Field>
-                        <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            One image, gridded frames with <b>walk</b> / <b>idle</b> (and optional directional
-                            <b> walk-up / walk-down / idle-up / idle-down</b>). Overrides the image field above while set.
-                          </p>
-                          <SpriteSheetControls
-                            value={ps.sheet}
-                            storyId={story.id}
-                            preset={WALKER_PRESET}
-                            onChange={(sheet) => setPs({ sheet })}
-                          />
-                        </div>
-                        {Object.keys(ps).length ? (
-                          <button
-                            className="w-full border border-paper/30 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/60 hover:text-gold"
-                            onClick={() => commit({ ...story, playerSprite: undefined })}
-                          >
-                            ⟲ Clear (use per-scene walkers)
-                          </button>
-                        ) : null}
-                      </div>
-                    );
-                  })()}
-
-                  {/* ---- investigation panels ---- */}
-                  <div className="border border-gold/30 bg-gold/5 p-2 space-y-1.5">
-                    <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🗂 Investigation panels</div>
-                    <p className="font-type text-[9px] leading-snug text-paper/45">
-                      Each panel is automatic: it only appears when this story actually uses the feature
-                      (corkboard needs a deduction board, travel map needs 🗺 Map locations). Tick a box to
-                      force one OFF for a cleaner frame even when the story defines it.
-                    </p>
-                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                      <input type="checkbox" className="mt-0.5"
-                        checked={!!dbox.hideCaseProgress}
-                        onChange={(e) => setBox({ hideCaseProgress: e.target.checked || undefined })} />
-                      <span>Hide ▤ Case Progress drawer
-                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
-                          {story.deduction || story.map?.locations?.length ? "Shown by default." : "Shown by default (tracks perks, people met, clues)."}
-                        </span>
-                      </span>
-                    </label>
-                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                      <input type="checkbox" className="mt-0.5"
-                        checked={!!dbox.hideCorkboard}
-                        onChange={(e) => setBox({ hideCorkboard: e.target.checked || undefined })} />
-                      <span>Hide 📌 Corkboard
-                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
-                          {story.deduction ? "This story HAS a deduction board — hiding removes the menu entry and the B key." : "This story has no deduction board, so the corkboard is already hidden automatically."}
-                        </span>
-                      </span>
-                    </label>
-                    <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                      <input type="checkbox" className="mt-0.5"
-                        checked={!!dbox.hideMap}
-                        onChange={(e) => setBox({ hideMap: e.target.checked || undefined })} />
-                      <span>Hide 🗺 Travel Map
-                        <span className="block font-type text-[9px] normal-case tracking-normal text-paper/45">
-                          {story.map?.locations?.length ? "This story HAS map locations — hiding removes the menu entry and the T key." : "This story has no map locations yet (add them on the 🗺 Map tab), so the map is already hidden automatically."}
                         </span>
                       </span>
                     </label>
@@ -8124,15 +6659,18 @@ function StudioInner({
                   <Field label="Backdrop image (optional)">
                     <input
                       className={inputCls}
-                      placeholder="paste a gradient:linear-gradient(…) — or pick art below"
+                      placeholder="/img/panel-parchment.jpg  ·  or gradient:linear-gradient(...)"
                       value={dbox.backgroundImage ?? ""}
                       onChange={(e) => setBox({ backgroundImage: e.target.value || undefined })}
                     />
                     <div className="mt-1">
-                      <ImagePicker
-                        value={dbox.backgroundImage}
-                        onChange={(v) => setBox({ backgroundImage: v || undefined })}
-                        placeholder="🖼 browse the image library (incl. gradient presets)…"
+                      <AssetDropdown
+                        storyId={story.id}
+                        assetType="image"
+                        returnReference
+                        value={dbox.backgroundImage?.startsWith("asset:") || dbox.backgroundImage?.startsWith("data:") ? dbox.backgroundImage : undefined}
+                        onChange={(url) => setBox({ backgroundImage: url ?? undefined })}
+                        placeholder="Or pick an uploaded image..."
                       />
                     </div>
                   </Field>
@@ -8247,73 +6785,6 @@ function StudioInner({
                   />
                 </Field>
 
-                {/* ★ FEATURED CASES — the front page of the newsstand. */}
-                <Field label="★ Featured cases (big cards at the top of the newsstand)">
-                  <div className="space-y-1">
-                    <p className="font-type text-[9px] leading-snug text-paper/45">
-                      Tick a case to give it a full-width banner card above the ordinary grid. The order you tick
-                      them is the running order of the front page. Nothing ticked = the newsstand looks as it
-                      always did.
-                    </p>
-                    {(() => {
-                      const feat = globalTitleTheme.featuredStoryIds ?? [];
-                      const setFeat = (ids: string[]) => {
-                        const next = { ...globalTitleTheme, featuredStoryIds: ids.length ? ids : undefined };
-                        setGlobalTitleThemeState(next);
-                        onUpdateTitleTheme(next);
-                      };
-                      // ORPHANS — ids featured but no longer in the catalogue
-                      // (the case was deleted). They render no checkbox row, so
-                      // without this they could never be unticked.
-                      const known = new Set(baseStories.map((b) => b.id));
-                      const orphans = feat.filter((id) => !known.has(id));
-                      return (
-                        <div className="max-h-48 space-y-0.5 overflow-y-auto border border-noir-700 bg-noir-950/60 p-1">
-                          {orphans.map((id) => (
-                            <div key={id} className="flex items-center gap-1.5 px-1 py-0.5 font-type text-[10px] text-crimson">
-                              <span className="truncate">⚠ {id} — no longer in the catalogue</span>
-                              <button
-                                className="ml-auto shrink-0 underline hover:text-paper"
-                                onClick={() => setFeat(feat.filter((f) => f !== id))}
-                              >
-                                remove
-                              </button>
-                            </div>
-                          ))}
-                          {baseStories.map((st) => {
-                            const at = feat.indexOf(st.id);
-                            const on = at >= 0;
-                            return (
-                              <label
-                                key={st.id}
-                                className={`flex cursor-pointer items-center gap-1.5 px-1 py-0.5 font-type text-[10px] ${
-                                  on ? "bg-gold/10 text-gold" : "text-paper/60 hover:bg-noir-800"
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={on}
-                                  onChange={() => setFeat(on ? feat.filter((f) => f !== st.id) : [...feat, st.id])}
-                                />
-                                {on ? <span className="font-pulp text-[9px]">★{at + 1}</span> : null}
-                                <span className="truncate">{st.title}</span>
-                              </label>
-                            );
-                          })}
-                          {feat.length > 0 ? (
-                            <button
-                              className="mt-1 w-full border border-noir-700 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/50 hover:border-crimson hover:text-crimson"
-                              onClick={() => setFeat([])}
-                            >
-                              clear featured strip
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </Field>
-
                 <Field label="Title page tagline / header text">
                   <input
                     className={inputCls}
@@ -8405,14 +6876,17 @@ function StudioInner({
                         }}
                       />
                     </div>
-                    <ImagePicker
+                    <AssetDropdown
+                      storyId="__global__"
+                      assetType="image"
                       value={globalTitleTheme.bgImageUrl}
+                      returnReference
                       onChange={(value) => {
-                        const next = { ...globalTitleTheme, bgImageUrl: value || undefined };
+                        const next = { ...globalTitleTheme, bgImageUrl: value };
                         setGlobalTitleThemeState(next);
                         onUpdateTitleTheme(next);
                       }}
-                      placeholder="🖼 browse the image library (uploads & built-ins)…"
+                      placeholder="Pick an uploaded title background..."
                     />
                     {globalTitleTheme.bgImageUrl && !globalTitleTheme.bgImageUrl.startsWith("asset:") && (
                       <div className="flex items-center gap-2">
@@ -8461,21 +6935,13 @@ function StudioInner({
             {tab === "briefing" && (
               <div className="space-y-2">
                 <HelpNote id="briefing-tab" title="Case File">
-                  <b>Game Info</b> is the spoiler-free synopsis behind the Newsreel card's Info button. The objective is always visible to players — leave it blank and they're guessing. Set a{" "}
+                  The objective is always visible to players — leave it blank and they're guessing. Set a{" "}
                   <b>heat limit</b> plus a <b>bust scene</b> for real stakes: the moment Heat reaches the limit the
                   engine sends the player to that ending (“Too much heat. The city closes in.”). The ending audit below
                   counts your victory / game-over outcomes — the validator wants at least one of each.
                 </HelpNote>
-                <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🗂 Case File — info, win &amp; lose rules</h3>
-                <p className="font-type text-[9px] text-paper/45">Game Info appears from the Info button on this case's Newsreel card. The objective and rules appear in-game.</p>
-                <Field label="Game Info (Newsreel synopsis)">
-                  <textarea
-                    className={`${inputCls} h-28 font-type`}
-                    placeholder="Give players a spoiler-free synopsis: premise, mood, role and style of play."
-                    value={story.briefing?.gameInfo ?? ""}
-                    onChange={(e) => commit({ ...story, briefing: { ...(story.briefing ?? { objective: "", winConditions: [], loseConditions: [] }), gameInfo: e.target.value } })}
-                  />
-                </Field>
+                <h3 className="font-pulp text-[10px] uppercase tracking-widest text-gold">🗂 Case File — win &amp; lose rules</h3>
+                <p className="font-type text-[9px] text-paper/45">Players open this in-game. If you leave it blank they get generic defaults and won't understand your case.</p>
                 <Field label="Objective (one line)">
                   <textarea
                     className={`${inputCls} h-14 font-type`}
@@ -8768,46 +7234,14 @@ function StudioInner({
                 <Field label="Node Layout Type">
                   <select
                     className={inputCls}
-                    value={scene.nodeType === "stage" && scene.hideHud ? "stageNoHud" : scene.nodeType ?? "standard"}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === "standard") updateScene(scene.id, { nodeType: undefined, hideHud: undefined });
-                      else if (v === "stageNoHud")
-                        updateScene(scene.id, {
-                          nodeType: "stage",
-                          hideHud: true,
-                          // A no-HUD room must walk from frame one: seed the
-                          // stage settings if the scene doesn't have them yet.
-                          stage:
-                            scene.stage ??
-                            ({
-                              playerImage: "emoji:🕵️",
-                              spawn: { x: 50, y: 86 },
-                              speed: 18,
-                              reach: 4,
-                              keyboard: true,
-                              floor: { top: 62, bottom: 94 },
-                              depthScale: 0.35,
-                              hints: "proximity",
-                            } as const),
-                        });
-                      else if (v === "stage") updateScene(scene.id, { nodeType: "stage", hideHud: undefined });
-                      else updateScene(scene.id, { nodeType: v as any, hideHud: undefined });
-                    }}
+                    value={scene.nodeType ?? "standard"}
+                    onChange={(e) => updateScene(scene.id, { nodeType: e.target.value === "standard" ? undefined : e.target.value as any })}
                   >
                     <option value="standard">📁 Standard Game Scene (with HUD)</option>
                     <option value="credits">🎬 Opening Credits (Centered text, NO HUD)</option>
                     <option value="cutscene">🎥 Cinematic Cutscene (Widescreen, NO HUD)</option>
-                    <option value="stage">🚶 Walkable Stage (free-roam exploration)</option>
-                    <option value="stageNoHud">🚶 Walkable Stage — NO HUD (cinematic free-roam)</option>
+                    <option value="stage">🚶 Walkable Stage (Telltale-style exploration)</option>
                   </select>
-                  {scene.nodeType === "stage" && scene.hideHud ? (
-                    <p className="mt-1 font-type text-[9px] leading-snug text-paper/45">
-                      Same walkable stage, but <b className="text-gold">zero chrome</b>: no menu, meters, leads panel,
-                      chips, inventory dock or sound/help — just the art, the walker, markers and subtitles. The
-                      player can still press <b>Esc</b> for Save &amp; exit. Every 🚶 Stage setting below applies.
-                    </p>
-                  ) : null}
                 </Field>
                 </CollapsibleSection>
                 {(scene.nodeType === "credits" || scene.nodeType === "cutscene") && (
@@ -9479,8 +7913,236 @@ function StudioInner({
                   </select>
                 </Field>
 
-                {/* The 🚶 walkable-stage editor now lives on its own 🚶 Stage tab. */}
-                {/* ---- Letterbox & entry transition (cinematic polish) ---- */}
+                {/* ---- Stage node — Telltale-style walkable exploration ---- */}
+                <CollapsibleSection id={`scene-stage-${scene.id}`} title="🚶 Walkable Stage (Telltale-style)">
+                  <div className="space-y-2">
+                    {scene.nodeType !== "stage" ? (
+                      <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
+                        These settings only run on a <b>🚶 Walkable Stage</b> node — set <b>Node Layout Type</b> above to
+                        "🚶 Walkable Stage". A stage scene has <b>no prose panel</b>: the player walks a character around
+                        the floor, walks up to interaction markers to use them, talks via 🗣 Start-conversation markers,
+                        and exits by walking to a door marker.
+                      </p>
+                    ) : !scene.stage ? (
+                      <button
+                        className="btn-tool w-full"
+                        onClick={() =>
+                          updateScene(scene.id, {
+                            stage: {
+                              playerImage: "emoji:🕵️",
+                              spawn: { x: 50, y: 86 },
+                              speed: 18,
+                              reach: 4,
+                              keyboard: true,
+                              floor: { top: 62, bottom: 94 },
+                              depthScale: 0.35,
+                              hints: "proximity",
+                            },
+                          })
+                        }
+                      >
+                        ＋ Add stage settings (floor, spawn, character)
+                      </button>
+                    ) : (
+                      <>
+                        <p className="font-type text-[10px] leading-snug text-paper/55">
+                          Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. Markers sit where
+                          the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
+                          narrative is the caption below + 💬 show-text markers.
+                        </p>
+                        <StageFloorEditor
+                          background={scene.background}
+                          media={media}
+                          floor={
+                            stageFloorOf(scene.stage)
+                          }
+                          spawn={{ x: scene.stage.spawn?.x ?? 50, y: scene.stage.spawn?.y ?? 90 }}
+                          hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds }))}
+                          selectedHotspotId={null}
+                          onFloor={(top, bottom) =>
+                            updateScene(scene.id, { stage: { ...scene.stage!, floor: { top, bottom } } })
+                          }
+                          onSpawn={(x, y) => updateScene(scene.id, { stage: { ...scene.stage!, spawn: { x, y } } })}
+                          onMoveMarker={(hsId, cx, baseY) =>
+                            updateScene(scene.id, {
+                              hotspots: (scene.hotspots ?? []).map((h) =>
+                                h.id === hsId
+                                  ? { ...h, bounds: { ...h.bounds, x: Math.round((cx - h.bounds.w / 2) * 10) / 10, y: Math.round((baseY - h.bounds.h) * 10) / 10 } }
+                                  : h
+                              ),
+                            })
+                          }
+                        />
+                        <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
+                          <textarea
+                            className={`${inputCls} h-14 font-type`}
+                            value={scene.stage.enterCaption ?? ""}
+                            placeholder="One short line — what the player should feel walking in."
+                            onChange={(e) =>
+                              updateScene(scene.id, { stage: { ...scene.stage!, enterCaption: e.target.value || undefined } })
+                            }
+                          />
+                        </Field>
+                        <Field label="Character sprite (emoji:… or an image url / asset)">
+                          <input
+                            className={inputCls}
+                            value={scene.stage.playerImage ?? ""}
+                            placeholder="emoji:🕵️ or /img/… or asset:…"
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: { ...scene.stage!, playerImage: e.target.value || undefined },
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Walk-cycle frames (one image url / asset: per line, optional)">
+                          <textarea
+                            className={`${inputCls} h-16 font-type`}
+                            value={(scene.stage.walkFrames ?? []).join("\n")}
+                            placeholder={"/img/walk1.png\n/img/walk2.png\n/img/walk3.png"}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: {
+                                  ...scene.stage!,
+                                  walkFrames: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
+                                },
+                              })
+                            }
+                          />
+                          <p className="mt-1 font-type text-[9px] text-paper/40">
+                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Leave empty for the
+                            procedural bob.
+                          </p>
+                        </Field>
+                        <div className="grid grid-cols-2 gap-1">
+                          <Field label="Spawn X (%)">
+                            <input
+                              type="number" min={1} max={99} className={inputCls}
+                              value={scene.stage.spawn?.x ?? 50}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, spawn: { x: Number(e.target.value) || 50, y: scene.stage!.spawn?.y ?? 86 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Spawn Y (%)">
+                            <input
+                              type="number" min={1} max={99} className={inputCls}
+                              value={scene.stage.spawn?.y ?? 86}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Walk speed (% width / sec)">
+                            <input
+                              type="number" min={4} max={60} className={inputCls}
+                              value={scene.stage.speed ?? 18}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, speed: Number(e.target.value) || 18 },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Reach distance (%)">
+                            <input
+                              type="number" min={1} max={12} step={0.5} className={inputCls}
+                              value={scene.stage.reach ?? 4}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, reach: Number(e.target.value) || 4 },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Floor top (%)">
+                            <input
+                              type="number" min={0} max={98} className={inputCls}
+                              value={scene.stage.floor?.top ?? 62}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, floor: { top: Number(e.target.value) || 0, bottom: scene.stage!.floor?.bottom ?? 94 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Floor bottom (%)">
+                            <input
+                              type="number" min={2} max={100} className={inputCls}
+                              value={scene.stage.floor?.bottom ?? 94}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, floor: { top: scene.stage!.floor?.top ?? 62, bottom: Number(e.target.value) || 94 } },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Depth shrink at floor top (0–0.9)">
+                            <input
+                              type="number" min={0} max={0.9} step={0.05} className={inputCls}
+                              value={scene.stage.depthScale ?? 0.35}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, depthScale: Number(e.target.value) },
+                                })
+                              }
+                            />
+                          </Field>
+                          <Field label="Sprite scale (default 1)">
+                            <input
+                              type="number" min={0.3} max={3} step={0.1} className={inputCls}
+                              value={scene.stage.playerScale ?? 1}
+                              onChange={(e) =>
+                                updateScene(scene.id, {
+                                  stage: { ...scene.stage!, playerScale: Number(e.target.value) || undefined },
+                                })
+                              }
+                            />
+                          </Field>
+                        </div>
+                        <Field label="Interaction labels on markers">
+                          <select
+                            className={inputCls}
+                            value={scene.stage.hints ?? "proximity"}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
+                              })
+                            }
+                          >
+                            <option value="proximity">Proximity — labels fade in as you approach</option>
+                            <option value="always">Always — every marker wears its label</option>
+                            <option value="none">None — reticles only (hover to peek)</option>
+                          </select>
+                        </Field>
+                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
+                          <input
+                            type="checkbox"
+                            checked={scene.stage.keyboard !== false}
+                            onChange={(e) =>
+                              updateScene(scene.id, {
+                                stage: { ...scene.stage!, keyboard: e.target.checked },
+                              })
+                            }
+                          />
+                          Arrow / WASD movement enabled
+                        </label>
+                        <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
+                          <b className="text-cyan-neon">The Telltale loop:</b> Hotspots tab lays the markers (💬
+                          show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
+                          for doors). The Beats tab is the conversation a 🗣 marker starts; give the scene's choices{" "}
+                          <b>time limits</b> for real "decide now" pressure.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </CollapsibleSection>
+
+                {/* ---- Letterbox & entry transition (Telltale polish) ---- */}
                 <div className="border border-gold/40 bg-gold/5 p-2 space-y-2">
                   <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🎞 Letterbox &amp; transition</div>
                   <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
@@ -9873,1230 +8535,6 @@ function StudioInner({
               </>
             )}
 
-            {scene && scene.nodeType === "stage" && tab === "stage" && (
-              <>
-                <HelpNote id="stage-tab" title="Walkable Stage">
-                  Free-roam exploration — the player walks a character around the floor and walks up to
-                  interaction markers to use them. Markers render <b>where you drew the zone</b> (a poster keeps
-                  its marker on the poster); the character walks to the floor <b>beneath</b> it. <b>👁 Looks never
-                  walk</b> — a 💬 show-text zone (or the Look verb) fires from a distance. Lay the markers on the{" "}
-                  <b>Hotspots</b> tab, write the conversations a <b>🗣 Start conversation</b> marker starts on the{" "}
-                  <b>Beats</b> tab, and wire doors as <b>→ Go to scene</b> hotspots. Every number on this tab is a
-                  % of the whole strip.
-                  <br /><br />
-                  Settings are grouped: <b>🗺 Room plate</b> (the drag-everything editor) · <b>➡ Entrances &amp;
-                  exits</b> · <b>🎬 Scene opening</b> (caption + scripted sequence) · <b>🕵️ Player character</b> ·{" "}
-                  <b>🚧 Obstacles</b> · <b>🚏 Ambient NPCs</b> · <b>🎛 Interaction</b> · <b>📐 Floor &amp; movement
-                  numbers</b>. Want a cinematic room with zero chrome? Set <b>Node Layout Type</b> (Scene tab) to{" "}
-                  <b>🚶 Walkable Stage — NO HUD</b>.
-                </HelpNote>
-                {/* ---- Stage node — free-roam walkable exploration ---- */}
-                <CollapsibleSection
-                  id={`scene-stage-${scene.id}`}
-                  title="🚶 Walkable Stage (free-roam)"
-                  defaultOpen
-                  hint={scene.hideHud ? "NO-HUD layout" : `${scene.stage?.npcs?.length ?? 0} NPCs · ${(scene.stage?.obstacles ?? []).length} obstacles`}
-                >
-                  <div className="space-y-2">
-                    {scene.nodeType !== "stage" ? (
-                      <p className="border border-gold/30 bg-gold/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                        These settings only run on a <b>🚶 Walkable Stage</b> node — set <b>Node Layout Type</b> above to
-                        "🚶 Walkable Stage". A stage scene has <b>no prose panel</b>: the player walks a character around
-                        the floor, walks up to interaction markers to use them, talks via 🗣 Start-conversation markers,
-                        and exits by walking to a door marker.
-                      </p>
-                    ) : !scene.stage ? (
-                      <button
-                        className="btn-tool w-full"
-                        onClick={() =>
-                          updateScene(scene.id, {
-                            stage: {
-                              playerImage: "emoji:🕵️",
-                              spawn: { x: 50, y: 86 },
-                              speed: 18,
-                              reach: 4,
-                              keyboard: true,
-                              floor: { top: 62, bottom: 94 },
-                              depthScale: 0.35,
-                              hints: "proximity",
-                            },
-                          })
-                        }
-                      >
-                        ＋ Add stage settings (floor, spawn, character)
-                      </button>
-                    ) : (
-                      <>
-                        {scene.hideHud ? (
-                          <div className="flex items-start gap-2 border border-gold/40 bg-gold/10 p-2">
-                            <span className="text-base leading-none" aria-hidden>🎭</span>
-                            <p className="min-w-0 flex-1 font-type text-[10px] leading-snug text-paper/70">
-                              <b className="text-gold">No-HUD room.</b> In play this scene renders zero chrome — no
-                              menu, meters, leads panel, chips, inventory dock or sound/help corner; just the art, the
-                              walker, its markers and subtitles. The player can still press <b>Esc</b> for Save &amp;
-                              exit, so no one is trapped.
-                            </p>
-                            <button
-                              type="button"
-                              className="shrink-0 border border-gold/50 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-gold hover:bg-gold/10"
-                              title="Switch Node Layout Type back to 🚶 Walkable Stage (with HUD)"
-                              onClick={() => updateScene(scene.id, { hideHud: undefined })}
-                            >
-                              Show the HUD
-                            </button>
-                          </div>
-                        ) : null}
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-plate`}
-                          title="🗺 Room plate & layout"
-                          defaultOpen
-                          hint="the visual editor — drag everything"
-                        >
-                        <p className="font-type text-[10px] leading-snug text-paper/55">
-                          Drag the neon floor edges, the 🕵️ spawn dot, and any marker on the plate. The <b className="text-cyan-neon">↕</b>{" "}
-                          handle on the character's head resizes it live; the <b className="text-neon">↔</b> on a prop/NPC's
-                          corner scales that object (feet stay planted). <b className="text-gold">▶ Walk</b> previews the
-                          walker's walk cycle. <b className="text-neon">🧭 Make path</b> turns the walkable zone into a
-                          polygon — drag its corner points (⊕ to add, ✕ to remove) to carve a winding path, or arm{" "}
-                          <b className="text-neon">Paint path</b> and click points straight onto the plate. Arm{" "}
-                          <b className="text-crimson">🚧 Draw obstacle</b> and drag a box to fence off furniture. Markers sit
-                          where the game draws them — at each hotspot's base. Prose is <b>not shown</b> on a stage node:
-                          narrative is the caption below + 💬 show-text markers. A{" "}
-                          <b className="text-neon">Pick on plate</b> button on a script step (below) waits for a click here
-                          and writes the coordinates for you.
-                        </p>
-                        <StageFloorEditor
-                          background={scene.background}
-                          media={media}
-                          floor={
-                            stageFloorOf(scene.stage)
-                          }
-                          spawn={{ x: scene.stage.spawn?.x ?? 50, y: scene.stage.spawn?.y ?? 90 }}
-                          player={{
-                            // Resolve exactly as the game does (Game.tsx): a
-                            // scene's own sprite/image wins, otherwise the
-                            // story-wide Player character (In-game theme) —
-                            // so a story-wide player sheet shows here.
-                            image: scene.stage.playerImage ?? story.playerSprite?.image,
-                            sheet: scene.stage.playerSheet ?? story.playerSprite?.sheet,
-                          }}
-                          hotspots={(scene.hotspots ?? []).map((h) => ({ id: h.id, label: h.label, cursor: h.cursor, bounds: h.bounds, image: h.image, sheet: h.sheet, imageFit: h.imageFit }))}
-                          selectedHotspotId={selectedHotspot}
-                          onSelectHotspot={(id) => setSelectedHotspot(id)}
-                          worldWidth={scene.stage.worldWidth}
-                          playerScale={scene.stage.playerScale}
-                          onPlayerScale={(s) =>
-                            updateScene(scene.id, {
-                              stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
-                            })
-                          }
-                          obstacles={scene.stage.obstacles ?? []}
-                          selectedObstacle={selectedBarrier}
-                          onObstacleSelect={(i) => setSelectedBarrier(i)}
-                          onObstacleDelete={(i) => {
-                            const obs = scene.stage!.obstacles ?? [];
-                            const next = obs.filter((_, j) => j !== i);
-                            updateScene(scene.id, { stage: { ...scene.stage!, obstacles: next.length ? next : undefined } });
-                            setSelectedBarrier(null);
-                          }}
-                          onHotspotDelete={(id) => {
-                            const hs = (scene.hotspots ?? []).find((h) => h.id === id);
-                            if (!hs) return;
-                            // A marker can be wired to things that outlive it: an
-                            // NPC's talkHotspotId, or a script step. Deleting it
-                            // silently would leave those dangling, so say so.
-                            const npcRefs = (scene.stage?.npcs ?? []).filter((n) => n.talkHotspotId === id).length;
-                            const warn = npcRefs
-                              ? `\n\n${npcRefs} stage NPC${npcRefs === 1 ? "" : "s"} link to this marker and will lose their talk target.`
-                              : "";
-                            if (!confirm(`Delete marker "${hs.label || id}"?${warn}`)) return;
-                            mutate((d) => {
-                              const sc = d.scenes.find((x) => x.id === scene.id)!;
-                              sc.hotspots = sc.hotspots?.filter((x) => x.id !== id);
-                              // Clear the dangling talk links rather than leaving
-                              // NPCs pointing at a marker that no longer exists.
-                              if (sc.stage?.npcs)
-                                for (const n of sc.stage.npcs) if (n.talkHotspotId === id) delete n.talkHotspotId;
-                            });
-                            setSelectedHotspot(null);
-                            say(`Deleted marker "${hs.label || id}".`);
-                          }}
-                          onObstacleMove={(i, bounds) =>
-                            updateScene(scene.id, {
-                              stage: {
-                                ...scene.stage!,
-                                obstacles: (scene.stage!.obstacles ?? []).map((o, j) => (j === i ? bounds : o)),
-                              },
-                            })
-                          }
-                          onObstacleDraw={(bounds) => {
-                            const obs = scene.stage!.obstacles ?? [];
-                            updateScene(scene.id, { stage: { ...scene.stage!, obstacles: [...obs, bounds] } });
-                            setSelectedBarrier(obs.length);
-                          }}
-                          floorPoints={scene.stage.floorPoints ?? []}
-                          onFloorPoints={(pts) =>
-                            updateScene(scene.id, {
-                              // Keep 1-2 point drafts too — paint mode adds
-                              // vertices one click at a time; the game and
-                              // the polygon UI only engage at >= 3 points.
-                              stage: { ...scene.stage!, floorPoints: pts.length ? pts : undefined },
-                            })
-                          }
-                          entrySpawns={scene.stage.entrySpawns}
-                          entrySceneTitles={Object.fromEntries(story.scenes.map((s) => [s.id, s.title]))}
-                          onEntrySpawn={(fromId, x, y) =>
-                            updateScene(scene.id, {
-                              stage: { ...scene.stage!, entrySpawns: { ...(scene.stage!.entrySpawns ?? {}), [fromId]: { x, y } } },
-                            })
-                          }
-                          onFloor={(top, bottom) =>
-                            updateScene(scene.id, { stage: { ...scene.stage!, floor: { top, bottom } } })
-                          }
-                          onSpawn={(x, y) => updateScene(scene.id, { stage: { ...scene.stage!, spawn: { x, y } } })}
-                          onMoveMarker={(hsId, cx, baseY) =>
-                            updateScene(scene.id, {
-                              hotspots: (scene.hotspots ?? []).map((h) =>
-                                h.id === hsId
-                                  ? { ...h, bounds: { ...h.bounds, x: Math.round((cx - h.bounds.w / 2) * 10) / 10, y: Math.round((baseY - h.bounds.h) * 10) / 10 } }
-                                  : h
-                              ),
-                            })
-                          }
-                          onResizeProp={(hsId, bounds) =>
-                            updateScene(scene.id, {
-                              hotspots: (scene.hotspots ?? []).map((h) => (h.id === hsId ? { ...h, bounds } : h)),
-                            })
-                          }
-                          pickPoint={scriptPick ? { npc: scriptPick.npc } : null}
-                          onPickPoint={(p) => {
-                            // Cutscene recorder: land the picked point on the
-                            // step that armed it, then hop back to the tab the
-                            // row lives on so the numbers are visible.
-                            if (!scriptPick) return;
-                            const { index, origin, hotspotId } = scriptPick;
-                            setScriptPick(null);
-                            const patchStep = (s: StageScriptStep): StageScriptStep =>
-                              s.do === "walkTo" || s.do === "npcWalkTo" ? { ...s, x: p.x, y: p.y } : s;
-                            if (origin === "enter") {
-                              const next = (scene.stage?.enterScript ?? []).map((s, si) => (si === index ? patchStep(s) : s));
-                              updateScene(scene.id, { stage: { ...scene.stage!, enterScript: next } });
-                            } else if (hotspotId) {
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const arr = s.hotspots!.find((x) => x.id === hotspotId)!.action.script ?? [];
-                                if (arr[index]) arr[index] = patchStep(arr[index]);
-                              });
-                            }
-                            if (origin === "hotspot") setTab("hotspots");
-                          }}
-                          onCancelPick={() => setScriptPick(null)}
-                        />
-                        <div className="space-y-1 border border-cyan-neon/35 bg-cyan-neon/5 p-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎬 Stage composite preview</span>
-                            <span className="font-type text-[8px] text-paper/40">background + foreground layers</span>
-                          </div>
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            This preview shows the complete stage plate, including hidden/visible foreground layers,
-                            sprite sheets, opacity, blend modes, parallax and walk-behind props. Layer editing lives in
-                            <b> Scene → Cinematics → Foreground sprites</b>; changes are shared with this stage view.
-                          </p>
-                          <div
-                            className="relative aspect-video w-full overflow-hidden border border-noir-700 bg-noir-950"
-                            style={scene.background.startsWith("gradient:") ? { background: scene.background.slice(9) } : { backgroundImage: `url(${media(scene.background) ?? scene.background})`, backgroundSize: "cover", backgroundPosition: "center" }}
-                          >
-                            <ForegroundExtras
-                              // Parity with play: a 🚶 stage pins its plate
-                              // still and strips pointer parallax (the walker,
-                              // markers and barriers are anchored to the plate
-                              // box), so the game's stage renders the extras
-                              // WITHOUT depth planes. The composite preview
-                              // shows exactly what the room will look like.
-                              cinematic={
-                                scene.cinematic
-                                  ? { ...scene.cinematic, parallaxDepth: undefined, parallaxLayers: undefined }
-                                  : scene.cinematic
-                              }
-                              resolve={media}
-                            />
-                            <ForegroundLayer cinematic={scene.cinematic} resolve={media} />
-                            <div className="pointer-events-none absolute inset-x-0 bottom-1 z-10 text-center font-pulp text-[8px] uppercase tracking-widest text-paper/65"><span className="bg-noir-950/70 px-2 py-1">Stage layer composite</span></div>
-                          </div>
-                        </div>
-                        <Field label="World width — how many screens the room spans (100 = one, the classic plate)">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="range" min={100} max={400} step={100} className="w-full accent-cyan-400"
-                              value={scene.stage.worldWidth ?? 100}
-                              onChange={(e) => {
-                                const w = Number(e.target.value);
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, worldWidth: w > 100 ? w : undefined },
-                                });
-                              }}
-                            />
-                            <span className="w-12 text-right font-pulp text-[10px] text-cyan-neon">
-                              {scene.stage.worldWidth ?? 100}%
-                            </span>
-                          </div>
-                          <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
-                            One continuous scrolling strip (a LucasArts alley): the camera follows the walker and pans
-                            across the plate. Every coordinate on this plate (spawn, markers, barriers) is a % of the
-                            <b> whole strip</b> — the dashed frames show what one screen of the player's viewport holds.
-                            Use a wide background image so the pan has art to show.
-                          </p>
-                        </Field>
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-edges`}
-                          title="➡ Entrances & exits"
-                          hint="walk-off edge arrows · per-room entry spawns"
-                        >
-                        {/* ---- edge exits: walk off the screen into the next scene ---- */}
-                        <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">
-                            ➡ Walk-off-screen exits (the red/yellow edge arrow)
-                          </div>
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            The LucasArts screen edge: the player walks (or clicks the arrow) into the world's edge and
-                            the character strides off the plate into the target scene. Red = open, yellow = locked
-                            (shows the locked line). Only left/right edges get arrows.
-                          </p>
-                          {(["left", "right"] as const).map((edge) => {
-                            const ex = scene.stage?.exitEdges?.[edge];
-                            const setExit = (patch: Partial<NonNullable<typeof ex>>) =>
-                              updateScene(scene.id, {
-                                stage: {
-                                  ...scene.stage!,
-                                  exitEdges: {
-                                    ...(scene.stage!.exitEdges ?? {}),
-                                    [edge]: { targetSceneId: scene.stage!.exitEdges?.[edge]?.targetSceneId ?? "", ...(scene.stage!.exitEdges?.[edge] ?? {}), ...patch },
-                                  },
-                                },
-                              });
-                            return (
-                              <div key={edge} className="space-y-1 border border-noir-700 bg-noir-950/60 p-1.5">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/60">
-                                    {edge === "left" ? "◀ left edge" : "right edge ▶"}
-                                  </span>
-                                  {ex ? (
-                                    <button
-                                      type="button"
-                                      className="font-type text-[9px] text-red-400/80 hover:text-red-300"
-                                      onClick={() => {
-                                        const next = { ...(scene.stage!.exitEdges ?? {}) };
-                                        delete next[edge];
-                                        updateScene(scene.id, { stage: { ...scene.stage!, exitEdges: Object.keys(next).length ? next : undefined } });
-                                      }}
-                                    >
-                                      ✕ remove
-                                    </button>
-                                  ) : null}
-                                </div>
-                                {ex ? (
-                                  <>
-                                    <Field label="Leaves to scene">
-                                      <select
-                                        className={inputCls}
-                                        value={ex.targetSceneId}
-                                        onChange={(e) => setExit({ targetSceneId: e.target.value })}
-                                      >
-                                        <option value="">— pick a scene —</option>
-                                        {story.scenes.filter((s) => s.id !== scene.id).map((s) => (
-                                          <option key={s.id} value={s.id}>{s.title}</option>
-                                        ))}
-                                      </select>
-                                    </Field>
-                                    <div className="grid grid-cols-2 gap-1">
-                                      <Field label="Arrow label (tooltip)">
-                                        <input
-                                          className={inputCls}
-                                          value={ex.label ?? ""}
-                                          placeholder="the road"
-                                          onChange={(e) => setExit({ label: e.target.value || undefined })}
-                                        />
-                                      </Field>
-                                      <Field label="Flag set on exit">
-                                        <input
-                                          className={inputCls}
-                                          value={ex.flagSet ?? ""}
-                                          placeholder="ft_left"
-                                          onChange={(e) => setExit({ flagSet: e.target.value || undefined })}
-                                        />
-                                      </Field>
-                                    </div>
-                                    <Field label="Locked line + locked-until flag (empty flag = always open)">
-                                      <input
-                                        className={inputCls}
-                                        value={ex.lockedLine ?? ""}
-                                        placeholder="Not yet — something's still holding you here."
-                                        onChange={(e) => setExit({ lockedLine: e.target.value || undefined })}
-                                      />
-                                      {/* Suggestion-backed like every other gate:
-                                          hand-typing the flag here was a silent
-                                          way to gate an exit on a flag that does
-                                          not exist, locking the player in. */}
-                                      <div className="mt-1">
-                                        <FlagInput
-                                          value={ex.gating?.requiresFlags?.[0]}
-                                          suggestions={allFlags}
-                                          placeholder="Flag that must be set (e.g. ft_keys_found)"
-                                          onChange={(v) =>
-                                            setExit({
-                                              gating: v ? { requiresFlags: [v] } : undefined,
-                                            })
-                                          }
-                                        />
-                                      </div>
-                                    </Field>
-                                  </>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="btn-tool w-full"
-                                    onClick={() => setExit({ targetSceneId: "" })}
-                                  >
-                                    ＋ Add {edge} edge exit
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {/* ---- entry spawns: where you appear when arriving from each room ---- */}
-                        {(() => {
-                          const incomers = story.scenes.filter((s) => {
-                            if (s.id === scene.id) return false;
-                            const exitsToHere =
-                              (s.hotspots ?? []).some((h) => h.action.targetSceneId === scene.id) ||
-                              (s.choices ?? []).some((c) => c.targetSceneId === scene.id) ||
-                              Object.values(s.stage?.exitEdges ?? {}).some((e) => e?.targetSceneId === scene.id);
-                            return exitsToHere;
-                          });
-                          if (!incomers.length) return null;
-                          return (
-                            <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
-                              <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">
-                                🚪 Entry spawns (cyan dots on the plate)
-                              </div>
-                              <p className="font-type text-[9px] leading-snug text-paper/45">
-                                Where the walker appears depends on the room they came from. Drag the cyan dots on the
-                                plate, or set numbers here. Unset = the room's own spawn.
-                              </p>
-                              {incomers.map((inc) => {
-                                const p = scene.stage?.entrySpawns?.[inc.id];
-                                return (
-                                  <div key={inc.id} className="flex items-center gap-1.5">
-                                    <span className="w-32 truncate font-type text-[9px] text-paper/60" title={inc.title}>
-                                      from {inc.title}:
-                                    </span>
-                                    <input
-                                      type="number" min={1} max={399} className={`${inputCls} w-16`}
-                                      value={p?.x ?? ""}
-                                      placeholder="x"
-                                      onChange={(e) => {
-                                        const x = Number(e.target.value);
-                                        updateScene(scene.id, {
-                                          stage: {
-                                            ...scene.stage!,
-                                            entrySpawns: { ...(scene.stage!.entrySpawns ?? {}), [inc.id]: { x: x || 50, y: p?.y ?? 86 } },
-                                          },
-                                        });
-                                      }}
-                                    />
-                                    <input
-                                      type="number" min={1} max={99} className={`${inputCls} w-16`}
-                                      value={p?.y ?? ""}
-                                      placeholder="y"
-                                      onChange={(e) => {
-                                        const y = Number(e.target.value);
-                                        updateScene(scene.id, {
-                                          stage: {
-                                            ...scene.stage!,
-                                            entrySpawns: { ...(scene.stage!.entrySpawns ?? {}), [inc.id]: { x: p?.x ?? 50, y: y || 86 } },
-                                          },
-                                        });
-                                      }}
-                                    />
-                                    {p ? (
-                                      <button
-                                        type="button"
-                                        className="font-type text-[9px] text-red-400/80 hover:text-red-300"
-                                        onClick={() => {
-                                          const next = { ...(scene.stage!.entrySpawns ?? {}) };
-                                          delete next[inc.id];
-                                          updateScene(scene.id, { stage: { ...scene.stage!, entrySpawns: Object.keys(next).length ? next : undefined } });
-                                        }}
-                                      >
-                                        ✕
-                                      </button>
-                                    ) : (
-                                      <span className="font-type text-[8px] italic text-paper/35">default spawn</span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        })()}
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-opening`}
-                          title="🎬 Scene opening"
-                          hint="caption + scripted entry sequence (SCUMM room-entry cutscene)"
-                        >
-                        <Field label="Caption on scene entry (the stage's opening line — replaces prose)">
-                          <textarea
-                            className={`${inputCls} h-14 font-type`}
-                            value={scene.stage.enterCaption ?? ""}
-                            placeholder="One short line — what the player should feel walking in."
-                            onChange={(e) =>
-                              updateScene(scene.id, { stage: { ...scene.stage!, enterCaption: e.target.value || undefined } })
-                            }
-                          />
-                        </Field>
-                        <Field label="🎬 Scripted sequence on scene entry (SCUMM room-entry cutscene)">
-                          <p className="mb-1 font-type text-[9px] leading-snug text-paper/45">
-                            Plays right after the scene fades in: input locks, letterbox bars drop, the steps run in
-                            order, then control returns. Give it a run-once flag so it plays once per story.
-                          </p>
-                          <ScriptEditor
-                            steps={scene.stage.enterScript ?? []}
-                            onChange={(next) =>
-                              updateScene(scene.id, { stage: { ...scene.stage!, enterScript: next.length ? next : undefined } })
-                            }
-                            npcIds={(scene.stage.npcs ?? []).map((n) => n.id)}
-                            scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
-                            onPickPoint={(index, npc) => setScriptPick((cur) => (cur?.origin === "enter" && cur.index === index ? null : { index, npc, origin: "enter" }))}
-                            picking={scriptPick?.origin === "enter" ? scriptPick : null}
-                          />
-                          {(scene.stage.enterScript?.length ?? 0) > 0 ? (
-                            <input
-                              className={`${inputCls} mt-1`}
-                              value={scene.stage.enterScriptFlag ?? ""}
-                              placeholder="run-once flag (empty = replays on every entry)"
-                              onChange={(e) =>
-                                updateScene(scene.id, { stage: { ...scene.stage!, enterScriptFlag: e.target.value.trim() || undefined } })
-                              }
-                            />
-                          ) : null}
-                        </Field>
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-player`}
-                          title="🕵️ Player character"
-                          hint="sprite · walk frames · sheet · size & pose"
-                        >
-                        <Field label="Character sprite (pick from the library — or type an emoji/tag)">
-                          <input
-                            className={inputCls}
-                            value={scene.stage.playerImage ?? ""}
-                            placeholder="emoji:🕵️ or bare 🕵️ — or pick art below"
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, playerImage: e.target.value || undefined },
-                              })
-                            }
-                          />
-                          <div className="mt-1">
-                            <ImagePicker
-                              value={
-                                scene.stage.playerImage && !scene.stage.playerImage.startsWith("emoji:")
-                                  ? scene.stage.playerImage
-                                  : undefined
-                              }
-                              onChange={(v) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerImage: v || undefined },
-                                })
-                              }
-                              placeholder="…or pick art from your image library"
-                              preferFolder="sprites"
-                            />
-                            <p className="mt-1 font-type text-[9px] leading-snug text-paper/40">
-                              No typing needed: <b>＋ upload</b> your art (or a cutout) once, then pick it here. Leave blank for
-                              the default walker; the typed box is for emojis / <code>lights:…</code> tags.
-                            </p>
-                          </div>
-                        </Field>
-                        <Field label="Walk-cycle frames (optional — add them with the picker)">
-                          <textarea
-                            className={`${inputCls} h-16 font-type`}
-                            value={(scene.stage.walkFrames ?? []).join("\n")}
-                            placeholder={"No typing needed — add frames below…\n(each line is a frame asset)"}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: {
-                                  ...scene.stage!,
-                                  walkFrames: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
-                                },
-                              })
-                            }
-                          />
-                          <div className="mt-1">
-                            <ImagePicker
-                              value={undefined}
-                              onChange={(v) => {
-                                if (!v) return;
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, walkFrames: [...(scene.stage!.walkFrames ?? []), v] },
-                                });
-                              }}
-                              placeholder="＋ add a frame from the image library…"
-                              preferFolder="sprites"
-                              allowClear={false}
-                            />
-                          </div>
-                          <p className="mt-1 font-type text-[9px] text-paper/40">
-                            2–4 frames cycled while walking (frame 1 doubles as the idle pose). Each pick appends a frame; edit
-                            the list above to reorder or delete. Leave empty for the procedural bob.
-                          </p>
-                        </Field>
-                        {/* ---- sprite-sheet walker (one image, gridded frames) ---- */}
-                        <div className="space-y-1 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">🎞 Sprite-sheet walker</div>
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            One image holding a grid of frames (left→right, top→bottom, starting at 0). Beats loose
-                            frame files: define "walk" and "idle" and the walker animates and stands still properly.
-                            Overrides the sprite/walk-frame fields above while set.
-                          </p>
-                          <SpriteSheetControls
-                            value={scene.stage.playerSheet}
-                            storyId={story.id}
-                            preset={WALKER_PRESET}
-                            onChange={(sheet) => updateScene(scene.id, { stage: { ...scene.stage!, playerSheet: sheet } })}
-                          />
-                          {/* ---- directional preview: walk away / towards ---- */}
-                          {(() => {
-                            const sheet = scene.stage.playerSheet;
-                            if (!sheetDrawable(sheet)) return null;
-                            return (
-                              <div className="space-y-1 border-t border-cyan-neon/20 pt-1.5">
-                                <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
-                                  Directional preview (add <span className="text-cyan-neon">walk-up</span> / <span className="text-cyan-neon">walk-down</span> / <span className="text-cyan-neon">idle-up</span> / <span className="text-cyan-neon">idle-down</span> to the sheet)
-                                </div>
-                                <div className="flex items-end gap-2">
-                                  {(
-                                    [
-                                      ["up", "walk-up", "⬆ away"],
-                                      ["down", "walk-down", "⬇ toward"],
-                                      ["left", "walk", "⬅ left"],
-                                      ["right", "walk", "➡ right"],
-                                    ] as const
-                                  ).map(([key, anim, label]) => (
-                                    <div key={key} className="flex flex-col items-center gap-0.5">
-                                      <div className="flex h-14 items-end justify-center overflow-hidden rounded border border-noir-700 bg-noir-950/70">
-                                        <SheetSprite
-                                          sheet={sheet}
-                                          anim={anim}
-                                          fallbacks={anim === "walk-up" || anim === "walk-down" ? ["walk", "idle"] : ["idle"]}
-                                          height={44}
-                                          freezeOnFallback
-                                          style={key === "left" ? { transform: "scaleX(-1)" } : undefined}
-                                        />
-                                      </div>
-                                      <span className="font-type text-[8px] leading-none text-paper/50">{label}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label={`Close-up size ${(scene.stage.playerNearScale ?? 1).toFixed(2)}× (nearest)`}>
-                            <input
-                              type="range" min={0.5} max={2} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerNearScale ?? 1}
-                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerNearScale: Number(e.target.value) } })}
-                            />
-                          </Field>
-                          <Field label={`Distance size ${(scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)).toFixed(2)}× (furthest)`}>
-                            <input
-                              type="range" min={0.3} max={1.5} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerFarScale ?? 1 - (scene.stage.depthScale ?? 0.35)}
-                              onChange={(e) => updateScene(scene.id, { stage: { ...scene.stage!, playerFarScale: Number(e.target.value) } })}
-                            />
-                          </Field>
-                          <Field label={`Character size ${(scene.stage.playerScale ?? 1).toFixed(2)}× (whole scene)`}>
-                            <input
-                              type="range" min={0.3} max={3} step={0.05} className="w-full accent-cyan-400"
-                              value={scene.stage.playerScale ?? 1}
-                              onChange={(e) => {
-                                const s = Number(e.target.value);
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerScale: s === 1 ? undefined : s },
-                                });
-                              }}
-                            />
-                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                              Fits the character to THIS scene — the 🕵️ on the plate grows/shrinks live. Size 1 is the
-                              classic look; the near/far sliders above only control the walk-toward-camera perspective.
-                            </span>
-                          </Field>
-                          <Field label="Default pose (named animation)">
-                            <input
-                              className={inputCls}
-                              value={scene.stage.playerPose ?? ""}
-                              placeholder="e.g. bend · crouch · reach"
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, playerPose: e.target.value.trim() || undefined },
-                                })
-                              }
-                            />
-                            <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                              A named animation on the player's sprite sheet held for the WHOLE scene (a hunched
-                              lookout, a seated figure). Leave empty for the normal idle/walk. A{" "}
-                              <b className="text-gold">🧍 Set player pose</b> hotspot can override it mid-scene.
-                            </span>
-                          </Field>
-                        </div>
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-obstacles`}
-                          title="🚧 Obstacles (walk around)"
-                          hint={`${(scene.stage.obstacles ?? []).length || "no"} boxes — or draw them on the plate`}
-                        >
-                        {/* ---- obstacles: furniture the walker routes around ---- */}
-                        {(() => {
-                          const obs = scene.stage!.obstacles ?? [];
-                          const setObs = (list: { x: number; y: number; w: number; h: number }[]) =>
-                            updateScene(scene.id, { stage: { ...scene.stage!, obstacles: list.length ? list : undefined } });
-                          const setOb = (i: number, patch: Partial<{ x: number; y: number; w: number; h: number }>) =>
-                            setObs(obs.map((o, j) => (j === i ? { ...o, ...patch } : o)));
-                          return (
-                            <div className="space-y-1 border border-amber-400/30 bg-amber-400/5 p-2">
-                              <div className="font-pulp text-[9px] uppercase tracking-widest text-amber-300">🚧 Obstacles (walk around)</div>
-                              <p className="font-type text-[9px] leading-snug text-paper/45">
-                                Furniture the character walks <b>around</b> instead of through — a bar, a counter, a parked
-                                bike. Click-to-walk routes around them (A* on a coarse grid, then smoothed to the corners a
-                                person would turn at); the keyboard slides along them. All values are scene percentages — but
-                                you never type them: <b>arm 🚧 Draw obstacle</b> on the plate above and drag a box, then{" "}
-                                <b>drag a box to move it, pull its ↘ corner to resize</b>. The numbers below update as you
-                                drag (fine-tune here if you must).
-                              </p>
-                              {obs.map((o, oi) => (
-                                <div key={oi} className="flex items-center gap-1">
-                                  <input type="number" min={0} max={100} className={`${inputCls} w-12`} title="X %" value={Math.round(o.x)} onChange={(e) => setOb(oi, { x: Number(e.target.value) })} />
-                                  <input type="number" min={0} max={100} className={`${inputCls} w-12`} title="Y %" value={Math.round(o.y)} onChange={(e) => setOb(oi, { y: Number(e.target.value) })} />
-                                  <input type="number" min={1} max={100} className={`${inputCls} w-12`} title="Width %" value={Math.round(o.w)} onChange={(e) => setOb(oi, { w: Number(e.target.value) })} />
-                                  <input type="number" min={1} max={100} className={`${inputCls} w-12`} title="Height %" value={Math.round(o.h)} onChange={(e) => setOb(oi, { h: Number(e.target.value) })} />
-                                  <button
-                                    type="button"
-                                    className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                    title="Remove this obstacle"
-                                    onClick={() => setObs(obs.filter((_, j) => j !== oi))}
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                              ))}
-                              <button
-                                type="button"
-                                className="w-full border border-amber-400/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-amber-300 hover:bg-amber-400/10"
-                                onClick={() => setObs([...obs, { x: 42, y: 70, w: 16, h: 12 }])}
-                              >
-                                ＋ add obstacle
-                              </button>
-                            </div>
-                          );
-                        })()}
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-npcs`}
-                          title="🚏 Ambient NPCs"
-                          hint={`${(scene.stage.npcs ?? []).length || "no"} actors — plate preview + patrols & set motions`}
-                        >
-                        {/* ---- ambient NPCs (idle / walk cycles) ---- */}
-                        {(() => {
-                          const st = scene.stage!;
-                          const npcs = st.npcs ?? [];
-                          const setNpcs = (list: StageNpc[]) =>
-                            updateScene(scene.id, { stage: { ...st, npcs: list.length ? list : undefined } });
-                          const setNpc = (i: number, patch: Partial<StageNpc>) =>
-                            setNpcs(npcs.map((n, j) => (j === i ? { ...n, ...patch } : n)));
-                          const setPatrol = (i: number, patrol: StageNpcWaypoint[]) =>
-                            setNpc(i, { patrol: patrol.length ? patrol : undefined });
-                          const setWp = (i: number, wi: number, patch: Partial<StageNpcWaypoint>) =>
-                            setPatrol(i, (npcs[i].patrol ?? []).map((w, k) => (k === wi ? { ...w, ...patch } : w)));
-                          return (
-                            <div className="space-y-2 border border-teal-400/30 bg-teal-400/5 p-2">
-                              <div className="font-pulp text-[9px] uppercase tracking-widest text-teal-300">
-                                🚶 Ambient NPCs (idle / walk cycles / set motions)
-                              </div>
-                              <p className="font-type text-[9px] leading-snug text-paper/45">
-                                Living set-dressing that idles, patrols and performs <b>SET MOTIONS</b> — a bartender
-                                polishing a glass, a dockhand who walks to a crate, faces left, plays his <b>hammer</b>
-                                animation and mutters a line before moving on. Give one a sprite sheet with <b>idle</b> +
-                                <b> walk</b> (plus any named motion animations); each waypoint can pick a motion, a facing
-                                and an ambient say-line for its pause. A single waypoint on the spawn = a standing actor
-                                cycling a motion on a timer. Interaction stays on the <b>Hotspots</b> tab — NPCs are pure
-                                stage life. Every actor needs a <b>unique id</b> (scripts key off it — the validator
-                                errors on duplicates), patrol legs are <b>straight lines</b> (route around furniture
-                                yourself), and a blank speed walks at the slow <b>ambient default of 12</b> — never the
-                                player's pace.
-                              </p>
-                              {npcs.length > 0 ? (
-                                <NpcPlatePreview
-                                  bg={bgStyle(media(scene.background) ?? scene.background)}
-                                  worldWidth={st.worldWidth}
-                                  floor={stageFloorOf(st)}
-                                  npcs={npcs.map((n) => ({
-                                    id: n.id,
-                                    x: n.x,
-                                    y: n.y,
-                                    patrol: n.patrol,
-                                    scale: n.scale,
-                                    // SHEET FIRST: most ambient actors have only
-                                    // a sheet, and reading `image` alone drew
-                                    // the placeholder emoji for the whole cast.
-                                    art: sheetDrawable(n.sheet)
-                                      ? { sheet: { ...n.sheet, image: assetUrl(media(n.sheet.image) ?? n.sheet.image) } }
-                                      : n.image?.startsWith("emoji:")
-                                        ? { emoji: n.image.slice(6) }
-                                        : n.image
-                                          ? { url: assetUrl(media(n.image) ?? n.image) }
-                                          : { emoji: "🚶" },
-                                  }))}
-                                  onMoveSpawn={(i, x, y) => setNpc(i, { x, y })}
-                                  onMoveWp={(i, wi, x, y) => setWp(i, wi, { x, y })}
-                                  onScale={(i, scale) => setNpc(i, { scale: scale === 1 ? undefined : scale })}
-                                />
-                              ) : null}
-                              {npcs.map((n, i) => (
-                                <div key={i} className="space-y-1 border border-teal-400/20 p-1.5">
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      className={`${inputCls} w-32`}
-                                      value={n.id}
-                                      title="NPC id"
-                                      onChange={(e) => setNpc(i, { id: e.target.value })}
-                                    />
-                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
-                                      facing
-                                      <select
-                                        className={inputCls}
-                                        value={n.facing ?? "right"}
-                                        onChange={(e) => setNpc(i, { facing: e.target.value as "left" | "right" })}
-                                      >
-                                        <option value="right">right</option>
-                                        <option value="left">left</option>
-                                      </select>
-                                    </label>
-                                    {/* INTERACTABLE NPC — link to a talker marker */}
-                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70" title="Link this actor to a talk marker: the character becomes clickable — the player clicks them (or presses N) and the walker chases them to start the conversation.">
-                                      talk marker
-                                      <select
-                                        className={inputCls}
-                                        value={n.talkHotspotId ?? ""}
-                                        onChange={(e) => setNpc(i, { talkHotspotId: e.target.value || undefined })}
-                                      >
-                                        <option value="">— ambient (not clickable) —</option>
-                                        {(scene.hotspots ?? [])
-                                          .filter((h) => hotspotReachableActions(h).some((a) => a.type === "startDialogue"))
-                                          .map((h) => (
-                                            <option key={h.id} value={h.id}>💬 {h.label}</option>
-                                          ))}
-                                      </select>
-                                    </label>
-                                    <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
-                                      scale
-                                      <input
-                                        type="number"
-                                        min={0.15}
-                                        max={3}
-                                        step={0.05}
-                                        className={`${inputCls} w-14`}
-                                        value={n.scale ?? 1}
-                                        onChange={(e) => setNpc(i, { scale: Number(e.target.value) })}
-                                      />
-                                    </label>
-                                    <button
-                                      type="button"
-                                      className="ml-auto shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                      title="Remove this NPC"
-                                      onClick={() => setNpcs(npcs.filter((_, j) => j !== i))}
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                  {/* 🖼 custom look: pick uploaded art from the library (no URL
-                                      typing) or type an emoji; a sprite sheet below beats both. */}
-                                  <div className="flex items-center gap-1">
-                                    <span className="shrink-0 font-type text-[9px] text-paper/50">art</span>
-                                    <input
-                                      type="text"
-                                      className={`${inputCls} w-20`}
-                                      title="A constant look without the library — type a bare emoji (🏍) or emoji:🏍. Clear (or pick art → ) to use an image instead."
-                                      value={n.image?.startsWith("emoji:") ? n.image.slice("emoji:".length) : ""}
-                                      placeholder="🏍"
-                                      onChange={(e) => {
-                                        const raw = e.target.value.trim();
-                                        // Bare glyph → emoji: tag; anything that looks like a path/url/tag passes through.
-                                        const norm =
-                                          raw && !raw.includes(":") && !raw.includes("/") && !raw.includes(".")
-                                            ? `emoji:${raw}`
-                                            : raw;
-                                        setNpc(i, { image: norm || undefined });
-                                      }}
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <ImagePicker
-                                        value={n.image && !n.image.startsWith("emoji:") ? n.image : undefined}
-                                        onChange={(v) => setNpc(i, { image: v || undefined })}
-                                        placeholder="…or pick an image"
-                                        preferFolder="sprites"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <span className="font-type text-[9px] text-paper/50">spawn</span>
-                                    <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="X %" value={Math.round(n.x)} onChange={(e) => setNpc(i, { x: Number(e.target.value) })} />
-                                    <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Y %" value={Math.round(n.y)} onChange={(e) => setNpc(i, { y: Number(e.target.value) })} />
-                                    <span className="font-type text-[9px] text-paper/50">speed</span>
-                                    <input type="number" min={1} max={80} className={`${inputCls} w-14`} title="Walk speed (%/s) — blank = 12, the ambient default; deliberately slower than and independent of the player's walk speed" value={n.speed ?? 12} onChange={(e) => setNpc(i, { speed: Number(e.target.value) })} />
-                                    <span className="font-type text-[9px] text-paper/50" title="Named sheet animation played while standing (instead of plain idle) — the barman's 'polish'">idle motion</span>
-                                    <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation at rest (blank = idle)" value={n.idleAnim ?? ""} onChange={(e) => setNpc(i, { idleAnim: e.target.value || undefined })} />
-                                  </div>
-                                  <SpriteSheetControls
-                                    value={n.sheet}
-                                    storyId={story.id}
-                                    preset={WALKER_PRESET}
-                                    onChange={(sheet) => setNpc(i, { sheet: sheet || undefined })}
-                                  />
-                                  <div className="space-y-1 border border-teal-400/15 p-1.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">
-                                        🚏 Patrol & set motions (leave empty to idle forever)
-                                      </span>
-                                      <label className="ml-auto flex items-center gap-1 font-type text-[9px] text-paper/50">
-                                        route
-                                        <select
-                                          className={inputCls}
-                                          title="loop: back to stop 1 · pingpong: walk the route backwards · once: walk it once and hold the last stop's motion forever"
-                                          value={n.patrolMode ?? "loop"}
-                                          onChange={(e) => setNpc(i, { patrolMode: e.target.value === "loop" ? undefined : (e.target.value as "pingpong" | "once") })}
-                                        >
-                                          <option value="loop">🔁 loop</option>
-                                          <option value="pingpong">↔ pingpong</option>
-                                          <option value="once">→ once (hold last)</option>
-                                        </select>
-                                      </label>
-                                    </div>
-                                    {(n.patrol ?? []).map((wp, wi) => (
-                                      <div key={wi} className="space-y-0.5 border-l-2 border-teal-400/20 pl-1">
-                                        <div className="flex items-center gap-1">
-                                          <span className="w-5 font-pulp text-[8px] text-paper/40">{wi + 1}</span>
-                                          <input type="number" min={0} max={400} className={`${inputCls} w-14`} title="Waypoint X %" value={Math.round(wp.x)} onChange={(e) => setWp(i, wi, { x: Number(e.target.value) })} />
-                                          <input type="number" min={0} max={100} className={`${inputCls} w-14`} title="Waypoint Y %" value={Math.round(wp.y)} onChange={(e) => setWp(i, wi, { y: Number(e.target.value) })} />
-                                          <span className="font-type text-[8px] text-paper/50">pause</span>
-                                          <input type="number" min={0} max={60} step={0.5} className={`${inputCls} w-12`} title="Idle seconds here" value={wp.pause ?? 2} onChange={(e) => setWp(i, wi, { pause: Number(e.target.value) })} />
-                                          <label className="flex items-center gap-1 font-type text-[8px] text-paper/50">
-                                            face
-                                            <select className={inputCls} title="Face this way during the pause (default: direction of arrival)" value={wp.facing ?? ""} onChange={(e) => setWp(i, wi, { facing: (e.target.value || undefined) as "left" | "right" | undefined })}>
-                                              <option value="">—</option>
-                                              <option value="left">left</option>
-                                              <option value="right">right</option>
-                                            </select>
-                                          </label>
-                                          <button type="button" className="ml-auto shrink-0 px-1 font-pulp text-[9px] text-crimson" title="Remove this waypoint" onClick={() => setPatrol(i, (n.patrol ?? []).filter((_, k) => k !== wi))}>✕</button>
-                                        </div>
-                                        <div className="flex items-center gap-1 pl-5">
-                                          <span className="font-type text-[8px] text-paper/50" title="Named sheet animation played during the pause — 'sweep', 'hammer', 'drink'">motion</span>
-                                          <input className={`${inputCls} w-20`} placeholder="idle" title="Named sheet animation during the pause (blank = idle motion)" value={wp.anim ?? ""} onChange={(e) => setWp(i, wi, { anim: e.target.value || undefined })} />
-                                          <span className="font-type text-[8px] text-paper/50" title="Ambient line floated over their head during the pause — SCUMM background chatter">say</span>
-                                          <input className={`${inputCls} flex-1`} placeholder="ambient line while paused…" value={wp.say ?? ""} onChange={(e) => setWp(i, wi, { say: e.target.value || undefined })} />
-                                          <span className="font-type text-[8px] text-paper/50" title="Size ON ARRIVAL at this stop — the walk leg shrinks/grows smoothly toward it, so a route into the distance walks away and one down the plate walks toward the camera. Blank = the NPC's base scale.">size</span>
-                                          <input type="number" min={0.05} max={4} step={0.05} className={`${inputCls} w-14`} placeholder="—" title="Arrival size ×(blank = base scale)" value={wp.scale ?? ""} onChange={(e) => setWp(i, wi, { scale: e.target.value === "" ? undefined : Math.max(0.05, Number(e.target.value)) })} />
-                                        </div>
-                                      </div>
-                                    ))}
-                                    <button
-                                      type="button"
-                                      className="w-full border border-teal-400/30 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-teal-300 hover:bg-teal-400/10"
-                                      onClick={() => setPatrol(i, [...(n.patrol ?? []), { x: Math.round(n.x + 20), y: Math.round(n.y), pause: 2 }])}
-                                    >
-                                      ＋ add waypoint
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                              <button
-                                type="button"
-                                className="w-full border border-teal-400/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-teal-300 hover:bg-teal-400/10"
-                                onClick={() => setNpcs([...npcs, { id: `npc_${Date.now().toString(36)}`, image: "emoji:🚶", x: 50, y: 88, scale: 1 }])}
-                              >
-                                ＋ add ambient NPC
-                              </button>
-                            </div>
-                          );
-                        })()}
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-interaction`}
-                          title="🎛 Interaction"
-                          hint="verb coin · object-first menus · marker labels"
-                        >
-                        {/* ---- verb coin: pick a verb, then the object ---- */}
-                        {(() => {
-                          const st = scene.stage!;
-                          const coinOn = !!st.verbCoin;
-                          const objectMenuOn = !!st.objectVerbMenu;
-                          const extendedOn = !!st.extendedVerbs;
-                          const chosen = st.verbs ?? [];
-                          const setVerbs = (list: (typeof VERB_IDS)[number][]) =>
-                            updateScene(scene.id, { stage: { ...st, verbCoin: coinOn, verbs: list.length ? list : undefined } });
-                          const shown = extendedOn ? VERB_IDS : CORE_VERB_IDS;
-                          return (
-                            <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
-                              <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎛 Verb coin (pick a verb, then click)</div>
-                              <label className="flex items-center gap-1 font-type text-[10px] text-paper/70">
-                                <input
-                                  type="checkbox"
-                                  checked={coinOn}
-                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, verbCoin: e.target.checked || undefined } })}
-                                />
-                                Show the verb coin in this room
-                              </label>
-                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
-                                <input
-                                  type="checkbox"
-                                  className="mt-0.5"
-                                  checked={!!st.sentenceLine}
-                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, sentenceLine: e.target.checked || undefined } })}
-                                />
-                                <span>
-                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💬 Sentence line (SCUMM)</span>
-                                  <br />
-                                  A strip along the bottom of the room reads out the pending interaction as you hover
-                                  ("Look at the drop-safe", "Use wrench on the bike", "Walk to"), and RIGHT-CLICKING an
-                                  object is a quick 👁 look. Off (the default): nothing renders and right-click stays the
-                                  browser's.
-                                </span>
-                              </label>
-                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
-                                <input
-                                  type="checkbox"
-                                  className="mt-0.5"
-                                  checked={objectMenuOn}
-                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, objectVerbMenu: e.target.checked || undefined } })}
-                                />
-                                <span>
-                                  <span className="font-pulp uppercase tracking-widest text-cyan-neon">💀 Object-first verb menu (the skull pie)</span>
-                                  <br />
-                                  Click the OBJECT first, then pick a verb from a small pie menu that pops up next to it
-                                  (USE expands to your inventory). Off (default): the bottom-left verb coin, and classic
-                                  click-to-activate rooms, are unchanged.
-                                </span>
-                              </label>
-                              {objectMenuOn ? (
-                                <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
-                                  <input
-                                    type="checkbox"
-                                    className="mt-0.5"
-                                    checked={!!st.objectMenuHold}
-                                    onChange={(e) => updateScene(scene.id, { stage: { ...st, objectMenuHold: e.target.checked || undefined } })}
-                                  />
-                                  <span>
-                                    <span className="font-pulp uppercase tracking-widest text-amber-300">⏱ Hold to open — classic skull pie</span>
-                                    <br />
-                                    Press AND HOLD an object and a BIG circular menu opens in the middle of the screen —
-                                    release over a verb to act, over the skull or outside to cancel. Quick taps just walk
-                                    to the object. Off (default): the menu opens on click, next to the object.
-                                  </span>
-                                </label>
-                              ) : null}
-                              {objectMenuOn ? (
-                                <div className="flex items-start gap-2 border border-cyan-neon/25 bg-cyan-neon/5 p-1.5">
-                                  <VerbMenuPiePreview verbs={verbsForScene(scene)} icon={scene.stage.objectMenuIcon ?? story.verbMenuIcon} media={media} size={150} />
-                                  <div className="min-w-0 flex-1 font-type text-[9px] leading-snug text-paper/50">
-                                    <b className="text-cyan-neon">Live preview</b> — the exact ring this room shows when the
-                                    pie opens, with your menu icon in the middle. {st.objectMenuHold ? "Hold-to-open" : "Click-to-open"} is{" "}
-                                    {story.verbMenuEnabled === false ? <b className="text-crimson">disabled story-wide (see 🎮 In-game theme ▸ 💀 Verb menu)</b> : "on"}. Tune the icon on the
-                                    🎮 In-game theme tab.
-                                  </div>
-                                </div>
-                              ) : null}
-                              <label className="flex items-start gap-1.5 border border-noir-700/70 bg-noir-900/30 p-1.5 font-type text-[10px] leading-snug text-paper/70">
-                                <input
-                                  type="checkbox"
-                                  className="mt-0.5"
-                                  checked={extendedOn}
-                                  onChange={(e) => updateScene(scene.id, { stage: { ...st, extendedVerbs: e.target.checked || undefined } })}
-                                />
-                                <span>
-                                  <span className="font-pulp uppercase tracking-widest text-amber-300">👢 Kick · 👊 Punch</span>
-                                  <br />
-                                  Opt this room in to the two EXTRA body-verbs (they appear in the coin or the object
-                                  menu). Off (default), the coin stays the classic five — visual novels and other cases
-                                  never see kick/punch.
-                                </span>
-                              </label>
-                              {coinOn ? (
-                                <>
-                                  <div className="flex flex-wrap gap-1">
-                                    {shown.map((v) => {
-                                      const on = chosen.includes(v) || (chosen.length === 0 && true);
-                                      const picked = chosen.length ? chosen.includes(v) : true;
-                                      return (
-                                        <button
-                                          key={v}
-                                          type="button"
-                                          className={`flex items-center gap-1 border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
-                                            picked ? "border-gold bg-gold/20 text-gold" : "border-noir-700 text-paper/50"
-                                          }`}
-                                          onMouseDown={(e) => e.preventDefault()}
-                                          onClick={() => {
-                                            const base = chosen.length ? chosen : [...VERB_IDS];
-                                            setVerbs(base.includes(v) ? base.filter((x) => x !== v) : [...base, v]);
-                                          }}
-                                          title={`${VERB_LABEL[v]} — ${on ? "on" : "off"}`}
-                                        >
-                                          <span aria-hidden>{VERB_ICON[v]}</span> {v}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                  <p className="font-type text-[9px] leading-snug text-paper/40">
-                                    The player picks a verb, then clicks an object — and USE arms an inventory item
-                                    first. Leave every verb on (default) to offer all {extendedOn ? "seven" : "five"}; untick the
-                                    ones this room can't answer. Objects reply per verb via each hotspot's <b>🎚 Verb coin</b> box,
-                                    and anything they don't answer gets the story's "that doesn't work" line.
-                                  </p>
-                                </>
-                              ) : null}
-                            </div>
-                          );
-                        })()}
-                        <Field label="Interaction labels on markers">
-                          <select
-                            className={inputCls}
-                            value={scene.stage.hints ?? "proximity"}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, hints: e.target.value as "proximity" | "always" | "none" },
-                              })
-                            }
-                          >
-                            <option value="proximity">Proximity — labels fade in as you approach</option>
-                            <option value="always">Always — every marker wears its label</option>
-                            <option value="none">None — reticles only (hover to peek)</option>
-                          </select>
-                        </Field>
-                        </CollapsibleSection>
-                        <CollapsibleSection
-                          id={`scene-stage-${scene.id}-numbers`}
-                          title="📐 Floor & movement numbers"
-                          hint="fine-tuning — the plate edits most of this visually"
-                        >
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Spawn X (%)">
-                            <input
-                              type="number" min={1} max={Math.max(99, (scene.stage.worldWidth ?? 100) - 1)} className={inputCls}
-                              value={scene.stage.spawn?.x ?? 50}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, spawn: { x: Number(e.target.value) || 50, y: scene.stage!.spawn?.y ?? 86 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Spawn Y (%)">
-                            <input
-                              type="number" min={1} max={99} className={inputCls}
-                              value={scene.stage.spawn?.y ?? 86}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, spawn: { x: scene.stage!.spawn?.x ?? 50, y: Number(e.target.value) || 86 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Walk speed (% width / sec)">
-                            <input
-                              type="number" min={4} max={60} className={inputCls}
-                              value={scene.stage.speed ?? 18}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, speed: Number(e.target.value) || 18 },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Reach distance (%)">
-                            <input
-                              type="number" min={1} max={12} step={0.5} className={inputCls}
-                              value={scene.stage.reach ?? 4}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, reach: Number(e.target.value) || 4 },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Floor top (%)">
-                            <input
-                              type="number" min={0} max={98} className={inputCls}
-                              value={scene.stage.floor?.top ?? 62}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, floor: { top: Number(e.target.value) || 0, bottom: scene.stage!.floor?.bottom ?? 94 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Floor bottom (%)">
-                            <input
-                              type="number" min={2} max={100} className={inputCls}
-                              value={scene.stage.floor?.bottom ?? 94}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, floor: { top: scene.stage!.floor?.top ?? 62, bottom: Number(e.target.value) || 94 } },
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Depth shrink at floor top (0–0.9)">
-                            <input
-                              type="number" min={0} max={0.9} step={0.05} className={inputCls}
-                              value={scene.stage.depthScale ?? 0.35}
-                              onChange={(e) =>
-                                updateScene(scene.id, {
-                                  stage: { ...scene.stage!, depthScale: Number(e.target.value) },
-                                })
-                              }
-                            />
-                          </Field>
-                        </div>
-                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/70">
-                          <input
-                            type="checkbox"
-                            checked={scene.stage.keyboard !== false}
-                            onChange={(e) =>
-                              updateScene(scene.id, {
-                                stage: { ...scene.stage!, keyboard: e.target.checked },
-                              })
-                            }
-                          />
-                          Arrow / WASD movement enabled
-                        </label>
-                        </CollapsibleSection>
-                        <p className="border border-cyan-neon/20 bg-cyan-neon/5 p-2 font-type text-[10px] leading-snug text-paper/60">
-                          <b className="text-cyan-neon">The walkable loop:</b> Hotspots tab lays the markers (💬
-                          show-text for looks, 🎁 for pickups, <b>🗣 Start conversation</b> to talk, <b>→ Go to scene</b>{" "}
-                          for doors). The Beats tab is the conversation a 🗣 marker starts; give the scene's choices{" "}
-                          <b>time limits</b> for real "decide now" pressure.
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </CollapsibleSection>
-              </>
-            )}
-
             {scene && tab === "beats" && (
               <>
                 <HelpNote id="beats-tab" title="Beats">
@@ -11200,93 +8638,6 @@ function StudioInner({
                     Characters tab.
                   </p>
                 </div>
-                {/* ---- ✂ EXTRACT BEATS ------------------------------------
-                    Splitting an overgrown conversation used to mean copying
-                    lines out by hand. Tick the beats, choose move or copy,
-                    and they leave in PLAY order with the scene's look
-                    carried across. */}
-                {(scene.dialogueBeats?.length ?? 0) > 1 ? (
-                  <div className="border border-neon/25 bg-neon/5 p-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-pulp text-[9px] uppercase tracking-widest text-neon">
-                        ✂ Split this scene
-                      </span>
-                      <button
-                        className="border border-neon/40 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10"
-                        onClick={() => {
-                          setBeatPickMode((v) => !v);
-                          setPickedBeats(new Set());
-                        }}
-                      >
-                        {beatPickMode ? "Cancel" : "Pick beats"}
-                      </button>
-                    </div>
-                    {beatPickMode ? (
-                      <div className="mt-1.5 space-y-1.5">
-                        <p className="font-type text-[9px] leading-snug text-paper/55">
-                          Tick the beats to lift out. They move in <b>play order</b>, not tick order, and the new scene
-                          inherits this one's background, audio and camera — so the split is invisible in play. Hotspots,
-                          choices and endings stay here.
-                        </p>
-                        <div className="flex flex-wrap items-center gap-1">
-                          <button
-                            className="border border-noir-600 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-neon/50 hover:text-neon"
-                            onClick={() => setPickedBeats(new Set((scene.dialogueBeats ?? []).map((x) => x.id)))}
-                          >
-                            All
-                          </button>
-                          <button
-                            className="border border-noir-600 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/60 hover:border-neon/50 hover:text-neon"
-                            onClick={() => setPickedBeats(new Set())}
-                          >
-                            None
-                          </button>
-                          <span className="ml-1 font-type text-[9px] text-paper/50">
-                            {pickedBeats.size} of {scene.dialogueBeats?.length ?? 0} picked
-                          </span>
-                        </div>
-                        {pickedBeats.size === (scene.dialogueBeats?.length ?? 0) && pickedBeats.size > 0 ? (
-                          <p className="border border-gold/40 bg-gold/10 px-1.5 py-1 font-type text-[9px] text-gold">
-                            ⚠ That's every beat — this scene would be left with no dialogue. Untick at least one, or use
-                            Copy instead of Move.
-                          </p>
-                        ) : null}
-                        <div className="flex flex-wrap gap-1">
-                          <button
-                            disabled={!pickedBeats.size || pickedBeats.size === (scene.dialogueBeats?.length ?? 0)}
-                            className="border border-neon/50 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-neon hover:bg-neon/10 disabled:opacity-30"
-                            title="Move the ticked beats into a new scene and wire a Continue choice to it"
-                            onClick={() =>
-                              extractBeats(scene.id, [...pickedBeats], { link: "chain", copy: false })
-                            }
-                          >
-                            ✂ Move → linked scene
-                          </button>
-                          <button
-                            disabled={!pickedBeats.size || pickedBeats.size === (scene.dialogueBeats?.length ?? 0)}
-                            className="border border-noir-600 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/70 hover:border-neon/50 hover:text-neon disabled:opacity-30"
-                            title="Move them into a new scene that is NOT connected — wire it yourself"
-                            onClick={() =>
-                              extractBeats(scene.id, [...pickedBeats], { link: "loose", copy: false })
-                            }
-                          >
-                            ✂ Move → loose scene
-                          </button>
-                          <button
-                            disabled={!pickedBeats.size}
-                            className="border border-noir-600 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-paper/70 hover:border-gold/50 hover:text-gold disabled:opacity-30"
-                            title="Leave the originals here and copy them into a new loose scene"
-                            onClick={() =>
-                              extractBeats(scene.id, [...pickedBeats], { link: "loose", copy: true })
-                            }
-                          >
-                            ⧉ Copy → loose scene
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
                 {(scene.dialogueBeats ?? []).map((b, i) => {
                   const speakerName =
                     b.characterId === "narrator"
@@ -11334,25 +8685,6 @@ function StudioInner({
                       }}
                       headerRight={
                         <span className="flex items-center gap-1">
-                          {beatPickMode ? (
-                            <input
-                              type="checkbox"
-                              className="mr-1 h-3 w-3 shrink-0 accent-neon"
-                              checked={pickedBeats.has(b.id)}
-                              title={`Pick beat ${i + 1} for the split`}
-                              aria-label={`Pick beat ${i + 1} for the split`}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => {
-                                e.stopPropagation();
-                                setPickedBeats((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(b.id)) next.delete(b.id);
-                                  else next.add(b.id);
-                                  return next;
-                                });
-                              }}
-                            />
-                          ) : null}
                           <button
                             className="px-1 text-[10px] text-paper/50 hover:text-gold disabled:opacity-25"
                             disabled={i === 0}
@@ -11647,8 +8979,6 @@ function StudioInner({
                         />
                         {b.background && (
                           <button
-                            type="button"
-                            title="Clear (use the scene default background)"
                             onClick={() =>
                               mutate((d) => {
                                 const s = d.scenes.find((x) => x.id === scene.id)!;
@@ -11662,15 +8992,18 @@ function StudioInner({
                         )}
                       </div>
                       <div className="mt-1">
-                        <ImagePicker
-                          value={b.background}
-                          onChange={(v) =>
+                        <AssetDropdown
+                          storyId={story.id}
+                          assetType="image"
+                          returnReference
+                          value={b.background?.startsWith("asset:") || b.background?.startsWith("data:") ? b.background : undefined}
+                          onChange={(url) =>
                             mutate((d) => {
                               const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.dialogueBeats!.find((x) => x.id === b.id)!.background = v || undefined;
+                              s.dialogueBeats!.find((x) => x.id === b.id)!.background = url;
                             })
                           }
-                          placeholder="🖼 or browse the image library… (leave blank for scene default)"
+                          placeholder="Or pick an uploaded image..."
                         />
                       </div>
                       {b.background && (
@@ -12007,7 +9340,7 @@ function StudioInner({
                         <div className="space-y-2">
                           <p className="font-type text-[10px] leading-snug text-paper/60">
                             While this line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button.
-                            They open their inventory and must present the clue that proves it false. Right clue → the caught
+                            They open their satchel and must present the clue that proves it false. Right clue → the caught
                             line plays and the flag sets; wrong clue → heat/trust cost, and they get only a few tries.
                           </p>
                           <Field label="The claim (what the player challenges — defaults to the line above)">
@@ -12251,308 +9584,15 @@ function StudioInner({
                   <b>object image</b> (a transparent PNG of a cup, a watch, a key) and it's drawn inside the zone —
                   drag the zone to position and scale it, and it zooms with the scene under the examine camera.
                 </HelpNote>
-                {scene.nodeType === "stage" ? (
-                  <div className="flex items-center gap-1">
-                    <span className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">Draw</span>
-                    <button
-                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
-                        zoneMode === "spawn" ? "border-cyan-neon bg-cyan-neon/15 text-cyan-neon" : "border-noir-600 text-paper/50"
-                      }`}
-                      onClick={() => setZoneMode("spawn")}
-                      title="Where the player character starts — click or drag on the plate"
-                    >
-                      🚶 Player start
-                    </button>
-                    <button
-                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
-                        zoneMode === "hotspot" ? "border-neon bg-neon/15 text-neon" : "border-noir-600 text-paper/50"
-                      }`}
-                      onClick={() => setZoneMode("hotspot")}
-                    >
-                      ⌖ Hotspots
-                    </button>
-                    <button
-                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
-                        zoneMode === "barrier" ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-600 text-paper/50"
-                      }`}
-                      onClick={() => setZoneMode("barrier")}
-                      title="No-go areas: walls, counters, furniture the walker must route around"
-                    >
-                      🚧 Barriers (no-go)
-                    </button>
-                    <button
-                      className={`border px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest ${
-                        zoneMode === "behind" ? "border-violet-400 bg-violet-400/15 text-violet-300" : "border-noir-600 text-paper/50"
-                      }`}
-                      onClick={() => setZoneMode("behind")}
-                      title="Walk-behinds: draw around a desk or counter that's painted into the background and the walker is covered when they stand behind it"
-                    >
-                      🪟 Walk-behinds
-                    </button>
-                  </div>
-                ) : null}
                 <p className="font-type text-[11px] text-paper/60">
-                  {zoneMode === "spawn" && scene.nodeType === "stage"
-                    ? "Click or drag on the plate to place the PLAYER CHARACTER — they stand where you drop them, clamped to the walkable floor."
-                    : zoneMode === "barrier" && scene.nodeType === "stage"
-                      ? "Drag on empty plate to fence off a NEW no-go area — a wall, a counter, a parked truck; the walker routes around it. Drag a barrier to MOVE it, and pull the square handles on the selected one to RESIZE."
-                      : zoneMode === "behind" && scene.nodeType === "stage"
-                        ? "Drag around something ALREADY PAINTED INTO THE BACKGROUND — a desk, a counter, a parked car — and the walker is covered by it when they stand behind it. No extra art needed: the region redraws the room's own background. The dashed line is the depth line; feet above it = behind. Select a region to get CORNER HANDLES — drag them to reshape, click a small edge dot to add a corner (an L-shaped counter), double-click a corner to remove it."
-                        : "Drag on empty plate to draw a NEW hotspot. Drag an existing hotspot to MOVE it, and pull the square handles on the selected one to RESIZE. (Drawing a fresh box while one is selected also reshapes it.)"}
+                  Drag directly on the preview to draw bounds — it updates the selected hotspot, or creates a new one.
                 </p>
-                {zoneMode === "behind" && scene.nodeType === "stage"
-                  ? (() => {
-                      const occ = scene.stage?.occluders ?? [];
-                      const setOcc = (list: typeof occ) =>
-                        updateScene(scene.id, {
-                          stage: { ...(scene.stage ?? {}), occluders: list.length ? list : undefined },
-                        });
-                      return (
-                        <div className="space-y-1 border border-violet-400/30 bg-violet-400/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-violet-300">
-                            🪟 Walk-behinds ({occ.length})
-                          </div>
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            Something painted into the plate that the character can stand BEHIND. The region
-                            redraws the room's own background clipped to your shape, so it lines up with the art
-                            perfectly and needs no separate cutout. Purely visual — add a 🚧 barrier over the same
-                            shape if it should also stop the walker.
-                          </p>
-                          {occ.length === 0 ? (
-                            <p className="font-type text-[9px] text-paper/45">
-                              None yet — drag around the desk on the plate.
-                            </p>
-                          ) : null}
-                          {occ.map((o, oi) => {
-                            const ys = o.points.map((p) => p.y);
-                            const autoBase = Math.max(...ys, 0);
-                            const base = o.baseline ?? autoBase;
-                            const patch = (d: Partial<typeof o>) => setOcc(occ.map((x, j) => (j === oi ? { ...x, ...d } : x)));
-                            return (
-                              <div key={o.id ?? oi} className="space-y-1">
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
-                                      selectedOccluder === oi
-                                        ? "border-violet-400 bg-violet-400/15 text-violet-300"
-                                        : "border-noir-700 text-paper/60"
-                                    }`}
-                                    onClick={() => setSelectedOccluder(selectedOccluder === oi ? null : oi)}
-                                  >
-                                    🪟 {o.label ?? `region ${oi + 1}`} — {o.points.length} pts, depth {Math.round(base)}%
-                                    {o.visible === false ? " (hidden)" : ""}
-                                  </button>
-                                  <button
-                                    className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                    title="Remove this walk-behind"
-                                    onClick={() => {
-                                      setOcc(occ.filter((_, j) => j !== oi));
-                                      setSelectedOccluder(null);
-                                    }}
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                                {selectedOccluder === oi ? (
-                                  <div className="space-y-1 border border-violet-400/20 bg-violet-400/5 p-1">
-                                    <input
-                                      className="w-full border border-noir-700 bg-noir-950 px-1 py-0.5 font-type text-[10px] text-paper"
-                                      placeholder="what is it? (the sergeant's desk)"
-                                      value={o.label ?? ""}
-                                      onChange={(e) => patch({ label: e.target.value || undefined })}
-                                    />
-                                    <label className="flex items-center gap-1 font-type text-[9px] text-paper/60">
-                                      <span className="shrink-0">Depth line</span>
-                                      <input
-                                        type="range"
-                                        min={0}
-                                        max={100}
-                                        step={0.5}
-                                        value={base}
-                                        onChange={(e) => patch({ baseline: Number(e.target.value) })}
-                                        className="flex-1"
-                                      />
-                                      <span className="w-8 shrink-0 text-right tabular-nums">{Math.round(base)}%</span>
-                                    </label>
-                                    <p className="font-type text-[9px] leading-snug text-paper/45">
-                                      The walker is covered while their feet are ABOVE this line. Defaults to the
-                                      shape's front edge ({Math.round(autoBase)}%), which is usually right.
-                                      {o.baseline !== undefined ? (
-                                        <button
-                                          className="ml-1 underline hover:text-violet-300"
-                                          onClick={() => patch({ baseline: undefined })}
-                                        >
-                                          reset to front edge
-                                        </button>
-                                      ) : null}
-                                    </p>
-                                    <label className="flex items-center gap-1 font-type text-[9px] text-paper/60">
-                                      <input
-                                        type="checkbox"
-                                        checked={o.visible !== false}
-                                        onChange={(e) => patch({ visible: e.target.checked ? undefined : false })}
-                                      />
-                                      Visible in play
-                                    </label>
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()
-                  : null}
-                {zoneMode === "barrier" && scene.nodeType === "stage"
-                  ? (() => {
-                      const obs = scene.stage?.obstacles ?? [];
-                      const setObs = (list: { x: number; y: number; w: number; h: number }[]) =>
-                        updateScene(scene.id, { stage: { ...(scene.stage ?? {}), obstacles: list.length ? list : undefined } });
-                      return (
-                        <div className="space-y-1 border border-crimson/30 bg-crimson/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-crimson">
-                            🚧 No-go areas ({obs.length})
-                          </div>
-                          {obs.length === 0 ? (
-                            <p className="font-type text-[9px] text-paper/45">
-                              None yet — drag a box on the plate to fence something off.
-                            </p>
-                          ) : null}
-                          {obs.map((o, oi) => (
-                            <div key={oi} className="space-y-1">
-                              <div className="flex items-center gap-1">
-                                <button
-                                  className={`flex-1 border px-1.5 py-0.5 text-left font-type text-[10px] ${
-                                    selectedBarrier === oi ? "border-crimson bg-crimson/15 text-crimson" : "border-noir-700 text-paper/60"
-                                  }`}
-                                  onClick={() => setSelectedBarrier(selectedBarrier === oi ? null : oi)}
-                                >
-                                  🚧 {Math.round(o.x)},{Math.round(o.y)} — {Math.round(o.w)}×{Math.round(o.h)}%{o.gating ? " 🚪" : ""}
-                                </button>
-                                <button
-                                  className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                  title="Remove this barrier"
-                                  onClick={() => {
-                                    setObs(obs.filter((_, j) => j !== oi));
-                                    setSelectedBarrier(null);
-                                  }}
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                              {selectedBarrier === oi ? (
-                                <div className="border border-crimson/20 bg-crimson/5 p-1">
-                                  <p className="font-type text-[9px] leading-snug text-paper/45">
-                                    🚪 <b className="text-crimson">Door:</b> give the barrier a gate and it blocks only
-                                    while the gate is SHUT — the moment it opens (a flag set by a key hotspot, a
-                                    conversation, a state's action) the walker can pass through. A barrier with no gate
-                                    always blocks (furniture).
-                                  </p>
-                                  <GatingEditor
-                                    gating={o.gating}
-                                    onChange={(g) => setObs(obs.map((b, j) => (j === oi ? { ...b, gating: g } : b)))}
-                                    items={story.items}
-                                    characters={story.characters}
-                                    flags={allFlags}
-                                    sectionId={`stage-barrier-${scene.id}-${oi}`}
-                                  />
-                                </div>
-                              ) : null}
-                            </div>
-                          ))}
-                          <button
-                            className="w-full border border-crimson/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                            onClick={() => {
-                              setObs([...obs, { x: 40, y: 68, w: 18, h: 12 }]);
-                              setSelectedBarrier(obs.length);
-                            }}
-                          >
-                            ＋ add barrier
-                          </button>
-                        </div>
-                      );
-                    })()
-                  : null}
                 <HotspotCanvas
                   scene={scene}
                   items={story.items}
                   selectedId={selectedHotspot}
                   media={media}
-                  barrierMode={zoneMode === "barrier" && scene.nodeType === "stage"}
-                  behindMode={zoneMode === "behind" && scene.nodeType === "stage"}
-                  occluders={scene.stage?.occluders ?? []}
-                  selectedOccluder={selectedOccluder}
-                  onOccluderSelect={(i) => setSelectedOccluder(i)}
-                  onOccluderPoints={(i, points) => {
-                    const list = scene.stage?.occluders ?? [];
-                    if (!list[i]) return;
-                    updateScene(scene.id, {
-                      stage: {
-                        ...(scene.stage ?? {}),
-                        occluders: list.map((o, j) => (j === i ? { ...o, points } : o)),
-                      },
-                    });
-                  }}
-                  onOccluderDraw={(b) => {
-                    // A dragged rectangle becomes a four-point shape; the
-                    // author refines the corners in the list below.
-                    const list = scene.stage?.occluders ?? [];
-                    const shape = {
-                      id: `occ_${Math.random().toString(36).slice(2, 7)}`,
-                      points: [
-                        { x: b.x, y: b.y },
-                        { x: b.x + b.w, y: b.y },
-                        { x: b.x + b.w, y: b.y + b.h },
-                        { x: b.x, y: b.y + b.h },
-                      ],
-                    };
-                    const next =
-                      selectedOccluder !== null && list[selectedOccluder]
-                        ? list.map((o, j) => (j === selectedOccluder ? { ...o, points: shape.points } : o))
-                        : [...list, shape];
-                    updateScene(scene.id, { stage: { ...(scene.stage ?? {}), occluders: next } });
-                    if (selectedOccluder === null) setSelectedOccluder(next.length - 1);
-                  }}
-                  spawnMode={zoneMode === "spawn" && scene.nodeType === "stage"}
-                  spawn={scene.stage?.spawn ?? { x: 50, y: 88 }}
-                  player={{
-                    image: scene.stage?.playerImage ?? story.playerSprite?.image,
-                    sheet: scene.stage?.playerSheet ?? story.playerSprite?.sheet,
-                    ...(scene.stage?.playerScale ? { scale: scene.stage.playerScale } : {}),
-                  }}
-                  onSpawnMove={(p) => {
-                    const floor = stageFloorOf(scene.stage);
-                    updateScene(scene.id, {
-                      stage: {
-                        ...(scene.stage ?? {}),
-                        spawn: { x: p.x, y: clamp(p.y, floor.top, floor.bottom) },
-                      },
-                    });
-                  }}
-                  stageNpcs={scene.nodeType === "stage" ? (scene.stage?.npcs ?? []) : []}
-                  barriers={scene.stage?.obstacles ?? []}
-                  selectedBarrier={selectedBarrier}
-                  onBarrierSelect={(i) => setSelectedBarrier(i)}
-                  onBarrierDraw={(bounds) => {
-                    const obs = scene.stage?.obstacles ?? [];
-                    const next =
-                      selectedBarrier !== null && obs[selectedBarrier]
-                        ? obs.map((o, j) => (j === selectedBarrier ? bounds : o))
-                        : [...obs, bounds];
-                    updateScene(scene.id, { stage: { ...(scene.stage ?? {}), obstacles: next } });
-                    if (selectedBarrier === null) setSelectedBarrier(next.length - 1);
-                  }}
-                  onBarrierMove={(i, bounds) => {
-                    const obs = scene.stage?.obstacles ?? [];
-                    if (!obs[i]) return;
-                    updateScene(scene.id, {
-                      stage: { ...(scene.stage ?? {}), obstacles: obs.map((o, j) => (j === i ? bounds : o)) },
-                    });
-                  }}
-                  onSelect={(id) => {
-                    setSelectedHotspot(id);
-                    if (id) setSelectedBarrier(null);
-                  }}
+                  onSelect={(id) => setSelectedHotspot(id)}
                   onDraw={(bounds) => {
                     if (selectedHotspot && scene.hotspots?.some((h) => h.id === selectedHotspot)) {
                       mutate((d) => {
@@ -12576,29 +9616,12 @@ function StudioInner({
                       setSelectedHotspot(id);
                     }
                   }}
-                  onMove={(id, bounds) => {
-                    mutate((d) => {
-                      const s = d.scenes.find((x) => x.id === scene.id)!;
-                      const h = s.hotspots?.find((x) => x.id === id);
-                      if (h) h.bounds = bounds;
-                    });
-                  }}
                 />
-                {(scene.hotspots ?? []).map((h) => {
-                  // Does this object hand anything over? Its own action OR any
-                  // multi-state override — the 🖼 "show the item's image"
-                  // toggle used to test only h.action.itemGranted, so it went
-                  // missing on exactly the objects that change with the story
-                  // (a drawer that is empty until a later state fills it).
-                  const itemGrantedHere =
-                    !!h.action.itemGranted ||
-                    (h.states ?? []).some((st) => !!st.action?.itemGranted) ||
-                    (h.action.then ?? []).some((c) => !!c.itemGranted);
-                  return (
+                {(scene.hotspots ?? []).map((h) => (
                   <div key={h.id} onClick={() => setSelectedHotspot(h.id)}>
                     <CollapsibleSection
                       id={`hotspot-${h.id}`}
-                      title={<span>⌖ {h.label || "Hotspot"}{(h.states?.length ?? 0) > 0 ? ` 🔁${h.states!.length}` : ""}</span>}
+                      title={<span>⌖ {h.label || "Hotspot"}</span>}
                       titleClass="text-gold"
                       defaultOpen={selectedHotspot === h.id}
                       className={`border ${selectedHotspot === h.id ? "border-neon" : "border-noir-600"}`}
@@ -12641,36 +9664,12 @@ function StudioInner({
                             })
                           }
                         >
-                          {VERB_IDS.map((c) => (
-                            <option key={c} value={c}>
-                              {VERB_ICON[c]} {VERB_LABEL[c]}
-                            </option>
+                          {["look", "take", "talk", "use", "go"].map((c) => (
+                            <option key={c}>{c}</option>
                           ))}
                         </select>
                       </Field>
                     </div>
-                    <Field label="Zone bounds — X · Y · W · H (%) — or drag/resize it on the plate above">
-                      <div className="grid grid-cols-4 gap-1">
-                        {(["x", "y", "w", "h"] as const).map((k) => (
-                          <input
-                            key={k}
-                            type="number"
-                            step={0.1}
-                            min={0}
-                            className={inputCls}
-                            title={{ x: "Left edge %", y: "Top edge %", w: "Width %", h: "Height %" }[k]}
-                            value={h.bounds[k]}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const hs = s.hotspots!.find((x) => x.id === h.id)!;
-                                hs.bounds = { ...hs.bounds, [k]: Math.max(0, Number(e.target.value) || 0) };
-                              })
-                            }
-                          />
-                        ))}
-                      </div>
-                    </Field>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Action type">
                         <select
@@ -12690,50 +9689,32 @@ function StudioInner({
                             { v: "setFlag", label: "🚩 Set flag" },
                             { v: "showText", label: "💬 Show text" },
                             { v: "openBoard", label: "📌 Open corkboard" },
-                            { v: "openMap", label: "🗺 Open travel map" },
                             { v: "patternPuzzle", label: "🔍 Pattern puzzle" },
                             { v: "startDialogue", label: "🗣 Start conversation (stage)" },
-                            { v: "setPlayerPose", label: "🧍 Set player pose (stage)" },
-                            { v: "runScript", label: "🎬 Run scripted sequence (stage)" },
                           ].map((t) => (
                             <option key={t.v} value={t.v}>{t.label}</option>
                           ))}
                         </select>
                       </Field>
-                    {(() => {
-                      // The destination control only exists where a scene jump
-                      // can actually happen: → goToScene always; 🗝 use-item
-                      // when it carries one (a locked door that swings open).
-                      const canTravel = h.action.type === "goToScene" || h.action.type === "useItem";
-                      const needsTarget = h.action.type === "goToScene" && !h.action.targetSceneId;
-                      if (!canTravel && !h.action.targetSceneId) return null;
-                      return (
-                        <Field label="🗺 Target scene — where this goes">
-                          <select
-                            className={`${inputCls} ${needsTarget ? "border-crimson/70 text-crimson" : ""}`}
-                            value={h.action.targetSceneId ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.hotspots!.find((x) => x.id === h.id)!.action.targetSceneId = e.target.value || undefined;
-                              })
-                            }
-                          >
-                            <option value="">{needsTarget ? "⚠ pick a scene…" : "— nowhere —"}</option>
-                            {story.scenes.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.title}
-                              </option>
-                            ))}
-                          </select>
-                          {needsTarget && (
-                            <p className="mt-1 font-type text-[9px] leading-snug text-crimson/90">
-                              A → go-to-scene marker without a target does nothing (the validator errors on it too).
-                            </p>
-                          )}
-                        </Field>
-                      );
-                    })()}
+                      <Field label="Target scene">
+                        <select
+                          className={inputCls}
+                          value={h.action.targetSceneId ?? ""}
+                          onChange={(e) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.action.targetSceneId = e.target.value || undefined;
+                            })
+                          }
+                        >
+                          <option value="">—</option>
+                          {story.scenes.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.title}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
                     </div>
                     <div className="grid grid-cols-2 gap-1">
                       <Field label="Object image (transparent)">
@@ -12819,29 +9800,6 @@ function StudioInner({
                             </option>
                           ))}
                         </select>
-                        {/* Per-hotspot, and shown HERE rather than 1,300 lines
-                            further down the inspector: this only means anything
-                            for the item chosen directly above it, and readers
-                            of the old layout reasonably took a lone checkbox
-                            floating among the scene-wide toggles for a global
-                            setting. It has always written h.showItemImage on
-                            this one hotspot. */}
-                        {itemGrantedHere && (
-                          <label className="mt-1 flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5"
-                              checked={!!h.showItemImage}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const sc2 = d.scenes.find((x) => x.id === scene.id)!;
-                                  sc2.hotspots!.find((x) => x.id === h.id)!.showItemImage = e.target.checked;
-                                })
-                              }
-                            />
-                            <span>🖼 show this item&apos;s image in the scene (players see the object to grab)</span>
-                          </label>
-                        )}
                       </Field>
                       <Field label="Sets flag">
                         <FlagInput
@@ -12856,437 +9814,6 @@ function StudioInner({
                         />
                       </Field>
                     </div>
-                    {/* ---- VERB COIN: what else this object answers to ---- */}
-                    {(() => {
-                      const hsSet = (patch: Partial<Hotspot>) =>
-                        mutate((d) => {
-                          const s = d.scenes.find((x) => x.id === scene.id)!;
-                          Object.assign(s.hotspots!.find((x) => x.id === h.id)!, patch);
-                        });
-                      const verbs = h.verbs ?? {};
-                      const used = Object.keys(verbs) as (typeof VERB_IDS)[number][];
-                      const setVerbAction = (v: string, action: Hotspot["action"]) =>
-                        hsSet({ verbs: { ...verbs, [v]: { ...(verbs as Record<string, Hotspot["action"]>)[v], ...action } } });
-                      const dropVerb = (v: string) => {
-                        const next: Record<string, Hotspot["action"]> = { ...verbs };
-                        delete next[v];
-                        hsSet({ verbs: Object.keys(next).length ? (next as Hotspot["verbs"]) : undefined });
-                      };
-                      const accepts = h.acceptsItems ?? [];
-                      const toggleAccept = (id: string) =>
-                        hsSet({ acceptsItems: accepts.includes(id) ? accepts.filter((x) => x !== id) : [...accepts, id] });
-                      const setResponse = (id: string, text: string) =>
-                        hsSet({ itemResponses: { ...(h.itemResponses ?? {}), [id]: text } });
-                      const setItemAudio = (id: string, url?: string) => {
-                        const map = { ...(h.itemAudio ?? {}) };
-                        if (url) map[id] = url;
-                        else delete map[id];
-                        hsSet({ itemAudio: Object.keys(map).length ? map : undefined });
-                      };
-                      const unsetVerbs = VERB_IDS.filter((v) => !used.includes(v));
-                      const actType = (v: string) => (verbs as Record<string, Hotspot["action"]>)[v]?.type ?? "showText";
-                      return (
-                        <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
-                          <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎚 Verb coin — other verbs</div>
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            What this object says when the player uses a DIFFERENT verb on it (the action above is the
-                            default, and is what plays with the coin off). Verb actions are repeatable — looking at a
-                            thing never uses it up. Anything not listed gets the story's "that doesn't work" line.
-                          </p>
-                          {used.map((v) => {
-                            const a = (verbs as Record<string, Hotspot["action"]>)[v];
-                            return (
-                              <div key={v} className="space-y-1 border border-noir-700/60 p-1">
-                                <div className="flex items-center gap-1">
-                                  <span className="w-14 shrink-0 font-pulp text-[9px] uppercase tracking-widest text-gold/80">
-                                    <span aria-hidden>{VERB_ICON[v]}</span> {v}
-                                  </span>
-                                  <select
-                                    className={inputCls}
-                                    value={actType(v)}
-                                    onChange={(e) => {
-                                      const ty = e.target.value as Hotspot["action"]["type"];
-                                      const base: Hotspot["action"] =
-                                        ty === "showText" ? { type: "showText", text: "" }
-                                        : ty === "giveItem" ? { type: "giveItem", itemGranted: undefined }
-                                        : ty === "goToScene" ? { type: "goToScene", targetSceneId: undefined }
-                                        : ty === "useItem" ? { type: "useItem", itemConsumed: undefined }
-                                        : { type: "showText", text: "" };
-                                      setVerbAction(v, base);
-                                    }}
-                                  >
-                                    <option value="showText">💬 Say a line</option>
-                                    <option value="giveItem">🎁 Give item</option>
-                                    <option value="goToScene">→ Go to scene</option>
-                                    <option value="useItem">🗝 Use item (consumes it)</option>
-                                  </select>
-                                  <button className="shrink-0 px-1 font-pulp text-[9px] text-crimson" title="Remove this verb" onClick={() => dropVerb(v)}>✕</button>
-                                </div>
-                                {a?.type === "showText" ? (
-                                  <textarea
-                                    className={`${inputCls} h-14 font-type`}
-                                    placeholder="What it says…"
-                                    value={a.text ?? ""}
-                                    onChange={(e) => setVerbAction(v, { ...a, text: e.target.value })}
-                                  />
-                                ) : null}
-                                {a?.type === "giveItem" ? (
-                                  <select className={inputCls} value={a.itemGranted ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemGranted: e.target.value || undefined })}>
-                                    <option value="">— pick an item —</option>
-                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
-                                  </select>
-                                ) : null}
-                                {a?.type === "goToScene" ? (
-                                  <select className={inputCls} value={a.targetSceneId ?? ""} onChange={(e) => setVerbAction(v, { ...a, targetSceneId: e.target.value || undefined })}>
-                                    <option value="">— pick a scene —</option>
-                                    {story.scenes.map((s) => (<option key={s.id} value={s.id}>{s.title}</option>))}
-                                  </select>
-                                ) : null}
-                                {a?.type === "useItem" ? (
-                                  <>
-                                    <textarea
-                                      className={`${inputCls} h-14 font-type`}
-                                      placeholder="The line it says when the item is used…"
-                                      value={a.text ?? ""}
-                                      onChange={(e) => setVerbAction(v, { ...a, text: e.target.value })}
-                                    />
-                                    <select className={inputCls} value={a.itemConsumed ?? ""} onChange={(e) => setVerbAction(v, { ...a, itemConsumed: e.target.value || undefined })}>
-                                      <option value="">— consumes nothing (a say-a-line use) —</option>
-                                      {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
-                                    </select>
-                                    <p className="font-type text-[8px] leading-snug text-paper/40">
-                                      Only the item picked above ever leaves the satchel — arming an item never
-                                      consumes it on its own.
-                                    </p>
-                                  </>
-                                ) : null}
-                                {(a?.type === "showText" || a?.type === "useItem") && (
-                                  <HotspotVoiceControls
-                                    story={story}
-                                    sceneId={scene.id}
-                                    assetKey={`${h.id}-${v}`}
-                                    line={a?.text ?? ""}
-                                    value={a?.audioUrl}
-                                    onChange={(url) => setVerbAction(v, { ...a, audioUrl: url })}
-                                  />
-                                )}
-                              </div>
-                            );
-                          })}
-                          {unsetVerbs.length ? (
-                            <select
-                              className={inputCls}
-                              value=""
-                              onChange={(e) => {
-                                if (!e.target.value) return;
-                                setVerbAction(e.target.value, { type: "showText", text: "" });
-                              }}
-                            >
-                              <option value="">＋ add a verb action…</option>
-                              {unsetVerbs.map((v) => (
-                                <option key={v} value={v}>{VERB_ICON[v]} {VERB_LABEL[v]}</option>
-                              ))}
-                            </select>
-                          ) : null}
-
-                          {/* ---- items this object accepts (the USE verb) ---- */}
-                          <div className="border-t border-gold/20 pt-1">
-                            <div className="font-pulp text-[9px] uppercase tracking-widest text-gold/80">🎒 Accepts these items (USE)</div>
-                            <p className="font-type text-[9px] leading-snug text-paper/45">
-                              Tick what WORKS here. The player arms it in the coin and clicks this object; anything
-                              else gets refused. Write the line it gets back — that's the joke, and the clue.
-                            </p>
-                            <div className="flex flex-wrap gap-1">
-                              {story.items.map((it) => {
-                                const on = accepts.includes(it.id);
-                                return (
-                                  <button
-                                    key={it.id}
-                                    type="button"
-                                    className={`border px-1.5 py-0.5 font-type text-[10px] ${on ? "border-gold bg-gold/20 text-gold" : "border-noir-700 text-paper/50"}`}
-                                    onClick={() => toggleAccept(it.id)}
-                                  >
-                                    {it.icon} {it.name}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {accepts.map((id) => {
-                              const it = story.items.find((x) => x.id === id);
-                              return (
-                                <div key={id} className="mt-1">
-                                  <div className="font-pulp text-[9px] uppercase tracking-widest text-paper/40">
-                                    {it?.icon} {it?.name ?? id} — line
-                                  </div>
-                                  <textarea
-                                    className={`${inputCls} h-14 font-type`}
-                                    placeholder="What happens when they use it here…"
-                                    value={h.itemResponses?.[id] ?? ""}
-                                    onChange={(e) => setResponse(id, e.target.value)}
-                                  />
-                                  <HotspotVoiceControls
-                                    story={story}
-                                    sceneId={scene.id}
-                                    assetKey={`${h.id}-item-${id}`}
-                                    line={h.itemResponses?.[id] ?? ""}
-                                    value={h.itemAudio?.[id]}
-                                    onChange={(url) => setItemAudio(id, url)}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
-                          <Field label="Refusal line (wrong verb / wrong item)">
-                            <input
-                              className={inputCls}
-                              value={h.wrongVerbText ?? ""}
-                              placeholder="Leave blank for the story's default"
-                              onChange={(e) => hsSet({ wrongVerbText: e.target.value || undefined })}
-                            />
-                          </Field>
-                        </div>
-                      );
-                    })()}
-
-                    {/* ---- MULTI-STATE OBJECT: one marker that changes with the story ---- */}
-                    {(() => {
-                      const hsSetBase = (patch: Partial<Hotspot>) =>
-                        mutate((d) => {
-                          const s = d.scenes.find((x) => x.id === scene.id)!;
-                          Object.assign(s.hotspots!.find((x) => x.id === h.id)!, patch);
-                        });
-                      const states = h.states ?? [];
-                      const setStates = (next: Hotspot["states"]) =>
-                        hsSetBase({ states: next?.length ? next : undefined });
-                      const patchState = (idx: number, patch: Partial<HotspotState>) =>
-                        setStates(states.map((st, i) => (i === idx ? { ...st, ...patch } : st)));
-                      const addState = () =>
-                        setStates([
-                          ...states,
-                          {
-                            id: `st_${uid()}`,
-                            when: { requiresFlags: [] },
-                            label: "",
-                          },
-                        ]);
-                      const moveState = (idx: number, dir: -1 | 1) => {
-                        const j = idx + dir;
-                        if (j < 0 || j >= states.length) return;
-                        const next = [...states];
-                        [next[idx], next[j]] = [next[j], next[idx]];
-                        setStates(next);
-                      };
-                      return (
-                        <CollapsibleSection
-                          id={`hotspot-states-${h.id}`}
-                          title={<span>🔁 States {states.length ? `· ${states.length}` : ""}</span>}
-                          hint={states.length ? `${states.length} state${states.length > 1 ? "s" : ""}` : "one object, many faces"}
-                          titleClass="text-cyan-neon"
-                          className="border border-cyan-neon/30 bg-cyan-neon/5"
-                        >
-                          <p className="font-type text-[9px] leading-snug text-paper/45">
-                            ONE marker that changes with the story — a lever up/down, a drawer full/empty, a door
-                            locked/open — instead of stacking gated duplicate hotspots. States are checked in order and
-                            the <b>last one whose gate passes wins</b>: list the unconditional default <b>first</b>,
-                            then the specific ones. A state only overrides what you fill in (label / art / cursor /
-                            action / gate); the object's zone, verbs and accepted items are shared. Typical pair: the
-                            base object takes the thing and sets a flag; the flag-gated state re-skins the same marker
-                            as the aftermath ("the empty bench hook").
-                          </p>
-                          {states.map((st, idx) => (
-                            <div key={st.id} className="space-y-1 border border-noir-700/60 bg-noir-950/40 p-1.5">
-                              <div className="flex items-center gap-1">
-                                <span className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon/80">
-                                  {idx + 1} · {st.when?.requiresFlags?.length || st.when?.requiresItems?.length || st.when?.requiresMemories?.length ? `after ${st.when?.requiresFlags?.[0] ?? st.when?.requiresItems?.[0] ?? "…"}` : "default (always)"}
-                                </span>
-                                <span className="flex-1" />
-                                <button className="px-1 text-paper/50 hover:text-paper" title="Move up (earlier = less specific)" onClick={() => moveState(idx, -1)}>↑</button>
-                                <button className="px-1 text-paper/50 hover:text-paper" title="Move down (later = wins over the ones above)" onClick={() => moveState(idx, 1)}>↓</button>
-                                <button className="px-1 font-pulp text-[9px] text-crimson hover:underline" title="Remove this state" onClick={() => setStates(states.filter((_, i) => i !== idx))}>✕</button>
-                              </div>
-                              <div className="grid grid-cols-2 gap-1">
-                                <Field label="Label (blank = keep the object's)">
-                                  <input
-                                    className={inputCls}
-                                    value={st.label ?? ""}
-                                    placeholder={h.label}
-                                    onChange={(e) => patchState(idx, { label: e.target.value || undefined })}
-                                  />
-                                </Field>
-                                <Field label="Cursor (blank = keep)">
-                                  <select
-                                    className={inputCls}
-                                    value={st.cursor ?? ""}
-                                    onChange={(e) => patchState(idx, { cursor: (e.target.value || undefined) as HotspotState["cursor"] })}
-                                  >
-                                    <option value="">— keep the object's —</option>
-                                    {VERB_IDS.map((c) => (
-                                      <option key={c} value={c}>{VERB_ICON[c]} {VERB_LABEL[c]}</option>
-                                    ))}
-                                  </select>
-                                </Field>
-                              </div>
-                              <Field label="Object image in this state (blank = keep · 'none' = no art)">
-                                <ImagePicker
-                                  value={st.image ?? ""}
-                                  onChange={(v) => patchState(idx, { image: v === undefined ? undefined : v || "" })}
-                                  storyId={story.id}
-                                  includeGradients={false}
-                                  placeholder="Pick the state's art…"
-                                />
-                                <div className="mt-1 flex gap-1">
-                                  {st.image ? (
-                                    <>
-                                      {st.image !== "" && (
-                                        <button
-                                          className="border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                                          onClick={() => patchState(idx, { image: "" })}
-                                        >
-                                          ◻ No art in this state
-                                        </button>
-                                      )}
-                                      <button
-                                        className="border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                                        onClick={() => patchState(idx, { image: undefined })}
-                                      >
-                                        ✕ Keep the object's art
-                                      </button>
-                                    </>
-                                  ) : null}
-                                </div>
-                              </Field>
-                              <GatingEditor
-                                gating={st.when}
-                                onChange={(g) => patchState(idx, { when: g })}
-                                items={story.items}
-                                characters={story.characters}
-                                flags={allFlags}
-                                sectionId={`hsstate-when-${h.id}-${st.id}`}
-                              />
-                              {/* ---- the state's ACTION override ---- */}
-                              <div className="space-y-1 border border-gold/20 bg-gold/5 p-1.5">
-                                <div className="flex items-center gap-1">
-                                  <span className="font-pulp text-[9px] uppercase tracking-widest text-gold/80">⚙ Action in this state</span>
-                                  <span className="flex-1" />
-                                  {st.action ? (
-                                    <button
-                                      className="px-1 font-pulp text-[9px] text-crimson hover:underline"
-                                      onClick={() => patchState(idx, { action: undefined })}
-                                    >
-                                      ✕ keep the object's action
-                                    </button>
-                                  ) : null}
-                                </div>
-                                <select
-                                  className={inputCls}
-                                  value={st.action?.type ?? ""}
-                                  onChange={(e) => {
-                                    if (!e.target.value) { patchState(idx, { action: undefined }); return; }
-                                    const ty = e.target.value as HotspotAction["type"];
-                                    patchState(idx, {
-                                      action:
-                                        ty === "showText" ? { type: "showText", text: "" }
-                                        : ty === "giveItem" ? { type: "giveItem", itemGranted: undefined }
-                                        : ty === "goToScene" ? { type: "goToScene", targetSceneId: undefined }
-                                        : ty === "useItem" ? { type: "useItem", itemConsumed: undefined }
-                                        : ty === "setFlag" ? { type: "setFlag", flagSet: "" }
-                                        : { type: "showText", text: "" },
-                                    });
-                                  }}
-                                >
-                                  <option value="">— keep the object's action —</option>
-                                  <option value="showText">💬 Say a line</option>
-                                  <option value="giveItem">🎁 Give item</option>
-                                  <option value="goToScene">→ Go to scene</option>
-                                  <option value="useItem">🗝 Use item (consumes it)</option>
-                                  <option value="setFlag">🚩 Set flag</option>
-                                  <option value="startDialogue">🗣 Start conversation (stage)</option>
-                                </select>
-                                {st.action?.type === "showText" || st.action?.type === "useItem" ? (
-                                  <textarea
-                                    className={`${inputCls} h-14 font-type`}
-                                    placeholder="What it says in this state…"
-                                    value={st.action.text ?? ""}
-                                    onChange={(e) => patchState(idx, { action: { ...st.action!, text: e.target.value } })}
-                                  />
-                                ) : null}
-                                {st.action?.type === "giveItem" ? (
-                                  <select
-                                    className={inputCls}
-                                    value={st.action.itemGranted ?? ""}
-                                    onChange={(e) => patchState(idx, { action: { ...st.action!, itemGranted: e.target.value || undefined } })}
-                                  >
-                                    <option value="">— pick an item —</option>
-                                    {story.items.map((it) => (<option key={it.id} value={it.id}>{it.icon} {it.name}</option>))}
-                                  </select>
-                                ) : null}
-                                {st.action?.type === "goToScene" ? (
-                                  <select
-                                    className={inputCls}
-                                    value={st.action.targetSceneId ?? ""}
-                                    onChange={(e) => patchState(idx, { action: { ...st.action!, targetSceneId: e.target.value || undefined } })}
-                                  >
-                                    <option value="">— pick a scene —</option>
-                                    {story.scenes.map((s) => (<option key={s.id} value={s.id}>{s.title}</option>))}
-                                  </select>
-                                ) : null}
-                                <FlagInput
-                                  value={st.action?.flagSet}
-                                  suggestions={allFlags}
-                                  onChange={(v) => st.action && patchState(idx, { action: { ...st.action, flagSet: v } })}
-                                />
-                                {(st.action?.type === "showText" || st.action?.type === "useItem") && (
-                                  <HotspotVoiceControls
-                                    story={story}
-                                    sceneId={scene.id}
-                                    assetKey={`${h.id}-state-${st.id}`}
-                                    line={st.action.text ?? ""}
-                                    value={st.action.audioUrl}
-                                    onChange={(url) => st.action && patchState(idx, { action: { ...st.action, audioUrl: url } })}
-                                  />
-                                )}
-                              </div>
-                              {/* ---- the state's GATE override (locked door → open door) ---- */}
-                              <div className="flex flex-wrap items-center gap-1 border border-crimson/20 bg-crimson/5 p-1.5">
-                                <span className="font-pulp text-[9px] uppercase tracking-widest text-crimson/80">🔒 Lock while in this state</span>
-                                <select
-                                  className={inputCls}
-                                  value={st.gating === null ? "open" : st.gating ? "replace" : "inherit"}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    if (v === "inherit") patchState(idx, { gating: undefined });
-                                    else if (v === "open") patchState(idx, { gating: null });
-                                    else patchState(idx, { gating: st.gating ?? { requiresFlags: [] } });
-                                  }}
-                                >
-                                  <option value="inherit">inherit the object's gate</option>
-                                  <option value="open">always unlocked (e.g. the opened door)</option>
-                                  <option value="replace">use its own gate…</option>
-                                </select>
-                                {st.gating ? (
-                                  <div className="w-full">
-                                    <GatingEditor
-                                      gating={st.gating === null ? undefined : st.gating}
-                                      onChange={(g) => patchState(idx, { gating: g ?? null })}
-                                      items={story.items}
-                                      characters={story.characters}
-                                      flags={allFlags}
-                                      sectionId={`hsstate-gate-${h.id}-${st.id}`}
-                                    />
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                          <button
-                            onClick={addState}
-                            className="w-full border border-cyan-neon/40 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                          >
-                            ＋ Add a state (e.g. "after it's been taken")
-                          </button>
-                        </CollapsibleSection>
-                      );
-                    })()}
                     {h.action.type === "patternPuzzle" && (
                       (() => {
                         const pp = h.action.patternPuzzle ?? { title: "Bank Statements", instruction: "Find the entries that don't belong", rows: [], targetCount: 3, payoffText: "" };
@@ -13400,638 +9927,27 @@ function StudioInner({
                             })
                           }
                         />
-                        <HotspotVoiceControls
-                          story={story}
-                          sceneId={scene.id}
-                          assetKey={`${h.id}-main`}
-                          line={h.action.text ?? ""}
-                          value={h.action.audioUrl}
-                          onChange={(url) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.audioUrl = url;
-                            })
-                          }
-                        />
                       </Field>
                     )}
-                    {h.action.type === "setPlayerPose" && (
-                      <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
-                        <Field label="Pose (named animation on the player's sheet)">
-                          <input
-                            className={inputCls}
-                            value={h.action.playerPose ?? ""}
-                            placeholder="e.g. bend · crouch · reach"
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.hotspots!.find((x) => x.id === h.id)!.action.playerPose = e.target.value.trim() || undefined;
-                              })
-                            }
-                          />
-                          <span className="mt-1 block font-type text-[9px] italic leading-snug text-paper/45">
-                            The walker switches to this animation when the hotspot fires — a "bend down" to look under
-                            the bar. Empty clears back to idle / the scene's default pose. Add the animation to the
-                            player's sprite sheet (Characters tab ▸ walk sheet) under a name like "bend".
-                          </span>
-                        </Field>
-                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                          <input
-                            type="checkbox"
-                            checked={!!h.action.playerPoseOnce}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.hotspots!.find((x) => x.id === h.id)!.action.playerPoseOnce = e.target.checked || undefined;
-                              })
-                            }
-                          />
-                          ▶ Play once, then revert (a quick bend-and-straighten)
-                        </label>
-                      </div>
-                    )}
-                    {h.action.type === "runScript" && (
-                      <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
-                        <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">🎬 Scripted sequence (stage cutscene)</div>
-                        <p className="font-type text-[9px] leading-snug text-paper/45">
-                          Steps play IN ORDER with input locked and letterbox bars down: walk the player, walk an NPC,
-                          float say lines, wait a beat, set a flag, or cut to another scene. 🚶 Walkable stages only —
-                          classic scenes ignore this action.
-                          {scene.nodeType !== "stage" ? " ⚠ This scene is NOT a walkable stage." : ""}
-                        </p>
-                        <ScriptEditor
-                          steps={h.action.script ?? []}
-                          onChange={(next) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.script = next.length ? next : undefined;
-                            })
-                          }
-                          npcIds={(scene.stage?.npcs ?? []).map((n) => n.id)}
-                          scenes={story.scenes.map((s) => ({ id: s.id, title: s.title }))}
-                          onPickPoint={(index, npc) => {
-                            // Jump to the stage tab so the plate is on screen;
-                            // after the click the editor hops back here.
-                            setScriptPick({ index, npc, origin: "hotspot", hotspotId: h.id });
-                            setTab("stage");
-                          }}
-                          picking={scriptPick?.origin === "hotspot" && scriptPick.hotspotId === h.id ? scriptPick : null}
-                        />
-                      </div>
-                    )}
-                    {h.action.type === "startDialogue" && (
-                      <div className="space-y-2 border border-cyan-neon/30 bg-cyan-neon/5 p-2">
-                        <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">💬 Topic-list conversation (opt-in)</div>
-                        <p className="font-type text-[9px] leading-snug text-paper/45">
-                          Instead of playing this scene's Beats straight through, the talk opens as a HUB of questions
-                          the player can ask ("ask the bartender…"). Pick a topic, its lines play, then
-                          it returns to the hub; <b>leave</b> ends the conversation. Leave empty to keep the classic
-                          linear conversation.
-                        </p>
-                        {(h.action.topics?.length ?? 0) === 0 ? (
-                          <button
-                            className="btn-tool w-full"
-                            onClick={() =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                a.topics = [
-                                  {
-                                    id: `topic_${uid()}`,
-                                    label: "What do you want to know?",
-                                    beats: [
-                                      { id: `b_${uid()}`, characterId: story.characters[0]?.id ?? "narrator", text: "The answer…" },
-                                    ],
-                                  },
-                                ];
-                              })
-                            }
-                          >
-                            ＋ Turn this into a topic list
-                          </button>
-                        ) : (
-                          <>
-                            <Field label="Hub heading (what the player sees above the questions)">
-                              <input
-                                className={inputCls}
-                                value={h.action.topicPrompt ?? ""}
-                                placeholder="What do you want to ask?"
-                                onChange={(e) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.hotspots!.find((x) => x.id === h.id)!.action.topicPrompt = e.target.value || undefined;
-                                  })
-                                }
-                              />
-                            </Field>
-                            <Field label="Leave option label">
-                              <input
-                                className={inputCls}
-                                value={h.action.topicLeaveLabel ?? ""}
-                                placeholder="Never mind"
-                                onChange={(e) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.hotspots!.find((x) => x.id === h.id)!.action.topicLeaveLabel = e.target.value || undefined;
-                                  })
-                                }
-                              />
-                            </Field>
-                            {h.action.topics!.map((t, ti) => (
-                              <div key={t.id} className="space-y-1.5 border border-noir-700 bg-noir-950/60 p-1.5">
-                                <div className="flex items-center gap-1">
-                                  <span className="font-pulp text-[8px] uppercase tracking-widest text-cyan-neon">Q{ti + 1}</span>
-                                  <input
-                                    className={`${inputCls} min-w-0 flex-1`}
-                                    value={t.label}
-                                    placeholder="Where's my gang?"
-                                    onChange={(e) =>
-                                      mutate((d) => {
-                                        const s = d.scenes.find((x) => x.id === scene.id)!;
-                                        s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].label = e.target.value;
-                                      })
-                                    }
-                                  />
-                                  <button
-                                    className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                    title="Remove this topic"
-                                    onClick={() =>
-                                      mutate((d) => {
-                                        const s = d.scenes.find((x) => x.id === scene.id)!;
-                                        const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                        a.topics = a.topics!.filter((_, j) => j !== ti);
-                                      })
-                                    }
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                                <div className="flex items-center gap-3 text-[9px]">
-                                  <label className="flex shrink-0 items-center gap-1 text-paper/70">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!t.repeatable}
-                                      onChange={(e) =>
-                                        mutate((d) => {
-                                          const s = d.scenes.find((x) => x.id === scene.id)!;
-                                          s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].repeatable = e.target.checked || undefined;
-                                        })
-                                      }
-                                    />
-                                    askable again
-                                  </label>
-                                  <label className="flex min-w-0 flex-1 items-center gap-1">
-                                    <span className="shrink-0 text-paper/50">sets flag</span>
-                                    {/* FlagInput, not a bare text box: every other
-                                        flag field in the Studio offers the story's
-                                        existing flags. Typing one by hand here was
-                                        the easiest way in the app to invent a
-                                        near-miss flag that silently never fires. */}
-                                    <div className="min-w-0 flex-1">
-                                      <FlagInput
-                                        value={t.flagSet}
-                                        suggestions={allFlags}
-                                        placeholder="optional"
-                                        onChange={(v) =>
-                                          mutate((d) => {
-                                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                                            s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].flagSet = v?.trim() || undefined;
-                                          })
-                                        }
-                                      />
-                                    </div>
-                                  </label>
-                                </div>
-                                <GatingEditor
-                                  sectionId={`topic-${t.id}`}
-                                  gating={t.gating}
-                                  items={story.items}
-                                  characters={story.characters}
-                                  flags={allFlags}
-                                  memoryTags={recallSuggestions}
-                                  onChange={(g) =>
-                                    mutate((d) => {
-                                      const s = d.scenes.find((x) => x.id === scene.id)!;
-                                      s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].gating = g;
-                                    })
-                                  }
-                                />
-                                <div className="space-y-1">
-                                  <div className="font-pulp text-[8px] uppercase tracking-widest text-paper/50">Lines</div>
-                                  {t.beats.map((b, bi) => (
-                                    <div key={b.id} className="flex items-start gap-1">
-                                      <select
-                                        className={`${inputCls} w-24 shrink-0`}
-                                        value={b.characterId}
-                                        onChange={(e) =>
-                                          mutate((d) => {
-                                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                                            s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].beats[bi].characterId = e.target.value;
-                                          })
-                                        }
-                                      >
-                                        <option value="narrator">Narrator</option>
-                                        {story.characters.map((c) => (
-                                          <option key={c.id} value={c.id}>{c.name}</option>
-                                        ))}
-                                      </select>
-                                      <textarea
-                                        className={`${inputCls} min-w-0 flex-1 font-type`}
-                                        value={b.text}
-                                        rows={2}
-                                        onChange={(e) =>
-                                          mutate((d) => {
-                                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                                            s.hotspots!.find((x) => x.id === h.id)!.action.topics![ti].beats[bi].text = e.target.value;
-                                          })
-                                        }
-                                      />
-                                      <button
-                                        className="shrink-0 px-1 font-pulp text-[9px] text-crimson"
-                                        title="Remove line"
-                                        onClick={() =>
-                                          mutate((d) => {
-                                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                                            const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                            a.topics![ti].beats = a.topics![ti].beats.filter((_, j) => j !== bi);
-                                          })
-                                        }
-                                      >
-                                        ✕
-                                      </button>
-                                    </div>
-                                  ))}
-                                  <button
-                                    className="w-full border border-cyan-neon/40 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                                    onClick={() =>
-                                      mutate((d) => {
-                                        const s = d.scenes.find((x) => x.id === scene.id)!;
-                                        const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                        const last = a.topics![ti].beats[a.topics![ti].beats.length - 1];
-                                        a.topics![ti].beats = [
-                                          ...a.topics![ti].beats,
-                                          { id: `b_${uid()}`, characterId: last?.characterId ?? story.characters[0]?.id ?? "narrator", text: "" },
-                                        ];
-                                      })
-                                    }
-                                  >
-                                    ＋ Add line
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                            <div className="flex gap-1">
-                              <button
-                                className="flex-1 border border-cyan-neon/50 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                                onClick={() =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                    a.topics = [
-                                      ...(a.topics ?? []),
-                                      { id: `topic_${uid()}`, label: "…", beats: [{ id: `b_${uid()}`, characterId: story.characters[0]?.id ?? "narrator", text: "" }] },
-                                    ];
-                                  })
-                                }
-                              >
-                                ＋ Add topic
-                              </button>
-                              <button
-                                className="border border-crimson/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-crimson hover:bg-crimson/10"
-                                onClick={() =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    s.hotspots!.find((x) => x.id === h.id)!.action.topics = undefined;
-                                  })
-                                }
-                              >
-                                ✕ Clear
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
                     {h.action.type === "useItem" && (
-                      <>
-                        <Field label="Reply line (shows when it's used)">
-                          <textarea
-                            className={`${inputCls} h-14 font-type`}
-                            placeholder="“That fits!” — what it says as the item is used…"
-                            value={h.action.text ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.hotspots!.find((x) => x.id === h.id)!.action.text = e.target.value || undefined;
-                              })
-                            }
-                          />
-                          <HotspotVoiceControls
-                            story={story}
-                            sceneId={scene.id}
-                            assetKey={`${h.id}-main`}
-                            line={h.action.text ?? ""}
-                            value={h.action.audioUrl}
-                            onChange={(url) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.hotspots!.find((x) => x.id === h.id)!.action.audioUrl = url;
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="Consumes item (leaves the satchel)">
-                          <select
-                            className={inputCls}
-                            value={h.action.itemConsumed ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.hotspots!.find((x) => x.id === h.id)!.action.itemConsumed = e.target.value || undefined;
-                              })
-                            }
-                          >
-                            <option value="">— consumes nothing (the item stays; only the line plays) —</option>
-                            {story.items.map((i) => (
-                              <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
-                            ))}
-                          </select>
-                          <p className="mt-1 font-type text-[8px] leading-snug text-paper/40">
-                            The engine ONLY spends the item picked here — arming an item is never enough to lose it.
-                          </p>
-                        </Field>
-                      </>
-                    )}
-                    {/* ---- 🔊 SOUND EFFECT ---------------------------------
-                        Fires on EVERY action type, and on the sfx bus — so it
-                        layers over a spoken line instead of replacing it. The
-                        voice clip above is for "someone says something"; this
-                        is for "something makes a noise". */}
-                    <div className="space-y-1.5 border border-cyan-neon/25 bg-cyan-neon/5 p-2">
-                      <div className="font-pulp text-[9px] uppercase tracking-widest text-cyan-neon">
-                        🔊 Sound effect on trigger
-                      </div>
-                      <p className="font-type text-[9px] leading-snug text-paper/45">
-                        A door creak, a gunshot, a phone. Plays on the <b>sfx</b> channel the moment this zone fires,
-                        <b> alongside</b> any spoken line (it never cuts narration off) and whatever the action does.
-                      </p>
-                      <div className="flex gap-1">
-                        <input
+                      <Field label="Consumes item (from Gating requirement)">
+                        <select
                           className={inputCls}
-                          placeholder="/audio/door-creak.mp3"
-                          value={mediaField(h.action.sfxUrl)}
+                          value={h.action.itemConsumed ?? ""}
                           onChange={(e) =>
                             mutate((d) => {
                               const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.sfxUrl = e.target.value || undefined;
-                            })
-                          }
-                        />
-                        <MediaUploadButton
-                          storyId={story.id}
-                          accept="audio/*"
-                          label="⇧ Upload"
-                          onUploaded={(_url, assetId) =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              s.hotspots!.find((x) => x.id === h.id)!.action.sfxUrl = `asset:${assetId}`;
-                            })
-                          }
-                        />
-                      </div>
-                      <AssetDropdown
-                        storyId={story.id}
-                        assetType="audio"
-                        returnReference
-                        value={h.action.sfxUrl}
-                        onChange={(url) =>
-                          mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.hotspots!.find((x) => x.id === h.id)!.action.sfxUrl = url || undefined;
-                          })
-                        }
-                        placeholder="Or pick uploaded audio..."
-                      />
-                      {h.action.sfxUrl ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="border border-cyan-neon/40 px-2 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-                            title="Hear it exactly as the game will play it"
-                            onClick={() => audio.playSfx(media(h.action.sfxUrl) ?? h.action.sfxUrl!, h.action.sfxVolume ?? 1)}
-                          >
-                            ▶ Test
-                          </button>
-                          <label className="flex flex-1 items-center gap-2 font-type text-[9px] text-paper/60">
-                            Volume {Math.round((h.action.sfxVolume ?? 1) * 100)}%
-                            <input
-                              type="range"
-                              min={0}
-                              max={1}
-                              step={0.05}
-                              className="flex-1 accent-cyan-neon"
-                              value={h.action.sfxVolume ?? 1}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const v = Number(e.target.value);
-                                  s.hotspots!.find((x) => x.id === h.id)!.action.sfxVolume = v === 1 ? undefined : v;
-                                })
-                              }
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="text-[10px] text-crimson hover:underline"
-                            title="Remove the sound effect"
-                            onClick={() =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                a.sfxUrl = undefined;
-                                a.sfxVolume = undefined;
-                              })
-                            }
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {/* ---- ⛓ CHAINED ACTIONS -------------------------------
-                        The action above stays the PRIMARY (it sets the cursor,
-                        the gating and whether the marker is consumed). These
-                        run straight after it, in order. */}
-                    <div className="space-y-1.5 border border-gold/25 bg-gold/5 p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-pulp text-[9px] uppercase tracking-widest text-gold">
-                          ⛓ Also do{(h.action.then?.length ?? 0) > 0 ? ` (${h.action.then!.length})` : ""}
-                        </span>
-                        <button
-                          className="border border-gold/40 px-1.5 py-0.5 font-pulp text-[8px] uppercase tracking-widest text-gold hover:bg-gold/10"
-                          onClick={() =>
-                            mutate((d) => {
-                              const s = d.scenes.find((x) => x.id === scene.id)!;
-                              const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                              a.then = [...(a.then ?? []), { type: "setFlag" }];
+                              s.hotspots!.find((x) => x.id === h.id)!.action.itemConsumed = e.target.value || undefined;
                             })
                           }
                         >
-                          ＋ Add
-                        </button>
-                      </div>
-                      <p className="font-type text-[9px] leading-snug text-paper/45">
-                        One click, several outcomes — show a line <b>and</b> set a flag <b>and</b> grant an item.
-                        Follow-ups apply their item / flag / meter / sound only; they can't open a board, start a
-                        conversation or run a script (use the primary action for those). A follow-up that
-                        <b> goes to a scene</b> ends the chain.
-                      </p>
-                      {(h.action.then ?? []).map((step, si) => (
-                        <div key={si} className="space-y-1 border border-noir-600 bg-noir-950/50 p-1.5">
-                          <div className="flex items-center gap-1">
-                            <span className="font-pulp text-[8px] uppercase tracking-widest text-paper/40">{si + 1}.</span>
-                            <select
-                              className={`${inputCls} flex-1`}
-                              value={step.type}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.hotspots!.find((x) => x.id === h.id)!.action.then![si].type = e.target.value as never;
-                                })
-                              }
-                            >
-                              <option value="setFlag">🚩 Set flag</option>
-                              <option value="giveItem">🎒 Give item</option>
-                              <option value="meterChange">📊 Change meter</option>
-                              <option value="goToScene">➜ Go to scene (ends the chain)</option>
-                            </select>
-                            <button
-                              className="px-1 text-[10px] text-paper/50 hover:text-gold disabled:opacity-25"
-                              disabled={si === 0}
-                              title="Run this earlier"
-                              onClick={() =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const t = s.hotspots!.find((x) => x.id === h.id)!.action.then!;
-                                  [t[si - 1], t[si]] = [t[si], t[si - 1]];
-                                })
-                              }
-                            >
-                              ▲
-                            </button>
-                            <button
-                              className="px-1 text-[10px] text-paper/50 hover:text-gold disabled:opacity-25"
-                              disabled={si === (h.action.then?.length ?? 0) - 1}
-                              title="Run this later"
-                              onClick={() =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const t = s.hotspots!.find((x) => x.id === h.id)!.action.then!;
-                                  [t[si + 1], t[si]] = [t[si], t[si + 1]];
-                                })
-                              }
-                            >
-                              ▼
-                            </button>
-                            <button
-                              className="text-[10px] text-crimson hover:underline"
-                              title="Remove this follow-up"
-                              onClick={() =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const a = s.hotspots!.find((x) => x.id === h.id)!.action;
-                                  a.then = a.then!.filter((_, j) => j !== si);
-                                  if (!a.then.length) a.then = undefined;
-                                })
-                              }
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          {step.type === "setFlag" && (
-                            <FlagInput
-                              value={step.flagSet ?? ""}
-                              suggestions={allFlags}
-                              onChange={(v) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.hotspots!.find((x) => x.id === h.id)!.action.then![si].flagSet = v || undefined;
-                                })
-                              }
-                            />
-                          )}
-                          {step.type === "giveItem" && (
-                            <select
-                              className={inputCls}
-                              value={step.itemGranted ?? ""}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.hotspots!.find((x) => x.id === h.id)!.action.then![si].itemGranted = e.target.value || undefined;
-                                })
-                              }
-                            >
-                              <option value="">— pick an item —</option>
-                              {story.items.map((it) => (
-                                <option key={it.id} value={it.id}>{it.icon} {it.name}</option>
-                              ))}
-                            </select>
-                          )}
-                          {step.type === "meterChange" && (
-                            <div className="flex items-center gap-1">
-                              <select
-                                className={`${inputCls} flex-1`}
-                                value={step.meterChange?.meter ?? "Suspicion"}
-                                onChange={(e) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    const st = s.hotspots!.find((x) => x.id === h.id)!.action.then![si];
-                                    st.meterChange = { meter: e.target.value as MeterKey, delta: st.meterChange?.delta ?? 1 };
-                                  })
-                                }
-                              >
-                                {METERS.map((m) => (
-                                  <option key={m} value={m}>{m}</option>
-                                ))}
-                              </select>
-                              <input
-                                type="number"
-                                step={1}
-                                className={`${inputCls} w-20`}
-                                title="How much to move the meter (negative lowers it)"
-                                value={step.meterChange?.delta ?? 1}
-                                onChange={(e) =>
-                                  mutate((d) => {
-                                    const s = d.scenes.find((x) => x.id === scene.id)!;
-                                    const st = s.hotspots!.find((x) => x.id === h.id)!.action.then![si];
-                                    st.meterChange = { meter: st.meterChange?.meter ?? "Suspicion", delta: Number(e.target.value) || 0 };
-                                  })
-                                }
-                              />
-                            </div>
-                          )}
-                          {step.type === "goToScene" && (
-                            <select
-                              className={inputCls}
-                              value={step.targetSceneId ?? ""}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.hotspots!.find((x) => x.id === h.id)!.action.then![si].targetSceneId = e.target.value || undefined;
-                                })
-                              }
-                            >
-                              <option value="">— pick a scene —</option>
-                              {story.scenes.map((sc2) => (
-                                <option key={sc2.id} value={sc2.id}>{sc2.title}</option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-
+                          <option value="">— none —</option>
+                          {story.items.map((i) => (
+                            <option key={i.id} value={i.id}>{i.icon} {i.name}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
                     {(h.action.type === "giveItem" || h.action.type === "showText") && (
                       <div className="space-y-1.5 border border-gold/30 bg-gold/5 p-2">
                         <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
@@ -14091,27 +10007,20 @@ function StudioInner({
                       />
                       repeatable
                     </label>
-                    <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                      <input
-                        type="checkbox"
-                        checked={!!h.remote}
-                        onChange={(e) =>
-                          mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            s.hotspots!.find((x) => x.id === h.id)!.remote = e.target.checked || undefined;
-                          })
-                        }
-                      />
-                      🔭 out of reach — works from a distance (no walk-up)
-                    </label>
-                    {h.remote && (
-                      <p className="-mt-1 pl-6 font-type text-[9px] leading-snug text-paper/45">
-                        On a 🚶 walkable stage the character normally walks over before a zone fires. With this ON they
-                        interact from wherever they stand — the walker just turns to face it. Use it for things they can
-                        SEE but never REACH: a clock high on a tower, a sign across the water — any verb the zone answers
-                        works at range, and strolling underneath never triggers it. (Plain <b>👁 looks</b> and 💬
-                        show-text zones already fire from a distance without this box.)
-                      </p>
+                    {h.action.itemGranted && (
+                      <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
+                        <input
+                          type="checkbox"
+                          checked={!!h.showItemImage}
+                          onChange={(e) =>
+                            mutate((d) => {
+                              const s = d.scenes.find((x) => x.id === scene.id)!;
+                              s.hotspots!.find((x) => x.id === h.id)!.showItemImage = e.target.checked;
+                            })
+                          }
+                        />
+                        🖼 show the item's image in the scene (players see the object to grab)
+                      </label>
                     )}
                     <Field label="Custom fail message">
                       <input
@@ -14141,8 +10050,7 @@ function StudioInner({
                     />
                     </CollapsibleSection>
                   </div>
-                  );
-                })}
+                ))}
               </>
             )}
 
@@ -14301,10 +10209,6 @@ function StudioInner({
                             const s = d.scenes.find((x) => x.id === scene.id)!;
                             const ch = s.choices!.find((x) => x.id === c.id)!;
                             ch.quickTime = e.target.checked || undefined;
-                            if (e.target.checked) {
-                              ch.ride = undefined; // mutually exclusive with the ride minigame
-                              ch.triangulate = undefined; // …and the triangulation bay
-                            }
                             // A quick-time prompt with no timer produces no countdown
                             // ring or banner in-game. Give it a sensible default
                             // deadline so the feature is visible the moment it's on.
@@ -14427,375 +10331,6 @@ function StudioInner({
                         </div>
                       </div>
                     )}
-                    {/* ---- Ride minigame (road chase) ---- */}
-                    <label className="flex items-center gap-2 border border-emerald-500/25 bg-emerald-500/5 p-1.5 text-[9px] text-paper/70">
-                      <input
-                        type="checkbox"
-                        checked={!!c.ride}
-                        onChange={(e) =>
-                          mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            const ch = s.choices!.find((x) => x.id === c.id)!;
-                            if (e.target.checked) {
-                              ch.ride = ch.ride ?? {};
-                              ch.quickTime = undefined; // mutually exclusive with quick-time
-                              ch.triangulate = undefined; // …and with the triangulation bay
-                            } else {
-                              ch.ride = undefined;
-                            }
-                          })
-                        }
-                      />
-                      <span>
-                        🏍 <b className="text-emerald-400">Ride minigame</b> — a steerable road chase (dodge oncoming traffic). Survive to the target; crash routes to the timed-out target. Mutually exclusive with quick-time.
-                      </span>
-                    </label>
-                    {c.ride && (
-                      <div className="space-y-1.5 border border-emerald-500/25 bg-emerald-500/5 p-1.5">
-                        <Field label="Big on-screen prompt (defaults to 'RIDE')">
-                          <input
-                            className={inputCls}
-                            placeholder="OUTRUN THE MIDNIGHT PACK"
-                            value={c.ride.prompt ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.choices!.find((x) => x.id === c.id)!.ride!.prompt = e.target.value || undefined;
-                              })
-                            }
-                          />
-                        </Field>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Lanes (2–5)">
-                            <input
-                              type="number"
-                              min={2}
-                              max={5}
-                              className={inputCls}
-                              value={c.ride.lanes ?? 3}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.lanes = Number(e.target.value) || 3;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Duration (seconds)">
-                            <input
-                              type="number"
-                              min={4}
-                              max={120}
-                              className={inputCls}
-                              value={c.ride.durationSeconds ?? 18}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.durationSeconds = Number(e.target.value) || 18;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Spawn rate (ms)">
-                            <input
-                              type="number"
-                              min={400}
-                              max={5000}
-                              className={inputCls}
-                              value={c.ride.spawnMs ?? 1200}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.spawnMs = Number(e.target.value) || 1200;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Traffic speed (screen-heights/sec)">
-                            <input
-                              type="number"
-                              min={0.2}
-                              max={2}
-                              step={0.05}
-                              className={inputCls}
-                              value={c.ride.speed ?? 0.5}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.speed = Number(e.target.value) || 0.5;
-                                })
-                              }
-                            />
-                          </Field>
-                        </div>
-                        <Field label="Rider's vehicle (pick from the library — or type an emoji: tag / glyph)">
-                          <input
-                            className={inputCls}
-                            placeholder="emoji:🏍 — or pick art below"
-                            value={c.ride.vehicleImage ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.choices!.find((x) => x.id === c.id)!.ride!.vehicleImage = e.target.value || undefined;
-                              })
-                            }
-                          />
-                          <div className="mt-1">
-                            <ImagePicker
-                              value={c.ride.vehicleImage && !c.ride.vehicleImage.startsWith("emoji:") ? c.ride.vehicleImage : undefined}
-                              onChange={(v) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.vehicleImage = v || undefined;
-                                })
-                              }
-                              placeholder="…or pick art from the image library"
-                              preferFolder="sprites"
-                            />
-                          </div>
-                        </Field>
-                        <Field label="Oncoming traffic (comma-separated — emoji: tags, glyphs, or picked art)">
-                          <input
-                            className={inputCls}
-                            placeholder="emoji:🚚, emoji:🚗, emoji:🚓"
-                            value={c.ride.traffic?.join(", ") ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const list = e.target.value.split(",").map((x) => x.trim()).filter(Boolean);
-                                s.choices!.find((x) => x.id === c.id)!.ride!.traffic = list.length ? list : undefined;
-                              })
-                            }
-                          />
-                          <div className="mt-1">
-                            <ImagePicker
-                              value={undefined}
-                              onChange={(v) => {
-                                if (!v) return;
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  const list = [...(s.choices!.find((x) => x.id === c.id)!.ride!.traffic ?? []), v];
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.traffic = list;
-                                });
-                              }}
-                              placeholder="＋ add a vehicle from the image library…"
-                              preferFolder="sprites"
-                              allowClear={false}
-                            />
-                          </div>
-                        </Field>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Win caption (clean run)">
-                            <input
-                              className={inputCls}
-                              placeholder="You catch him."
-                              value={c.ride.winText ?? ""}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.winText = e.target.value || undefined;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Crash caption">
-                            <input
-                              className={inputCls}
-                              placeholder="You went down."
-                              value={c.ride.crashText ?? ""}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.ride!.crashText = e.target.value || undefined;
-                                })
-                              }
-                            />
-                          </Field>
-                        </div>
-                      </div>
-                    )}
-                    {/* ---- Triangulation minigame (3D signal fix) ---- */}
-                    <label className="flex items-center gap-2 border border-[#7de2ff]/25 bg-[#7de2ff]/5 p-1.5 text-[9px] text-paper/70">
-                      <input
-                        type="checkbox"
-                        checked={!!c.triangulate}
-                        onChange={(e) =>
-                          mutate((d) => {
-                            const s = d.scenes.find((x) => x.id === scene.id)!;
-                            const ch = s.choices!.find((x) => x.id === c.id)!;
-                            if (e.target.checked) {
-                              ch.triangulate = ch.triangulate ?? {};
-                              // One minigame per choice — they all take over the screen.
-                              ch.quickTime = undefined;
-                              ch.ride = undefined;
-                            } else {
-                              ch.triangulate = undefined;
-                            }
-                          })
-                        }
-                      />
-                      <span>
-                        📡 <b className="text-[#7de2ff]">Triangulation minigame</b> — a 3D night bay (three.js): sweep a
-                        directional antenna from each shore post, commit a bearing at the signal peak, and cross the
-                        lines on the boat. A fix routes to the target; the clock routes to the timed-out target.
-                        Mutually exclusive with quick-time and the ride.
-                      </span>
-                    </label>
-                    {c.triangulate && (
-                      <div className="space-y-1.5 border border-[#7de2ff]/25 bg-[#7de2ff]/5 p-1.5">
-                        <p className="font-type text-[9px] leading-snug text-paper/45">
-                          Difficulty is the relationship between <b>tolerance</b> and <b>bearings required</b>: the
-                          signal lobe is 22° wide, so a careful sweep lands within ~1.5° and a fix inside ~2 units.
-                          Tolerance 9 with 3 bearings is a fair test; drop the tolerance to tighten the screws.
-                        </p>
-                        <Field label="Big on-screen prompt">
-                          <input
-                            className={inputCls}
-                            placeholder="Triangulate the signal"
-                            value={c.triangulate.prompt ?? ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                s.choices!.find((x) => x.id === c.id)!.triangulate!.prompt = e.target.value || undefined;
-                              })
-                            }
-                          />
-                        </Field>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Seconds on the clock">
-                            <input
-                              type="number"
-                              min={10}
-                              max={180}
-                              className={inputCls}
-                              value={c.triangulate.durationSeconds ?? 45}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.triangulate!.durationSeconds =
-                                    Number(e.target.value) || 45;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Crossing tolerance (world units)">
-                            <input
-                              type="number"
-                              min={2}
-                              max={30}
-                              className={inputCls}
-                              value={c.triangulate.toleranceMeters ?? 9}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.triangulate!.toleranceMeters =
-                                    Number(e.target.value) || 9;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Bearings required to call a fix">
-                            <input
-                              type="number"
-                              min={2}
-                              max={6}
-                              className={inputCls}
-                              value={c.triangulate.bearingsRequired ?? 3}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.triangulate!.bearingsRequired =
-                                    Number(e.target.value) || 3;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Bearings allowed (the margin for error)">
-                            <input
-                              type="number"
-                              min={2}
-                              max={12}
-                              className={inputCls}
-                              value={c.triangulate.bearingsAllowed ?? 5}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.triangulate!.bearingsAllowed =
-                                    Number(e.target.value) || 5;
-                                })
-                              }
-                            />
-                          </Field>
-                        </div>
-                        <Field label="Shore posts — one per line as x,z,label (blank = the three default posts)">
-                          <textarea
-                            className={`${inputCls} h-16 font-mono text-[10px]`}
-                            placeholder={"-38,34,Post A — Dinner Key\n40,30,Post B — Rickenbacker\n2,-40,Post C — Coast Guard"}
-                            value={(c.triangulate.posts ?? [])
-                              .map((p) => `${p.x},${p.z}${p.label ? `,${p.label}` : ""}`)
-                              .join("\n")}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const list = e.target.value
-                                  .split("\n")
-                                  .map((row) => row.trim())
-                                  .filter(Boolean)
-                                  .map((row) => {
-                                    const [x, z, ...rest] = row.split(",");
-                                    return { x: Number(x) || 0, z: Number(z) || 0, label: rest.join(",").trim() || undefined };
-                                  });
-                                s.choices!.find((x) => x.id === c.id)!.triangulate!.posts = list.length >= 2 ? list : undefined;
-                              })
-                            }
-                          />
-                        </Field>
-                        <Field label="Boat position — x,z (blank = a seeded random spot, different each playthrough)">
-                          <input
-                            className={`${inputCls} font-mono text-[10px]`}
-                            placeholder="blank = random"
-                            value={c.triangulate.target ? `${c.triangulate.target.x},${c.triangulate.target.z}` : ""}
-                            onChange={(e) =>
-                              mutate((d) => {
-                                const s = d.scenes.find((x) => x.id === scene.id)!;
-                                const raw = e.target.value.trim();
-                                const [x, z] = raw.split(",");
-                                s.choices!.find((x2) => x2.id === c.id)!.triangulate!.target =
-                                  raw && z !== undefined ? { x: Number(x) || 0, z: Number(z) || 0 } : undefined;
-                              })
-                            }
-                          />
-                        </Field>
-                        <div className="grid grid-cols-2 gap-1">
-                          <Field label="Win caption">
-                            <input
-                              className={inputCls}
-                              placeholder="Fix confirmed"
-                              value={c.triangulate.winText ?? ""}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.triangulate!.winText = e.target.value || undefined;
-                                })
-                              }
-                            />
-                          </Field>
-                          <Field label="Out-of-time caption">
-                            <input
-                              className={inputCls}
-                              placeholder="Signal lost"
-                              value={c.triangulate.failText ?? ""}
-                              onChange={(e) =>
-                                mutate((d) => {
-                                  const s = d.scenes.find((x) => x.id === scene.id)!;
-                                  s.choices!.find((x) => x.id === c.id)!.triangulate!.failText = e.target.value || undefined;
-                                })
-                              }
-                            />
-                          </Field>
-                        </div>
-                      </div>
-                    )}
                     <label className="flex items-center gap-2 border border-noir-600/60 p-1.5 text-[9px] text-paper/55">
                       <input
                         type="checkbox"
@@ -14837,7 +10372,7 @@ function StudioInner({
                         }
                       />
                     </Field>
-                    <Field label="&quot;X will remember that&quot; card (impact card shown after picking this choice)">
+                    <Field label="&quot;X will remember that&quot; card (shown after picking this choice — Telltale style)">
                       <input
                         className={inputCls}
                         placeholder="e.g. Lydia will remember that."
@@ -14940,7 +10475,7 @@ function StudioInner({
                         </select>
                         <label
                           className="flex shrink-0 items-center gap-1 text-[9px] text-paper/55"
-                          title="Hand it over: the item leaves your inventory (they keep it). Off = you flash it and keep it."
+                          title="Hand it over: the item leaves your satchel (they keep it). Off = you flash it and keep it."
                         >
                           <input
                             type="checkbox"
@@ -15058,7 +10593,7 @@ function StudioInner({
         </div>
       </div>
 
-      {showHelp && <StudioHelpModal onClose={() => setShowHelp(false)} onOpenManual={onOpenManual} />}
+      {showHelp && <StudioHelpModal onClose={() => setShowHelp(false)} />}
 
       {exportPayload !== null && (
         <div
@@ -15141,246 +10676,10 @@ export function Studio(props: {
   onDeleteStory: (storyId: string, deleteMedia?: boolean) => boolean;
   onCreateStory: (story: Story) => boolean;
   onUpdateTitleTheme: (theme: TitleTheme) => void;
-  onOpenManual?: () => void;
 }) {
-  // GUARD — StudioInner opens `baseStories[0]` when there is no remembered or
-  // requested story, so an empty catalogue crashed the whole app with
-  // "Cannot read properties of undefined (reading 'id')" before anything
-  // rendered. A caller passing an empty list is a bug, but it must not take
-  // the editor down with no way back to the newsstand.
-  if (props.baseStories.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 bg-noir-950 p-8 text-center">
-        <div className="font-pulp text-sm uppercase tracking-[0.3em] text-crimson">No cases to edit</div>
-        <p className="max-w-sm font-type text-[12px] text-paper/60">
-          Studio needs at least one case in the catalogue. Head back to the newsstand and create or restore one.
-        </p>
-        <button
-          onClick={props.onExit}
-          className="border border-gold/60 px-4 py-1.5 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-gold/10"
-        >
-          ← Back to the newsstand
-        </button>
-      </div>
-    );
-  }
   return (
     <ReactFlowProvider>
       <StudioInner {...props} />
     </ReactFlowProvider>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  travel-map editor (🗺 Map tab)                                     */
-/* ------------------------------------------------------------------ */
-
-/**
- * Editor for Story.map — the flag-gated travel screen. Pins are placed by
- * clicking the preview (the selected location moves to where you click), and
- * unlocking uses the same gating vocabulary as choices: a comma-separated
- * flag list here writes `gating.requiresFlags`. Deleting the last location
- * removes `story.map` entirely so the player-side map vanishes cleanly.
- */
-function MapEditor({ story, onUpdate }: { story: Story; onUpdate: (s: Story) => void }) {
-  const map = story.map ?? { locations: [] };
-  const resolveMedia = useResolvedMedia(story.id);
-  const flags = useMemo(() => collectFlags(story), [story]);
-  const [selectedLocId, setSelectedLocId] = useState<string | null>(map.locations[0]?.id ?? null);
-  const previewRef = useRef<HTMLDivElement>(null);
-
-  const setMap = (patch: Partial<typeof map>) => onUpdate({ ...story, map: { ...map, ...patch } });
-  const updateLoc = (id: string, patch: Partial<MapLocation>) =>
-    setMap({ locations: map.locations.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
-  const removeLoc = (id: string) => {
-    const rest = map.locations.filter((l) => l.id !== id);
-    if (rest.length === 0 && !map.backgroundImage && !map.title) {
-      const { map: _gone, ...noMap } = story;
-      onUpdate(noMap as Story);
-    } else {
-      setMap({ locations: rest });
-    }
-    if (selectedLocId === id) setSelectedLocId(rest[0]?.id ?? null);
-  };
-  const addLoc = () => {
-    const id = `loc-${Date.now().toString(36)}`;
-    const loc: MapLocation = {
-      id,
-      label: `Location ${map.locations.length + 1}`,
-      targetSceneId: story.scenes[0]?.id ?? "",
-      x: 20 + ((map.locations.length * 17) % 60),
-      y: 25 + ((map.locations.length * 23) % 50),
-    };
-    setMap({ locations: [...map.locations, loc] });
-    setSelectedLocId(id);
-  };
-
-  const bgRaw = map.backgroundImage;
-  const bgResolved = resolveMedia(bgRaw) ?? bgRaw;
-  const bgStyle: React.CSSProperties = bgResolved
-    ? bgResolved.startsWith("gradient:")
-      ? { background: bgResolved.slice(9) }
-      : { backgroundImage: `url(${assetUrl(bgResolved)})`, backgroundSize: "cover", backgroundPosition: "center" }
-    : { background: "linear-gradient(160deg,#14141f 0%,#0c0c14 70%)" };
-
-  const placePin = (e: React.MouseEvent) => {
-    if (!selectedLocId || !previewRef.current) return;
-    const rect = previewRef.current.getBoundingClientRect();
-    const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
-    const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
-    updateLoc(selectedLocId, { x: Math.min(100, Math.max(0, x)), y: Math.min(100, Math.max(0, y)) });
-  };
-
-  const selected = map.locations.find((l) => l.id === selectedLocId) ?? null;
-
-  return (
-    <div className="space-y-3">
-      <div className="border border-gold/30 bg-gold/5 p-2">
-        <div className="font-pulp text-[10px] uppercase tracking-widest text-gold">🗺 Travel Map</div>
-        <p className="mt-1 font-type text-[10px] leading-snug text-paper/55">
-          A screen of destinations the player can jump to (menu → 🗺 Travel map, or T). Each location
-          unlocks when its required flags are set — earn the tip, open the door. Locked pins show as
-          “???” unless you hide them entirely. In play, travel resolves through note placeholders like
-          every other route, and the validator checks every pin.
-        </p>
-      </div>
-
-      <Field label="Map title (heading on the player's screen)">
-        <input className={inputCls} value={map.title ?? ""} placeholder="Travel Map"
-          onChange={(e) => setMap({ title: e.target.value || undefined })} />
-      </Field>
-
-      <Field label="Map artwork (pins are placed on this)">
-        <ImagePicker value={map.backgroundImage} storyId={story.id}
-          onChange={(v) => setMap({ backgroundImage: v })} placeholder="Pick the map image…" />
-      </Field>
-
-      {/* ---- map absorbs pure travel choices ---- */}
-      <div className="space-y-1 border border-gold/30 bg-gold/5 p-2">
-        <label className="flex items-start gap-2 text-[10px] uppercase tracking-wider text-paper/70">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={!!map.replaceTravelChoices}
-            onChange={(e) => setMap({ replaceTravelChoices: e.target.checked || undefined })}
-          />
-          <span>🗺 Map absorbs travel choices</span>
-        </label>
-        <p className="font-type text-[9px] leading-snug text-paper/45">
-          When on, a choice whose ONLY job is going to a scene an unlocked pin also reaches is hidden in
-          play — the choice rail shows a single “🗺 Open the map” action instead, so travel has one home.
-          Safety rails: choices that set flags, move meters, give items, reply in place, present evidence
-          or run a timer are NEVER absorbed (the map applies no consequences), and a locked pin never
-          absorbs a choice — the authored line stays until the pin is earned. Your choices are untouched
-          in the draft; this is purely a play-time swap.
-        </p>
-      </div>
-
-      {/* click-to-place preview */}
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <span className="font-pulp text-[9px] uppercase tracking-widest text-paper/50">
-            {selected ? `Click the map to place “${selected.label}”` : "Add a location, then click the map to place its pin"}
-          </span>
-          <button onClick={addLoc} className="border border-gold/60 px-2 py-0.5 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/15">
-            + Add location
-          </button>
-        </div>
-        <div ref={previewRef} onClick={placePin}
-          className={`relative aspect-video w-full overflow-hidden border-2 border-noir-600 ${selected ? "cursor-crosshair" : ""}`}
-          style={bgStyle}>
-          {map.locations.map((loc) => (
-            <button
-              key={loc.id}
-              onClick={(e) => { e.stopPropagation(); setSelectedLocId(loc.id); }}
-              className="absolute -translate-x-1/2 -translate-y-1/2"
-              style={{ left: `${loc.x}%`, top: `${loc.y}%` }}
-              title={`${loc.label} → ${story.scenes.find((s) => s.id === loc.targetSceneId)?.title ?? loc.targetSceneId}`}
-            >
-              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 text-sm shadow-[0_2px_8px_rgba(0,0,0,0.8)] ${
-                loc.id === selectedLocId ? "border-neon bg-neon/25" : "border-gold bg-noir-950/85"
-              }`}>
-                {loc.icon ?? (loc.gating ? "🔒" : "📍")}
-              </span>
-              <span className={`mt-0.5 block whitespace-nowrap border px-1 font-pulp text-[8px] uppercase tracking-widest backdrop-blur-sm ${
-                loc.id === selectedLocId ? "border-neon/60 bg-noir-950/85 text-neon" : "border-gold/50 bg-noir-950/85 text-gold"
-              }`}>
-                {loc.label}
-              </span>
-            </button>
-          ))}
-          {map.locations.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center font-type text-xs italic text-paper/45">
-              No locations yet — “+ Add location” to drop the first pin.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* per-location editors */}
-      <div className="space-y-2">
-        {map.locations.map((loc) => {
-          const gateFlags = loc.gating?.requiresFlags ?? [];
-          const isSel = loc.id === selectedLocId;
-          return (
-            <div key={loc.id}
-              className={`space-y-1.5 border p-2 ${isSel ? "border-neon/60 bg-neon/5" : "border-noir-600 bg-noir-900/50"}`}
-              onClick={() => setSelectedLocId(loc.id)}>
-              <div className="flex items-center gap-2">
-                <input className={inputCls} value={loc.label}
-                  onChange={(e) => updateLoc(loc.id, { label: e.target.value })} placeholder="Location name" />
-                <input className={`${inputCls} !w-14 text-center`} value={loc.icon ?? ""} maxLength={4}
-                  onChange={(e) => updateLoc(loc.id, { icon: e.target.value || undefined })} placeholder="📍" title="Pin emoji" />
-                <button onClick={(e) => { e.stopPropagation(); removeLoc(loc.id); }}
-                  className="shrink-0 border border-crimson/40 px-2 py-1 font-pulp text-[9px] uppercase text-crimson hover:bg-crimson/10">
-                  ✕
-                </button>
-              </div>
-              <Field label="Travels to scene">
-                <select className={inputCls} value={loc.targetSceneId}
-                  onChange={(e) => updateLoc(loc.id, { targetSceneId: e.target.value })}>
-                  {story.scenes.map((sc) => (
-                    <option key={sc.id} value={sc.id}>
-                      {sc.nodeType === "note" ? `📝 ${sc.title} (note — passes through)` : sc.title}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Unlocked by flags (comma-separated — empty = always open)">
-                <input className={inputCls} value={gateFlags.join(", ")} list={`map-flags-${story.id}`}
-                  onChange={(e) => {
-                    const requiresFlags = e.target.value.split(",").map((f) => f.trim()).filter(Boolean);
-                    const gating: Gating | undefined = requiresFlags.length
-                      ? { ...(loc.gating ?? {}), requiresFlags }
-                      : (() => {
-                          const { requiresFlags: _r, ...rest } = loc.gating ?? {};
-                          return Object.keys(rest).length ? rest : undefined;
-                        })();
-                    updateLoc(loc.id, { gating });
-                  }}
-                  placeholder="e.g. found_pier_tip" />
-              </Field>
-              {!!loc.gating && (
-                <>
-                  <Field label="Teaser on the locked pin (else an automatic hint)">
-                    <input className={inputCls} value={loc.lockedHint ?? ""}
-                      onChange={(e) => updateLoc(loc.id, { lockedHint: e.target.value || undefined })}
-                      placeholder="Someone in the diner knows the pier number…" />
-                  </Field>
-                  <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-paper/60">
-                    <input type="checkbox" checked={!!loc.hiddenWhenLocked}
-                      onChange={(e) => updateLoc(loc.id, { hiddenWhenLocked: e.target.checked || undefined })} />
-                    Hide the pin completely until unlocked (a secret place)
-                  </label>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <datalist id={`map-flags-${story.id}`}>
-        {flags.map((f) => <option key={f} value={f} />)}
-      </datalist>
-    </div>
   );
 }

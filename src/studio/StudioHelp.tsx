@@ -160,7 +160,7 @@ const SOFTLOCK_CHECKLIST = [
 
 /** The full help modal. Sections mirror the instruction manual so the terms
  * match what the rest of Studio calls things. */
-export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void; onOpenManual?: () => void }) {
+export function StudioHelpModal({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -181,23 +181,13 @@ export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void
         className="pop-in flex max-h-[88vh] w-full max-w-3xl flex-col border-2 border-gold/60 bg-noir-950 shadow-[0_0_60px_rgba(232,178,60,0.15)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-gold/30 px-4 py-2">
+        <div className="flex items-center justify-between border-b border-gold/30 px-4 py-2">
           <h3 className="font-pulp text-sm uppercase tracking-wide text-gold">
             ? Studio Help — the field manual
           </h3>
-          <div className="flex items-center gap-2">
-            {onOpenManual && (
-              <button
-                onClick={onOpenManual}
-                className="border border-cyan-neon/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
-              >
-                ↗ Full manual
-              </button>
-            )}
-            <button onClick={onClose} className="px-2 text-lg leading-none text-paper/60 hover:text-neon" aria-label="Close help">
-              ✕
-            </button>
-          </div>
+          <button onClick={onClose} className="px-2 text-lg leading-none text-paper/60 hover:text-neon" aria-label="Close help">
+            ✕
+          </button>
         </div>
 
         <div className="space-y-2 overflow-y-auto p-4">
@@ -272,7 +262,7 @@ export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void
               <li><b>Timer</b> — the choice expires at 0 (recorded as expired).</li>
               <li><b>⚡ Quick-time prompt</b> — a hard deadline: big banner, countdown ring, optional heartbeat + shaky cam below ~30% left. On expiry it routes to the <i>timed-out target</i> and applies <i>timed-out consequences</i> — a distinct “you hesitated” branch, not a silent loss.</li>
               <li><b>Memory tag</b> — records the player's exact line; a beat can <i>recall</i> it later with <code>{"{said}"}</code>.</li>
-              <li><b>“X will remember that” card</b> — full-screen impact line after the pick.</li>
+              <li><b>“X will remember that” card</b> — Telltale-style full-screen impact line after the pick.</li>
             </ul>
           </Section>
 
@@ -362,7 +352,7 @@ export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void
               Turn a dialogue line into a false claim the player must <b>prove</b>, not just read. On a beat, open{" "}
               <b>🎯 Press the Lie (contradiction)</b> and tick <b>“This line is a lie the player can catch.”</b> While that
               line is on screen the player gets a <b className="text-crimson">🎯 Press them on that</b> button: they open
-              their inventory and must present the clue that proves the statement false.
+              their satchel and must present the clue that proves the statement false.
             </p>
             <ul className="list-disc space-y-1 pl-5">
               <li><b>Breaking evidence</b> — tick only the item(s) that ACTUALLY disprove the claim. Every other held item is a bluff the speaker calls. Handing the player many clues is fine; they still have to pick the one that matters.</li>
@@ -393,19 +383,7 @@ export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void
               Walking onto a hotspot zone fires it <b>through the same hotspot action</b> — give-item pickups, show-text, exits
               and gating all behave identically; it's only the input that changes from click-the-zone to walk-to-the-zone.
               Set the spawn point, walk speed, reach distance and sprite (image / <code>emoji:…</code>). Put hotspots where the
-              player should walk to something. The 💀 <b>object-first verb menu</b> can open on
-              click, or <b>hold-to-open</b> as a big circular pie in the middle of the screen — its centrepiece sprite
-              is set on the 🎮 <b>In-game theme</b> tab. Try the office in <b>Demo Lab: Press the Lie</b>.
-            </p>
-            <p>
-              <b>🎥 Wide worlds & walk-off exits (Scene tab → Walkable Stage).</b> <b>World width</b> makes a room a
-              scrolling strip several screens long — the camera follows the player (a LucasArts alley). Markers, spawns and
-              barriers are then placed in % of the whole strip (dashed viewport frames show what one screen holds).
-              <b>Walk-off-screen exits</b> put the red/yellow edge arrow on the plate: walk into the edge (or click the arrow)
-              and the character strides off-screen into the target scene — yellow means gated, with a locked line. <b>Entry
-              spawns</b> (cyan dots, draggable) pick where the player appears depending on the room they arrived from.
-              <b>Character size</b> (<code>stage.playerScale</code>) fits the walker to the scene — the 🕵️ on the plate grows
-              and shrinks live (1 = classic look; near/far sliders still control the walk-toward-camera perspective).
+              player should walk to something. Try the office in <b>Demo Lab: Press the Lie</b>.
             </p>
           </Section>
 
