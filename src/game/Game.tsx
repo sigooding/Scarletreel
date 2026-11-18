@@ -55,6 +55,8 @@ import {
   recordPresentation,
   resolveBeatText,
   resolveRecap,
+  resolveHotspot,
+  activeStageObstacles,
   sceneById,
   seasonEpisodes,
   CURSOR_ICON,
@@ -99,6 +101,7 @@ import { sheetDrawable, type SpriteSheet } from "./spriteSheet";
 import { PatternPuzzleGame } from "./PatternPuzzle";
 import type { PatternPuzzleConfig } from "./PatternPuzzleTypes";
 import { RideGame } from "./RideGame";
+import { TriangulateGame } from "./TriangulateGame";
 import { RouteMap } from "./RouteMap";
 import { actOfScene } from "./routeGraph";
 import { emptyCoverage, readCoverage, recordRun, recordVisit, writeCoverage, type PlaytestCoverage } from "./playtestCoverage";
@@ -129,6 +132,34 @@ import type {
   StageScriptStep,
   Story,
 } from "../types";
+import { initGameSeedFromUrl } from "./rng";
+/* The decision surface — the branching rules, extracted as pure functions so
+ * the automated playthrough bot (scripts/playthrough-bot.mjs) drives the SAME
+ * logic the player does. Game.tsx imports them rather than keeping private
+ * copies, so the simulation can never silently drift from the runtime. */
+import { adjustedConsequences, choiceRepeats, getPerks, type Perks } from "./decisions";
+import { canRewindDecision, emptyRewind, popRewind, pushRewind, rewindLabel, sealRewind, type RewindStack } from "./rewind";
+import { deepLinkFromUrl, describeDeepLink, resolveDeepLink } from "./deepLink";
+
+/* SEEDED RUNS — ?seed=1234 on the URL pins every gameplay draw (minigame
+ * shuffles, ride spawns) to one deterministic stream, applied once at
+ * import before anything mounts. Same seed + same inputs = same run: a
+ * bug that needs an unlucky roll replays on demand. */
+const bootSeed = initGameSeedFromUrl();
+if (bootSeed) console.info(`[seed] deterministic run — seed "${bootSeed}" (same seed + same inputs = same run)`);
+
+/* INJECT-A-WORLD-STATE DEEP LINKS — ?scene=…&flags=…&items=…&meters=…&trust=…
+ * boots the real runtime into a fabricated world state, so a specific branch
+ * can be handed to a collaborator as a link and "the gate should open" can be
+ * WATCHED opening at full screen instead of inspected in Studio.
+ *
+ * Read when the player MOUNTS, not once at module import the way the seed is.
+ * The seed can be import-time because it only has to be applied before the
+ * first draw; a deep link decides which scene to open, and the URL can change
+ * between mounts without a reload (a Studio playtest window, an in-app
+ * navigation, a remount in tests). Reading it at import captured whatever URL
+ * happened to be live when the module first loaded and then applied it
+ * forever. See src/game/deepLink.ts. */
 
 /* ------------------------------------------------------------------ */
 /*  helpers                                                            */
@@ -735,9 +766,12 @@ export function ForegroundLayer({
         x={x}
         y={y}
         anchor={anchor}
+        rotation={cinematic?.foregroundRotation ?? 0}
         zoom={zoom}
         zoomDur={zoomDur}
         anim={anim}
+        blendMode={cinematic?.foregroundBlendMode}
+        layerOpacity={cinematic?.foregroundOpacity}
       />
     </div>
   );
@@ -752,16 +786,25 @@ function ForegroundExtraImage({
   extra,
   resolve,
   motionName,
+  cam,
 }: {
   extra: ForegroundExtra;
   resolve?: (v?: string) => string | undefined;
   /** set when this extra has a motion path — the compiled animation name */
   motionName?: string;
+  /** wide-stage camera pan in screen-%, for `worldX` layers */
+  cam?: number;
 }) {
   const r = resolve ?? ((v?: string) => v);
   const src = assetUrl(r(extra.image));
   if (!src && !sheetDrawable(extra.sheet)) return null;
-  const x = clamp(extra.x ?? 50, 0, 100);
+  // WORLD-PINNED SCENERY. On a wide stage, `worldX` places the prop in the
+  // ROOM (0..worldWidth) and it pans with the camera; plain `x` is a
+  // viewport position and stays put. Screen-% = worldX - cam.
+  const x =
+    extra.worldX !== undefined && cam !== undefined
+      ? extra.worldX - cam
+      : clamp(extra.x ?? 50, 0, 100);
   const y = clamp(extra.y ?? 50, 0, 100);
   const scale = Math.max(0.05, extra.scale ?? 1);
   const fit = extra.fit ?? "contain";
@@ -775,10 +818,12 @@ function ForegroundExtraImage({
   const boxStyle: React.CSSProperties = {
     left: `${x}%`,
     top: `${y}%`,
+    opacity: clamp(extra.opacity ?? 1, 0, 1),
+    mixBlendMode: extra.blendMode ?? "normal",
     width: fit === "cover" || fit === "fill" ? "100%" : "auto",
     height: fit === "cover" || fit === "fill" ? "100%" : `${(scale * 100).toFixed(1)}%`,
     aspectRatio: fit === "cover" || fit === "fill" ? undefined : "auto",
-    transform: `translate(${(-ax).toFixed(2)}%, ${(-ay).toFixed(2)}%)`,
+    transform: `translate(${(-ax).toFixed(2)}%, ${(-ay).toFixed(2)}%) rotate(${extra.rotation ?? 0}deg)`,
     transformOrigin: `${ax}% ${ay}%`,
     display: "flex",
     alignItems: "flex-end",
@@ -814,7 +859,7 @@ function ForegroundExtraImage({
   // An animated extra: the sprite sheet replaces the static image entirely.
   if (sheetDrawable(extra.sheet)) {
     return (
-      <div className="absolute" style={boxStyle} aria-hidden>
+      <div className="pointer-events-none absolute" style={boxStyle} aria-hidden>
         {withPreset(
           <SheetSprite
           sheet={extra.sheet}
@@ -840,10 +885,10 @@ function ForegroundExtraImage({
   }
   if (!src) return null;
   if (src.startsWith("gradient:")) {
-    return <div className="absolute" style={{ ...boxStyle, background: src.slice(9) }} aria-hidden />;
+    return <div className="pointer-events-none absolute" style={{ ...boxStyle, background: src.slice(9) }} aria-hidden />;
   }
   return (
-    <div className="absolute" style={boxStyle} aria-hidden>
+    <div className="pointer-events-none absolute" style={boxStyle} aria-hidden>
       {withPreset(
         <img
           src={src}
@@ -891,6 +936,7 @@ export function ForegroundExtras({
   resolve,
   skip,
   only,
+  cam,
 }: {
   cinematic?: CinematicSettings;
   resolve?: (v?: string) => string | undefined;
@@ -898,6 +944,8 @@ export function ForegroundExtras({
   skip?: Set<number>;
   /** When set, draw ONLY these indices (the walk-behind pass). */
   only?: Set<number>;
+  /** wide-stage camera pan in screen-%, for `worldX` layers */
+  cam?: number;
 }) {
   const extras = cinematic?.foregroundExtras ?? [];
   // Motion paths compile to real @keyframes, one per animated extra, emitted
@@ -909,6 +957,7 @@ export function ForegroundExtras({
     .join("\n");
   const wanted = extras
     .map((_e, i) => i)
+    .filter((i) => extras[i].visible !== false)
     .filter((i) => (only ? only.has(i) : true) && !(skip && !only ? skip.has(i) : false));
   if (!extras.length || !wanted.length) return null;
   // When parallax is on, each extra wraps in a parallax-mid plane so it
@@ -924,6 +973,7 @@ export function ForegroundExtras({
             key={i}
             extra={e}
             resolve={resolve}
+            {...(cam !== undefined ? { cam } : {})}
             {...(motionAnimatable(e.motion) ? { motionName: motionName(i) } : {})}
           />
         );
@@ -931,7 +981,7 @@ export function ForegroundExtras({
         return (
           <div
             key={`par-${i}`}
-            className="parallax-mid absolute inset-0"
+            className="parallax-mid pointer-events-none absolute inset-0"
             style={{ "--plane-shift": `${(4 + (e.depth ?? 0.5) * 26).toFixed(1)}px` } as React.CSSProperties}
           >
             {el}
@@ -954,9 +1004,12 @@ function ForegroundFrames({
   x,
   y,
   anchor,
+  rotation,
   zoom,
   zoomDur,
   anim,
+  blendMode,
+  layerOpacity,
 }: {
   frames: string[];
   fit: "contain" | "cover" | "fill" | "native";
@@ -964,9 +1017,12 @@ function ForegroundFrames({
   x: number;
   y: number;
   anchor: { ax: number; ay: number };
+  rotation: number;
   zoom?: number;
   zoomDur: number;
   anim?: ForegroundAnimation;
+  blendMode?: CinematicSettings["foregroundBlendMode"];
+  layerOpacity?: number;
 }) {
   const [index, setIndex] = useState(0);
   const idxRef = useRef(0);
@@ -1067,7 +1123,7 @@ function ForegroundFrames({
   // zoom is active the .fg-zoom animation overrides transform (forwards fill),
   // and this guarantees the *un-animated* / reduced-motion state is correct for
   // both push-in and pull-out (scale below the base).
-  const restingTransform = `scale(${scale})`;
+  const restingTransform = `scale(${scale}) rotate(${rotation}deg)`;
 
   return (
     <div ref={frameRef} className="absolute inset-0">
@@ -1083,6 +1139,11 @@ function ForegroundFrames({
             height: box.h ? `${box.h}px` : 0,
             // translate by the anchor so the anchor point lands on (x, y).
             transform: `translate(${(-anchor.ax).toFixed(2)}%, ${(-anchor.ay).toFixed(2)}%)`,
+            // Blend/opacity live on the BOX, not the <img>: the img already
+            // owns opacity for the cross-dissolve between frames, so setting
+            // them here keeps the two from fighting.
+            mixBlendMode: blendMode ?? "normal",
+            opacity: layerOpacity ?? 1,
           }}
         >
           <img
@@ -2168,28 +2229,12 @@ const METER_STYLE: Record<MeterKey, { bar: string; icon: string }> = {
   Suspicion: { bar: "bg-gold", icon: "🔥" },
 };
 
-interface Perks {
-  velvetTongue: boolean;
-  ironNerve: boolean;
-  sharpEye: boolean;
-  heat: boolean;
-}
-
 const perkDefs: { key: keyof Perks; icon: string; name: string; desc: string; danger?: boolean }[] = [
   { key: "velvetTongue", icon: "💋", name: "Velvet Tongue", desc: "Charm 4+ · positive trust gains get +1" },
   { key: "ironNerve", icon: "✊", name: "Iron Nerve", desc: "Intimidate 4+ · hard-nosed choices stop costing Heat" },
   { key: "sharpEye", icon: "🧠", name: "Sharp Eye", desc: "Deduce 4+ · hotspots shimmer and bad board guesses stay quiet" },
   { key: "heat", icon: "🔥", name: "HEAT", desc: "Heat 6+ · trust gains are halved and wrong board links cost 2", danger: true },
 ];
-
-function getPerks(state: GlobalState): Perks {
-  return {
-    velvetTongue: state.meters.Sultry >= 4,
-    ironNerve: state.meters.Aggressive >= 4,
-    sharpEye: state.meters.Clever >= 4,
-    heat: state.meters.Suspicion >= 6,
-  };
-}
 
 function MetersHUD({
   state,
@@ -2686,7 +2731,7 @@ function DeductionBoard({
             />
             <div className="flex items-center gap-2">
               {c.img ? (
-                <img src={assetUrl(c.img)} alt="" loading="lazy" decoding="async" className="h-10 w-10 object-cover border border-gold/40" />
+                <img src={assetUrl(c.img)} alt="" loading="lazy" decoding="async" className="h-10 w-10 object-cover object-top border border-gold/40" />
               ) : (
                 <span className="text-2xl">{c.icon}</span>
               )}
@@ -2762,22 +2807,6 @@ interface Toast {
 interface RememberCard {
   line: string;
   key: number;
-}
-
-function choiceHasEffects(choice: Choice): boolean {
-  if (!choice.consequences) return false;
-  return Object.values(choice.consequences).some((value) => Array.isArray(value) && value.length > 0);
-}
-
-function choiceRepeats(choice: Choice): boolean {
-  if (choice.isRepeatable !== undefined) return choice.isRepeatable;
-  // Conversational replies advance the scene's dialogue, so they're one-shot
-  // unless explicitly marked repeatable (otherwise the same answer would
-  // re-trigger forever).
-  if (choice.reply) return false;
-  // Pure navigation is safe to repeat. Anything that changes state defaults to
-  // one-shot so trust, items and meters cannot be farmed by scene loops.
-  return !choiceHasEffects(choice);
 }
 
 type Overlay =
@@ -2862,6 +2891,9 @@ function CasePlayer({
    *   done   — the conversation finished; back to walking
    * Choices on a stage node ONLY ever show during "open". */
   const [stageConvo, setStageConvo] = useState<"closed" | "open" | "done">("closed");
+  /** Which hotspot's conversation is playing — Stage freezes ONLY the NPC
+   *  linked to this marker (everyone else keeps patrolling). */
+  const [convoHotspotId, setConvoHotspotId] = useState<string | null>(null);
   /* TOPIC-LIST DIALOGUE (opt-in). When a startDialogue marker carries
    * `action.topics`, the conversation is a HUB of askable topics instead of
    * the scene's linear beats. `topicConvo` holds the active hub (null = not in
@@ -2886,6 +2918,27 @@ function CasePlayer({
    * the cinematic overlay style was pulled from the menu (it towers over the
    * art). Kept as a constant so the render branches below keep their shape. */
   const classicSubtitles = true;
+  /* PULP PAPER — the halftone-dot + grain overlay. An option now: some
+   * rooms read cleaner without it. Remembered per player. */
+  const [pulpOn, setPulpOn] = useState(() => {
+    try {
+      return localStorage.getItem("scarlet-reel-pulp") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const togglePulp = () => {
+    setPulpOn((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("scarlet-reel-pulp", next ? "1" : "0");
+      } catch {
+        /* session-only */
+      }
+      return next;
+    });
+    audio.click();
+  };
   useEffect(() => {
     try {
       localStorage.setItem("scarlet-reel-subtitles", "classic");
@@ -2939,6 +2992,7 @@ function CasePlayer({
    * wrong → wrongSubmissionConsequences + retry or consequence scene. */
   const [patternPuzzle, setPatternPuzzle] = useState<{ config: PatternPuzzleConfig; hotspot: Hotspot } | null>(null);
   const [rideChoice, setRideChoice] = useState<Choice | null>(null);
+  const [triangulateChoice, setTriangulateChoice] = useState<Choice | null>(null);
   /* EXAMINE — hold-to-inspect. While active, the camera zooms onto the
    * hotspot bounds and a meter fills over examineSeconds; releasing early
    * aborts, completion fires the hotspot's normal action (pickup / the
@@ -2999,6 +3053,16 @@ function CasePlayer({
   const [visitedScenes, setVisitedScenes] = useState<Set<string>>(new Set());
   /** ordered decision log — powers the end-of-part flowchart */
   const [journey, setJourney] = useState<JourneyStep[]>([]);
+  /* REWIND ONE DECISION — a bounded RAM-only stack of world snapshots, one
+   * per decision (a choice, a lapsed quick-time window, a hotspot that
+   * changes the world). ↺ Rewind restores the top entry through the SAME
+   * restoreSave path a load slot uses, so items un-pick, flags un-set and
+   * meters roll back by construction. See src/game/rewind.ts for the rules
+   * (endings seal the stack; nothing is persisted). */
+  const [rewind, setRewind] = useState<RewindStack>(emptyRewind);
+  /** buildSave is defined below; the ref lets the decision paths above it
+   *  snapshot without a temporal-dead-zone reference. */
+  const buildSaveRef = useRef<(() => GameSave) | null>(null);
   /** when set, the part-break route chart is covering the screen; the parked
    * destination is entered once the player dismisses it */
   const [partBreak, setPartBreak] = useState<{ title: string; nextSceneId: string } | null>(null);
@@ -3159,30 +3223,65 @@ function CasePlayer({
   /** The walker's feet (scene %) in a STAGE room — drives walk-behind masks:
    *  a foreground extra flagged `occludes` is drawn OVER the character while
    *  they stand behind it, so they disappear behind the counter. */
-  const [walkerFeet, setWalkerFeet] = useState<{ x: number; y: number } | null>(null);
+  /* The walker's LIVE feet position stays in a ref — re-rendering the whole
+   * Game on every position report would cascade passive updates 60x/s during
+   * every walk in an occluder room (and trips React's nested-update limiter
+   * in some environments). Only the flip moments — an `occludes` extra
+   * gaining/losing the walker behind it — need a render, so the pos callback
+   * diffs the membership set and setStates only when it changes. */
+  const occlSceneRef = useRef(scene);
+  occlSceneRef.current = scene;
+  const occlSetRef = useRef<Set<number>>(new Set<number>());
+  const [occludersInFront, setOccludersInFront] = useState<Set<number>>(() => new Set<number>());
+  /** Wide-stage camera pan (screen-%), reported by Stage. Only foreground
+   *  extras with an explicit `worldX` consume it. */
+  const [stageCam, setStageCam] = useState(0);
+  const handleWalkerPos = useCallback((p: { x: number; y: number }) => {
+    const scn = occlSceneRef.current;
+    if (!scn || scn.nodeType !== "stage") return;
+    const extras = scn.cinematic?.foregroundExtras ?? [];
+    const front = new Set<number>();
+    extras.forEach((e, i) => {
+      if (extraOccludes(e, p.y)) front.add(i);
+    });
+    const prev = occlSetRef.current;
+    if (prev.size === front.size && [...front].every((i) => prev.has(i))) return;
+    occlSetRef.current = front;
+    setOccludersInFront(front);
+  }, []);
+  // A fresh scene starts with a clean occlusion set (the Stage's first pos
+  // report repopulates it for the new room's extras).
+  useEffect(() => {
+    if (occlSetRef.current.size) {
+      occlSetRef.current = new Set<number>();
+      setOccludersInFront(new Set<number>());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId, entrySeq]);
   /** The walker's current POSE (a named sheet animation, e.g. "bend") — set by
    *  a `setPlayerPose` hotspot action, held until movement or another pose.
    *  Transient presentation, so it lives here rather than in the save state. */
   const [playerPose, setPlayerPose] = useState<string | null>(null);
   /** Whether the current pose is a one-shot (play once, then revert). */
   const [playerPoseOnce, setPlayerPoseOnce] = useState(false);
-  const occludersInFront = useMemo(() => {
-    const extras = scene?.cinematic?.foregroundExtras ?? [];
-    const front = new Set<number>();
-    if (!isStage) return front;
-    extras.forEach((e, i) => {
-      if (extraOccludes(e, walkerFeet?.y)) front.add(i);
-    });
-    return front;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStage, scene?.cinematic?.foregroundExtras, walkerFeet?.y]);
   const hasOccluders = (scene?.cinematic?.foregroundExtras ?? []).some((e) => e.occludes);
+  /** Any layer pinned to the world rather than the viewport — only then does
+   *  the camera need reporting (an idle room shouldn't re-render on a pan). */
+  const hasWorldPinnedExtras = (scene?.cinematic?.foregroundExtras ?? []).some(
+    (e) => e.worldX !== undefined,
+  );
 
   /* ---- CURSOR ART: per-verb art (and the plain arrow) ---- */
   const [hoverCursor, setHoverCursor] = useState<CursorKind | null>(null);
   /** The verb the coin is holding, reported by the Stage — in a coin room that
    *  is the cursor, because the verb IS the cursor. */
   const [coinVerb, setCoinVerb] = useState<VerbId | null>(null);
+  // The coin only exists on STAGE scenes; when the player walks off one into
+  // a classic scene the armed verb must NOT survive as that scene's cursor
+  // art (the leak showed the "Pick up" hand over every novel hotspot).
+  useEffect(() => {
+    if (!isStage) setCoinVerb(null);
+  }, [isStage, sceneId]);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const cursorSlot = (hoverCursor ?? coinVerb ?? "default") as import("../logic").CursorSlot;
   const cursor = useMemo(() => resolveCursor(story, cursorSlot), [story, cursorSlot]);
@@ -3202,7 +3301,22 @@ function CasePlayer({
 
   // How THIS case shows what you're carrying (default: the classic chip rail,
   // so no existing game changes). See InventorySettings in src/types.ts.
-  const invDisplay = useMemo(() => inventoryDisplay(story), [story]);
+  const baseInvDisplay = useMemo(() => inventoryDisplay(story), [story]);
+  /** COIN vs DOCK — the verb coin is pinned bottom-left (Stage.tsx, the way a
+   *  LucasArts room puts it) and the inventory dock ALSO defaults bottom-left,
+   *  so on a verb-coin stage the dock's buttons sat on top of the coin and ate
+   *  its clicks: the verbs were visible but unreachable. When the room shows a
+   *  coin and the author has NOT chosen a corner, slide the dock to the
+   *  opposite bottom corner. An explicit `inventoryDisplay.anchor` always
+   *  wins, and non-coin scenes are untouched. */
+  const invDisplay = useMemo(() => {
+    const coinRoom =
+      scene?.nodeType === "stage" &&
+      !!scene.stage &&
+      (scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false));
+    if (!coinRoom || story.inventoryDisplay?.anchor) return baseInvDisplay;
+    return { ...baseInvDisplay, anchor: "bottom-right" as const };
+  }, [baseInvDisplay, scene, story.inventoryDisplay?.anchor, story.verbMenuEnabled]);
   /** Dropping an item on a scene object: 🚶 rooms walk there first, then USE
    *  it (so the splice happens at the bike, not across the street); every
    *  other scene fires it where it was dropped. */
@@ -3210,7 +3324,7 @@ function CasePlayer({
   /** SCRIPTED SEQUENCE ordered by a `runScript` hotspot on a 🚶 stage —
    *  handed to Stage keyed (same shape of contract as dropRequest). Classic
    *  graphic-novel scenes never see this: the action is stage-only. */
-  const [scriptRequest, setScriptRequest] = useState<{ steps: StageScriptStep[]; key: number } | null>(null);
+  const [scriptRequest, setScriptRequest] = useState<{ steps: StageScriptStep[]; key: number; coverageTag?: string } | null>(null);
   /** Room-entry script for the CURRENT stage scene, with its run-once flag
    *  latch applied: undefined when there's no script or the flag says it
    *  already played. Stage captures it at mount (scene-keyed remount). */
@@ -3506,6 +3620,7 @@ function CasePlayer({
     // mid-conversation save re-opens it at its saved beat below), and the
     // entry caption plays once — the stage's opening narration.
     if (scene.nodeType === "stage") {
+      setConvoHotspotId(null);
       setStageConvo(restoring && restoring.beatIdx > 0 ? "open" : "closed");
       setStageCaption(null);
       setPlayerPose(null); // a fresh scene starts in its own default pose
@@ -3850,6 +3965,36 @@ function CasePlayer({
     [story]
   );
 
+  /* -------- rewind one decision --------
+   * Snapshot BEFORE a decision commits, so ↺ Rewind restores the world as it
+   * stood the instant before the player chose. This is deliberately NOT a
+   * per-frame or per-line snapshot: one entry per decision, collapsed when a
+   * decision doesn't actually move the world, capped at REWIND_LIMIT, and
+   * refused at an ending (the run is decided there — see rewind.ts). */
+  useEffect(() => {
+    buildSaveRef.current = buildSave;
+  });
+  const snapshotDecision = useCallback(
+    (label: string) => {
+      const build = buildSaveRef.current;
+      if (!build) return;
+      const atEnding = !!sceneById(story, sceneIdRef.current)?.isEnding;
+      setRewind((r) => pushRewind(r, build(), label, { isEnding: atEnding }));
+    },
+    [story]
+  );
+  const doRewindDecision = useCallback(() => {
+    setRewind((r) => {
+      const { stack, entry } = popRewind(r);
+      if (!entry) return r;
+      audio.stopSpeech();
+      audio.click();
+      restoreSave(entry.save);
+      pushToast(`↺ Rewound: ${entry.label}`, "info");
+      return stack;
+    });
+  }, [restoreSave, pushToast]);
+
   /* -------- playtest coverage --------
    * A running tally of what this case has actually exercised: every scene
    * entered and every choice picked, accumulated across playthroughs and
@@ -3861,7 +4006,7 @@ function CasePlayer({
     coverageRef.current = readCoverage(story.id) ?? emptyCoverage(story.id);
   }, [story.id]);
   const markCoverage = useCallback(
-    (kind: "scene" | "choice", id: string) => {
+    (kind: "scene" | "choice" | "marker" | "cutscene", id: string) => {
       if (!id) return;
       const next = recordVisit(coverageRef.current ?? emptyCoverage(story.id), kind, id);
       coverageRef.current = next;
@@ -3881,6 +4026,9 @@ function CasePlayer({
     // know you have (or have not) reached.
     markCoverage("scene", sceneId);
     if (scene.isEnding) {
+      // The run is decided. Seal the rewind stack so an ending can never be
+      // re-rolled by undoing your way back out of it (see rewind.ts).
+      setRewind(sealRewind);
       const next = recordRun(coverageRef.current ?? emptyCoverage(story.id));
       coverageRef.current = next;
       writeCoverage(next);
@@ -4430,6 +4578,12 @@ function CasePlayer({
   // back within this scene.
   const canRewind = proseAcknowledged;
 
+  /** ↺ Rewind (a whole decision, across scenes) is a different control from
+   *  ◂ Back (one line, within the scene). It is live whenever the stack holds
+   *  a decision and the run hasn't been sealed by an ending. */
+  const canUndoDecision = canRewindDecision(rewind);
+  const undoLabel = rewindLabel(rewind) ?? "the last decision";
+
   /* -------- topic-list dialogue (opt-in) -------- */
   // Pick a topic off the hub: mark it asked, record its flag, and play its
   // beats through the normal beat queue (visibleBeats returns them while
@@ -4453,6 +4607,7 @@ function CasePlayer({
   const leaveTopic = useCallback(() => {
     audio.click();
     audio.stopSpeech();
+    setConvoHotspotId(null);
     setStageConvo("done");
     setTopicConvo(null);
     setTopicBeats(null);
@@ -4562,11 +4717,14 @@ function CasePlayer({
 
   const speakLine = useCallback(
     (beat: { text: string; characterId: string; audioUrl?: string; silent?: boolean }, textOverride?: string) => {
-      if (beat.silent) return; // no narration at all
+      // Recorded cues are sound effects as often as they are spoken lines.
+      // Play the clip even when the authored beat is marked silent so a
+      // silent text beat can still fire a gunshot, door slam, or other cue.
       if (beat.audioUrl) {
         audio.playClip(beat.audioUrl);
         return;
       }
+      if (beat.silent) return; // no narration at all
       const ch = story.characters.find((c) => c.id === beat.characterId);
       audio.speak(textOverride ?? beat.text, beat.characterId, ch?.voice);
     },
@@ -4574,7 +4732,10 @@ function CasePlayer({
   );
 
   useEffect(() => {
-    if (autoNarrate && currentBeat && currentBeatText) {
+    // Audio beats are intentional sound design and must not depend on the
+    // player's Web Speech narration toggle. This also lets a textless beat
+    // trigger a recorded cue as it enters the queue.
+    if (currentBeat?.audioUrl || (autoNarrate && currentBeat && currentBeatText)) {
       const t = window.setTimeout(() => speakLine(currentBeat, currentBeatText), 220);
       return () => window.clearTimeout(t);
     }
@@ -4618,6 +4779,7 @@ function CasePlayer({
     // hub (no beats, no choices) must not auto-close the conversation.
     if (topicConvo) return;
     if (!inBeats && !hasUsableChoice) {
+      setConvoHotspotId(null);
       setStageConvo("done");
       audio.stopSpeech();
     }
@@ -4671,7 +4833,21 @@ function CasePlayer({
   // and qteShakyCam is on, we override to SHAKY CAM regardless of whether the
   // scene already has a base cinematic (otherwise the swap does nothing on a
   // scene with no cinematic configured).
-  const bgCinematic = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+  const bgCinematicBase = qtShaky ? { ...(scene?.cinematic ?? {}), mode: "shake" as const } : scene?.cinematic;
+  /* STAGE rooms: the walker, interaction markers and the painted walk path
+   * are anchored to the PLATE BOX, so the room art must sit perfectly still.
+   * Any cinematic that moves the plate — the default pan push-in (zoom to
+   * 1.22 while drifting), zoom-hold, dolly, shake, pointer parallax — slides
+   * the art out from under the authored path (the Studio plate previews the
+   * same room STATIC, which is why the painted path lined up there but not
+   * in play). Pin stage backgrounds to static and strip parallax; colour
+   * grade, lights, dim and letterbox still apply (they don't move pixels).
+   * Talk-zoom stays aligned separately — the stage world wrapper shares the
+   * plate's transform. */
+  const bgCinematic: CinematicSettings | undefined =
+    scene?.nodeType === "stage"
+      ? { ...(bgCinematicBase ?? {}), mode: "static", parallaxDepth: undefined, parallaxLayers: undefined }
+      : bgCinematicBase;
   // Parallax follows the pointer across the stage; enabled when the plate or
   // the currently showing insert-shot beat carries depth settings.
   const beatCinematic = inBeats ? currentBeat?.cinematic : undefined;
@@ -4745,6 +4921,10 @@ function CasePlayer({
         expiredNow.forEach((id) => {
           const choice = liveScene?.choices?.find((c) => c.id === id);
           if (choice?.quickTime) {
+            // An expired quick-time window is exactly the decision players
+            // most want back — snapshot before its consequences land so ↺
+            // Rewind puts the clock back on the table.
+            snapshotDecision(`the window closed on “${choice.text}”`);
             if (choice.timedOutConsequences) {
               setState((s) => applyConsequences(story, choice.timedOutConsequences, s));
             }
@@ -4960,11 +5140,23 @@ function CasePlayer({
       }
       // Playtest coverage: this branch was actually taken (replies included).
       markCoverage("choice", `${sceneId}:${choice.id}`);
+      // Rewind: snapshot the world BEFORE this decision changes it. Taken
+      // after the gate check (a refused pick is not a decision) and before
+      // any state update, so ↺ Rewind lands exactly on the moment of choosing.
+      snapshotDecision(`“${choice.text}”`);
       // A ride choice launches the steerable minigame instead of navigating at
       // once — the win/crash routes happen in <RideGame> via finishRide.
       if (choice.ride) {
         audio.click();
         setRideChoice(choice);
+        return;
+      }
+      // Same contract as a ride, different game: the 3D triangulation bay
+      // routes through finishRide (win → targetSceneId with the choice's
+      // consequences, fail → timedOutTargetSceneId).
+      if (choice.triangulate) {
+        audio.click();
+        setTriangulateChoice(choice);
         return;
       }
       // Conversational replies answer in place: apply consequences, stay in the
@@ -5078,33 +5270,11 @@ function CasePlayer({
         });
       }
       if (choice.attitudeTag && choice.attitudeTag !== "Neutral") audio.stinger();
-      const perks = getPerks(stateRef.current);
-      // Start from the presentation-aware consequences so an item handover
-      // (consumePresentedItem) survives the perk adjustments below.
-      let cons = presentationConsequences(choice);
-      if (cons?.trustChanges && (perks.velvetTongue || perks.heat)) {
-        cons = {
-          ...cons,
-          trustChanges: cons.trustChanges.map((t) => {
-            let d = t.delta;
-            if (d > 0 && perks.velvetTongue) d += 1;
-            if (d > 0 && perks.heat) d = Math.max(1, Math.floor(d / 2));
-            return { ...t, delta: d };
-          }),
-        };
-      }
-      // Iron Nerve: while the perk is active (Aggressive 4+), hard-nosed
-      // (Aggressive-tagged) choices stop costing Suspicion — you keep your nerve
-      // when you turn up the pressure. Applied before the heat toast so it
-      // reflects the actual (dampened) Suspicion delta.
-      if (cons?.meterChanges && perks.ironNerve && choice.attitudeTag === "Aggressive") {
-        cons = {
-          ...cons,
-          meterChanges: cons.meterChanges.map((m) =>
-            m.meter === "Suspicion" && m.delta > 0 ? { ...m, delta: 0 } : m
-          ),
-        };
-      }
+      // The perk layer (Velvet Tongue / HEAT / Iron Nerve) lives in
+      // decisions.ts so the playthrough bot applies the identical maths.
+      // It starts from the presentation-aware consequences, so an item
+      // handover (consumePresentedItem) survives the adjustment.
+      const cons = adjustedConsequences(choice, stateRef.current);
       // Positive feedback: surface trust/meter/item gains so players know the
       // choice actually did something (previously only failures got a toast).
       if (cons?.trustChanges?.length) {
@@ -5147,7 +5317,7 @@ function CasePlayer({
     // one too: the reply branch builds the next used-set from it, and a stale
     // copy dropped previously-spent replies, making one-shot replies
     // re-pickable (a trust farm inside an interrogation).
-    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure, usedChoices]
+    [story, scene, sceneId, goToScene, pushToast, recordJourney, leaveFor, iqComposure, usedChoices, snapshotDecision]
   );
 
   /** Route out of a finished ride minigame. `won` = you ran the target down
@@ -5164,27 +5334,13 @@ function CasePlayer({
           return next;
         });
       }
-      const perks = getPerks(stateRef.current);
-      let cons = won ? presentationConsequences(choice) : choice.timedOutConsequences;
-      if (cons?.trustChanges && (perks.velvetTongue || perks.heat)) {
-        cons = {
-          ...cons,
-          trustChanges: cons.trustChanges.map((t) => {
-            let d = t.delta;
-            if (d > 0 && perks.velvetTongue) d += 1;
-            if (d > 0 && perks.heat) d = Math.max(1, Math.floor(d / 2));
-            return { ...t, delta: d };
-          }),
-        };
-      }
-      if (cons?.meterChanges && perks.ironNerve && choice.attitudeTag === "Aggressive") {
-        cons = {
-          ...cons,
-          meterChanges: cons.meterChanges.map((m) =>
-            m.meter === "Suspicion" && m.delta > 0 ? { ...m, delta: 0 } : m
-          ),
-        };
-      }
+      // Same shared perk layer as a normal pick — a crash routes through the
+      // choice's timed-out consequences instead of its win consequences.
+      const cons = adjustedConsequences(
+        choice,
+        stateRef.current,
+        won ? presentationConsequences(choice) : choice.timedOutConsequences
+      );
       if (cons?.trustChanges?.length) {
         cons.trustChanges.forEach((t) => {
           const ch = story.characters.find((c) => c.id === t.characterId);
@@ -5370,6 +5526,13 @@ function CasePlayer({
     (hs: Hotspot, baseState?: GlobalState, action?: HotspotAction, markUsed = true) => {
       const act = action ?? hs.action;
       let s = baseState ?? stateRef.current;
+      // Rewind: a zone that HANDS you something, sets a flag, moves a meter or
+      // moves you is a decision. Reading a line ("showText" with no payload)
+      // is not — snapshotting those would fill the stack with flavour text and
+      // push the real decisions off the bottom.
+      if (act.itemGranted || act.flagSet || act.meterChange || (act.targetSceneId && act.type !== "showText")) {
+        snapshotDecision(`${hs.label}`);
+      }
       if (act.itemGranted) {
         s = applyConsequences(story, { addItems: [act.itemGranted] }, s);
         const it = story.items.find((i) => i.id === act.itemGranted);
@@ -5382,6 +5545,29 @@ function CasePlayer({
       }
       if (act.flagSet) s = applyConsequences(story, { setFlags: [act.flagSet] }, s);
       if (act.meterChange) s = applyConsequences(story, { meterChanges: [act.meterChange] }, s);
+      // CHAINED ACTIONS — the follow-ups run here, in order, so one click can
+      // show a line AND set a flag AND grant an item. Only the STATE effects
+      // are chained (item/flag/meter/sfx) plus a final navigation: replaying
+      // the whole activateHotspot switch per link would let a chain open a
+      // board, start a conversation or run a script mid-flight, which is a
+      // different feature and a much bigger blast radius.
+      let chainTarget: string | undefined;
+      for (const step of act.then ?? []) {
+        if (step.sfxUrl) audio.playSfx(step.sfxUrl, step.sfxVolume ?? 1);
+        if (step.itemGranted) {
+          s = applyConsequences(story, { addItems: [step.itemGranted] }, s);
+          const it = story.items.find((i) => i.id === step.itemGranted);
+          audio.pickup();
+          pushToast(`Picked up: ${it?.icon ?? ""} ${it?.name ?? step.itemGranted}`, "success");
+        }
+        if (step.flagSet) s = applyConsequences(story, { setFlags: [step.flagSet] }, s);
+        if (step.meterChange) s = applyConsequences(story, { meterChanges: [step.meterChange] }, s);
+        // Navigation ENDS the chain, exactly like a script's goToScene step.
+        if (step.targetSceneId && step.type !== "showText") {
+          chainTarget = step.targetSceneId;
+          break;
+        }
+      }
       setState(s);
       // VERB COIN: a verb action is flavour and stays on the object (you can
       // look at the same bench twice). Only an action that TAKES something
@@ -5389,14 +5575,22 @@ function CasePlayer({
       if (markUsed) setUsedHotspots((u) => new Set(u).add(`${sceneId}:${hs.id}`));
       // Any successful interaction means the player searched the scene.
       setInvestigatedThisVisit(true);
+      // The primary action's navigation wins; a chained one only fires when
+      // the primary didn't move us (otherwise two goToScene calls would race).
       if (act.targetSceneId && act.type !== "showText") goToScene(act.targetSceneId);
+      else if (chainTarget) goToScene(chainTarget);
     },
-    [story, sceneId, goToScene, pushToast]
+    [story, sceneId, goToScene, pushToast, snapshotDecision]
   );
 
   const activateHotspot = useCallback(
     (hs: Hotspot, ctx?: { verb?: VerbId; itemId?: string }) => {
       const stageMode = sceneById(story, sceneId)?.nodeType === "stage";
+      // MULTI-STATE: act on the object as it stands RIGHT NOW — the active
+      // state's action/cursor/label override the base. Callers usually pass
+      // the already-resolved view from the render; resolving again here is
+      // idempotent and covers fire paths that hold the raw hotspot.
+      hs = resolveHotspot(hs, stateRef.current);
       // VERB COIN — "use the wrench on the bike" resolves to the action the
       // object answers with for that verb (and item), or to a refusal line.
       let act = hs.action;
@@ -5430,6 +5624,14 @@ function CasePlayer({
         if (soundOnRef.current && autoNarrate) audio.speak(failText);
         return;
       }
+      // Playtest coverage: this STAGE marker actually fired (the gate passed
+      // and the verb resolved — a refusal above never counts).
+      if (stageMode) markCoverage("marker", `${sceneId}:${hs.id}`);
+      // SOUND EFFECT — fires for EVERY action type, before the switch, so a
+      // door creak plays whether the zone shows a line, grants an item or
+      // walks you to another room. On the sfx bus, so it layers over the
+      // narration instead of cutting it off (that is what audioUrl is for).
+      if (act.sfxUrl) audio.playSfx(act.sfxUrl, act.sfxVolume ?? 1);
       switch (act.type) {
         case "showText": {
           audio.click();
@@ -5479,12 +5681,14 @@ function CasePlayer({
             setBeatIdx(0);
             setBeatDone(false);
             setChoiceFocus(0);
+            setConvoHotspotId(hs.id);
             setStageConvo("open");
             completeHotspot(hs, undefined, act, markUsed);
           } else if ((sceneById(story, sceneId)?.dialogueBeats?.length ?? 0) > 0) {
             setBeatIdx(0);
             setBeatDone(false);
             setChoiceFocus(0);
+            setConvoHotspotId(hs.id);
             setStageConvo("open");
             completeHotspot(hs, undefined, act, markUsed);
           }
@@ -5518,7 +5722,7 @@ function CasePlayer({
           }
           if (act.script && act.script.length > 0) {
             audio.click();
-            setScriptRequest({ steps: act.script, key: Date.now() });
+            setScriptRequest({ steps: act.script, key: Date.now(), coverageTag: hs.id });
           }
           // flagSet/meterChange on the action still apply (and the marker is
           // consumed unless the hotspot is repeatable, like any other).
@@ -5674,10 +5878,29 @@ function CasePlayer({
     // line plays (authored extras fire once — see activateHotspot). Only
     // something genuinely REMOVED by use — an item taken, a route used —
     // hides its marker.
-    return scene.hotspots.filter(
-      (hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`) || hs.action.type === "showText",
-    );
-  }, [scene, usedHotspots, sceneId]);
+    // MULTI-STATE: the survivors are then re-skinned by their active state
+    // (Hotspot.states) — one marker that changes with the story instead of
+    // flag-gated duplicates. Identity (id, bounds, verbs, items) is
+    // untouched, so used-marker tracking and coin verbs stay stable while
+    // the label/art/action follow the world. Resolving BEFORE the used-
+    // filter matters: the 💬-exemption must read the action the object
+    // would fire NOW — a safe whose "open" state grants the item is a
+    // pickup, not a re-readable line, and must stay consumed.
+    return scene.hotspots
+      .map((hs) => resolveHotspot(hs, state))
+      .filter(
+        (hs) => hs.isRepeatable || !usedHotspots.has(`${sceneId}:${hs.id}`) || hs.action.type === "showText",
+      );
+  }, [scene, usedHotspots, sceneId, state]);
+
+  /* DOORS — gate-aware barriers: while a barrier's gate is shut it is a wall
+   * (the router respects it); the moment the gate opens it stops existing.
+   * Resolved here, where the world state lives, and handed to the Stage as
+   * the obstacle list the walker actually collides with. */
+  const stageActiveObstacles = useMemo(
+    () => activeStageObstacles(scene?.stage?.obstacles, state),
+    [scene, state]
+  );
 
   /* Searchable things left in this scene: anything that isn't a pure exit
    * and hasn't been read/collected yet. The end-of-scene nudge tells the
@@ -5832,6 +6055,16 @@ function CasePlayer({
           else goBack();
         }
       }
+      // Backspace = rewind one DECISION (← is one line). Deliberately a
+      // different key: undoing a choice is a much bigger step than stepping
+      // back through dialogue, and must never happen by accident on ←.
+      if (e.key === "Backspace") {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          doRewindDecision();
+        }
+      }
       if (interactive && !topicConvo && availableChoices.length) {
         if (["ArrowDown", "s", "S"].includes(e.key)) {
           e.preventDefault();
@@ -5890,7 +6123,22 @@ function CasePlayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, story.deduction, story.map, story.dialogueBox, soundOn, enableSound, triggerHint]);
+  }, [overlay, menuOpen, partBreak, actMap, pendingAct, proseAcknowledged, proseDone, inBeats, interactive, availableChoices, choiceFocus, advanceBeat, pickChoice, skipCurrentText, goBack, goToSceneStart, doRewindDecision, story.deduction, story.map, story.dialogueBox, soundOn, enableSound, triggerHint]);
+
+  // Characters "on stage": anyone with talking frames (or a resting pose) who
+  // speaks in this scene. The active speaker cycles their keyframes; the rest
+  // hold their resting pose (or first frame), so two characters can face each
+  // other and only the one talking animates.
+  const onStage = useMemo(
+    () =>
+      scene && scene.nodeType !== "credits" && scene.nodeType !== "cutscene"
+        ? story.characters.filter((c) => {
+            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest || sheetDrawable(c.talkingSheet))) return false;
+            return (scene.dialogueBeats ?? []).some((b) => b.characterId === c.id);
+          })
+        : [],
+    [scene, story.characters]
+  );
 
   if (!scene)
     return (
@@ -5916,23 +6164,12 @@ function CasePlayer({
       ? SPEAKER_ACCENTS[0]
       : speakerAccent(story, currentBeat.characterId)
     : null;
-  // Characters "on stage": anyone with talking frames (or a resting pose) who
-  // speaks in this scene. The active speaker cycles their keyframes; the rest
-  // hold their resting pose (or first frame), so two characters can face each
-  // other and only the one talking animates.
-  const onStage = useMemo(
-    () =>
-      scene && scene.nodeType !== "credits" && scene.nodeType !== "cutscene"
-        ? story.characters.filter((c) => {
-            if (!((c.talkingFrames?.length ?? 0) > 0 || c.talkingRest || sheetDrawable(c.talkingSheet))) return false;
-            return (scene.dialogueBeats ?? []).some((b) => b.characterId === c.id);
-          })
-        : [],
-    [scene, story.characters]
-  );
   const activeSpeakerId = inBeats && !beatIsVo && currentBeat ? currentBeat.characterId : null;
   const animateActive = !!activeSpeakerId && currentBeat?.useCharacterAnimation !== false;
-  const showStage = proseAcknowledged && !overlay && !scene.isEnding && onStage.length > 0;
+  // STAGE nodes never overlay talking cutouts: the conversation plays as
+  // captions while the (frozen, facing-you) NPC on the plate is the speaker
+  // — portraits under the walkers read as glitchy double-vision.
+  const showStage = proseAcknowledged && !overlay && !scene.isEnding && scene.nodeType !== "stage" && onStage.length > 0;
   const particleKind = scene.particles ?? (scene.ambientAudio === "rain" ? "rain" : scene.ambientAudio === "tension" ? "smoke" : "none");
   // A credits node can carry a montage of stills that cross-dissolve behind the
   // titles, replacing the single background plate for the length of the intro.
@@ -5950,24 +6187,48 @@ function CasePlayer({
         : "scene-fade";
 
   // Single cinematic background helper
+  // TALK ZOOM — while a stage conversation plays, the ROOM eases in toward
+  // the talking pair (plate AND actors, one shared transform so the
+  // background zooms in lockstep with the characters) and back out when
+  // the floor is handed back. Origin sits on the conversation's marker —
+  // between the walker and who they're talking to — clamped inside the
+  // frame; a CSS transition does the easing both ways.
+  const talkHs =
+    stageConvo === "open" && convoHotspotId
+      ? (scene.hotspots ?? []).find((h) => h.id === convoHotspotId)
+      : undefined;
+  const talkZoomEase = { transition: "transform 0.45s cubic-bezier(0.3, 0.7, 0.3, 1)" };
+  const talkZoomStyle: React.CSSProperties = talkHs
+    ? {
+        ...talkZoomEase,
+        transform: "scale(1.22)",
+        transformOrigin: `${Math.min(86, Math.max(14, talkHs.bounds.x + talkHs.bounds.w / 2))}% ${Math.min(
+          82,
+          Math.max(30, talkHs.bounds.y + talkHs.bounds.h - 12),
+        )}%`,
+      }
+    : { ...talkZoomEase };
+
   const buildSingleBg = () => {
     const resolvedBackground = assetBackground(scene.background);
     const { className: cinClass, style: cinStyle } = cinematicLayer(bgCinematic, scene.background);
     // Examine zoom: magnify the plate toward the examined hotspot's centre.
     // It's applied to a WRAPPER (not the plate itself) because the plate's
     // cinematic animation already owns its own `transform` property.
-    const b = examining?.hs.bounds;
+    // Stages skip it: only the plate would zoom while the walker/markers
+    // stayed put, sliding the art out from under the painted walk path.
+    const b = scene?.nodeType === "stage" ? undefined : examining?.hs.bounds;
     const examineStyle: React.CSSProperties = {
       transform: b ? `scale(${examineZoom(b)})` : "scale(1)",
       transformOrigin: b ? `${b.x + b.w / 2}% ${b.y + b.h / 2}%` : "50% 50%",
       transition: "transform 0.55s cubic-bezier(0.3, 0.7, 0.3, 1)",
     };
-    const plateParallax = hasParallax(bgCinematic) && !b;
+    const plateParallax = hasParallax(bgCinematic) && !b && !talkHs;
     return (
       <div className="absolute inset-0 overflow-hidden">
         <div
           className={`absolute inset-0 will-change-transform ${plateParallax ? "parallax-plate parallax-idle" : ""}`}
-          style={{ ...examineStyle, ...(plateParallax ? parallaxStyle(bgCinematic) : {}) }}
+          style={{ ...examineStyle, ...(plateParallax ? parallaxStyle(bgCinematic) : {}), ...(talkHs ? talkZoomStyle : {}) }}
         >
           {resolvedBackground.startsWith("video:") ? (
             <>
@@ -6011,6 +6272,7 @@ function CasePlayer({
           <ForegroundExtras
             key={`fge-${sceneId}-${entrySeq}`}
             cinematic={bgCinematic}
+            {...(hasWorldPinnedExtras ? { cam: stageCam } : {})}
             {...(occludersInFront.size ? { skip: occludersInFront } : {})}
           />
           {/* Keyed by scene entry so a foreground zoom animation replays fresh
@@ -6123,7 +6385,7 @@ function CasePlayer({
         </div>
       )}
 
-      <div className="fx-halftone absolute inset-0" aria-hidden />
+      {pulpOn && <div className="fx-halftone absolute inset-0" aria-hidden />}
       {particleKind !== "none" && <Particles kind={particleKind as "rain" | "smoke" | "storm"} soundOn={soundOn} />}
 
       {/* Scene entry transition (fade / fade-black / cut) */}
@@ -6180,6 +6442,7 @@ function CasePlayer({
         const stageEl = (
           <Stage
             key={`stage-${sceneId}`}
+            activeObstacles={stageActiveObstacles}
             settings={{
               ...scene.stage,
               // Story-wide walker default (In-game theme → 🚶 Player character);
@@ -6206,7 +6469,8 @@ function CasePlayer({
             }}
             cursorStyle={cursorStyle}
             onVerbChange={setCoinVerb}
-            {...(hasOccluders ? { onPosChange: setWalkerFeet } : {})}
+            {...(hasOccluders ? { onPosChange: handleWalkerPos } : {})}
+            {...(hasWorldPinnedExtras ? { onCamChange: setStageCam } : {})}
             {...(dropRequest ? { dropRequest } : {})}
             {...(scriptRequest ? { scriptRequest } : {})}
             {...(stageEnterScript ? { enterScript: stageEnterScript } : {})}
@@ -6222,12 +6486,21 @@ function CasePlayer({
                 setPlayerPoseOnce(false);
               }
             }}
-            verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene(scene) : undefined}
+            onScriptStep={({ tag, index }) => {
+              // Playtest coverage: this cutscene step actually ran. The
+              // entry script stores under an empty hotspot tag; a runScript
+              // hotspot under its own id (mirrored by the coverage report).
+              markCoverage("cutscene", `${sceneId}:${tag === "enter" ? "" : tag}#${index}`);
+            }}
+            verbs={scene.stage.verbCoin || (scene.stage.objectVerbMenu && story.verbMenuEnabled !== false) ? verbsForScene({ ...scene, hotspots: visibleHotspots }) : undefined}
+            convoHotspotId={stageConvo === "open" ? convoHotspotId : null}
             inventory={state.inventory.map((i) => ({ id: i.id, name: i.name, icon: i.icon }))}
             background={wideBg}
             onEdgeExit={(edge) => {
               const ex = scene.stage?.exitEdges?.[edge];
-              if (!ex) return;
+              // A half-authored edge (no target) must not strand the walker in
+              // a dead scene — refuse the exit instead of going nowhere.
+              if (!ex?.targetSceneId) return;
               const fs = ex.flagSet;
               if (fs) setState((s) => applyConsequences(story, { setFlags: [fs] }, s));
               goToScene(ex.targetSceneId);
@@ -6243,35 +6516,57 @@ function CasePlayer({
         // grade; only added when a grade is active (a filter would otherwise
         // change the containing block for no reason).
         const g = spriteGradeStyle(bgCinematic);
+        // The zoom wrapper carries the SAME talkZoomStyle as the plate
+        // wrapper, so background and characters scale as one room.
+        // z-[47]: this wrapper carries talkZoomStyle, and a `transform`
+        // creates a STACKING CONTEXT — everything inside it (including the
+        // verb coin's z-[200]) is sealed in and sorts as one unit against its
+        // siblings. Without an explicit z-index the whole stage sorted below
+        // the walk-behind pass at z-[58], so a foreground prop covered the
+        // verb menu entirely. Giving the wrapper its own layer keeps the
+        // stage above the plate while the occluder pass still paints over the
+        // WALKER, which is what a walk-behind is for.
+        const stageZoomed = (
+          <div className="absolute inset-0 z-[47]" data-stage-world style={talkZoomStyle}>
+            {stageEl}
+            {/* WALK-BEHIND PASS — must live INSIDE this wrapper. talkZoomStyle
+                sets a transform, which creates a stacking context and seals
+                the whole stage (verb coin included) into one layer; a sibling
+                pass therefore painted over the coin and the dock no matter
+                what z it used. In here it sorts against the walker directly:
+                z-[160] clears the tallest walker (50 + y, so max ~150) while
+                staying under the stage's own z-[200] controls. It also pans
+                with the room, so a prop can no longer drift against the art. */}
+            {hasOccluders && occludersInFront.size > 0 && !overlay && (
+              <div className="pointer-events-none absolute inset-0 z-[160]" aria-hidden>
+                <ForegroundExtras
+                  key={`occl-${sceneId}-${entrySeq}`}
+                  cinematic={bgCinematic}
+                  {...(hasWorldPinnedExtras ? { cam: stageCam } : {})}
+                  only={occludersInFront}
+                />
+              </div>
+            )}
+          </div>
+        );
         return g.filter ? (
           <div className="pointer-events-none absolute inset-0 z-[45]" style={g}>
-            {stageEl}
+            {stageZoomed}
           </div>
         ) : (
-          stageEl
+          stageZoomed
         );
       })()}
 
-      {/* WALK-BEHIND PASS — foreground extras flagged `occludes` are drawn
-          OVER the walker (z above the stage) while the walker stands behind
-          them, and under them (normal extras pass) when in front. No mask
-          asset: the cutout's own alpha does the hiding. */}
-      {isStage && hasOccluders && occludersInFront.size > 0 && !overlay && (
-        <div className="pointer-events-none absolute inset-0 z-[58]" aria-hidden>
-          <ForegroundExtras
-            key={`occl-${sceneId}-${entrySeq}`}
-            cinematic={bgCinematic}
-            only={occludersInFront}
-          />
-        </div>
-      )}
+      {/* (the walk-behind pass now renders inside the stage wrapper above —
+          see the note there on stacking contexts) */}
 
       {/* ANIMATED CURSOR — a sprite that tracks the mouse when a verb's
           cursor art is a sheet (a reaching hand, a turning key). Drawn above
           everything, clicks pass straight through it. */}
       {cursor.animated && cursor.art?.sheet && pointer && !overlay ? (
         <div
-          className="pointer-events-none fixed z-[95] drop-shadow-[0_2px_6px_rgba(0,0,0,0.7)]"
+          className="pointer-events-none fixed z-[400] drop-shadow-[0_2px_6px_rgba(0,0,0,0.7)]"
           style={{ left: pointer.x - cursor.hx, top: pointer.y - cursor.hy }}
           aria-hidden
         >
@@ -6280,11 +6575,14 @@ function CasePlayer({
       ) : null}
 
       {/* STAGE caption bar — showText / locked / entry lines play as a
-          subtitle over the floor instead of the centre exam card. */}
+          subtitle pinned to the TOP of the plate, well above the character:
+          the walker roams the bottom floor band, so a bottom-anchored bar
+          rendered right on top of them (and lingered for seconds) hid the
+          sprite mid-scene. */}
       {isStage && stageCaption && !overlay && (
         <div
           key={stageCaption.key}
-          className={`stage-caption pointer-events-none absolute inset-x-0 bottom-[16%] z-[74] flex justify-center px-6`}
+          className={`stage-caption pointer-events-none absolute inset-x-0 top-[13%] z-[74] flex justify-center px-6`}
           onClick={(e) => e.stopPropagation()}
         >
           <div
@@ -6424,7 +6722,7 @@ function CasePlayer({
               visitedCount={visitedScenes.size}
             />
           )}
-          {!scene.hideSceneTitle && (
+          {!scene.hideSceneTitle && scene.nodeType !== "stage" && (
             <div
               key={`scene-title-${sceneId}-${entrySeq}`}
               className="scene-title-card pointer-events-none absolute inset-x-0 bottom-[34%] z-[46] flex justify-center"
@@ -6448,7 +6746,7 @@ function CasePlayer({
       )}
 
       {/* A visible action list keeps point-and-click interactions discoverable. */}
-      {proseAcknowledged && !scene.isEnding && !hudHidden && (
+      {proseAcknowledged && !scene.isEnding && !hudHidden && scene.nodeType !== "stage" && (
         <aside
           className={`hud-frame absolute right-3 top-24 z-50 w-64 p-2.5 ${
             investigateNudge ? "hud-frame-gold animate-pulse" : ""
@@ -6485,8 +6783,9 @@ function CasePlayer({
               </button>
             </div>
           )}
-          <div className="hud-kicker hud-kicker-left mb-1.5">Current lead</div>
-          <p className="font-type mb-1 text-[11px] leading-snug text-paper/70">{objective}</p>
+          {/* hud-lead: the Minimal HUD theme setting fades these until hover. */}
+          <div className="hud-kicker hud-kicker-left hud-lead mb-1.5">Current lead</div>
+          <p className="hud-lead font-type mb-1 text-[11px] leading-snug text-paper/70">{objective}</p>
           {isSoftlocked && (
             <div className="mb-1.5 border border-crimson/30 bg-crimson/[0.08] p-1.5">
               <p className="font-type text-[10px] text-crimson">Dead end detected — nothing here is reachable.</p>
@@ -6525,7 +6824,7 @@ function CasePlayer({
             <p className="font-type text-[10px] leading-snug text-paper/45">
               {stageTalking
                 ? "Talking — the conversation is on screen."
-                : "🚶 Walk with WASD / arrow keys or click the floor. Walk up to touch things — 👁 looking works from right here."}
+                : "🚶 Walk with WASD / arrows or click the floor · double-click to jog · H reveals markers · N talks to the nearest character · 1-9 pick coin verbs. 👁 looking works from right here."}
             </p>
           )}
           {!isStage && (
@@ -6562,7 +6861,7 @@ function CasePlayer({
       {!hudHidden && (
         <div className="pointer-events-none absolute left-3 top-3 z-40 flex flex-col items-start gap-1">
           {(autoAdvance || skipMode || hintActive) && (
-            <div className="hud-frame flex items-center gap-1.5 px-2 py-1">
+            <div className="hud-chrome hud-frame flex items-center gap-1.5 px-2 py-1">
               {autoAdvance && (
                 <span className="hud-chip" data-kind="good">⏩ Auto</span>
               )}
@@ -6723,6 +7022,24 @@ function CasePlayer({
             title="Back — rewind one line at a time within this scene (←)"
           >
             ◂ Back
+          </button>
+          {/* ↺ REWIND — undo a whole DECISION, not a line: the choice, the
+              quick-time window you let close, the flags and items it handed
+              you, across scenes. Sealed once an ending is reached. */}
+          <button
+            onClick={doRewindDecision}
+            disabled={!canUndoDecision}
+            data-color={canUndoDecision ? "neon" : undefined}
+            className="hud-btn px-2 py-1"
+            title={
+              canUndoDecision
+                ? `Rewind one decision — undo ${undoLabel} (Backspace)`
+                : rewind.sealed
+                  ? "The case is closed — decisions are final now"
+                  : "No decision to rewind yet"
+            }
+          >
+            ↺ Rewind
           </button>
           <button
             onClick={() => {
@@ -7501,7 +7818,7 @@ function CasePlayer({
               cinematic cut. (Continue mode keeps its single button above.) */}
 
           {interactive && !scene.isEnding && !hasUsableChoice && hasValidAutoAdvance && !scene.autoAdvanceHideTimer && autoAdvanceRemaining > 0 && (
-            <div className="mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
+            <div className="hud-chrome mt-2 border border-gold/40 bg-noir-950/90 px-3 py-2 text-center">
               <p className="font-pulp text-[10px] uppercase tracking-widest text-gold">
                 ⏱ Next scene in {autoAdvanceRemaining}s
               </p>
@@ -7717,6 +8034,16 @@ function CasePlayer({
             </button>
           </div>
 
+          <button
+            onClick={togglePulp}
+            data-active={pulpOn || undefined}
+            data-color={pulpOn ? "cyan" : undefined}
+            className="hud-btn mb-3 w-full px-2 py-1.5"
+            title="The pulp-paper halftone dots and grain over the art"
+          >
+            Pulp paper: {pulpOn ? "ON" : "OFF"}
+          </button>
+
           {musicTrack && (
             <button
               onClick={() => {
@@ -7828,7 +8155,7 @@ function CasePlayer({
               <div className="border border-paper/20 p-3">
                 <h3 className="font-pulp text-sm uppercase text-paper/70">Controls</h3>
                 <p className="mt-1 font-type text-xs leading-relaxed text-paper/60">
-                  Space / Enter: continue dialogue (a press while text types finishes the line) · ←: back one line · Shift+←: restart scene · 1–9: choices · ↑↓ / W S: move choice focus · B: corkboard · L: dialogue log · M: mute · .: skip text · Esc: close / quit
+                  Space / Enter: continue dialogue (a press while text types finishes the line) · ←: back one line · Shift+←: restart scene · Backspace: rewind one decision · 1–9: choices · ↑↓ / W S: move choice focus · B: corkboard · L: dialogue log · M: mute · .: skip text · Esc: close / quit
                 </p>
               </div>
               <button
@@ -7909,7 +8236,7 @@ function CasePlayer({
                       {c.avatarUrl.startsWith("emoji:") ? (
                         <div className="flex h-full w-full items-center justify-center text-2xl">{c.avatarUrl.slice(6) || "👤"}</div>
                       ) : (
-                        <img src={assetUrl(c.avatarUrl)} alt={c.name} className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                        <img src={assetUrl(c.avatarUrl)} alt={c.name} className="h-full w-full object-cover object-top" loading="lazy" decoding="async" />
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -7988,6 +8315,23 @@ function CasePlayer({
         />
       )}
 
+      {triangulateChoice && (
+        <TriangulateGame
+          config={triangulateChoice.triangulate!}
+          onWin={() => {
+            const c = triangulateChoice;
+            setTriangulateChoice(null);
+            finishRide(c, true);
+          }}
+          onFail={() => {
+            const c = triangulateChoice;
+            setTriangulateChoice(null);
+            finishRide(c, false);
+          }}
+          onClose={() => setTriangulateChoice(null)}
+        />
+      )}
+
       {pressLieBeat?.lie && (
         <Modal title="Press them — present your evidence" onClose={() => setPressLieBeat(null)} wide>
           <p className="mb-1 font-pulp text-[10px] uppercase tracking-widest text-crimson">
@@ -8016,7 +8360,7 @@ function CasePlayer({
                     title={item.description}
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center border border-paper/30 bg-noir-950 text-2xl">
-                      {item.iconUrl ? <img src={assetUrl(item.iconUrl)} alt="" className="h-full w-full object-cover" /> : item.icon}
+                      {item.iconUrl ? <img src={assetUrl(item.iconUrl)} alt="" className="h-full w-full object-contain p-0.5" /> : item.icon}
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate font-pulp text-[11px] uppercase tracking-wide text-paper/90">{item.name}</span>
@@ -8277,6 +8621,28 @@ export function GamePlayer({
 }) {
   const episodic = isEpisodic(story);
 
+  /* DEEP LINK — a URL that carries a world state. Resolved against THIS story
+   * (so ids are validated and warnings name the story that lacks them), and
+   * applied only on a fresh run: a resume has a save, and a link must never
+   * overwrite one. Deliberately limited to world state — the journey log,
+   * save slots and season progress stay read-only, so a link cannot fabricate
+   * a "previously on…" recap or forge a completed season. */
+  const deepLink = useMemo(() => {
+    const req = deepLinkFromUrl();
+    if (!req.present) return null;
+    const res = resolveDeepLink(story, req);
+    if (!res.applied) return null;
+    return res;
+  }, [story]);
+  useEffect(() => {
+    if (!deepLink) return;
+    console.info(`[deep-link] injected world state — ${describeDeepLink(deepLink)}`);
+    deepLink.warnings.forEach((w) => console.warn(`[deep-link] ${w}`));
+  }, [deepLink]);
+  // A resume is the player's own progress; never clobber it with a link.
+  const linkActive = !!deepLink && !resumeSlot && !resumeEpisodeId;
+  const linkScene = linkActive ? deepLink.sceneId : undefined;
+
   // Non-episodic stories keep the original one-shot behaviour untouched.
   if (!episodic) {
     return (
@@ -8287,11 +8653,37 @@ export function GamePlayer({
         resumeSlot={resumeSlot}
         primedMusic={primedMusic}
         primedNarration={primedNarration}
-        startSceneId={playFromSceneId}
+        startSceneId={playFromSceneId ?? linkScene}
+        {...(linkActive ? { initialState: deepLink.state } : {})}
         onOpenInStudio={onOpenInStudio}
         onExit={onExit}
       />
     );
+  }
+
+  /* An episodic story deep-linked to a scene opens the owning episode
+   * directly at it, with the injected state instead of the carry-over — the
+   * link IS the premise you want to test. */
+  if (linkActive && linkScene) {
+    const owner = episodeOfScene(story, linkScene);
+    if (owner) {
+      return (
+        <CasePlayer
+          key={`deep-link-${owner.id}-${linkScene}`}
+          story={story}
+          typeSpeed={typeSpeed}
+          isNewGamePlus={isNewGamePlus}
+          primedMusic={primedMusic}
+          primedNarration={primedNarration}
+          episode={owner}
+          initialState={deepLink.state}
+          startSceneId={linkScene}
+          playtestMode
+          onOpenInStudio={onOpenInStudio}
+          onExit={onExit}
+        />
+      );
+    }
   }
 
   // Studio playtest for an episodic story: open the episode that owns the

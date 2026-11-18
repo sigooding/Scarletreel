@@ -44,7 +44,7 @@ export function PlaytestCoveragePanel({ story, onSelectScene }: { story: Story; 
   }, [refresh]);
 
   const report = coverageReport(story, cov);
-  const recorded = !!cov && (report.sceneVisited > 0 || report.choiceTaken > 0 || report.runs > 0);
+  const recorded = !!cov && (report.sceneVisited > 0 || report.choiceTaken > 0 || report.markerFired > 0 || report.cutsceneRun > 0 || report.runs > 0);
   const when = report.updatedAt ? new Date(report.updatedAt).toLocaleString() : null;
 
   const gaps: { title: string; tone: string; items: { key: string; label: string; sceneId?: string }[] }[] = [
@@ -59,6 +59,24 @@ export function PlaytestCoveragePanel({ story, onSelectScene }: { story: Story; 
       items: report.missedChoices.map((g) => ({
         key: `c:${g.sceneId}:${g.choiceId}`,
         label: `${g.sceneTitle ?? g.sceneId} — “${g.text}”`,
+        sceneId: g.sceneId,
+      })),
+    },
+    {
+      title: ` stage markers never fired`,
+      tone: "text-orange-300",
+      items: report.missedMarkers.map((g) => ({
+        key: `m:${g.sceneId}:${g.hotspotId}`,
+        label: `${g.sceneTitle ?? g.sceneId} — ${g.text || g.hotspotId}`,
+        sceneId: g.sceneId,
+      })),
+    },
+    {
+      title: ` cutscene steps never played`,
+      tone: "text-sky-300",
+      items: report.missedCutsceneSteps.map((g) => ({
+        key: `x:${g.sceneId}:${g.hotspotId ?? ""}:${g.text}`,
+        label: `${g.sceneTitle ?? g.sceneId} — ${g.text}`,
         sceneId: g.sceneId,
       })),
     },
@@ -93,20 +111,26 @@ export function PlaytestCoveragePanel({ story, onSelectScene }: { story: Story; 
 
       <p className="font-type text-[9px] leading-snug text-paper/45">
         The validator says what <i>could</i> be reached. This says what you actually played: the engine counts every scene you
-        enter and every choice you pick while a case is in play, and the tally persists across playthroughs. Gaps are the
-        branches nobody has tested yet.
+        enter, every choice you pick, every stage marker you fire and every cutscene step that plays while a case is in
+        play, and the tally persists across playthroughs. Gaps are the branches nobody has tested yet.
       </p>
 
       {!recorded ? (
         <p className="font-type text-[10px] leading-relaxed text-paper/45">
           Nothing recorded yet — hit <b>▶ Test</b> (or play the case from the newsstand) and this fills in: scenes entered,
-          choices taken, endings reached.
+          choices taken, stage markers fired, cutscene steps played, endings reached.
         </p>
       ) : (
         <>
           <div className="space-y-2">
             <Bar label="Scenes entered" done={report.sceneVisited} total={report.sceneTotal} tone="bg-cyan-neon" />
             <Bar label="Choices taken" done={report.choiceTaken} total={report.choiceTotal} tone="bg-emerald-400" />
+            {report.markerTotal > 0 && (
+              <Bar label="Stage markers fired" done={report.markerFired} total={report.markerTotal} tone="bg-orange-300" />
+            )}
+            {report.cutsceneTotal > 0 && (
+              <Bar label="Cutscene steps played" done={report.cutsceneRun} total={report.cutsceneTotal} tone="bg-sky-300" />
+            )}
             {report.endingTotal > 0 && (
               <Bar label="Endings reached" done={report.endingSeen} total={report.endingTotal} tone="bg-gold" />
             )}
@@ -145,8 +169,8 @@ export function PlaytestCoveragePanel({ story, onSelectScene }: { story: Story; 
             ) : null
           )}
 
-          {report.missedScenes.length === 0 && report.missedChoices.length === 0 && (
-            <p className="font-type text-[10px] text-emerald-400">✓ Every scene and every choice in this case has been played.</p>
+          {report.missedScenes.length === 0 && report.missedChoices.length === 0 && report.missedMarkers.length === 0 && report.missedCutsceneSteps.length === 0 && (
+            <p className="font-type text-[10px] text-emerald-400">✓ Every scene, choice, marker and cutscene step in this case has been played.</p>
           )}
         </>
       )}

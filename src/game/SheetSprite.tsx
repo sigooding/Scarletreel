@@ -21,6 +21,39 @@ import { sheetAnim, sheetCols, sheetFrameAt, sheetFramePos, type SpriteSheet } f
  * `resolve` maps `asset:` references to blob/data URLs where the story
  * fields haven't been resolved yet (Studio previews).
  */
+/** Module-level sheet image cache — every SheetSprite instance shares one
+ *  Image per URL. Re-entering a room or remounting a cast member then has
+ *  the grid on hand at FIRST render: no null frame, no pop-in. The scene
+ *  warm-up (preloadStageArt) feeds the same cache. */
+const sheetImgs = new Map<string, HTMLImageElement>();
+
+/** Decoded enough to read the grid off immediately. `complete !== false`
+ *  (not `complete &&`) keeps stubbed Image implementations — happy-dom's
+ *  eager loader has no `complete` field and fires onload exactly once — on
+ *  the instant path, so StrictMode remounts still render first frame. */
+function sheetReady(img: HTMLImageElement): boolean {
+  return img.naturalWidth > 0 && img.complete !== false;
+}
+
+function acquireSheetImg(url: string, cb: (img: HTMLImageElement) => void): void {
+  let img = sheetImgs.get(url);
+  if (!img) {
+    img = new Image();
+    img.src = url;
+    sheetImgs.set(url, img);
+  }
+  if (sheetReady(img)) cb(img);
+  else img.addEventListener("load", () => cb(img!), { once: true });
+}
+
+/** SCENE-ENTRY WARM-UP — start loading a room's art before its sprites
+ *  mount, so the first frame of every character is on screen the moment
+ *  the room shows (no one-frame sprite pop). Safe to call with anything:
+ *  undefined entries are skipped, repeats are shared via the cache. */
+export function preloadStageArt(urls: (string | undefined | null)[]): void {
+  for (const u of urls) if (u) acquireSheetImg(assetUrl(u), () => {});
+}
+
 export function SheetSprite({
   sheet,
   anim,
@@ -40,11 +73,16 @@ export function SheetSprite({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [tick, setTick] = useState(0);
   const startRef = useRef(0);
 
   const url = assetUrl(resolve ? resolve(sheet.image) ?? sheet.image : sheet.image);
+  // Cache hit = dims known synchronously: the very first render draws a
+  // frame instead of the one-beat null that read as a "pop".
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(() => {
+    const img = sheetImgs.get(url);
+    return img && sheetReady(img) ? { w: img.naturalWidth, h: img.naturalHeight } : null;
+  });
   const active = sheetAnim(sheet, anim, fallbacks);
   // Did the lookup land on the animation the caller asked for?
   const requested = sheet.animations?.[anim];
@@ -53,11 +91,9 @@ export function SheetSprite({
 
   useEffect(() => {
     let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
+    acquireSheetImg(url, (img) => {
       if (!cancelled) setDims({ w: img.naturalWidth, h: img.naturalHeight });
-    };
-    img.src = url;
+    });
     return () => {
       cancelled = true;
     };
@@ -79,7 +115,12 @@ export function SheetSprite({
   const cols = sheetCols(sheet, dims.w);
   const rows = Math.max(1, Math.floor(dims.h / Math.max(1, sheet.frameHeight)));
   const elapsed = (performance.now() - startRef.current) / 1000;
-  const frame = frozen ? active.frames[0] : sheetFrameAt(active, elapsed);
+  // CLAMP the frame into the real grid: a frame index past cols*rows would
+  // background-position onto a phantom row and render nothing (the classic
+  // "character blinks out every few frames" bug on drift-trimmed sheets).
+  const maxFrame = Math.max(0, cols * rows - 1);
+  const rawFrame = frozen ? active.frames[0] : sheetFrameAt(active, elapsed);
+  const frame = Math.min(rawFrame, maxFrame);
   const { col, row } = sheetFramePos(frame, cols);
 
   const common: React.CSSProperties = {

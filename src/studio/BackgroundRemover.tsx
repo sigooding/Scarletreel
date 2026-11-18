@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveAssetReference, uploadDataUrlAsset } from "../data/mediaLibrary";
 import { ImagePicker } from "./ImagePicker";
-import { applyEdgeFloodKey, applyKey, contentBounds, despeckle, parseHex, sampleEdges, sampleCorners, toHex } from "./spriteForge";
+import { applyEdgeFloodKey, applyKey, contentBounds, despeckle, keyStats, parseHex, sampleEdges, sampleCorners, toHex } from "./spriteForge";
 
 /* ------------------------------------------------------------------ */
 /*  Media Tools tab: Background Remover.                               */
@@ -74,6 +74,8 @@ export function BackgroundRemover({ storyId }: { storyId: string }) {
   const [dragOver, setDragOver] = useState(false);
   const [compare, setCompare] = useState(false);
   const [libRef, setLibRef] = useState<string | undefined>(undefined);
+  /** Live "did this actually work?" readout, recomputed on every render pass. */
+  const [diag, setDiag] = useState<{ removedPct: number; edgeSpread: number } | null>(null);
   /** The decoded source image — decoded once, then reused by the "show
    *  original" compare view (drawImage on a still-loading <img> paints
    *  nothing, so the element is kept rather than rebuilt per render). */
@@ -162,6 +164,12 @@ export function BackgroundRemover({ storyId }: { storyId: string }) {
     const key = parseHex(keyHex);
     let keyed = mode === "flood" ? applyEdgeFloodKey(src, key, tolerance, softness) : applyKey(src, key, tolerance, softness);
     if (clean) keyed = despeckle(keyed);
+    const stats = keyStats(src, keyed, key);
+    setDiag((prev) =>
+      prev && Math.abs(prev.removedPct - stats.removedPct) < 0.05 && Math.abs(prev.edgeSpread - stats.edgeSpread) < 0.5
+        ? prev
+        : { removedPct: stats.removedPct, edgeSpread: stats.edgeSpread },
+    );
     const bounds = trim ? contentBounds(keyed) : null;
     const bx = bounds ?? { x: 0, y: 0, w: src.width, h: src.height };
 
@@ -377,6 +385,39 @@ export function BackgroundRemover({ storyId }: { storyId: string }) {
               show original
             </label>
           </div>
+
+          {/* Honest diagnosis. The old tool silently did nothing when the key
+              colour was wrong, which reads as "the editor is broken". */}
+          {diag && !compare && (
+            <div
+              className={`border px-2 py-1 font-type text-[9px] leading-snug ${
+                diag.removedPct < 1
+                  ? "border-crimson/50 bg-crimson/10 text-crimson"
+                  : diag.removedPct > 97
+                    ? "border-amber-400/50 bg-amber-400/10 text-amber-300"
+                    : "border-emerald-400/40 bg-emerald-400/5 text-emerald-300"
+              }`}
+            >
+              {diag.removedPct < 1 ? (
+                <>
+                  <b>Nothing was removed.</b> The key colour doesn’t match this backdrop
+                  {diag.edgeSpread > 60 ? " — and the border isn’t one flat colour, so no single key can cut it" : ""}.
+                  Click the backdrop in the preview to pick the right colour, press <b>⟲ auto</b>, or raise tolerance.
+                  {diag.edgeSpread > 60 && mode === "color" ? " Switch to 🪄 edge flood for a busy/graded backdrop." : ""}
+                </>
+              ) : diag.removedPct > 97 ? (
+                <>
+                  <b>Almost everything vanished</b> — tolerance is eating the subject too. Slide tolerance down, or switch to
+                  🪄 edge flood so only the backdrop touching the border is cut.
+                </>
+              ) : (
+                <>
+                  ✓ removed <b>{diag.removedPct.toFixed(0)}%</b> of the image · backdrop flatness{" "}
+                  {diag.edgeSpread < 30 ? "flat (ideal)" : diag.edgeSpread < 60 ? "slightly graded" : "busy — try edge flood"}
+                </>
+              )}
+            </div>
+          )}
 
           <div className="inline-block max-w-full border border-noir-600" style={CHECKER}>
             <canvas

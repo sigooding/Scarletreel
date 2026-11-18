@@ -3,9 +3,11 @@ import { audio, type MixChannel } from "./audio";
 import { STORIES } from "./data/stories";
 import { GamePlayer, LensFlareLayer } from "./game/Game";
 import { clearSession, readSession, writeSession } from "./game/session";
+import { deepLinkFromUrl } from "./game/deepLink";
 import { decodeStory, isEpisodic, latestSave, loadEndings, removeStoryEndings, seasonEpisodes, storySeasonProgress } from "./logic";
 import { assetUrl } from "./assetPath";
 import { Studio } from "./studio/Studio";
+import { CreatorManual } from "./studio/CreatorManual";
 import { resolveAssetReference, resolveStoryMedia, compactStoryMedia, loadStoryAssetsForExport, importStoryAssets, deleteStoryAssets } from "./data/mediaLibrary";
 import type { EndingLog, Story, TitleTheme } from "./types";
 
@@ -25,6 +27,7 @@ type Mode =
       primedNarration?: PrimedAudio | null;
     }
   | { kind: "studio"; openStoryId?: string; openSceneId?: string }
+  | { kind: "manual" }
   | { kind: "gallery" };
 
 const SETTINGS_KEY = "scarlet-reel-settings-v1";
@@ -45,7 +48,8 @@ const studioPlayKey = (token: string) => `scarlet-studio-play-${token}`;
 // r5: Nobody's Witness title sequence (montage, card motion, typeface).
 // r6: catalogue trimmed to the flagship; clears every cached built-in copy,
 //     including ones whose story file no longer ships.
-const CONTENT_REVISION = "38";
+// r39: case files gain editable Game Info synopses on the Newsreel.
+const CONTENT_REVISION = "39";
 
 export function loadGlobalTitleTheme(): TitleTheme {
   try {
@@ -57,6 +61,9 @@ export function loadGlobalTitleTheme(): TitleTheme {
     tagline: "A Dime-Store Detective Serial",
     bgImageUrl: "/img/bg-alley.jpg",
     neonColor: "#ff2e88",
+    // The newest case gets the front page out of the box, so the featured
+    // strip is visible without having to go and configure it first.
+    featuredStoryIds: ["sledge-hammer-caliber"],
   };
 }
 
@@ -426,6 +433,7 @@ export default function App() {
   const [resolvedTitleTheme, setResolvedTitleTheme] = useState<TitleTheme>(loadGlobalTitleTheme);
   const [imported, setImported] = useState<Story | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [infoStory, setInfoStory] = useState<Story | null>(null);
   const [verticalRack, setVerticalRack] = useState(false);
   const [fullscreenOn, setFullscreenOn] = useState(false);
   const [resolutionValue, setResolutionValue] = useState("1440x900");
@@ -516,13 +524,29 @@ export default function App() {
       if (story) setImported(story);
     } else if (location.hash === "#studio" || new URLSearchParams(location.search).get("studio")) {
       setMode({ kind: "studio" });
-    } else if (location.hash === "#play" || new URLSearchParams(location.search).get("play")) {
-      const flagship =
+    } else if (location.hash === "#manual" || location.hash.startsWith("#manual/") || new URLSearchParams(location.search).get("manual") !== null) {
+      setMode({ kind: "manual" });
+    } else if (
+      location.hash === "#play" ||
+      new URLSearchParams(location.search).get("play") ||
+      // WORLD-STATE DEEP LINK — ?scene=…&flags=…&items=… boots straight into
+      // the game so a collaborator can be handed one specific branch as a URL.
+      // ?story=<id> picks which case; without it the flagship is assumed, so
+      // the short form (?scene=tt_light&flags=tt_caught_lie) just works.
+      // GamePlayer does the resolving; App only has to open the player.
+      deepLinkFromUrl().present
+    ) {
+      const wanted = new URLSearchParams(location.search).get("story");
+      const target =
+        (wanted ? STORIES.find((s) => s.id === wanted) : undefined) ??
         STORIES.find((s) => s.id === "nobodys-witness-true") ??
         STORIES.find((s) => s.id === "nobodys-witness-flagship") ??
         STORIES[0];
-      if (flagship) {
-        void resolveStoryMedia(flagship).then((resolved) => {
+      if (wanted && !STORIES.some((s) => s.id === wanted)) {
+        console.warn(`[deep-link] unknown story "${wanted}" — opening the flagship instead`);
+      }
+      if (target) {
+        void resolveStoryMedia(target).then((resolved) => {
           setMode({ kind: "play", story: resolved, primedMusic: null });
         });
       }
@@ -552,7 +576,26 @@ export default function App() {
     if (mode.kind === "studio" || mode.kind === "gallery") audio.setAmbient(null);
   }, [mode.kind, resolvedTitleTheme.musicUrl, startMenuMusic]);
 
-  const stories = useMemo(() => (imported ? [...catalog, imported] : catalog), [catalog, imported]);
+  const allStories = useMemo(() => (imported ? [...catalog, imported] : catalog), [catalog, imported]);
+  /** ★ FEATURED — the big banner cards at the top of the newsstand, in the
+   *  order the author listed them. Unresolvable ids are skipped so a hidden
+   *  or deleted case can't leave a hole on the front page. */
+  const featuredStories = useMemo(() => {
+    const ids = globalTitleTheme.featuredStoryIds ?? [];
+    if (ids.length === 0) return [];
+    const byId = new Map(allStories.map((s) => [s.id, s]));
+    const seen = new Set<string>();
+    return ids
+      .filter((id) => !seen.has(id) && seen.add(id))
+      .map((id) => byId.get(id))
+      .filter((s): s is NonNullable<typeof s> => !!s);
+  }, [allStories, globalTitleTheme.featuredStoryIds]);
+  /** The ordinary grid below — a featured case is NOT repeated in it. */
+  const stories = useMemo(() => {
+    if (featuredStories.length === 0) return allStories;
+    const feat = new Set(featuredStories.map((s) => s.id));
+    return allStories.filter((s) => !feat.has(s.id));
+  }, [allStories, featuredStories]);
 
   const primeOpeningNarration = useCallback((story: Story): PrimedAudio | null => {
     // Recorded prose MP3s are raw <audio> elements. Start-scene autoplay must be
@@ -635,6 +678,10 @@ export default function App() {
   useEffect(() => {
     if (sessionRestored.current) return;
     sessionRestored.current = true;
+    // A world-state deep link is an explicit instruction about where to land.
+    // Restoring the last session on top of it would silently discard the
+    // branch the link was sent to show.
+    if (deepLinkFromUrl().present) return;
     const session = readSession();
     if (!session) return;
     if (session.kind === "studio") {
@@ -645,7 +692,9 @@ export default function App() {
       setMode({ kind: "gallery" });
       return;
     }
-    const story = stories.find((s) => s.id === session.storyId);
+    // allStories, not `stories`: the grid list excludes anything promoted to
+    // the featured strip, and a featured case must still be resumable.
+    const story = allStories.find((s) => s.id === session.storyId);
     // Case deleted or hidden, or no checkpoint to return to — the newsstand is
     // the right place to land, so fall through and leave mode alone.
     if (!story) return;
@@ -667,8 +716,10 @@ export default function App() {
       clearSession();
     } else if (mode.kind === "play") {
       writeSession({ kind: "play", storyId: mode.story.id });
-    } else {
+    } else if (mode.kind === "studio" || mode.kind === "gallery") {
       writeSession({ kind: mode.kind });
+    } else {
+      clearSession();
     }
   }, [mode]);
 
@@ -841,10 +892,17 @@ export default function App() {
 
       {mode.kind === "studio" && (
         <Studio
-          baseStories={stories}
+          // allStories, NOT the grid list: `stories` excludes anything
+          // promoted to the featured strip, which is a NEWSSTAND-PRESENTATION
+          // concern only. Passing the filtered list hid featured cases from
+          // Studio entirely — and when every story was featured it arrived
+          // empty, so `baseStories[0].id` threw on mount and the featured
+          // checkbox had no row left to untick.
+          baseStories={allStories}
           initialStoryId={mode.openStoryId}
           initialSceneId={mode.openSceneId}
           onExit={() => setMode({ kind: "menu" })}
+          onOpenManual={() => setMode({ kind: "manual" })}
           onPlay={(s, opts) => {
             if (openStudioPlayWindow(s, opts?.fromSceneId)) {
               say("Playtest opened in a new window.");
@@ -901,6 +959,10 @@ export default function App() {
             setGlobalTitleTheme(theme);
           }}
         />
+      )}
+
+      {mode.kind === "manual" && (
+        <CreatorManual onExit={() => setMode({ kind: "menu" })} onOpenStudio={() => setMode({ kind: "studio" })} />
       )}
 
       {mode.kind === "gallery" && (
@@ -1002,7 +1064,9 @@ export default function App() {
 
               <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                 <button
-                  onClick={() => play(stories[0] ?? catalog[0])}
+                  // The hero button should open the FRONT of the stand — the
+                  // first featured case if there is one, else the first card.
+                  onClick={() => play(featuredStories[0] ?? stories[0] ?? catalog[0])}
                   className="border-2 border-gold bg-gold/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold shadow-[0_0_20px_rgba(232,178,60,0.3)] hover:bg-gold/25 transition-all hover:scale-105"
                 >
                   ▶ Play Nobody's Witness: True Romance Cut
@@ -1012,6 +1076,12 @@ export default function App() {
                   className="border-2 border-cyan-neon bg-cyan-neon/15 px-6 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-cyan-neon shadow-[0_0_20px_rgba(42,217,217,0.3)] hover:bg-cyan-neon/25 transition-all hover:scale-105"
                 >
                   🎬 Open Studio Editor
+                </button>
+                <button
+                  onClick={() => setMode({ kind: "manual" })}
+                  className="border border-gold/70 bg-gold/5 px-5 py-2.5 font-pulp text-xs uppercase tracking-[0.2em] text-gold hover:bg-gold/15 transition-all hover:scale-105"
+                >
+                  📓 Creator Manual
                 </button>
               </div>
             </header>
@@ -1033,6 +1103,69 @@ export default function App() {
                 {verticalRack ? "Grid View" : "Magazine Rack"}
               </button>
             </div>
+
+            {/* ★ FEATURED — the front page of the magazine rack. Set in
+                Studio → Global Title Page Theme → Featured cases. Ids that no
+                longer resolve (hidden or deleted) are dropped rather than
+                leaving a gap, and with none set the stand renders exactly as
+                it always did. */}
+            {featuredStories.length > 0 ? (
+              <div className="mt-4 space-y-4">
+                {featuredStories.map((s) => {
+                  const found = endingsFound(s);
+                  const total = endingsTotal(s);
+                  return (
+                    <div
+                      key={`feat-${s.id}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => play(s)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          play(s);
+                        }
+                      }}
+                      className="group relative cursor-pointer overflow-hidden border-2 border-gold/70 bg-noir-800 text-left shadow-2xl transition-transform hover:-translate-y-1 hover:border-neon focus-visible:border-neon"
+                    >
+                      <div className="relative h-64 w-full overflow-hidden sm:h-80 lg:h-96">
+                        {s.coverImage.startsWith("gradient:") ? (
+                          <div className="absolute inset-0 transition-transform duration-700 group-hover:scale-105" style={coverStyle(s.coverImage)} />
+                        ) : (
+                          <img
+                            src={assetUrl(s.coverImage)}
+                            alt=""
+                            decoding="async"
+                            className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
+                          />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-noir-950 via-noir-950/40 to-transparent" />
+                        <div className="absolute left-3 top-3 border border-gold bg-noir-950/90 px-2.5 py-1 font-pulp text-[10px] uppercase tracking-widest text-gold">
+                          ★ Featured
+                        </div>
+                        <div className="absolute inset-x-0 bottom-0 p-4 sm:p-6">
+                          <h2 className="font-pulp text-2xl uppercase leading-none tracking-wide text-paper drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] sm:text-4xl">
+                            {s.title}
+                          </h2>
+                          {s.tagline ? (
+                            <p className="mt-1.5 max-w-2xl font-type text-[12px] italic text-paper/80 sm:text-sm">{s.tagline}</p>
+                          ) : null}
+                          <div className="mt-2 flex items-center gap-3 font-pulp text-[9px] uppercase tracking-widest text-gold/90">
+                            <span>▶ Play</span>
+                            {total > 0 ? (
+                              <span className="text-paper/60">
+                                {found}/{total} endings
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
 
             <div className={`mt-4 ${verticalRack ? "space-y-4" : "grid gap-5 md:grid-cols-2 xl:grid-cols-3"}`}>
               {stories.map((s, idx) => {
@@ -1154,6 +1287,17 @@ export default function App() {
                         </span>
                         <div className="flex items-center gap-1 text-[9px]">
                           <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setInfoStory(s);
+                            }}
+                            className="border border-cyan-neon/40 px-1.5 py-0.5 font-pulp text-cyan-neon hover:bg-cyan-neon/10"
+                            title={`About ${s.title}`}
+                            aria-label={`Info about ${s.title}`}
+                          >
+                            ⓘ Info
+                          </button>
+                          <button
                             onClick={async (e) => {
                               e.stopPropagation();
                               try {
@@ -1208,7 +1352,10 @@ export default function App() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (stories.length <= 1) {
+                              // Counted across the WHOLE stand (featured cases
+                              // included), or hiding down to one featured card
+                              // would be wrongly blocked/allowed.
+                              if (allStories.length <= 1) {
                                 say("At least one playable case must remain on the newsstand.");
                                 return;
                               }
@@ -1253,6 +1400,59 @@ export default function App() {
               })}
             </div>
 
+            {infoStory && (
+              <div
+                className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-5 backdrop-blur-sm"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="case-info-title"
+                onClick={() => setInfoStory(null)}
+              >
+                <section
+                  className="relative max-h-[85vh] w-full max-w-xl overflow-y-auto border-2 border-cyan-neon/60 bg-noir-950 p-6 shadow-[0_0_45px_rgba(42,217,217,0.18)]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => setInfoStory(null)}
+                    className="absolute right-3 top-3 border border-paper/30 px-2 py-1 font-pulp text-[10px] text-paper/60 hover:border-crimson hover:text-crimson"
+                    aria-label="Close case info"
+                  >
+                    ✕
+                  </button>
+                  <div className="font-pulp text-[9px] uppercase tracking-[0.35em] text-cyan-neon">Case File · Game Info</div>
+                  <h2 id="case-info-title" className="mt-2 pr-10 font-pulp text-2xl uppercase text-paper">{infoStory.title}</h2>
+                  <p className="mt-1 font-type text-sm italic text-gold/80">{infoStory.tagline}</p>
+                  <div className="mt-5 border-l-2 border-cyan-neon/60 pl-4 font-type text-sm leading-relaxed whitespace-pre-wrap text-paper/80">
+                    {infoStory.briefing?.gameInfo?.trim() || infoStory.briefing?.objective || "No synopsis has been filed for this case yet."}
+                  </div>
+                  {infoStory.briefing?.objective && (
+                    <div className="mt-5 border border-noir-600 bg-noir-900/70 p-3">
+                      <div className="font-pulp text-[9px] uppercase tracking-widest text-gold">Objective</div>
+                      <p className="mt-1 font-type text-xs leading-relaxed text-paper/65">{infoStory.briefing.objective}</p>
+                    </div>
+                  )}
+                  <div className="mt-6 flex justify-end gap-2">
+                    <button
+                      onClick={() => setInfoStory(null)}
+                      className="border border-paper/30 px-4 py-2 font-pulp text-[10px] uppercase tracking-widest text-paper/65 hover:border-paper"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={() => {
+                        const selected = infoStory;
+                        setInfoStory(null);
+                        play(selected);
+                      }}
+                      className="border-2 border-gold bg-gold/10 px-5 py-2 font-pulp text-[10px] uppercase tracking-widest text-gold hover:bg-gold/20"
+                    >
+                      ▶ Play Case
+                    </button>
+                  </div>
+                </section>
+              </div>
+            )}
+
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <button
                 onClick={() => setMode({ kind: "studio" })}
@@ -1265,6 +1465,12 @@ export default function App() {
                 className="border-2 border-paper/30 px-6 py-3 font-pulp text-sm uppercase tracking-[0.2em] text-paper/80 hover:border-cyan-neon hover:text-cyan-neon"
               >
                 🗞 Morgue File — ending gallery
+              </button>
+              <button
+                onClick={() => setMode({ kind: "manual" })}
+                className="border-2 border-cyan-neon/45 px-6 py-3 font-pulp text-sm uppercase tracking-[0.2em] text-cyan-neon hover:bg-cyan-neon/10"
+              >
+                📓 Creator Manual — Studio guide
               </button>
               {/* Import / Export for the entire catalog */}
               <button

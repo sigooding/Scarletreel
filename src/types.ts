@@ -102,6 +102,11 @@ export type StageScriptStep =
   /** Ends the script and navigates. Steps after it never run. */
   | { do: "goToScene"; targetSceneId: string };
 
+/** One follow-up action in a hotspot's `then` chain. Structurally a
+ *  HotspotAction minus its own chain — flat by construction, so the engine
+ *  can run a chain with a simple loop and no recursion or cycle guard. */
+export type ChainedHotspotAction = Omit<HotspotAction, "then">;
+
 export interface HotspotAction {
   type: HotspotActionType;
   targetSceneId?: string;
@@ -139,6 +144,24 @@ export interface HotspotAction {
   topicPrompt?: string;
   /** The leave option's label (default "Never mind"). */
   topicLeaveLabel?: string;
+  /** SOUND EFFECT — a clip fired when this action runs: a door creak, a
+   *  gunshot, a phone ringing. Distinct from `audioUrl`, which is the VOICE
+   *  channel and replaces the narration reader. This plays on the sfx bus
+   *  ALONGSIDE any line, overlaps rather than interrupting, and is silenced
+   *  by the sfx volume slider. Use audioUrl for "someone says something" and
+   *  sfxUrl for "something makes a noise". */
+  sfxUrl?: string;
+  /** Volume for `sfxUrl`, 0..1, relative to the sfx channel (default 1). */
+  sfxVolume?: number;
+  /** CHAINED ACTIONS — extra actions run in order straight after this one.
+   *  A hotspot's `action` stays the primary (it decides the cursor, gating
+   *  and whether the marker is consumed); these are follow-ups, so one click
+   *  can show a line AND set a flag AND grant an item.
+   *
+   *  Deliberately flat: a chained action carries no `then` of its own, so a
+   *  chain cannot nest or loop. Navigation ends the chain — anything after a
+   *  goToScene never runs, exactly like a script's goToScene step. */
+  then?: ChainedHotspotAction[];
   /** setPlayerPose hotspots switch the WALKER's sprite animation to a named
    *  pose — a "bend down" to look under the bar, a "crouch", a "reach". Not
    *  a flag: the pose IS the animation name on the player's sheet. Flags are
@@ -213,6 +236,11 @@ export interface Hotspot {
    *  zone answers works at range. Ignored on classic (non-stage) scenes,
    *  where hotspots already fire on click. */
   remote?: boolean;
+  /** PROP OCCLUSION — stage scenes only: this marker's object art draws OVER
+   *  the walkers instead of depth-sorting under them, so a big foreground
+   *  prop (the crashed saucer) believably covers the character walking
+   *  behind it. Default false: object art sits under walkers as always. */
+  occludes?: boolean;
   /** EXAMINE interaction: instead of a click, the player HOLDS the pointer on
    * this hotspot. The scene camera zooms in on the hotspot bounds, an
    * "EXAMINING" meter fills over `examineSeconds` (default 2.5 — release
@@ -225,6 +253,36 @@ export interface Hotspot {
   examine?: boolean;
   /** Seconds the examine hold takes (default 2.5). */
   examineSeconds?: number;
+  /** MULTI-STATE OBJECT — one object that changes with the story instead of
+   *  being faked with flag-gated duplicate hotspots. States are evaluated in
+   *  order and the LAST one whose gate passes is active (so list the
+   *  unconditional default FIRST, then increasingly specific ones). The
+   *  active state overrides the hotspot's label / image / cursor / action /
+   *  gating; everything else (identity, bounds, verbs, accepted items,
+   *  repeatable…) is inherited unchanged — the marker never duplicates or
+   *  re-mounts, it just re-skins and re-answers in place. See
+   *  docs/adventure-mode.md § Multi-state objects. */
+  states?: HotspotState[];
+}
+
+/** One state of a multi-stage object (see Hotspot.states). Every field is an
+ *  OVERRIDE — undefined means "keep the hotspot's own value" (and an empty
+ *  string for `image` means 'draw no object art in this state'). */
+export interface HotspotState {
+  /** Stable id (validator references, Studio list keys). */
+  id: string;
+  /** When this state is active. Omitted = always active: list that state
+   *  FIRST as the default — an unconditional state listed later would
+   *  permanently shadow everything above it (the validator warns on it). */
+  when?: Gating;
+  label?: string;
+  image?: string;
+  cursor?: CursorKind;
+  action?: HotspotAction;
+  /** Replaces the hotspot's own gate while this state is active.
+   *  `undefined` = inherit the hotspot's gating; an EXPLICIT null = this
+   *  state is always unlocked (the "door now open" state of a locked door). */
+  gating?: Gating | null;
 }
 
 export interface Choice {
@@ -293,15 +351,55 @@ export interface Choice {
    * Default false — you flash it, you keep it. The choice being one-shot
    * already prevents showing the same item twice for two reactions. */
   consumePresentedItem?: boolean;
-  /** OPT-IN playable ride minigame (Full Throttle's road sequence). Picking
+  /** OPT-IN playable ride minigame (a road sequence). Picking
    *  this choice launches a steering game instead of navigating at once: the
    *  player weaves through oncoming traffic for the ride's duration — survive
    *  to `targetSceneId` (the choice's `consequences` apply on the win), crash
    *  to `timedOutTargetSceneId`. Mutually exclusive with `quickTime`. */
   ride?: RideConfig;
+  /** OPT-IN playable SIGNAL TRIANGULATION minigame (a 3D radio fix). Picking
+   *  this choice opens a three.js bay: sweep a directional antenna around the
+   *  water, read the signal strength, and drop bearing lines from three
+   *  listening posts until they cross on the boat. Nail the fix inside the
+   *  time limit and the choice's `consequences` apply and you head to
+   *  `targetSceneId`; run out of time (or burn every bearing) and it routes to
+   *  `timedOutTargetSceneId`. Mutually exclusive with `quickTime` and `ride`. */
+  triangulate?: TriangulateConfig;
 }
 
-/** A playable vehicle-ride minigame (Full Throttle's highway chase): steer
+/** A playable SIGNAL TRIANGULATION minigame — the 3D counterpart to the
+ *  lane-dodging ride and the flat row-picking pattern puzzle.
+ *
+ *  The player orbits a night-time bay rendered in three.js, aims a directional
+ *  antenna from each of several shore posts, and commits a bearing when the
+ *  signal meter peaks. Each committed bearing draws a line across the water;
+ *  where the lines cross is the fix. Win by committing enough bearings whose
+ *  crossing lands within `toleranceMeters` of the hidden target. */
+export interface TriangulateConfig {
+  /** the big prompt above the bay */
+  prompt?: string;
+  /** seconds on the clock (default 45) */
+  durationSeconds?: number;
+  /** how many bearings must cross on the target to win (default 3) */
+  bearingsRequired?: number;
+  /** how many bearings the player may commit in total (default 5) — the
+   *  margin for error, since a sloppy bearing is spent either way */
+  bearingsAllowed?: number;
+  /** how close the crossing must land, in world units (default 9) */
+  toleranceMeters?: number;
+  /** shore listening posts the player sweeps from, as world-unit x/z pairs.
+   *  Two is the minimum for a crossing; three gives a real fix. */
+  posts?: { x: number; z: number; label?: string }[];
+  /** where the boat actually is, in world units. Omit for a seeded random
+   *  position out on the water — a different fix on every playthrough. */
+  target?: { x: number; z: number };
+  /** caption on a successful fix */
+  winText?: string;
+  /** caption when the clock beats you */
+  failText?: string;
+}
+
+/** A playable vehicle-ride minigame (a highway chase): steer
  *  left/right across lanes, dodging oncoming traffic. Reaching the end wins
  *  the ride; a crash routes to the choice's `timedOutTargetSceneId`. */
 export interface RideConfig {
@@ -323,6 +421,30 @@ export interface RideConfig {
   winText?: string;
   /** caption shown on a crash (default "You went down.") */
   crashText?: string;
+  /** ROAD ART — a vertically TILING image scrolled toward the player instead
+   *  of the built-in CSS asphalt. Use a seamless tile (its top edge must
+   *  continue into its bottom edge) or the loop visibly jumps. */
+  roadImage?: string;
+  /** Scenery behind the road — a skyline the road is driving into. Static;
+   *  the sense of speed comes from the road, not the horizon. */
+  horizonImage?: string;
+  /** COCKPIT OVERLAY — a dashboard/windscreen frame drawn OVER the road, with
+   *  its middle transparent. Turns the ride from a top-down dodge into a
+   *  first-person drive without changing any of the play. */
+  dashboardImage?: string;
+  /** Full-bleed image shown on the crash card (the wreck). */
+  crashImage?: string;
+  /** DRIVER BEATS — the character's running commentary. One is fired on each
+   *  near miss (`nearMiss`), on the crash, and on the win, so the ride talks
+   *  the way the show does instead of playing in silence. Lines are picked in
+   *  order and don't repeat until the list is exhausted. */
+  driverName?: string;
+  /** The talking sheet for the driver's portrait beside each line. */
+  driverSheet?: import("./game/spriteSheet").SpriteSheet;
+  /** Quips fired when traffic passes close without hitting. */
+  nearMissLines?: string[];
+  /** Quips fired as the ride starts. */
+  startLines?: string[];
 }
 
 /** A catch-them-in-a-lie beat. Authored on a DialogueBeat via `beat.lie`:
@@ -681,15 +803,33 @@ export interface ForegroundExtra {
   fit?: "contain" | "cover" | "fill" | "native";
   /** image scale (default 1) */
   scale?: number;
-  /** anchor position as % of the frame (default 50 / 50) */
+  /** anchor position as % of the frame (default 50 / 50).
+   *
+   *  NOTE the coordinate space: x/y are a % of the VIEWPORT and are clamped
+   *  to 0..100, even in a wide (`stage.worldWidth > 100`) room. Hotspots,
+   *  obstacles, occluders and spawns are a % of the WORLD. Set `worldX` to
+   *  pin a prop to the room instead of the screen. */
   x?: number;
   y?: number;
+  /** WIDE STAGES ONLY. Pin this layer to a position in the WORLD
+   *  (0..worldWidth) so it pans with the camera instead of staying stuck to
+   *  the viewport. Without it a prop slides across the room as the player
+   *  walks — a dumpster drifting along the alley. Overrides `x`. */
+  worldX?: number;
   /** point ON the image pinned at x/y, CSS background-position style (default "50% 100%" — feet on the floor) */
   anchor?: string;
   /** mirror horizontally, so two subjects can face each other */
   flip?: boolean;
   /** parallax depth 0 (far)→1 (near); only moves when parallaxDepth is on. */
   depth?: number;
+  /** Toggle the layer without deleting it — useful while composing a shot. */
+  visible?: boolean;
+  /** layer opacity, useful for ghosts, rain, fog and distant silhouettes. */
+  opacity?: number;
+  /** CSS compositing style for this layer. */
+  blendMode?: "normal" | "screen" | "multiply" | "overlay" | "soft-light" | "difference";
+  /** rotation in degrees around the authored anchor. */
+  rotation?: number;
   /** optional animated push-in zoom (1 = none) */
   zoom?: number;
   /** seconds the foreground zoom takes (default 8) */
@@ -797,6 +937,8 @@ export interface CinematicSettings {
   foregroundY?: number;
   /** animated push-in (or pull-out) zoom applied to the foreground, focused on
    * foregroundAnchor. 1 = no zoom (default); >1 zooms in, <1 zooms out. */
+  /** rotation in degrees around the authored foreground anchor. */
+  foregroundRotation?: number;
   foregroundZoom?: number;
   /** seconds for the foreground zoom to complete (default 8) */
   foregroundZoomDuration?: number;
@@ -804,6 +946,17 @@ export interface CinematicSettings {
    * several poses. When set, its `frames` replace the single foregroundImage
    * (every frame shares the same scale / fit / position). */
   foregroundAnimation?: ForegroundAnimation;
+  /** CSS blend mode for the PRIMARY foreground layer (default "normal").
+   *
+   * A real cutout with an alpha channel needs nothing here. This exists for
+   * legacy FX plates that fake transparency by painting the subject on flat
+   * black ("screen" drops the black) or flat white ("multiply" drops the
+   * white). foregroundExtras always had `blendMode`; the primary layer did
+   * not, so an FX plate assigned to it rendered as an opaque rectangle over
+   * the scene — the one place authors could not work around it. */
+  foregroundBlendMode?: "normal" | "screen" | "multiply" | "lighten" | "darken" | "overlay" | "soft-light" | "hard-light";
+  /** opacity of the PRIMARY foreground layer 0–1 (default 1). */
+  foregroundOpacity?: number;
   /** ADDITIONAL foreground images stacked on top of the plate (and behind
    * the primary foregroundImage subject). Unlike the single primary
    * foreground (the vertigo / talking-sprite anchor), these are independently
@@ -964,6 +1117,8 @@ export interface LensFlareSettings {
  * Without this, players have no idea what they are aiming at or what kills them.
  */
 export interface CaseBriefing {
+  /** Newsreel synopsis shown by the case card's Info button. */
+  gameInfo?: string;
   /** one-line statement of the case goal */
   objective: string;
   /** how the player achieves the best outcome */
@@ -1044,6 +1199,44 @@ export interface Interrogation {
  * lives in short caption lines (`showText` actions and `enterCaption`),
  * the way a walkable scene speaks through what you do, not paragraphs.
  */
+/** One no-go rectangle the walker routes around (StageSettings.obstacles).
+ *  Optionally carries a GATE: while the gate does NOT pass, the barrier is a
+ *  solid wall (a locked door); the moment the gate opens the barrier ceases
+ *  to exist and the walker may pass — the lock-and-key puzzle made spatial. */
+/** One WALK-BEHIND region (StageSettings.occluders): a shape drawn over the
+ *  room's own background art that covers the walker while they stand behind
+ *  it. Purely visual — use an `obstacle` if it should also block movement. */
+export interface StageOccluder {
+  /** Stable id (editor/validator references). Optional. */
+  id?: string;
+  /** The shape, in world-% (x spans 0–worldWidth, y spans 0–100). Three or
+   *  more points. A rectangle is just four points. */
+  points: { x: number; y: number }[];
+  /** THE DEPTH LINE, in % of plate height: the walker is covered while their
+   *  feet are ABOVE this (smaller y = further away). Defaults to the lowest
+   *  point of the shape — the front edge of the desk — which is what you want
+   *  almost every time. Nudge it to move where "behind" begins. */
+  baseline?: number;
+  /** Hide the region without deleting it, while composing a shot. */
+  visible?: boolean;
+  /** Author's note — what this shape is ("the sergeant's desk"). */
+  label?: string;
+}
+
+export interface StageObstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Stable id (editor/validator references). Optional. */
+  id?: string;
+  /** PASSAGE GATE — the barrier blocks while this gate is CLOSED and is
+   *  gone once it opens. Omit for furniture that always blocks (a counter,
+   *  a parked truck). A gate with an item requirement works too (the crowd
+   *  parts once you hold the badge). */
+  gating?: Gating;
+}
+
 export interface StageSettings {
   /** The player character sprite. An image url / `asset:` token, or an emoji
    *  glyph when it starts with "emoji:" (e.g. "emoji:🕵️"). */
@@ -1058,6 +1251,13 @@ export interface StageSettings {
    *  When on, hotspots answer per verb (Hotspot.verbs) and the USE verb arms
    *  an inventory item. See docs/adventure-mode.md. */
   verbCoin?: boolean;
+  /** SENTENCE LINE — the SCUMM strip along the bottom of the room that
+   *  reads out the pending interaction as you hover ("Look at the
+   *  drop-safe", "Use wrench on the bike", or just "Walk to"). While on,
+   *  RIGHT-CLICKING an object is a quick 👁 Look, exactly like picking
+   *  look off the coin. Rooms without it (the default) render nothing
+   *  new and classic graphic-novel scenes are untouched. */
+  sentenceLine?: boolean;
   /** Which verbs the coin offers. Defaults to every verb the room uses. */
   verbs?: import("./types").VerbId[];
   /** OPT-IN for the two EXTRA body-verbs (👢 kick · 👊 punch). When true, the
@@ -1068,14 +1268,14 @@ export interface StageSettings {
    *  the extra verbs a per-ROOM choice, so a visual novel or a classic case
    *  never sees them unless it asks. See docs/adventure-mode.md. */
   extendedVerbs?: boolean;
-  /** OPT-IN — OBJECT-FIRST verb menu (Full Throttle's "skull"): instead of
+  /** OPT-IN — OBJECT-FIRST verb menu (the "skull pie"): instead of
    *  picking a verb from the bottom coin and then the object, the player
    *  CLICKS an object first and a small pie-style menu of the verbs THAT
    *  object answers pops up next to it; pick a verb to act. USE expands to
    *  the inventory when the object accepts items. Off (default): the classic
    *  flow (and the verb-first coin) is unchanged. See docs/adventure-mode.md. */
   objectVerbMenu?: boolean;
-  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (Full Throttle's
+  /** OPT-IN — HOLD-TO-OPEN for the object-first verb menu (the
    *  classic skull pie): instead of opening the pie the instant you click an
    *  object, the player PRESSES AND HOLDS the object and a BIG circular menu
    *  opens in the middle of the screen — the story's `verbMenuIcon` sprite
@@ -1087,7 +1287,7 @@ export interface StageSettings {
   /** The sprite at the CENTRE of the object-first skull pie menu (see
    *  `objectVerbMenu` / `objectMenuHold`) — an image url / `asset:` token or
    *  an `emoji:` glyph, rendered BIG in the middle of the ring of verbs so
-   *  the menu wears the game's own art (Full Throttle's flaming skull).
+   *  the menu wears the game's own art.
    *  Default: a skull emoji. Normally set story-wide on the 🎮 In-game theme
    *  tab (Story.verbMenuIcon); a stage value overrides it. */
   objectMenuIcon?: string;
@@ -1119,6 +1319,26 @@ export interface StageSettings {
    *  y-extent (bottom = near, top = far). Overrides `floor` for movement;
    *  `floor` (or the polygon's bounds) still drives the depth scale. */
   floorPoints?: { x: number; y: number }[];
+  /** WALK-BEHIND REGIONS — draw around a desk, a counter, a parked car that
+   *  is ALREADY PAINTED INTO THE BACKGROUND, and the walker is covered by it
+   *  when they stand behind it.
+   *
+   *  This is the classic adventure "walk-behind" and it needs no extra art:
+   *  the region is filled with the ROOM'S OWN BACKGROUND, clipped to the
+   *  polygon you drew, and drawn at the depth of its `baseline`. A character
+   *  whose feet are ABOVE the baseline (further up the plate = further away)
+   *  sorts underneath it and is partly hidden; step forward past the baseline
+   *  and you walk in front of it again. Because the fill is the background
+   *  itself, the cutout matches the art pixel-for-pixel at every viewport
+   *  size — nothing to export, nothing to keep in register.
+   *
+   *  Contrast the two neighbouring features:
+   *    - `obstacles`  — where you may WALK   (collision, no visual)
+   *    - `occluders`  — what COVERS you      (visual, no collision)
+   *    - foregroundExtras + `occludes` — the same idea for a SEPARATE cutout
+   *      image (a prop that isn't in the plate).
+   *  A desk usually wants an occluder AND an obstacle over the same shape. */
+  occluders?: StageOccluder[];
   /** Perspective: how much SMALLER the character is drawn at the top of the
    *  floor vs the bottom, 0–0.9 (default 0.35). 0 = flat, no depth scaling. */
   depthScale?: number;
@@ -1158,8 +1378,14 @@ export interface StageSettings {
    *  counter, a parked bike — as scene-percent rectangles. Click-to-walk
    *  routes around them (A* on a coarse grid, then string-pulled to the
    *  corners a person would actually turn at); the keyboard slides along them
-   *  instead of stopping dead. See src/logic.ts `stageRoute`. */
-  obstacles?: { x: number; y: number; w: number; h: number }[];
+   *  instead of stopping dead. See src/logic.ts `stageRoute`.
+   *  A barrier may carry a GATE (`gating`): while the gate is CLOSED the
+   *  barrier is a solid wall, and the instant it opens the barrier is GONE —
+   *  a locked door made SPATIAL (the walker physically cannot pass, never
+   *  mind the menus). Pair it with a door hotspot (or a multi-state object)
+   *  whose action sets the opening flag. See docs/adventure-mode.md
+   *  § "Doors as real doors". */
+  obstacles?: StageObstacle[];
   /** WIDE WORLD — how many viewport-widths the room spans (default 100 =
    *  one screen, the classic single plate). 200 = two screens side by side,
    *  like a LucasArts scrolling alley: the camera follows the walker and
@@ -1220,6 +1446,14 @@ export interface StageNpc {
   patrol?: StageNpcWaypoint[];
   /** Walk speed in world-% / second (default: the room's walker speed). */
   speed?: number;
+  /** INTERACTABLE NPC — link this actor to a 🗣 start-conversation marker
+   *  (by hotspot id) and the actor BECOMES that marker: the static diamond
+   *  hides and the character itself is clickable — the walker chases the
+   *  actor's LIVE position (re-routing while they patrol) and the
+   *  conversation fires on catch. Pressing N in play walks to + talks with
+   *  the nearest linked character. Ambient (no link) NPCs stay pure
+   *  set-dressing, exactly as before. */
+  talkHotspotId?: string;
   /** How the route repeats (default "loop" — jump back to waypoint 1):
    *  "pingpong" walks the route backwards to the start and out again;
    *  "once" walks it a single time and HOLDS the last waypoint's motion
@@ -1582,7 +1816,7 @@ export interface StoryMap {
  *    reading-forward, one decision at a time.
  *  - "adventure": a point-and-click room game — walkable rooms (STAGE nodes),
  *    verb cursors (look / take / talk / use / go), inventory puzzles, NPCs
- *    with idle animation. Prototype: src/data/throttleAsh.ts.
+ *    with idle animation. See docs/adventure-mode.md.
  *  - "vn": a visual novel — full-screen portraits, minimal UI, dialogue-led.
  *
  *  Today this is a DECLARATION (Studio shows it, the validator reads it, and
@@ -1625,7 +1859,7 @@ export interface Story {
    *  tab. See CursorArt. */
   cursorArt?: Partial<Record<import("./types").CursorKind | "default", CursorArt>>;
   /** The sprite at the CENTRE of the object-first skull pie menu (Full
-   *  Throttle's skull — see StageSettings.objectVerbMenu / objectMenuHold).
+   *  the skull pie — see StageSettings.objectVerbMenu / objectMenuHold).
    *  An image url / `asset:` token or an `emoji:` glyph; rendered BIG in the
    *  middle of the ring of verbs whenever the pie opens. Purely additive:
    *  unset keeps the default skull emoji and every non-opt-in game is
@@ -1634,7 +1868,7 @@ export interface Story {
   /** OPT-IN master switch for the object-first verb menu (the skull pie).
    *  The menu is already per-scene opt-in (StageSettings.objectVerbMenu);
    *  this is the STORY-wide kill-switch. Default undefined = "on" (scenes
-   *  that opt in keep their menu, so existing stories like Full Throttle are
+   *  that opt in keep their menu, so existing opt-in stories are
    *  untouched). Set `false` to disable the pie everywhere — every scene's
    *  objectVerbMenu / objectMenuHold is ignored — so a game that never uses
    *  it never shows it. Authored on the 🎮 In-game theme tab. */
@@ -1675,8 +1909,11 @@ export interface Story {
   /** Look of the bottom dialogue/choice panel. Story-wide, so the reading
    * surface stays consistent from scene to scene. */
   dialogueBox?: DialogueBoxTheme;
-  /** studio canvas layout: sceneId -> position */
-  layout?: Record<string, { x: number; y: number }>;
+  /** Studio canvas layout: sceneId -> position, plus an OPTIONAL authored size.
+   *  w/h are only present once an author has resized that card by hand; every
+   *  card without them renders at the default width, so old stories and fresh
+   *  scenes are unaffected. Purely an editor concern — the game never reads it. */
+  layout?: Record<string, { x: number; y: number; w?: number; h?: number }>;
   /** transport-only array to package IndexedDB assets during import/export */
   assets?: MediaAsset[];
 }
@@ -1768,6 +2005,14 @@ export interface TitleTheme {
   musicUrl?: string;
   bgImageUrl?: string;
   neonColor?: string; // custom flicker neon hex code
+  /** FEATURED CASES — story ids given a big banner card at the TOP of the
+   *  newsstand, above the ordinary grid: the front-page splash of the
+   *  magazine rack. Order here is the order they appear, so this doubles as
+   *  the running order of the front page. Ids that no longer resolve to a
+   *  visible story are ignored (a hidden or deleted case must not leave a
+   *  hole at the top of the stand). Empty/omitted = no featured strip and
+   *  the newsstand looks exactly as it always did. */
+  featuredStoryIds?: string[];
 }
 
 export interface GlobalState {

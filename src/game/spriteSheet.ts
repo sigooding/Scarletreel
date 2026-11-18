@@ -40,9 +40,18 @@ export interface SpriteSheet {
   pixelated?: boolean;
 }
 
-/** Columns in the sheet given the loaded image's natural width. */
+/** Columns in the sheet given the loaded image's natural width. Drift-
+ *  tolerant: a sheet whose width sits within 5% of a whole frame multiple
+ *  rounds UP to it (downscale pipelines can land 1-2px short per row of
+ *  frames); flooring there would drop the LAST column, whose frames then
+ *  wrap to a phantom row and render blank — characters flashing on/off
+ *  every animation cycle. Genuinely partial columns (>=5% short) still
+ *  floor, as before. */
 export function sheetCols(sheet: SpriteSheet, imageWidth: number): number {
-  return Math.max(1, Math.floor(imageWidth / Math.max(1, sheet.frameWidth)));
+  const fw = Math.max(1, sheet.frameWidth);
+  const n = imageWidth / fw;
+  const r = Math.round(n);
+  return Math.max(1, Math.abs(n - r) <= 0.05 * Math.max(1, r) ? r : Math.floor(n));
 }
 
 /** Resolve an animation by name with graceful fallbacks. */
@@ -92,7 +101,23 @@ export function sheetDrawable(sheet?: SpriteSheet | null): sheet is SpriteSheet 
  * `expectedNames`: the animation names the engine looks up for THIS use of
  * the sheet (walker: walk/idle, portrait: talk/rest, extra: loop) — a sheet
  * defining none of them still renders via fallback, but gets a hint. */
-export function spriteSheetIssues(sheet: SpriteSheet, label = "sprite sheet", expectedNames?: string[]): string[] {
+/** Author-facing sanity check; each entry becomes a validator warning.
+ * `expectedNames`: the animation names the engine looks up for THIS use of
+ * the sheet (walker: walk/idle, portrait: talk/rest, extra: loop) — a sheet
+ * defining none of them still renders via fallback, but gets a hint.
+ * `gridFrameCount`: how many frames the sheet image ACTUALLY holds
+ * (cols × rows from its natural size). Only known once the image has decoded,
+ * so it is optional — when supplied, animations referencing frames past the
+ * end of the grid are reported. Those frames don't crash: SheetSprite clamps
+ * them to the last real frame, so the sprite silently plays the WRONG pose
+ * (a "talk" cycle that stops moving, an idle stuck on the final frame).
+ * Nothing else in the app tells the author, which is why it belongs here. */
+export function spriteSheetIssues(
+  sheet: SpriteSheet,
+  label = "sprite sheet",
+  expectedNames?: string[],
+  gridFrameCount?: number
+): string[] {
   const issues: string[] = [];
   if (!sheet.image) issues.push(`${label}: no sheet image set.`);
   if (!(sheet.frameWidth > 0) || !(sheet.frameHeight > 0))
@@ -104,10 +129,34 @@ export function spriteSheetIssues(sheet: SpriteSheet, label = "sprite sheet", ex
     else if (anim.frames.some((f) => !Number.isInteger(f) || f < 0))
       issues.push(`${label}: animation "${name}" has a negative or fractional frame index.`);
     if (anim?.fps !== undefined && !(anim.fps > 0)) issues.push(`${label}: animation "${name}" fps must be > 0.`);
+
+    // Frames past the end of the real grid. Reported per animation, naming the
+    // offenders, because "frame 7 doesn't exist" is actionable and "this sheet
+    // is wrong" is not. Common after re-building a sheet with fewer sprites
+    // than the animations were originally written for.
+    if (gridFrameCount && gridFrameCount > 0 && anim?.frames?.length) {
+      const over = anim.frames.filter((f) => Number.isInteger(f) && f >= gridFrameCount);
+      if (over.length) {
+        const unique = [...new Set(over)].sort((a, b) => a - b);
+        const one = unique.length === 1;
+        issues.push(
+          `${label}: animation "${name}" uses frame${one ? "" : "s"} ${unique.join(", ")}, but the sheet only has ${gridFrameCount} (0–${gridFrameCount - 1}). ` +
+            `${one ? "It" : "They"} will render as frame ${gridFrameCount - 1} instead.`
+        );
+      }
+    }
   }
   if (expectedNames?.length && anims.length && !anims.some(([n]) => expectedNames.includes(n)))
     issues.push(
       `${label}: none of the animation names the engine looks up here (${expectedNames.map((n) => `"${n}"`).join(", ")}) are defined — it will fall back to "${anims[0][0]}".`
     );
   return issues;
+}
+
+/** Frames the sheet image actually holds, from its natural pixel size.
+ *  Shared by the editor's warning and its animation presets so both agree. */
+export function sheetFrameCount(sheet: SpriteSheet, imageWidth: number, imageHeight: number): number {
+  const cols = sheetCols(sheet, imageWidth);
+  const rows = Math.max(1, Math.floor(imageHeight / Math.max(1, sheet.frameHeight)));
+  return Math.max(1, cols * rows);
 }

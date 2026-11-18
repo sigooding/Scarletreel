@@ -179,17 +179,66 @@ function sampleCorners(px, w, h) {
   };
 }
 
-/** Chroma-key + feather. Everything within `tolerance` of the key goes
- *  transparent; the `softness` band beyond it ramps the alpha. */
+/** Chroma-key + feather + DESPILL. Everything within `tolerance` of the key
+ *  goes transparent; the `softness` band beyond it ramps the alpha.
+ *
+ *  DESPILL is why this function isn't just the distance test. Anti-aliased
+ *  art blends the subject into the key colour along every edge, so the pixels
+ *  that survive the cut still carry the key in their RGB. On a chunky
+ *  silhouette you never notice; on fine detail — chain-link mesh, railings,
+ *  hair, stray leaves — nearly every pixel IS an edge pixel and the sprite
+ *  renders with a magenta halo over the game's background.
+ *
+ *  The fix: for a key whose dominant channels are known (magenta = R+B, green
+ *  = G), pull the offending channel(s) back down toward the neutral channel by
+ *  however much the pixel leans toward the key. Colours that legitimately
+ *  contain the key hue lose a little saturation; the halo disappears. */
 function key(px, w, h, k, tol, soft) {
   const out = new Uint8Array(px);
+  // Which channels does the key over-weight? (magenta ff00ff -> r,b)
+  const kmax = Math.max(k.r, k.g, k.b);
+  const hot = [k.r, k.g, k.b].map((c) => c >= kmax * 0.75 && kmax > 40);
+  const cold = [0, 1, 2].filter((i) => !hot[i]);
+
   for (let i = 0; i < out.length; i += 4) {
-    const dr = out[i] - k.r,
-      dg = out[i + 1] - k.g,
-      db = out[i + 2] - k.b;
+    const r = out[i],
+      g = out[i + 1],
+      b = out[i + 2];
+    const dr = r - k.r,
+      dg = g - k.g,
+      db = b - k.b;
     const dist = Math.sqrt(dr * dr + dg * dg + db * db);
-    if (dist <= tol) out[i + 3] = 0;
-    else if (dist <= tol + soft) out[i + 3] = Math.round(out[i + 3] * ((dist - tol) / soft));
+
+    if (dist <= tol) {
+      out[i + 3] = 0;
+      continue;
+    }
+    if (dist <= tol + soft) out[i + 3] = Math.round(out[i + 3] * ((dist - tol) / soft));
+    if (out[i + 3] === 0 || cold.length === 0) continue;
+
+    // Despill: pull the key's hue out of pixels it bled into.
+    //
+    // The clamp must only fire on pixels that are ACTUALLY spilled. Real
+    // magenta spill lifts BOTH hot channels (R and B) above the cold one
+    // (G) together — that is what "leaning magenta" means. Skin, by
+    // contrast, is R > G > B: its red is genuinely high but its blue sits
+    // BELOW green, so it is not spill and must be left alone.
+    //
+    // The previous version clamped any hot channel above the cold average,
+    // which caught every warm colour in the plate and flattened R down to
+    // G — turning all skin tones a uniform olive grey. (Trunk's face went
+    // from 155,148,137 to 174,174,148.)
+    const c = [r, g, b];
+    let ref = 0;
+    for (const j of cold) ref += c[j];
+    ref /= cold.length;
+    const spilled = [0, 1, 2].every((j) => !hot[j] || c[j] > ref);
+    if (!spilled) continue;
+    // Feather the correction by how far above the cold reference the pixel
+    // leans, so a lightly-tinted edge is nudged rather than hard-clamped.
+    for (let j = 0; j < 3; j++) {
+      if (hot[j] && c[j] > ref) out[i + j] = Math.round(ref);
+    }
   }
   return out;
 }
@@ -348,6 +397,29 @@ const frames = cols
 if (!frames.length) {
   console.error(`✖ no frames found in ${inPath} — try --auto, or a bigger --tolerance`);
   process.exit(2);
+}
+
+/* RESOLUTION GUARD — `--height` is the sheet's real pixel resolution, and it
+ * is a CEILING on how sharp the sprite can ever be. The game now sizes stage
+ * walkers as a fraction of the plate (stageSpritePx), so on a large display a
+ * character can be asked to draw at 300–400px; a sheet sliced at 200 gets
+ * upscaled and goes soft, which reads as "the sprites look wrong" long before
+ * anyone suspects the slicing step. Warn when we're throwing pixels away, and
+ * when we're inventing them. */
+{
+  const srcMax = Math.max(...frames.map((f) => f.srcH));
+  if (height > srcMax * 1.05) {
+    console.warn(
+      `⚠ --height ${height} UPSCALES the source (tallest frame is ${srcMax}px): the sheet will be soft. ` +
+        `Re-render the plate larger, or slice at --height ${srcMax}.`
+    );
+  }
+  if (height < 256) {
+    console.warn(
+      `⚠ --height ${height} is low for a stage character. The engine scales walkers with the ` +
+        `viewport, so 384–512 is the safe range; small sheets look fine in the editor and blur in play.`
+    );
+  }
 }
 
 const widest = Math.max(...frames.map((f) => Math.round((f.x1 - f.x0) * f.scale)));

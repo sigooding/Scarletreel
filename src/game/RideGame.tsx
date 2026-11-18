@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { gameRandom } from "./rng";
 import type { RideConfig } from "../types";
 import { assetUrl } from "../assetPath";
+import { SheetSprite } from "./SheetSprite";
 import { audio } from "../audio";
 
 /**
- * RideGame — a playable vehicle-ride minigame (Full Throttle's highway chase).
+ * RideGame — a playable vehicle-ride minigame (a highway chase).
  *
  * The player steers a vehicle across a few lanes, dodging oncoming traffic
  * that scrolls toward them. Survive the ride's duration and you run the
@@ -56,6 +58,15 @@ export function RideGame({
   const traffic = config.traffic && config.traffic.length ? config.traffic : ["🚗"];
   const vehicle = config.vehicleImage ?? "🏍";
 
+  /** DRIVER BEATS — the running commentary. `quip` is the line on screen; the
+   *  pools are consumed in order and only recycled once exhausted, so a short
+   *  ride doesn't repeat itself. */
+  const [quip, setQuip] = useState<string | null>(null);
+  const quipTimer = useRef(0);
+  const nearMissPool = useRef<string[]>([]);
+  /** Obstacles already scored for a near miss — each one may only quip once. */
+  const missed = useRef<Set<number>>(new Set());
+
   const [lane, setLane] = useState(() => Math.floor(lanes / 2));
   const [phase, setPhase] = useState<"ready" | "riding" | "win" | "crash">("ready");
   const [obstacles, setObstacles] = useState<Obstacle[]>([]);
@@ -71,12 +82,16 @@ export function RideGame({
   winRef.current = onWin;
   const crashRef = useRef(onCrash);
   crashRef.current = onCrash;
+  const sayRef = useRef((_l?: string) => {});
 
   /** begin the ride on any key/tap. */
   const start = useCallback(() => {
     if (phaseRef.current !== "ready") return;
     audio.click();
     setPhase("riding");
+    const openers = config.startLines ?? [];
+    if (openers.length) sayRef.current(openers[Math.floor(gameRandom() * openers.length)]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** steer one lane left/right (clamped). */
@@ -91,6 +106,17 @@ export function RideGame({
     },
     [lanes]
   );
+
+  /** Put a line on screen for a beat. Later lines cut off earlier ones —
+   *  during a scrape the newest reaction is always the relevant one. */
+  const say = useCallback((line?: string) => {
+    if (!line) return;
+    window.clearTimeout(quipTimer.current);
+    setQuip(line);
+    quipTimer.current = window.setTimeout(() => setQuip(null), 1900);
+  }, []);
+  sayRef.current = say;
+  useEffect(() => () => window.clearTimeout(quipTimer.current), []);
 
   /* ---- keyboard steering ---- */
   useEffect(() => {
@@ -121,6 +147,8 @@ export function RideGame({
     let spawnAt = performance.now();
     let elapsed = 0;
     let nextId = 1;
+    missed.current = new Set();
+    nearMissPool.current = [];
     const step = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -132,15 +160,28 @@ export function RideGame({
         // The rider sits near the bottom of the frame; traffic in their lane
         // reaching that row is a hit.
         if (!crashed && o.lane === laneRef.current && y >= 76 && y <= 92) crashed = true;
+        // NEAR MISS — it swept past the rider's row in an ADJACENT lane. This
+        // is the beat the show is made of: the gag lands on the dodge, not on
+        // the crash (a crash ends the ride, so a line there is nearly unseen).
+        if (y >= 80 && y <= 96 && !missed.current.has(o.id) && Math.abs(o.lane - laneRef.current) === 1) {
+          missed.current.add(o.id);
+          const pool = config.nearMissLines ?? [];
+          if (pool.length) {
+            if (nearMissPool.current.length === 0) nearMissPool.current = [...pool];
+            sayRef.current(nearMissPool.current.shift());
+          }
+        }
         return { ...o, y };
       });
       if (now >= spawnAt) {
-        spawnAt = now + spawnMs + Math.random() * spawnMs * 0.4;
+        // Seeded via the game RNG: ?seed= pins spawn timing, lane and
+        // sprite so a run that crashes at a specific pattern replays.
+        spawnAt = now + spawnMs + gameRandom() * spawnMs * 0.4;
         objs.push({
           id: nextId++,
-          lane: Math.floor(Math.random() * lanes),
+          lane: Math.floor(gameRandom() * lanes),
           y: -18,
-          sprite: traffic[Math.floor(Math.random() * traffic.length)],
+          sprite: traffic[Math.floor(gameRandom() * traffic.length)],
         });
       }
       objs = objs.filter((o) => o.y < 108);
@@ -189,10 +230,34 @@ export function RideGame({
         }
       }}
     >
-      {/* scrolling asphalt + lane markings (CSS: the dashes march toward you) */}
+      {/* scrolling asphalt + lane markings. With `roadImage` the built-in CSS
+          asphalt is replaced by a real tiling plate scrolled toward the
+          player; `horizonImage` sits behind it as static scenery (the speed
+          reads off the road, not the skyline). */}
       <div className="absolute inset-0" aria-hidden>
         <div className="absolute inset-0 bg-gradient-to-b from-noir-900 to-noir-950" />
-        <div className="road-scroll absolute inset-x-0 top-0 h-full" />
+        {config.horizonImage ? (
+          <img
+            src={assetUrl(config.horizonImage)}
+            alt=""
+            className="absolute inset-x-0 top-0 h-1/3 w-full object-cover opacity-80"
+          />
+        ) : null}
+        {config.roadImage ? (
+          <div
+            className="ride-road absolute inset-x-0 bottom-0 top-0"
+            style={{
+              backgroundImage: `url(${assetUrl(config.roadImage)})`,
+              backgroundRepeat: "repeat-y",
+              backgroundSize: "100% 50%",
+              // Slower art = fewer, larger tiles; keep it tied to `speed` so
+              // the road and the traffic agree about how fast this is.
+              animationDuration: `${Math.max(0.35, 1 / speed).toFixed(2)}s`,
+            }}
+          />
+        ) : (
+          <div className="road-scroll absolute inset-x-0 top-0 h-full" />
+        )}
         {Array.from({ length: lanes - 1 }).map((_, i) => {
           const x = ((i + 1) / lanes) * 100;
           return (
@@ -236,6 +301,37 @@ export function RideGame({
         <TrafficSprite value={vehicle} className="road-vehicle h-24 w-auto text-7xl drop-shadow-[0_12px_24px_rgba(0,0,0,0.7)]" />
       </div>
 
+      {/* COCKPIT — drawn over the road and the traffic but under the HUD, so
+          the ride reads as first-person without touching how it plays. */}
+      {config.dashboardImage ? (
+        <img
+          src={assetUrl(config.dashboardImage)}
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-[8] w-full select-none object-cover object-bottom"
+        />
+      ) : null}
+
+      {/* 💬 DRIVER BEAT — the deadpan running commentary. Sits above the
+          cockpit so the joke is never hidden behind the steering wheel. */}
+      {quip ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[4%] z-[12] flex justify-center px-4">
+          <div className="hud-frame pop-in flex max-w-lg items-center gap-2 bg-noir-950/90 px-3 py-2">
+            {config.driverSheet ? (
+              <span className="shrink-0">
+                <SheetSprite sheet={config.driverSheet} anim="talk" fallbacks={["rest", "idle"]} height={44} />
+              </span>
+            ) : null}
+            <span className="font-type text-[13px] leading-tight text-paper">
+              {config.driverName ? (
+                <b className="mr-1 font-pulp text-[10px] uppercase tracking-widest text-neon">{config.driverName}:</b>
+              ) : null}
+              {quip}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       {/* ready / result cards */}
       {phase === "ready" && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-6">
@@ -262,7 +358,10 @@ export function RideGame({
       )}
       {phase === "crash" && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-crimson/20 p-6">
-          <div className="hud-frame pop-in max-w-md p-5 text-center border-crimson/60">
+          {config.crashImage ? (
+            <img src={assetUrl(config.crashImage)} alt="" aria-hidden className="absolute inset-0 h-full w-full object-cover opacity-70" />
+          ) : null}
+          <div className="hud-frame pop-in relative max-w-md p-5 text-center border-crimson/60">
             <div className="font-pulp text-xl uppercase tracking-[0.3em] text-crimson">✖</div>
             <p className="mt-2 font-type text-sm text-paper/90">{config.crashText ?? "You went down."}</p>
           </div>

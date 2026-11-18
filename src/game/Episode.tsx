@@ -36,7 +36,10 @@ function avatarNode(character: Character | undefined) {
     return <span className="flex h-10 w-10 items-center justify-center border border-gold/40 bg-noir-900 text-xl">{url.slice(6)}</span>;
   }
   if (!url) return null;
-  return <img src={url} alt="" className="h-10 w-10 border border-gold/40 object-cover" />;
+  // object-top, not the default centre crop: cast refs are tall 2:3 portraits,
+  // and centring a 2:3 image in a square box crops to the chest — a wall of
+  // headless avatars. Anchoring the crop to the top keeps the face.
+  return <img src={url} alt="" className="h-10 w-10 border border-gold/40 object-cover object-top" />;
 }
 
 /* ------------------------------------------------------------------ */

@@ -75,7 +75,7 @@ export function InventoryDock({
   const [combineSel, setCombineSel] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragItem | null>(null);
   const dragRef = useRef<{ item: Item; startX: number; startY: number; active: boolean } | null>(null);
-  // Full Throttle's right-click skull: right-click an item to pop a small verb
+  // Right-click an item to pop a small verb
   // menu at the cursor (inspect / use-on / combine), and right-click the dock
   // to open or close it. `useOn` is the "use this on…" targeting mode.
   const [ctxMenu, setCtxMenu] = useState<{ item: Item; x: number; y: number } | null>(null);
@@ -216,7 +216,7 @@ export function InventoryDock({
           setOpen((o) => !o);
         }}
         onContextMenu={(e) => {
-          // Full Throttle opens the skull with a right-click.
+          // The skull verb menu opens with a right-click.
           e.preventDefault();
           audio.click();
           setOpen((o) => !o);
@@ -325,7 +325,10 @@ export function InventoryDock({
 
   return (
     <>
-      <div className={`absolute z-50 flex flex-col ${anchorClass(display.anchor)}`} data-inventory={display.mode}>
+      {/* z-[60]: the dock must clear the walk-behind foreground pass in
+          Game.tsx, which paints scenery at z-[58]. At the old z-50 a
+          foreground prop rendered straight over the inventory. */}
+      <div className={`absolute z-[60] flex flex-col ${anchorClass(display.anchor)}`} data-inventory={display.mode}>
         {heading}
         {combineMode && open && state.inventory.length > 0 && (
           <div className="mb-1.5 border border-gold/30 bg-gold/10 px-2 py-1 font-type text-[10px] text-gold">
@@ -383,7 +386,7 @@ export function InventoryDock({
         </div>
       ) : null}
 
-      {/* Full Throttle's right-click verb menu — pops at the cursor. */}
+      {/* Right-click verb menu — pops at the cursor. */}
       {ctxMenu && (
         <div
           className="fixed z-[95] w-44 overflow-hidden rounded border border-gold/40 bg-noir-900/95 shadow-[0_10px_30px_rgba(0,0,0,0.7)] backdrop-blur"

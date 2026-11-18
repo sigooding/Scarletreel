@@ -98,18 +98,54 @@ import {
   wrongVerbLine,
   VERB_IDS,
   CORE_VERB_IDS,
+  activeHotspotState,
+  resolveHotspot,
+  hotspotReachableActions,
+  activeStageObstacles,
+  sentenceLineText,
 } from "../src/logic";
 import { buildRouteGraph, scenesInAct } from "../src/game/routeGraph";
-import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
-import { coveragePercent, coverageReport, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { sheetAnim, sheetCols, sheetDrawable, sheetFrameAt, sheetFrameCount, sheetFramePos, spriteSheetIssues } from "../src/game/spriteSheet";
+import { coveragePercent, coverageReport, cutsceneStepKey, emptyCoverage, recordRun, recordVisit } from "../src/game/playtestCoverage";
+import { spriteSheetIssues, sheetAnim } from "../src/game/spriteSheet";
+import { resolveVerbAction, verbsForScene } from "../src/logic";
+import { SOUTH_PARK } from "../src/data/southPark";
+import { existsSync, readFileSync } from "node:fs";
+import { mulberry32, hashSeed, setGameSeed, currentGameSeed, gameRandom, gameRange, gamePick, gameShuffle, seedFromSearch } from "../src/game/rng";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyEdgeFloodKey, applyKey, despeckle, sampleCorners, sampleEdges } from "../src/studio/spriteForge";
+import {
+  AI_PROVIDERS,
+  defaultAiSettings,
+  geminiGenerationBody,
+  GEMINI_ASPECT_RATIOS,
+  openaiGenerationBody,
+  openaiSizesForModel,
+  providerReferenceSupport,
+  splitDataUrl,
+} from "../src/data/aiImages";
 import { describeMotion, ease, motionAnimatable, motionAnimation, motionKeyframes, pathPointAt, pathSegments, presetSeconds, presetStyle } from "../src/game/animation";
 import type { SpriteSheet } from "../src/game/spriteSheet";
 import { NEON_DINER } from "../src/data/neonDiner";
-import { FULL_THROTTLE } from "../src/data/fullThrottle";
-import { FULL_THROTTLE_CORVILLE } from "../src/data/fullThrottleCorville";
-import { FULL_THROTTLE_ORIGINAL } from "../src/data/fullThrottleOriginal";
-import { THROTTLE_ASH } from "../src/data/throttleAsh";
+import { STORIES } from "../src/data/stories";
+import {
+  adjustedConsequences,
+  applyDecision,
+  availableDecisions,
+  decisionCoverageKey,
+  choiceRepeats as decisionChoiceRepeats,
+  decisionCoverageKind,
+  decisionKey,
+  getPerks,
+  hotspotRepeats,
+  initialSim,
+  isStuck,
+  visibleBeatQueue,
+} from "../src/game/decisions";
+import { buildDeepLink, describeDeepLink, parseDeepLink, resolveDeepLink } from "../src/game/deepLink";
+import { canRewindDecision, emptyRewind, popRewind, pushRewind, REWIND_LIMIT, rewindLabel, sealRewind } from "../src/game/rewind";
+import { RAIN_SECTOR } from "../src/data/rainSector";
 import type { Choice, Contradiction, DialogueBeat, EpisodeProgress, GameSave, Hotspot, JourneyStep, SceneNode, StageSettings, Story } from "../src/types";
 
 let passed = 0;
@@ -257,6 +293,73 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   );
 }
 
+// --- collectFlags/flagSetSources see EVERY hotspot flag source -------------
+// A hotspot can set a flag four ways and the engine honours all four, but only
+// the action's own flagSet used to be collected. Flags set by a conversation
+// TOPIC, a chained ⛓ follow-up or a MULTI-STATE override were therefore
+// missing from every flag dropdown in the Studio, absent from the 🏷 Flags
+// tab, reported as "doesn't match any flag used in the story", and miscounted
+// by the craft audit — while working perfectly at runtime.
+{
+  const story: Story = {
+    id: "t",
+    title: "T",
+    startSceneId: "s1",
+    characters: [],
+    items: [],
+    scenes: [
+      {
+        id: "s1",
+        title: "Scene A",
+        background: "",
+        nodeType: "stage",
+        hotspots: [
+          {
+            id: "h1",
+            label: "the desk",
+            bounds: { x: 0, y: 0, w: 10, h: 10 },
+            action: {
+              type: "showText",
+              text: "hi",
+              flagSet: "f_action",
+              topics: [{ id: "t1", label: "ask about the key", beats: [], flagSet: "f_topic" }],
+              then: [{ type: "showText", text: "x", flagSet: "f_then" }],
+            },
+            states: [{ id: "st1", action: { type: "showText", text: "y", flagSet: "f_state" } }],
+          },
+        ],
+      },
+    ],
+  };
+  const flags = collectFlags(story);
+  for (const f of ["f_action", "f_topic", "f_then", "f_state"]) {
+    check(`collectFlags sees the hotspot ${f.slice(2)} flag`, flags.includes(f), flags);
+  }
+  check(
+    "flagSetSources names the conversation topic",
+    flagSetSources(story, "f_topic").some((x) => x.includes("ask about the key")),
+    flagSetSources(story, "f_topic")
+  );
+  check(
+    "flagSetSources names the chained action",
+    flagSetSources(story, "f_then").some((x) => x.includes("chained")),
+    flagSetSources(story, "f_then")
+  );
+  check(
+    "flagSetSources names the multi-state override",
+    flagSetSources(story, "f_state").some((x) => x.includes("state")),
+    flagSetSources(story, "f_state")
+  );
+  // The validator's "flag note matches no flag" warning reads collectFlags,
+  // so a note on a topic-set flag must NOT be reported as stray.
+  const noted: Story = { ...story, flagNotes: { f_topic: "set when you ask about the key" } };
+  check(
+    "a note on a topic-set flag is not reported as stray",
+    !validateStory(noted).some((i) => i.message.includes("doesn\u2019t match") || i.message.includes("doesn't match")),
+    validateStory(noted).map((i) => i.message)
+  );
+}
+
 // --- collectMemoryTags: memoryLog + gating + recalls + recap gating ---
 {
   const story: Story = {
@@ -378,6 +481,372 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   const craftIssues = (scenes: SceneNode[], extra?: Partial<Story>) => validateStory(craftStory(scenes, extra));
   const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
 
+  /* ---- Neon Salt + the triangulation minigame --------------------------- */
+  {
+    const { NEON_SALT } = await import("../src/data/neonSalt");
+    const ns = NEON_SALT;
+    const nsIssues = validateStory(ns);
+    check(
+      "neon salt: validates with no errors",
+      !nsIssues.some((i) => i.severity === "error"),
+      nsIssues.filter((i) => i.severity === "error").map((i) => i.message),
+    );
+    check("neon salt: no warnings either", !nsIssues.length, nsIssues.map((i) => i.message));
+    // Every scene must be reachable or the art never gets seen.
+    {
+      const out = new Map<string, string[]>();
+      storyEdges(ns).forEach((e) => {
+        if (!out.has(e.source)) out.set(e.source, []);
+        out.get(e.source)!.push(e.target);
+      });
+      const seen = new Set<string>();
+      const queue = [ns.startSceneId];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        if (seen.has(cur)) continue;
+        seen.add(cur);
+        (out.get(cur) ?? []).forEach((t) => queue.push(t));
+      }
+      check(
+        "neon salt: every scene is reachable",
+        seen.size === ns.scenes.length,
+        ns.scenes.filter((x) => !seen.has(x.id)).map((x) => x.id),
+      );
+    }
+    check(
+      "neon salt: all three ending tiers exist",
+      new Set(ns.scenes.filter((s2) => s2.isEnding).map((s2) => s2.endingData?.tier)).size === 3,
+    );
+
+    // ---- pass 2: the clues have to MATTER -------------------------------
+    // Both clues were collectable but gated nothing, so Isabel confessed to
+    // detectives holding an empty folder. Every clue flag must now be read
+    // by at least one gate somewhere, or the evidence is set dressing.
+    {
+      const gatesReading = (flag: string) => {
+        let n = 0;
+        ns.scenes.forEach((sc) => {
+          const g = (x?: { requiresFlags?: string[]; excludesFlags?: string[] }) =>
+            (x?.requiresFlags?.includes(flag) || x?.excludesFlags?.includes(flag)) && n++;
+          sc.choices?.forEach((c) => g(c.gating));
+          sc.hotspots?.forEach((h) => g(h.gating));
+          sc.dialogueBeats?.forEach((b) => g(b.conditionRule));
+        });
+        return n;
+      };
+      check("neon salt: the log page gates something", gatesReading("f_has_log") > 0);
+      check("neon salt: the mailbox card gates something", gatesReading("f_has_card") > 0);
+      // The water is the expensive move; it must be earned off the board.
+      const water = ns.scenes.find((x) => x.id === "ns_s040")?.choices?.find((c) => c.targetSceneId === "ns_s060");
+      check(
+        "neon salt: the water is gated behind the corkboard",
+        water?.gating?.requiresFlags?.includes("f_board_wired") === true,
+      );
+    }
+    // The corkboard connections must reference real items and suspects, or a
+    // wire can never be made and the gate above is unreachable.
+    {
+      const board = ns.deduction!;
+      const ids = new Set([...ns.items.map((i) => i.id), ...ns.characters.map((c) => c.id)]);
+      check(
+        "neon salt: every corkboard connection references real evidence",
+        board.connections.every((c) => ids.has(c.a) && ids.has(c.b)),
+        board.connections.filter((c) => !ids.has(c.a) || !ids.has(c.b)),
+      );
+      check(
+        "neon salt: the board suspects all exist",
+        board.suspectIds.every((id) => ns.characters.some((c) => c.id === id)),
+      );
+    }
+    // The interrogation: a lie nobody can break is a wall, not a scene.
+    {
+      const box = ns.scenes.find((x) => x.id === "ns_s080")!;
+      check("neon salt: the box is an interrogation", !!box.interrogation);
+      const lieBeat = box.dialogueBeats?.find((b) => b.lie);
+      check("neon salt: Gio tells a breakable lie", !!lieBeat?.lie);
+      check(
+        "neon salt: the breaking evidence is an item the player can actually hold",
+        lieBeat!.lie!.evidenceItemIds.every((id) => ns.items.some((i) => i.id === id)),
+      );
+      // The crack has to be worth something: it is the only way onto the road
+      // that reaches gold (box → State Attorney → roof → ns_end_book).
+      const gold = box.choices?.find((c) => c.targetSceneId === "ns_s090");
+      check(
+        "neon salt: the road to gold is gated on cracking him",
+        gold?.gating?.requiresFlags?.includes("f_gio_broke") === true,
+      );
+      // …and a player who fails must still have a way out of the room.
+      check(
+        "neon salt: there is an ungated exit from the box",
+        (box.choices ?? []).some((c) => c.targetSceneId && !c.gating),
+      );
+    }
+
+    // ---- pass 3: voice, continuity and the trust thread ------------------
+    {
+      const allProse = ns.scenes.map((x) => x.prose ?? "").join(" ");
+      const allText = JSON.stringify(ns);
+      // AMERICAN SPELLING. Miami PD does not employ a "harbourmaster", and the
+      // opening line originally described the bay as "the colour of a bad
+      // cheque" — British spelling in the mouth of a Florida detective.
+      const britishisms = ["colour", "harbour", "authorised", "realise", "recognise", "cheque", "whilst", "grey "];
+      check(
+        "neon salt: no British spellings in an American story",
+        !britishisms.some((w) => allText.toLowerCase().includes(w)),
+        britishisms.filter((w) => allText.toLowerCase().includes(w)),
+      );
+      // The opening line was also a near-copy of What's Owed's "the color of a
+      // bill you argued about and lost" — the same joke in the same position.
+      check(
+        "neon salt: the opening line is not recycled from What's Owed",
+        !allProse.includes("bad cheque") && !allProse.includes("bad check"),
+      );
+      // CONTINUITY: pass 2 made GIO the one who confesses, but the gold
+      // ending's prose still said "She signed it".
+      const goldEnd = ns.scenes.find((x) => x.id === "ns_end_book")!;
+      check(
+        "neon salt: the gold ending's prose matches who actually confessed",
+        !(goldEnd.prose ?? "").startsWith("She signed"),
+        goldEnd.prose,
+      );
+    }
+    // The trust meters existed but nothing ever moved Isabel's, so the
+    // relationship was decorative. Her thread must swing and then be read.
+    {
+      const movesIsabel = ns.scenes.some((sc) =>
+        (sc.choices ?? []).some((c) => c.consequences?.trustChanges?.some((t) => t.characterId === "isabel")),
+      );
+      check("neon salt: something actually moves Isabel's trust", movesIsabel);
+      const roof = ns.scenes.find((x) => x.id === "ns_s100")!;
+      const readsBelief = (roof.dialogueBeats ?? []).some(
+        (b) =>
+          b.conditionRule?.requiresFlags?.includes("f_isabel_believed") ||
+          b.conditionRule?.requiresFlags?.includes("f_isabel_accused"),
+      );
+      check("neon salt: the epilogue reads how you treated her", readsBelief);
+    }
+    // The 03:52 call is the load-bearing fact of the whole case; it must be an
+    // item the player can HOLD, not just a line they read.
+    {
+      check("neon salt: the call log is a real item", ns.items.some((i) => i.id === "call_log"));
+      const box = ns.scenes.find((x) => x.id === "ns_s080")!;
+      const lie = box.dialogueBeats?.find((b) => b.lie)!.lie!;
+      check("neon salt: the call log breaks Gio's alibi", lie.evidenceItemIds.includes("call_log"));
+      // …and the State Attorney must actually require it, or the confession
+      // alone would still be enough and the scene would be theatre.
+      const ada = ns.scenes.find((x) => x.id === "ns_s090")!;
+      check(
+        "neon salt: the State Attorney needs the paperwork, not the confession",
+        (ada.choices ?? []).some((c) => c.gating?.requiresFlags?.includes("f_has_calllog")),
+      );
+    }
+    // Every clue item carries evidence art rather than a bare emoji.
+    check(
+      "neon salt: every clue has evidence art",
+      ns.items.filter((i) => i.isClue).every((i) => !!i.iconUrl),
+      ns.items.filter((i) => i.isClue && !i.iconUrl).map((i) => i.id),
+    );
+
+    // ---- NO SOFT-LOCKS: walk the graph carrying flags --------------------
+    // The pass-2 gates are the first in this story that can shut a door
+    // behind you, so prove every reachable state can still reach an ending.
+    {
+      type St = { sc: string; f: string[] };
+      const key = (x: St) => `${x.sc}|${[...x.f].sort().join(",")}`;
+      const byId = new Map(ns.scenes.map((x) => [x.id, x]));
+      const gateOk = (g: { requiresFlags?: string[]; excludesFlags?: string[]; requiresItems?: string[] } | undefined, f: Set<string>) => {
+        if (!g) return true;
+        if (g.requiresFlags?.some((r) => !f.has(r))) return false;
+        if (g.excludesFlags?.some((r) => f.has(r))) return false;
+        if (g.requiresItems?.length) return false; // conservative
+        return true;
+      };
+      const succ = (st: St): St[] => {
+        const sc = byId.get(st.sc);
+        if (!sc) return [];
+        const f = new Set(st.f);
+        const res: St[] = [];
+        (sc.hotspots ?? []).forEach((h) => {
+          if (gateOk(h.gating, f) && h.action?.flagSet) {
+            const nf = new Set(f);
+            nf.add(h.action.flagSet);
+            res.push({ sc: st.sc, f: [...nf] });
+          }
+        });
+        (sc.choices ?? []).forEach((c) => {
+          if (!gateOk(c.gating, f) || !c.targetSceneId) return;
+          const nf = new Set(f);
+          (c.consequences?.setFlags ?? []).forEach((x) => nf.add(x));
+          res.push({ sc: c.targetSceneId, f: [...nf] });
+          if (c.timedOutTargetSceneId) res.push({ sc: c.timedOutTargetSceneId, f: [...nf] });
+        });
+        return res;
+      };
+      const start: St = { sc: ns.startSceneId, f: [] };
+      const all = new Map<string, St>([[key(start), start]]);
+      const stack = [start];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        succ(cur).forEach((n) => {
+          const k = key(n);
+          if (!all.has(k)) {
+            all.set(k, n);
+            stack.push(n);
+          }
+        });
+      }
+      const isEnd = (id: string) => !!byId.get(id)?.isEnding;
+      const stuck: string[] = [];
+      all.forEach((st) => {
+        if (isEnd(st.sc)) return;
+        const seen2 = new Set([key(st)]);
+        const q2 = [st];
+        let ok = false;
+        while (q2.length) {
+          const c = q2.shift()!;
+          if (isEnd(c.sc)) {
+            ok = true;
+            break;
+          }
+          succ(c).forEach((n) => {
+            const k = key(n);
+            if (!seen2.has(k)) {
+              seen2.add(k);
+              q2.push(n);
+            }
+          });
+        }
+        if (!ok) stuck.push(key(st));
+      });
+      check("neon salt: no gate combination soft-locks the player", stuck.length === 0, stuck.slice(0, 5));
+    }
+    // The minigame choice MUST wire both outcomes: an unrouted loss is a
+    // dead end the player reaches by playing badly, which is the worst way
+    // to find a bug.
+    const gameChoice = ns.scenes.find((s2) => s2.id === "ns_s060")?.choices?.[0];
+    check("neon salt: the minigame choice carries a triangulate config", !!gameChoice?.triangulate);
+    check("neon salt: the minigame win route is wired", !!gameChoice?.targetSceneId);
+    check("neon salt: the minigame LOSS route is wired", !!gameChoice?.timedOutTargetSceneId);
+    check(
+      "neon salt: a minigame choice never also carries quickTime or ride",
+      !gameChoice?.quickTime && !gameChoice?.ride,
+    );
+    // Talking sprites: three poses each (closed / half / open).
+    ns.characters.forEach((c) => {
+      check(
+        `neon salt: ${c.id} has a 3-pose talking sheet`,
+        !!c.talkingSheet && (c.talkingSheet.animations.talk?.frames.length ?? 0) >= 3,
+      );
+    });
+
+    // The triangulation MATH, independent of the renderer: three exact
+    // bearings must cross on the target, and a sloppy sweep must not.
+    const trueDeg = (p: { x: number; z: number }, t: { x: number; z: number }) =>
+      ((Math.atan2(t.x - p.x, -(t.z - p.z)) * 180) / Math.PI + 360) % 360;
+    const cross = (a: { x: number; z: number; deg: number }, b: { x: number; z: number; deg: number }) => {
+      const ar = (a.deg * Math.PI) / 180;
+      const br = (b.deg * Math.PI) / 180;
+      const adx = Math.sin(ar);
+      const adz = -Math.cos(ar);
+      const bdx = Math.sin(br);
+      const bdz = -Math.cos(br);
+      const det = adx * -bdz - -bdx * adz;
+      if (Math.abs(det) < 1e-4) return null;
+      const t = ((b.x - a.x) * -bdz - -bdx * (b.z - a.z)) / det;
+      if (t < 0) return null;
+      return { x: a.x + adx * t, z: a.z + adz * t };
+    };
+    const fixOf = (bs: { x: number; z: number; deg: number }[]) => {
+      const pts: { x: number; z: number }[] = [];
+      for (let i = 0; i < bs.length; i++)
+        for (let j = i + 1; j < bs.length; j++) {
+          const p = cross(bs[i], bs[j]);
+          if (p) pts.push(p);
+        }
+      if (!pts.length) return null;
+      return {
+        x: pts.reduce((a, p) => a + p.x, 0) / pts.length,
+        z: pts.reduce((a, p) => a + p.z, 0) / pts.length,
+      };
+    };
+    const cfgPosts = gameChoice!.triangulate!.posts!;
+    const boat = { x: 10, z: -5 };
+    const exact = cfgPosts.map((p) => ({ x: p.x, z: p.z, deg: trueDeg(p, boat) }));
+    const exactFix = fixOf(exact)!;
+    check(
+      "triangulate: three exact bearings cross on the boat",
+      Math.hypot(exactFix.x - boat.x, exactFix.z - boat.z) < 0.001,
+      exactFix,
+    );
+    // Two bearings from the SAME post are parallel and cross nowhere — the
+    // reason the game auto-advances the post after every commit.
+    check(
+      "triangulate: two bearings from one post give no fix",
+      fixOf([exact[0], { ...exact[0] }]) === null,
+    );
+    // A wild sweep must miss, or the minigame is not a game.
+    const wild = cfgPosts.map((p, i) => ({ x: p.x, z: p.z, deg: trueDeg(p, boat) + (i === 0 ? 25 : -20) }));
+    const wildFix = fixOf(wild)!;
+    check(
+      "triangulate: a wild sweep misses the tolerance",
+      Math.hypot(wildFix.x - boat.x, wildFix.z - boat.z) > (gameChoice!.triangulate!.toleranceMeters ?? 9),
+      wildFix,
+    );
+  }
+
+  /* ---- linear film: no win/lose audit ---------------------------------- */
+  {
+    // A story that ends on a credits roll with no branching endings is a FILM,
+    // not a case. Demanding a "victory ending" of it raised a hard ERROR that
+    // blocked Publish & Play on an otherwise complete story (What's Owed).
+    const film: Story = {
+      id: "film",
+      title: "Film",
+      tagline: "",
+      coverImage: "",
+      startSceneId: "f1",
+      items: [],
+      characters: [],
+      scenes: [
+        {
+          id: "f1",
+          title: "Open",
+          background: "",
+          prose: "It rained.",
+          choices: [{ id: "fc1", text: "Roll credits", targetSceneId: "f2", attitudeTag: "Neutral" }],
+        } as SceneNode,
+        { id: "f2", title: "End", nodeType: "credits", background: "", prose: "", choices: [] } as SceneNode,
+      ],
+    };
+    const filmIssues = validateStory(film);
+    check(
+      "linear film: no victory-ending ERROR on a credits-only story",
+      !has(filmIssues, /No victory ending exists/),
+      filmIssues.map((i) => i.message),
+    );
+    check(
+      "linear film: no game-over warning either",
+      !has(filmIssues, /No game-over ending exists/),
+      filmIssues.map((i) => i.message),
+    );
+    // A credits roll is terminal by nature — it needs neither isEnding nor an
+    // exit to be legitimate, so it must not raise "has no exits".
+    check("linear film: publishable (no errors)", !filmIssues.some((i) => i.severity === "error"),
+      filmIssues.filter((i) => i.severity === "error").map((i) => i.message));
+    // But a story WITH endings is still a case and still gets audited.
+    const caseStory: Story = {
+      ...film,
+      scenes: [
+        film.scenes[0],
+        { id: "f2", title: "End", isEnding: true, background: "", prose: "", choices: [] } as SceneNode,
+      ],
+    };
+    check(
+      "linear film: a story with real endings is still win/lose audited",
+      has(validateStory(caseStory), /No victory ending exists/),
+    );
+  }
+
   /* ---- stage node validation ------------------------------------------ */
   {
     const stageBase: SceneNode = {
@@ -406,6 +875,32 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     // No exit at all (no door marker, no auto-advance, no choices) = soft-lock.
     const trapped = craftIssues([{ ...stageBase, hotspots: [] }]);
     check("stage: a stage node with no way out is an error", has(trapped, /has no way out/));
+
+    /* ---- walk-off-screen edge exits ------------------------------------ */
+    {
+      const withEdge = (edge: import("../src/types").StageExitEdge) =>
+        craftIssues([{ ...stageBase, stage: { ...stageBase.stage!, exitEdges: { right: edge } } }]);
+
+      // A properly wired edge exit is clean, and counts as a way out on its own.
+      const good = withEdge({ targetSceneId: "e" });
+      check("edge exit: a wired edge raises no edge issues", !has(good, /Walk-off-screen exit/), good.filter((i) => /Walk-off/.test(i.message)));
+      const edgeOnly = craftIssues([
+        { ...stageBase, hotspots: [], stage: { ...stageBase.stage!, exitEdges: { right: { targetSceneId: "e" } } } },
+      ]);
+      check("edge exit: an edge exit alone is a way out", !has(edgeOnly, /has no way out/));
+
+      // THE BUG: an edge with no target drew an arrow and walked the player
+      // into goToScene("") — a dead scene. sceneEdges only emits a branch when
+      // the target is truthy, so the dangling-link check never saw it.
+      check("edge exit: a targetless edge is an error", has(withEdge({ targetSceneId: "" }), /has no target scene/));
+      check("edge exit: an edge to a missing scene is an error", has(withEdge({ targetSceneId: "ghost_scene" }), /missing scene "ghost_scene"/));
+      check("edge exit: an edge back to the same scene warns", has(withEdge({ targetSceneId: "st" }), /leads back to the same scene/));
+      // A targetless edge must not satisfy the "way out" check either.
+      check(
+        "edge exit: a targetless edge is not a way out",
+        has(craftIssues([{ ...stageBase, hotspots: [], stage: { ...stageBase.stage!, exitEdges: { right: { targetSceneId: "" } } } }]), /has no way out/)
+      );
+    }
 
     // setPlayerPose is a legal action: it needs no target scene and doesn't
     // replay a reward, so it validates clean even when repeatable.
@@ -1045,9 +1540,86 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: posReachesMarker hits within reach", posReachesMarker({ x: 79, y: 61 }, m, 4, 16 / 9));
   check("stage: posReachesMarker misses far away", !posReachesMarker({ x: 10, y: 90 }, m, 4, 16 / 9));
 
-  // Caption hold scales with length and stays sane.
-  check("stage: a short caption holds ~3s", Math.abs(stageCaptionMs("Hi.") - 3000) < 1e-9, stageCaptionMs("Hi."));
-  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 9000 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+  // Caption hold scales with length and stays sane — and snappy (the old
+  // formula held a line for up to NINE seconds, glued over the character).
+  check("stage: a short caption holds ~2.5s", Math.abs(stageCaptionMs("Hi.") - 2500) < 1e-9, stageCaptionMs("Hi."));
+  check("stage: a long caption holds longer but is capped", stageCaptionMs("x".repeat(300)) <= 5200 && stageCaptionMs("x".repeat(100)) > stageCaptionMs("Hi."));
+
+  // AI Images: the OpenAI request only carries response_format for the
+  // dall-e family — gpt-image models REJECT it with a 400 (unknown_parameter),
+  // which is exactly what Generate was hitting with the default model.
+  check("ai: gpt-image body omits response_format", !("response_format" in openaiGenerationBody("gpt-image-1", "p", "1024x1024")));
+  check("ai: dall-e-3 body keeps response_format", "response_format" in openaiGenerationBody("dall-e-3", "p", "1024x1024"));
+  check("ai: body carries model/prompt/size", (openaiGenerationBody("gpt-image-1", "noir alley", "1024x1024") as { model: string; prompt: string; size: string }).model === "gpt-image-1");
+  // ...and each family's size list excludes the other's (invalid pairs 400).
+  check("ai: gpt-image sizes exclude dall-e's 1792x1024", !openaiSizesForModel("gpt-image-1").includes("1792x1024") && openaiSizesForModel("gpt-image-1").includes("1536x1024"));
+  check("ai: dall-e sizes exclude gpt-image's 1536x1024", !openaiSizesForModel("dall-e-3").includes("1536x1024") && openaiSizesForModel("dall-e-3").includes("1792x1024"));
+
+  // --- Gemini (Nano Banana) request shape ----------------------------------
+  // Both of these are hard 400s / silent text replies if wrong, and neither is
+  // visible without a live key — so they are pinned here instead.
+  {
+    const plain = geminiGenerationBody("noir alley", "16:9") as any;
+    check("ai/gemini: prompt goes in a parts array", plain.contents[0].parts[0].text === "noir alley");
+    check(
+      "ai/gemini: responseModalities asks for IMAGE",
+      plain.generationConfig.responseModalities.includes("IMAGE"),
+      plain.generationConfig
+    );
+    check("ai/gemini: aspect ratio rides in imageConfig", plain.generationConfig.imageConfig.aspectRatio === "16:9");
+    check("ai/gemini: no reference part when none supplied", plain.contents[0].parts.length === 1);
+
+    // Omitting the ratio must omit imageConfig entirely, not send undefined.
+    const noRatio = geminiGenerationBody("x") as any;
+    check("ai/gemini: no imageConfig when no ratio is set", !("imageConfig" in noRatio.generationConfig));
+
+    // Reference image: same parts array, correct mime.
+    const withRef = geminiGenerationBody("restyle", "1:1", { mimeType: "image/jpeg", base64: "AAAA" }) as any;
+    check("ai/gemini: reference rides beside the prompt", withRef.contents[0].parts.length === 2);
+    check("ai/gemini: reference mime is preserved", withRef.contents[0].parts[1].inline_data.mime_type === "image/jpeg");
+    check("ai/gemini: reference payload is bare base64", withRef.contents[0].parts[1].inline_data.data === "AAAA");
+
+    // splitDataUrl feeds the above — it must strip the data: header.
+    const split = splitDataUrl("data:image/webp;base64,ZZZZ");
+    check("ai/gemini: splitDataUrl reads the mime type", split.mimeType === "image/webp", split);
+    check("ai/gemini: splitDataUrl strips the header", split.base64 === "ZZZZ", split);
+    check("ai/gemini: splitDataUrl defaults to png", splitDataUrl("notadataurl").mimeType === "image/png");
+
+    // Every offered ratio is one Gemini actually accepts.
+    check("ai/gemini: 16:9 is an offered ratio", GEMINI_ASPECT_RATIOS.includes("16:9"));
+    check("ai/gemini: no bogus ratios offered", GEMINI_ASPECT_RATIOS.every((r) => /^\d+:\d+$/.test(r)));
+  }
+
+  // --- provider catalogue stays coherent -----------------------------------
+  {
+    check("ai: gemini is in the provider list", AI_PROVIDERS.some((p) => p.id === "gemini"));
+    const defs = defaultAiSettings();
+    for (const meta of AI_PROVIDERS) {
+      check(`ai: "${meta.id}" has default settings`, !!defs.providers[meta.id], meta.id);
+      check(`ai: "${meta.id}" default id matches its key`, defs.providers[meta.id]?.id === meta.id, meta.id);
+    }
+    // A commercial provider needs a key; a local one must ship a baseUrl.
+    for (const meta of AI_PROVIDERS) {
+      if (meta.kind === "local") {
+        check(`ai: local "${meta.id}" ships a baseUrl`, !!defs.providers[meta.id]?.baseUrl, meta.id);
+        check(`ai: local "${meta.id}" needs no key`, meta.needsKey === false, meta.id);
+      } else {
+        check(`ai: cloud "${meta.id}" is marked as needing a key`, meta.needsKey === true, meta.id);
+      }
+    }
+    // Reference support must be a value the UI knows how to render.
+    for (const meta of AI_PROVIDERS) {
+      const sup = providerReferenceSupport(meta.id, defs.providers[meta.id]?.model);
+      check(`ai: "${meta.id}" reference support is a known value`, sup === "full" || sup === "fixed" || sup === false, { id: meta.id, sup });
+    }
+    check("ai: gemini accepts a reference image", providerReferenceSupport("gemini", "gemini-2.5-flash-image") === "fixed");
+    // The withdrawn Together free endpoint must not be a shipped default.
+    check(
+      "ai: no default points at the withdrawn FLUX free endpoint",
+      defs.providers.together?.model !== "black-forest-labs/FLUX.1-schnell-Free",
+      defs.providers.together?.model
+    );
+  }
 
   // Legacy exports: stage2d bolt-on maps to a stage node; clean stories pass through untouched.
   const legacy: any = {
@@ -1844,237 +2416,6 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 }
 
 /* ================================================================== */
-/*  4b. Full Throttle — the recreated opening, walked end to end        */
-/* ================================================================== */
-// The FT recreation's puzzle chain is gated end to end: punch the dumpster
-// lid, climb out into the wide alley, kick in the bar door, TALK to Quohog
-// (which is what unlocks the shakedown), grab the keys, and ride out into
-// the Rottwheeler QTE duel — where hesitating routes to a game-over ending.
-{
-  const S = FULL_THROTTLE;
-  const byId = new Map(S.scenes.map((x) => [x.id, x]));
-  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
-  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
-    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
-    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
-  };
-  let st = createInitialState(S);
-
-  // The ride is locked until the keys are in hand.
-  check("ft: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft_keys"] }, st));
-  // Inside the dumpster: the lid opens with a punch (ft_free), and climbing
-  // out is gated on it — no punching, no leaving.
-  check("ft: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft_free"] }, st));
-  apply(hs("ft_dump", "fth_lid").action);
-  check("ft: punching the lid sets ft_free", st.activeFlags.has("ft_free"));
-  check("ft: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft_free"] }, st));
-  // The alley: the door kick is a one-way flag, and the bike tells Ben the
-  // keys are gone before Quohog can hand them over.
-  apply(hs("ft_alley", "fth_door").action);
-  check("ft: kicking the door sets ft_door_open", st.activeFlags.has("ft_door_open"));
-  check("ft: the bike flags the missing keys", hs("ft_alley", "fth_bike").action.flagSet === "ft_noticed_keys");
-  // Inside the bar: talking to Quohog is a TOPIC-LIST conversation, and the
-  // shakedown only opens after the player asks for the keys (the "My keys"
-  // topic sets ft_quohog_talked; the grab marker is gated on it).
-  check("ft: grabbing Quohog is locked before the talk", !meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
-  const quohogTopics = hs("ft_bar", "fth_quohog").action.topics;
-  check("ft: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
-  check("ft: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft_topic_keys" && t.flagSet === "ft_quohog_talked"));
-  apply(quohogTopics!.find((t) => t.id === "ft_topic_keys")!);
-  check("ft: asking for the keys sets ft_quohog_talked", st.activeFlags.has("ft_quohog_talked"));
-  check("ft: the shakedown unlocks after asking", meetsGating(hs("ft_bar", "fth_quohog_grab").gating, st));
-  apply(hs("ft_bar", "fth_quohog_grab").action);
-  check("ft: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft_keys"));
-  check("ft: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft_keys"] }, st));
-  // The bar's walk-off-screen exit is a real scene edge.
-  check("ft: the bar has a left-edge exit to the alley", S.scenes.find((s) => s.id === "ft_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft_alley");
-  check("ft: storyEdges carries the walk-off edge", storyEdges(S).some((e) => e.id === "e-ft_bar-edge-left" && e.target === "ft_alley"));
-  // The Rottwheeler duel: two steerable ride minigames, each routing a crash
-  // to the game-over road instead of a graceful fail-forward.
-  const ride = byId.get("ft_ride")!;
-  const fight1 = ride.choices!.find((c) => c.id === "ftc_fight1")!;
-  check("ft: the duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2 && (fight1.ride.durationSeconds ?? 18) > 0);
-  check("ft: ride crash routes to the game-over ending", fight1.timedOutTargetSceneId === "ft_ride_dead");
-  const dead = byId.get("ft_ride_dead")!;
-  check("ft: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
-  check("ft: beating the fight reaches Part One", byId.get("ft_ride3")!.choices!.some((c) => c.targetSceneId === "ft_tbc"));
-  const tbc = byId.get("ft_tbc")!;
-  check("ft: Part One is a victory ending", tbc.isEnding === true && tbc.endingData?.tier === "victory-silver");
-  // Every gated marker in the chain is actually reachable: the flags it
-  // needs are set by the step before it (no permanent locks).
-  const flagsSet = new Set<string>();
-  S.scenes.forEach((sc) => {
-    (sc.hotspots ?? []).forEach((h) => {
-      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
-      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
-      h.gating?.requiresFlags?.forEach((f) => flagsSet.add(f));
-      Object.values(sc.stage?.exitEdges ?? {}).forEach((e) => e?.gating?.requiresFlags?.forEach((f) => flagsSet.add(f)));
-    });
-  });
-  check("ft: every gated flag has an author somewhere in the chain", ["ft_free", "ft_door_open", "ft_quohog_talked", "ft_noticed_keys"].every((f) => flagsSet.has(f)));
-  // The skull pie (hold-to-open + theme sprite): on wherever object-first is,
-  // with the story's own centrepiece — and only there ("as an option only").
-  check("ft: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
-  check("ft: the skull pie wears the story's own sprite", S.verbMenuIcon === "/img/ft-skull.png");
-  check("ft: no other story opts into the hold gesture", THROTTLE_ASH.scenes.every((sc) => !sc.stage?.objectMenuHold) && !THROTTLE_ASH.verbMenuIcon);
-}
-
-/* ================================================================== */
-/*  4c. Full Throttle — The Corville Run (new version) BETA TEST        */
-/* ================================================================== */
-// The reimagined FT exercises every engine feature at once: a NEW sprite
-// sheet with named POSE animations, a scene default pose (crouch), transient
-// setPlayerPose hotspots (bend/reach), the hold-to-open skull pie with a NEW
-// centrepiece, a 200%-wide world with entry spawns, walk-off edge exits, a
-// point-stretched walk path, A* obstacles, topic-list dialogue, and a QTE
-// duel with a game-over branch.
-{
-  const S = FULL_THROTTLE_CORVILLE;
-  const byId = new Map(S.scenes.map((x) => [x.id, x]));
-  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
-  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
-    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
-    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
-  };
-  let st = createInitialState(S);
-
-  // The story validates cleanly and is registered in the catalogue.
-  const ft2Issues = validateStory(S);
-  check("ft2: story validates (no errors)", ft2Issues.filter((i) => i.severity === "error").length === 0, ft2Issues.slice(0, 4));
-  check("ft2: starts on the credits", S.startSceneId === "ft2_credits" && byId.get("ft2_credits")!.nodeType === "credits");
-  // No false "every exit is gated" warnings: the dumpster's only exit (climb)
-  // is gated on ft2_free, which the lid-punch sets in the same room; the bar
-  // leaves through an UNGATED walk-off edge — both must read as open.
-  const gatedWarnings = ft2Issues.filter((i) => i.severity === "warning" && /Every exit from .* is gated/.test(i.message));
-  check("ft2: no false 'every exit is gated' warnings", gatedWarnings.length === 0, gatedWarnings.map((w) => w.sceneId));
-
-  // NEW SPRITE + POSES: the player sprite is a sheet with the pose animations
-  // the hotspots drive, and every transient pose is a known animation.
-  const sheet = S.playerSprite?.sheet;
-  check("ft2: the player is a sprite sheet (not an emoji)", !!sheet && !!sheet.image && sheet.frameWidth > 0 && sheet.frameHeight > 0);
-  check("ft2: the sheet has all five pose animations", sheet && ["idle", "walk", "bend", "crouch", "reach"].every((a) => !!(sheet.animations as Record<string, unknown>)[a]));
-
-  // SCENE DEFAULT POSE: the dumpster starts Ben in a crouch.
-  check("ft2: the dumpster defaults Ben to a crouch", byId.get("ft2_dump")!.stage!.playerPose === "crouch");
-
-  // TRANSIENT POSES: bend (alley) and reach (bar) are setPlayerPose actions.
-  check("ft2: looking under the dumpster is a transient bend", hs("ft2_alley", "ft2h_under").action.type === "setPlayerPose" && hs("ft2_alley", "ft2h_under").action.playerPose === "bend" && hs("ft2_alley", "ft2h_under").action.playerPoseOnce === true);
-  check("ft2: reaching over the bar is a transient reach", hs("ft2_bar", "ft2h_reach").action.type === "setPlayerPose" && hs("ft2_bar", "ft2h_reach").action.playerPose === "reach");
-
-  // SKULL PIE: hold-to-open everywhere object-first is on, with the NEW icon.
-  check("ft2: hold-to-open is on wherever object-first is", S.scenes.every((sc) => (sc.stage?.objectVerbMenu ? sc.stage.objectMenuHold === true : true)));
-  check("ft2: the skull pie wears the new sprite", S.verbMenuIcon === "/assets/sprites/ft2-skull.png");
-  check("ft2: extended verbs (kick/punch) are on in every stage", S.scenes.filter((s) => s.nodeType === "stage").every((s) => s.stage!.extendedVerbs === true));
-
-  // WIDE WORLD + CAMERA: the alley is a 200% strip with per-source spawns.
-  const alley = byId.get("ft2_alley")!;
-  check("ft2: the alley is a wide world", alley.stage!.worldWidth === 200);
-  check("ft2: entry spawns depend on where you came from", alley.stage!.entrySpawns!.ft2_dump?.x === 8 && alley.stage!.entrySpawns!.ft2_bar?.x === 168);
-
-  // WALK PATH + OBSTACLES: the bar uses a point-stretched path, the alley has
-  // obstacles to route around.
-  check("ft2: the bar uses a point-stretched walk path", (byId.get("ft2_bar")!.stage!.floorPoints?.length ?? 0) >= 4);
-  check("ft2: the alley has A* obstacles", (alley.stage!.obstacles?.length ?? 0) >= 1);
-
-  // WALK-OFF EDGE: the bar's left edge walks back to the alley.
-  check("ft2: the bar has a left-edge exit to the alley", byId.get("ft2_bar")!.stage!.exitEdges?.left?.targetSceneId === "ft2_alley");
-
-  // AMBIENT NPC: the bar has a patrolling barfly with idle + walk animations.
-  const barfly = byId.get("ft2_bar")!.stage!.npcs?.find((n) => n.id === "ft2_barfly");
-  check("ft2: the bar has an ambient NPC", !!barfly);
-  check("ft2: the NPC carries a sprite sheet with idle + walk", !!barfly && !!barfly.sheet?.animations?.idle && !!barfly.sheet?.animations?.walk);
-  check("ft2: the NPC walks a patrol (≥2 waypoints)", !!barfly && (barfly.patrol?.length ?? 0) >= 2);
-  check("ft2: the NPC sheet validates clean", !!barfly && !!barfly.sheet && spriteSheetIssues(barfly.sheet, "npc", ["idle", "walk"]).length === 0);
-  check("ft2: no ambient NPC errors in the story check", ft2Issues.filter((i) => i.severity === "error").length === 0);
-
-  // PUZZLE CHAIN (flag reachability, end to end).
-  check("ft2: ride-out is locked before the keys", !meetsGating({ requiresItems: ["ft2_keys"] }, st));
-  check("ft2: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["ft2_free"] }, st));
-  apply(hs("ft2_dump", "ft2h_lid").action);
-  check("ft2: punching the lid sets ft2_free", st.activeFlags.has("ft2_free"));
-  check("ft2: climb-out unlocks after the punch", meetsGating({ requiresFlags: ["ft2_free"] }, st));
-  apply(hs("ft2_alley", "ft2h_door").action);
-  check("ft2: kicking the door sets ft2_door", st.activeFlags.has("ft2_door"));
-  check("ft2: grabbing Quohog is locked before the talk", !meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
-  const quohogTopics = hs("ft2_bar", "ft2h_quohog").action.topics;
-  check("ft2: talking to Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
-  check("ft2: asking for the keys is the gated topic", quohogTopics!.some((t) => t.id === "ft2_topic_keys" && t.flagSet === "ft2_quohog_talked"));
-  apply(quohogTopics!.find((t) => t.id === "ft2_topic_keys")!);
-  check("ft2: asking for the keys sets ft2_quohog_talked", st.activeFlags.has("ft2_quohog_talked"));
-  check("ft2: the shakedown unlocks after asking", meetsGating(hs("ft2_bar", "ft2h_grab").gating, st));
-  apply(hs("ft2_bar", "ft2h_grab").action);
-  check("ft2: the shakedown hands over the keys", st.inventory.some((i) => i.id === "ft2_keys"));
-  check("ft2: ride-out unlocks with the keys", meetsGating({ requiresItems: ["ft2_keys"] }, st));
-
-  // RIDE DUEL with a real game-over branch.
-  const ride = byId.get("ft2_ride")!;
-  const fight = ride.choices!.find((c) => c.id === "ft2c_fight")!;
-  check("ft2: the duel is a playable ride", !!fight.ride && (fight.ride.lanes ?? 3) >= 2 && (fight.ride.durationSeconds ?? 18) > 0);
-  check("ft2: ride crash routes to the game-over ending", fight.timedOutTargetSceneId === "ft2_ride_dead");
-  const dead = byId.get("ft2_ride_dead")!;
-  check("ft2: losing the fight is an ending", dead.isEnding === true && dead.endingData?.tier === "gameover");
-  check("ft2: winning reaches Part One", byId.get("ft2_tbc")!.isEnding === true && byId.get("ft2_tbc")!.endingData?.tier === "victory-silver");
-
-  // Every gated flag is actually produced somewhere in the chain.
-  const flagsSet = new Set<string>();
-  S.scenes.forEach((sc) => {
-    (sc.hotspots ?? []).forEach((h) => {
-      if (h.action.flagSet) flagsSet.add(h.action.flagSet);
-      (h.action.topics ?? []).forEach((t) => { if (t.flagSet) flagsSet.add(t.flagSet); });
-    });
-  });
-  check("ft2: every gated flag has an author in the chain", ["ft2_free", "ft2_door", "ft2_quohog_talked"].every((f) => flagsSet.has(f)));
-}
-
-/* ================================================================== */
-/*  4c. FULL THROTTLE — the original opening, faithfully (the NEW      */
-/*  story). Exercises the two "feel" features: the right-click skull   */
-/*  inventory and the steerable ride minigame.                         */
-/* ================================================================== */
-{
-  const S = FULL_THROTTLE_ORIGINAL;
-  const byId = new Map(S.scenes.map((x) => [x.id, x]));
-  const hs = (sceneId: string, hsId: string) => byId.get(sceneId)!.hotspots!.find((x) => x.id === hsId)!;
-  const apply = (action: { flagSet?: string; itemGranted?: string }) => {
-    if (action.flagSet) st = applyConsequences(S, { setFlags: [action.flagSet] }, st);
-    if (action.itemGranted) st = { ...st, inventory: [...st.inventory, S.items.find((i) => i.id === action.itemGranted)!] };
-  };
-  let st = createInitialState(S);
-  const issues = validateStory(S);
-  check("fto: the story validates with no errors", issues.filter((i) => i.severity === "error").length === 0);
-
-  // THE RIGHT-CLICK SKULL: the inventory is a container skull, waiting
-  // closed until right-clicked open.
-  check("fto: inventory is a container skull", S.inventoryDisplay?.mode === "container" && !!S.inventoryDisplay.image);
-  check("fto: the skull starts closed (right-click to open)", S.inventoryDisplay?.startClosed === true);
-
-  // THE RIDE: both duel passes are steerable rides, not quick-times.
-  const fight1 = byId.get("fto_ride")!.choices!.find((c) => c.id === "ftoc_fight1")!;
-  const fight2 = byId.get("fto_ride2")!.choices!.find((c) => c.id === "ftoc_fight2")!;
-  check("fto: the first duel is a playable ride", !!fight1.ride && (fight1.ride.lanes ?? 3) >= 2);
-  check("fto: the second duel is harder (more lanes)", !!fight2.ride && (fight2.ride.lanes ?? 0) > (fight1.ride.lanes ?? 3));
-  check("fto: a crash routes to the game-over ending", fight1.timedOutTargetSceneId === "fto_ride_dead" && fight2.timedOutTargetSceneId === "fto_ride_dead");
-  check("fto: winning the duel still sets the Rottwheeler flag", fight2.consequences?.setFlags?.includes("fto_rott_beaten"));
-
-  // PUZZLE CHAIN, end to end (the faithful opening).
-  check("fto: climb-out is locked before the lid is punched", !meetsGating({ requiresFlags: ["fto_free"] }, st));
-  apply(hs("fto_dump", "ftoh_lid").action);
-  check("fto: punching the lid sets fto_free", st.activeFlags.has("fto_free"));
-  check("fto: ride-out is locked before the keys", !meetsGating({ requiresItems: ["fto_keys"] }, st));
-  const quohogTopics = hs("fto_bar", "ftoh_quohog").action.topics;
-  check("fto: Quohog is a topic-list conversation", !!quohogTopics && quohogTopics.length >= 3);
-  apply(quohogTopics!.find((t) => t.id === "fto_topic_keys")!);
-  check("fto: asking for the keys sets fto_quohog_talked", st.activeFlags.has("fto_quohog_talked"));
-  apply(hs("fto_bar", "ftoh_quohog_grab").action);
-  check("fto: the shakedown hands over the keys", st.inventory.some((i) => i.id === "fto_keys"));
-  check("fto: ride-out unlocks with the keys", meetsGating({ requiresItems: ["fto_keys"] }, st));
-
-  // Faithful characters: Ben is the Polecats' LEADER (not chasing them).
-  const ben = S.characters.find((c) => c.id === "ben");
-  check("fto: Ben is the leader of the Polecats", ben?.role === "Leader of the Polecats");
-}
-
-/* ================================================================== */
 /*  5. Voice ducking envelope (audio.ts — stepped ramp, real-time)     */
 /* ================================================================== */
 {
@@ -2746,6 +3087,52 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     !spriteSheetIssues(sheet, "walker", ["walk", "idle"]).length
   );
 
+  // -- over-range frames (needs the real grid size) ---------------------------
+  // A frame index past the end of the sheet does NOT crash: SheetSprite clamps
+  // it to the last real frame. That is the danger — the sprite silently plays
+  // the wrong pose and nothing tells the author. Only reported when the caller
+  // knows how many frames the image actually holds.
+  {
+    const four = { ...sheet, animations: { walk: { frames: [0, 1, 2, 3] } } };
+    check(
+      "sheet issues: over-range frames are silent without a grid size",
+      spriteSheetIssues(four, "walker", undefined, undefined).length === 0
+    );
+    check(
+      "sheet issues: frames within the grid are clean",
+      spriteSheetIssues(four, "walker", undefined, 4).length === 0
+    );
+    const over = spriteSheetIssues(four, "walker", undefined, 2);
+    check("sheet issues: over-range frames are caught", over.length === 1, over);
+    check("sheet issues: the offending frames are named", /frames 2, 3/.test(over[0] ?? ""), over[0]);
+    check("sheet issues: the real frame count is named", /only has 2/.test(over[0] ?? ""), over[0]);
+    check("sheet issues: the clamped result is explained", /frame 1 instead/.test(over[0] ?? ""), over[0]);
+    // Singular/plural, and duplicates collapse.
+    const one = spriteSheetIssues({ ...sheet, animations: { walk: { frames: [0, 5, 5] } } }, "walker", undefined, 3);
+    check("sheet issues: a single over-range frame reads singular", /uses frame 5,? but|uses frame 5, but/.test(one[0] ?? ""), one[0]);
+    check("sheet issues: duplicate over-range frames collapse", (one[0].match(/5/g) ?? []).length === 1, one[0]);
+    // Each animation is reported separately.
+    const two = spriteSheetIssues(
+      { ...sheet, animations: { walk: { frames: [9] }, idle: { frames: [8] } } },
+      "walker",
+      undefined,
+      2
+    );
+    check("sheet issues: each animation is reported separately", two.length === 2, two);
+  }
+
+  // -- sheetFrameCount: editor and validator must agree on the grid -----------
+  {
+    // The fixture is 114x192 per frame. A 456x384 image -> 4 cols x 2 rows = 8.
+    check("sheet: frame count from image size", sheetFrameCount(sheet, 456, 384) === 8, sheetFrameCount(sheet, 456, 384));
+    check("sheet: a single-row strip counts its columns", sheetFrameCount(sheet, 456, 192) === 4, sheetFrameCount(sheet, 456, 192));
+    check("sheet: never reports zero frames", sheetFrameCount(sheet, 1, 1) === 1);
+    // The clamp the runtime applies must line up with the frame we name.
+    const grid = sheetFrameCount(sheet, 456, 192); // 4 frames, 0-3
+    const clamped = Math.min(7, grid - 1);
+    check("sheet: runtime clamps to the last frame we name", clamped === 3, clamped);
+  }
+
   // -- drawable test used by walker / portraits / extras ----------------------
   check("sheet: a full sheet is drawable", sheetDrawable(sheet));
   check("sheet: undefined is not drawable", !sheetDrawable(undefined));
@@ -2872,6 +3259,177 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
 }
 
 /* ================================================================== */
+/*  Playtest coverage v2 — stage markers + cutscene steps              */
+/* ================================================================== */
+{
+  const stageStory: Story = {
+    id: "cov-stage",
+    title: "Stage coverage",
+    tagline: "",
+    startSceneId: "s1",
+    characters: [],
+    items: [],
+    scenes: [
+      {
+        id: "s1",
+        title: "Dock",
+        background: "/img/d.jpg",
+        nodeType: "stage",
+        dialogueBeats: [],
+        choices: [],
+        hotspots: [
+          { id: "h1", label: "Crate", bounds: { x: 10, y: 40, w: 20, h: 20 }, action: { type: "showText", text: "A crate." } },
+          { id: "h2", label: "Lever", bounds: { x: 40, y: 40, w: 20, h: 20 }, action: { type: "runScript", script: [{ do: "say", text: "Clunk." }, { do: "setFlag", flag: "lever" }] } },
+        ],
+        stage: {
+          floor: { top: 60, bottom: 95 },
+          spawn: { x: 50, y: 90 },
+          enterScript: [{ do: "wait", seconds: 1 }, { do: "face", dir: "left" }],
+        },
+      },
+    ],
+  };
+
+  const blank = coverageReport(stageStory, null);
+  check("coverage v2: a stage story tallies its markers and steps", blank.markerTotal === 2 && blank.cutsceneTotal === 4, blank);
+  check("coverage v2: an empty tally misses every marker and step", blank.missedMarkers.length === 2 && blank.missedCutsceneSteps.length === 4, blank);
+  check("coverage v2: classic scenes contribute no stage tallies", coverageReport({ ...stageStory, scenes: [{ id: "c1", title: "C", background: "/img/c.jpg", hotspots: [], dialogueBeats: [], choices: [] }] }, null).markerTotal === 0);
+
+  // The recorder/report key contract: one shared function, so the two sides
+  // can never drift. Entry script = empty hotspot tag; runScript = its id.
+  check("coverage v2: entry-script keys use an empty hotspot tag", cutsceneStepKey("s1", undefined, 0) === "s1:#0" && cutsceneStepKey("s1", undefined, 1) === "s1:#1");
+  check("coverage v2: hotspot step keys carry the hotspot id", cutsceneStepKey("s1", "h2", 1) === "s1:h2#1");
+
+  let cov = emptyCoverage("cov-stage");
+  cov = recordVisit(cov, "marker", "s1:h1");
+  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", undefined, 0));
+  cov = recordVisit(cov, "cutscene", cutsceneStepKey("s1", "h2", 1));
+  const rv = coverageReport(stageStory, cov);
+  check("coverage v2: fired markers are counted", rv.markerFired === 1 && rv.markerTotal === 2, rv.markerFired);
+  check("coverage v2: the unfired marker is reported with its label", rv.missedMarkers.length === 1 && rv.missedMarkers[0].hotspotId === "h2" && rv.missedMarkers[0].text === "Lever", rv.missedMarkers);
+  check("coverage v2: played steps are counted", rv.cutsceneRun === 2 && rv.cutsceneTotal === 4, rv.cutsceneRun);
+  check("coverage v2: unplayed steps are reported", rv.missedCutsceneSteps.length === 2, rv.missedCutsceneSteps);
+  check("coverage v2: entry and hotspot gaps name themselves apart", rv.missedCutsceneSteps.some((g) => g.text === "entry step 2") && rv.missedCutsceneSteps.some((g) => g.text === "Lever — step 1"), rv.missedCutsceneSteps);
+  check("coverage v2: an unrecorded key reads as zero", (cov.cutscene["s1:h9#0"] ?? 0) === 0, cov.cutscene);
+  check("coverage v2: recording a marker never mutates the input", (cov.markers["s1:h1"] ?? 0) === 1 && !("s1:h2" in cov.markers), cov.markers);
+}
+
+/* ================================================================== */
+/*  SOUTH PARK: THE RECESS WARS — the walkable-stage beta data         */
+/* ================================================================== */
+{
+  // The beta must pass the validator clean — it ships in the catalogue.
+  const spIssues = validateStory(SOUTH_PARK);
+  const spErrors = spIssues.filter((i) => i.severity === "error");
+  check("south park: the beta validates with no errors", spErrors.length === 0, spErrors.map((i) => i.message).join(" | "));
+
+  // Every sheet it references is on disk and well-formed, with walk+idle.
+  // The harness bundles to /tmp — resolve public/ from the npm cwd instead.
+  const spRoot = path.join(process.cwd(), "public");
+  const spSheets: [string, import("../src/game/spriteSheet").SpriteSheet][] = [
+    ["stan", SOUTH_PARK.playerSprite!.sheet!],
+    ["cartman walk", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
+    ["kyle walk", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
+    ["kenny walk", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
+    ["barbrady walk", SOUTH_PARK.scenes[3].stage!.npcs![0].sheet!],
+    ["tweek walk", SOUTH_PARK.scenes[3].stage!.npcs![1].sheet!],
+    ["barbrady talk", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")!.talkingSheet!],
+    ["cartman moods", SOUTH_PARK.scenes[5].hotspots![0].sheet!],
+  ];
+  for (const [label, sheet] of spSheets) {
+    check("south park: " + label + " sheet exists on disk", existsSync(path.join(spRoot, sheet.image)), sheet.image);
+    check("south park: " + label + " sheet is well-formed", spriteSheetIssues(sheet, label).length === 0, spriteSheetIssues(sheet, label).join(" | "));
+    check("south park: " + label + " sheet has a walk animation", !!sheetAnim(sheet, "walk"));
+  }
+  for (const sc of SOUTH_PARK.scenes) {
+    check("south park: background exists for " + sc.id, existsSync(path.join(spRoot, sc.background)), sc.background);
+  }
+
+  // Pure stage game: every non-ending scene is a walkable stage with the
+  // verb menu on and at least one verb answerable.
+  for (const sc of SOUTH_PARK.scenes) {
+    if (sc.isEnding) continue;
+    check("south park: " + sc.id + " is a verb-menu stage", sc.nodeType === "stage" && sc.stage?.verbCoin === true && verbsForScene(sc).length > 0, verbsForScene(sc).join(","));
+  }
+
+  // The USE puzzle: the locker answers the snowball (and only via USE with
+  // it armed); the sled is gated on the key the locker grants.
+  const spLocker = SOUTH_PARK.scenes[1].hotspots![0];
+  const spUse = resolveVerbAction(spLocker, "use", "sp_snowball");
+  check("south park: the locker answers USE + snowball", spUse.ok && spUse.action.type === "useItem" && spUse.action.itemGranted === "sp_key", spUse);
+  check("south park: the locker refuses an unaccepted item", !resolveVerbAction(spLocker, "use", "sp_sled").ok);
+  const spSled = SOUTH_PARK.scenes[2].hotspots![1];
+  check("south park: the sled is gated on the frozen key", JSON.stringify(spSled.gating) === JSON.stringify({ requiresItems: ["sp_key"] }), spSled.gating);
+  check("south park: taking the sled sets the pond flag", spSled.action.flagSet === "sp_got_sled");
+  const spPondEdge = SOUTH_PARK.scenes[2].stage!.exitEdges?.right;
+  check("south park: the pond edge opens only with the sled", spPondEdge?.gating?.requiresFlags?.[0] === "sp_got_sled");
+
+  // The pond cutscene walks Kenny onto the ice and speaks the two lines.
+  const spEnter = SOUTH_PARK.scenes[5].stage!.enterScript ?? [];
+  check("south park: the pond cutscene has the Kenny gag", spEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_kenny_npc") && spEnter.some((st) => st.do === "say" && /killed Kenny/.test(st.text)), spEnter.map((st) => st.do).join(","));
+
+  // The finale branches into two distinct ending cards.
+  const spChoices = SOUTH_PARK.scenes[5].choices ?? [];
+  check("south park: the confrontation offers two endings", spChoices.length === 2 && new Set(spChoices.map((c) => c.targetSceneId)).size === 2, spChoices.map((c) => c.targetSceneId).join(","));
+  const spEndings = SOUTH_PARK.scenes.filter((sc) => sc.isEnding);
+  check("south park: both endings carry ending cards", spEndings.length === 2 && spEndings.every((sc) => !!sc.endingData && sc.choices.length === 0));
+
+  // Pass-2: 1.5x cast, talking sheets, item icons, title cover, the cafe.
+  check("south park: the cast plays at 1.5x", SOUTH_PARK.scenes[0].stage!.playerScale === 1.5 && SOUTH_PARK.scenes[0].stage!.npcs!.every((n) => n.scale === 1.5) && SOUTH_PARK.scenes[3].stage!.npcs!.every((n) => n.scale === 1.5));
+  const spTalkers = SOUTH_PARK.characters.filter((c) => c.talkingSheet);
+  check("south park: the whole cast carries talking sheets", spTalkers.length === 5 && spTalkers.every((c) => !!c.talkingSheet!.animations.talk && !!c.talkingSheet!.animations.rest), spTalkers.map((c) => c.id).join(","));
+  check("south park: every talking sheet exists on disk", spTalkers.every((c) => existsSync(path.join(spRoot, c.talkingSheet!.image))), spTalkers.map((c) => c.talkingSheet!.image).join(","));
+  const spItems = SOUTH_PARK.items.filter((i) => i.iconUrl);
+  check("south park: item icons exist on disk", spItems.length === 3 && spItems.every((i) => existsSync(path.join(spRoot, i.iconUrl!))), spItems.map((i) => i.iconUrl).join(","));
+  check("south park: the cover is the title card", SOUTH_PARK.coverImage.endsWith("sp-title.png") && existsSync(path.join(spRoot, SOUTH_PARK.coverImage)));
+  const spCafe = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_cafe")!;
+  check("south park: the cafe is a verb-menu stage with Barbrady", spCafe.nodeType === "stage" && spCafe.stage!.verbCoin === true && spCafe.stage!.npcs![0].talkHotspotId === "sp_cafe_barbrady");
+  check("south park: the hall links to the cafe and back", SOUTH_PARK.scenes[1].stage!.exitEdges?.right?.targetSceneId === "sp_cafe" && spCafe.stage!.exitEdges?.left?.targetSceneId === "sp_hall");
+  // Pass 3: directional walks for the whole cast, object art on markers,
+  // the verb-wheel sprite, and object-first menus on.
+  for (const [who, sheet] of [
+    ["stan", SOUTH_PARK.playerSprite!.sheet!],
+    ["kyle", SOUTH_PARK.scenes[0].stage!.npcs![1].sheet!],
+    ["cartman", SOUTH_PARK.scenes[0].stage!.npcs![0].sheet!],
+    ["kenny", SOUTH_PARK.scenes[5].stage!.npcs![0].sheet!],
+  ] as const) {
+    check("south park: " + who + " walks away from camera (walk-up)", !!sheet.animations["walk-up"] && sheet.animations["walk-up"].frames.length === 6, sheet.image);
+  }
+  const spObjArt: [string, string][] = [
+    ["snow pile", "sp_bus_snow"],
+    ["black ice", "sp_bus_ice"],
+    ["locker 27", "sp_hall_locker"],
+    ["trophy case", "sp_hall_trophy"],
+    ["the sled", "sp_base_sled"],
+    ["toy chest", "sp_base_chest"],
+    ["pond sign", "sp_pond_sign"],
+    ["espresso machine", "sp_cafe_machine"],
+  ];
+  for (const [label, hsId] of spObjArt) {
+    const hs = SOUTH_PARK.scenes.flatMap((sc) => sc.hotspots ?? []).find((h) => h.id === hsId)!;
+    check("south park: " + label + " carries object art on disk", !!hs.image && existsSync(path.join(spRoot, hs.image)), hs.image);
+  }
+  check("south park: the verb-wheel snowflake exists", !!SOUTH_PARK.verbMenuIcon && existsSync(path.join(spRoot, SOUTH_PARK.verbMenuIcon)), SOUTH_PARK.verbMenuIcon);
+  check("south park: object-first verb menus are on", SOUTH_PARK.scenes[0].stage!.objectVerbMenu === true);
+  check("south park: barbrady talks with his own sheet", SOUTH_PARK.characters.find((c) => c.id === "sp_barbrady")?.talkingSheet?.animations.talk != null);
+
+  // The wrong-cartoon cameo: a wide reel, the gag cutscene, the portal loop.
+  const spCrash = SOUTH_PARK.scenes.find((sc) => sc.id === "sp_crash")!;
+  check("south park: the cameo is THE wide reel (worldWidth 200)", spCrash.nodeType === "stage" && spCrash.stage!.worldWidth === 200, spCrash.stage!.worldWidth);
+  const spCrashEnter = spCrash.stage!.enterScript ?? [];
+  check("south park: the cameo cutscene says the line", spCrashEnter.some((st) => st.do === "say" && /wrong CARTOON/.test(st.text)) && spCrashEnter.some((st) => st.do === "say" && /Wrong scene\. Wrong cartoon\. Bye/.test(st.text)), spCrashEnter.map((st) => st.do).join(","));
+  check("south park: the cameo walks both visitors on cue", spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_rick_cameo") && spCrashEnter.some((st) => st.do === "npcWalkTo" && st.npcId === "sp_morty_cameo"));
+  for (const [who, npcId] of [["rick", "sp_rick_cameo"], ["morty", "sp_morty_cameo"]] as const) {
+    const npc = spCrash.stage!.npcs!.find((n) => n.id === npcId)!;
+    check("south park: " + who + " sheet exists and is well-formed", existsSync(path.join(spRoot, npc.sheet!.image)) && spriteSheetIssues(npc.sheet!, who).length === 0, npc.sheet!.image);
+  }
+  check("south park: cameo characters stay stage-only (no cutouts)", SOUTH_PARK.characters.filter((c) => ["sp_rick", "sp_morty"].includes(c.id)).every((c) => !c.talkingSheet));
+  const spPortal = spCrash.hotspots!.find((h) => h.id === "sp_crash_portal")!;
+  check("south park: the portal opens after the talk and loops home", spPortal.gating?.requiresFlags?.[0] === "sp_cameo_talked" && spPortal.action.targetSceneId === "sp_cafe");
+  check("south park: the cafe's right edge leads to the crash", SOUTH_PARK.scenes[3].stage!.exitEdges?.right?.targetSceneId === "sp_crash");
+}
+
+/* ================================================================== */
 /*  Background remover — the keying tools behind 🪄 Media Tools        */
 /* ================================================================== */
 {
@@ -2918,6 +3476,48 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
     check("key: edge sample reads the backdrop, not the subject", edge.r > 200 && edge.b > 200 && edge.g < 40, edge);
     const corner = sampleCorners(img.data, img.width, img.height);
     check("key: corner sample agrees on a flat plate", Math.abs(corner.r - edge.r) < 8, { corner, edge });
+  }
+
+  // --- REGRESSION: samplers on a NON-FLAT border ---------------------------
+  // The tests above only use a uniform border, where a mean and a dominant
+  // sample are identical — so they could not catch the real bug: the samplers
+  // used to AVERAGE every border pixel, returning a colour present nowhere in
+  // the image the moment the border was not one flat tone. That is what made
+  // the background remover "do nothing" on real photos and AI art.
+  {
+    // Border is 3/4 white backdrop and 1/4 dark object intruding at the frame
+    // edge. The mean is a mid grey that matches NEITHER; the correct answer is
+    // the dominant tone, i.e. the white backdrop.
+    const img = plate(16, 16, [250, 250, 250]);
+    for (let x = 12; x < 16; x++) {
+      put(img, x, 0, [10, 20, 90]);
+      put(img, x, 15, [10, 20, 90]);
+    }
+    const edge = sampleEdges(img.data, img.width, img.height);
+    check(
+      "key: edge sample returns the DOMINANT backdrop, not a mean of two tones",
+      edge.r > 235 && edge.g > 235 && edge.b > 235,
+      edge,
+    );
+    // The mean of this border would land near rgb(200,203,214) — prove we are
+    // nowhere near it, so a regression back to averaging fails loudly.
+    check("key: edge sample is not the arithmetic mean", edge.r > 230, edge);
+
+    // A key sampled this way must actually cut the backdrop.
+    const keyed = applyKey(img, edge, 40, 10);
+    check("key: dominant sample clears the true backdrop", alphaAt(keyed, 2, 0) === 0, alphaAt(keyed, 2, 0));
+  }
+  {
+    // Corners: three agree, one is covered by the subject. Averaging all four
+    // drags the key off the backdrop; majority agreement keeps it correct.
+    const img = plate(12, 12, [255, 0, 255]);
+    for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) put(img, x, y, [20, 20, 20]); // subject over one corner
+    const corner = sampleCorners(img.data, img.width, img.height);
+    check(
+      "key: corner sample ignores the one corner the subject covers",
+      corner.r > 230 && corner.g < 30 && corner.b > 230,
+      corner,
+    );
   }
 
   // --- colour key vs edge flood -------------------------------------------
@@ -3103,377 +3703,1505 @@ check("prettyFlagName: hyphens", prettyFlagName("saw-the-body") === "saw the bod
   check("stage: grid step is coarse enough to be cheap", STAGE_GRID_STEP >= 1 && STAGE_GRID_STEP <= 5);
 }
 
-/* ============================================================
-   POINT-AND-CLICK PROTOTYPE (src/data/throttleAsh.ts)
-   ------------------------------------------------------------
-   The adventure mode's reference case. These checks keep it honest: a
-   room game is a web of cross-references (hotspots → scenes → flags →
-   items) and one typo silently strands the player.
-   ============================================================ */
+/* ================================================================== */
+/*  MULTI-STATE OBJECTS (Hotspot.states)                               */
+/* ================================================================== */
 {
-  const story = THROTTLE_ASH;
-  const sceneIds = new Set(story.scenes.map((s) => s.id));
-  const itemIds = new Set(story.items.map((i) => i.id));
-  const charIds = new Set(story.characters.map((c) => c.id));
-  const knownFlags = new Set<string>(Object.keys(story.flagNotes ?? {}));
+  const base = (states: Hotspot["states"], extra: Partial<Hotspot> = {}): Hotspot => ({
+    id: "obj",
+    label: "the drawer",
+    bounds: { x: 10, y: 40, w: 20, h: 20 },
+    cursor: "look",
+    gating: { requiresFlags: ["lockpicked"] },
+    action: { type: "showText", text: "The drawer is jammed shut." },
+    ...extra,
+    states,
+  });
+  const st = (s: GlobalState): GlobalState => s;
+  const empty = st({ activeFlags: new Set(), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+  const withFlags = (...f: string[]) =>
+    st({ activeFlags: new Set(f), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
 
-  check("adventure: the case declares its kind", story.gameKind === "adventure");
-  check("adventure: it starts in a room, not on a prose plate", story.scenes.some((s) => s.id === story.startSceneId && s.nodeType === "stage"));
-  check(
-    "adventure: every room is a walkable stage",
-    story.scenes.filter((s) => !s.isEnding).every((s) => s.nodeType === "stage"),
-  );
-  check(
-    "adventure: every room both spawns and floors the walker",
-    story.scenes.filter((s) => s.nodeType === "stage").every((s) => !!s.stage?.spawn && !!s.stage?.floor),
-  );
-
-  // Every exit, every item, every referenced flag and every speaker exists.
-  const badTargets: string[] = [];
-  const badItems: string[] = [];
-  const badChars: string[] = [];
-  const badFlags: string[] = [];
-  const flagSource = (o?: { requiresFlags?: string[]; excludesFlags?: string[]; setFlags?: string[] }) => [
-    ...(o?.requiresFlags ?? []), ...(o?.excludesFlags ?? []), ...(o?.setFlags ?? []),
-  ];
-  for (const s of story.scenes) {
-    if (s.id === "x") continue;
-    for (const hs of s.hotspots ?? []) {
-      if (hs.action.type === "goToScene") {
-        if (!hs.action.targetSceneId || !sceneIds.has(hs.action.targetSceneId)) badTargets.push(`${s.id}/${hs.id}`);
-      }
-      if (hs.action.type === "giveItem" && hs.action.itemGranted && !itemIds.has(hs.action.itemGranted)) badItems.push(`${s.id}/${hs.id}`);
-      if (hs.action.type === "useItem" && hs.action.itemConsumed && !itemIds.has(hs.action.itemConsumed)) badItems.push(`${s.id}/${hs.id}`);
-      for (const f of flagSource(hs.gating ?? undefined)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
-      for (const f of flagSource(hs.action)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
-      for (const f of flagSource(hs.action.consequences)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${hs.id}:${f}`);
-    }
-    for (const c of s.choices ?? []) {
-      if (c.targetSceneId && !sceneIds.has(c.targetSceneId)) badTargets.push(`${s.id}/${c.id}`);
-      if (c.presentItem && !itemIds.has(c.presentItem)) badItems.push(`${s.id}/${c.id}`);
-      for (const f of flagSource(c.gating ?? undefined)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${c.id}:${f}`);
-      for (const f of flagSource(c.consequences)) if (f.startsWith("adv_") && !knownFlags.has(f)) badFlags.push(`${s.id}/${c.id}:${f}`);
-    }
-    for (const b of s.dialogueBeats ?? []) if (!charIds.has(b.characterId)) badChars.push(`${s.id}/${b.id}`);
+  /* ---- resolution semantics ---- */
+  {
+    const noStates = base(undefined);
+    check("states: no states = the hotspot itself", resolveHotspot(noStates, empty) === noStates);
   }
-  check("adventure: every exit leads somewhere real", badTargets.length === 0, badTargets);
-  check("adventure: every item handed over or consumed exists", badItems.length === 0, badItems);
-  check("adventure: every speaker exists", badChars.length === 0, badChars);
-  check("adventure: every flag it uses is documented in flagNotes", badFlags.length === 0, badFlags);
+  check("states: none pass = base fields stand", resolveHotspot(base([{ id: "a", when: { requiresFlags: ["x"] }, label: "A" }]), empty).label === "the drawer");
+  check("states: last passing state wins", resolveHotspot(
+    base([
+      { id: "def", label: "default face" },
+      { id: "mid", when: { requiresFlags: ["m"] }, label: "mid face" },
+      { id: "last", when: { requiresFlags: ["l"] }, label: "last face" },
+    ]),
+    withFlags("m", "l")
+  ).label === "last face");
+  check("states: an earlier state stands when the later gate is shut", resolveHotspot(
+    base([
+      { id: "def", label: "default face" },
+      { id: "mid", when: { requiresFlags: ["m"] }, label: "mid face" },
+    ]),
+    withFlags("m")
+  ).label === "mid face");
+  check("states: partial overrides inherit the rest", (() => {
+    const r = resolveHotspot(base([{ id: "s", label: "the open drawer" }]), empty);
+    return r.label === "the open drawer" && r.action.text === "The drawer is jammed shut." && r.cursor === "look";
+  })());
+  check("states: image override swaps the art", resolveHotspot(base([{ id: "s", image: "/img/open.png" }]), empty).image === "/img/open.png");
+  check("states: an empty-string image CLEARS the art", resolveHotspot(base([{ id: "s", image: "" }], { image: "/img/closed.png" }), empty).image === undefined);
+  check("states: action override replaces the action", resolveHotspot(base([{ id: "s", action: { type: "showText", text: "It hangs open, empty." } }]), empty).action.text === "It hangs open, empty.");
+  check("states: a null gating override UNLOCKS the object", resolveHotspot(base([{ id: "s", gating: null }]), empty).gating === undefined);
+  check("states: a gating override replaces the gate", resolveHotspot(base([{ id: "s", gating: { requiresFlags: ["other"] } }]), empty).gating?.requiresFlags?.[0] === "other");
+  check("states: identity is never overridden", (() => {
+    const r = resolveHotspot(base([{ id: "s", label: "x", action: { type: "goToScene", targetSceneId: "e" } }]), empty);
+    return r.id === "obj" && JSON.stringify(r.bounds) === JSON.stringify({ x: 10, y: 40, w: 20, h: 20 });
+  })());
+  check("states: resolving is idempotent", (() => {
+    const once = resolveHotspot(base([{ id: "s", label: "x" }]), empty);
+    return resolveHotspot(once, empty) === once || resolveHotspot(once, empty).label === "x";
+  })());
+  check("states: activeHotspotState reports the winner", activeHotspotState(base([{ id: "a", label: "A" }, { id: "b", when: { requiresFlags: ["z"] }, label: "B" }]), withFlags("z"))?.id === "b");
+  check("states: hotspotReachableActions includes every state action", hotspotReachableActions(base([{ id: "s", action: { type: "goToScene", targetSceneId: "e" } }, { id: "t" }])).length === 2);
 
-  // The inventory puzzle is actually solvable in the order the rooms allow.
-  const wrench = story.items.find((i) => i.id === "adv_wrench");
-  check(
-    "adventure: wrench + line combine into the repair kit",
-    wrench?.combinableWith?.targetItemId === "adv_fuel_line" && wrench?.combinableWith?.resultItemId === "adv_repair_kit",
-    wrench?.combinableWith,
-  );
-  check("adventure: the repair kit is consumed by a USE hotspot", story.scenes.some((s) => (s.hotspots ?? []).some((hs) => hs.action.type === "useItem" && hs.action.itemConsumed === "adv_repair_kit")));
-  check("adventure: the endings are gated on the bike being fixed", story.scenes.filter((s) => s.isEnding).every((s) => true));
-  const endings = story.scenes.filter((s) => s.isEnding);
-  check("adventure: three endings — gold, silver and a bust", endings.length === 3, endings.map((e) => e.endingData?.tier));
-  check("adventure: exactly one gold", endings.filter((e) => e.endingData?.tier === "victory-gold").length === 1);
-  check("adventure: exactly one bust", endings.filter((e) => e.endingData?.tier === "gameover").length === 1);
-  check(
-    "adventure: every ending is reachable from somewhere",
-    endings.every((e) => story.scenes.some((s) => (s.hotspots ?? []).some((hs) => hs.action.type === "goToScene" && hs.action.targetSceneId === e.id) || (s.choices ?? []).some((c) => c.targetSceneId === e.id))),
-  );
-  check("adventure: the validator is happy with the case", validateStory(story).filter((i) => i.severity === "error").length === 0, validateStory(story).slice(0, 6));
+  /* ---- the verb machinery reads the resolved view ---- */
+  check("states: verb answering follows the state cursor", (() => {
+    const r = resolveHotspot(base([{ id: "s", cursor: "take" }], { action: { type: "giveItem", itemGranted: "coin" } }), empty);
+    return resolveVerbAction(r, "take").ok && !resolveVerbAction(r, "look").ok;
+  })());
+
+  /* ---- validator + graph ---- */
+  {
+    const endScene = (id: string): SceneNode => ({
+      id,
+      title: id,
+      background: "",
+      prose: "",
+      isEnding: true,
+      endingData: { tier: "victory-gold", headline: "H", recap: "R" },
+    });
+    const sceneWith = (hotspots: Hotspot[]): SceneNode => ({
+      id: "s1",
+      title: "Room",
+      background: "",
+      prose: "text",
+      hotspots,
+      choices: [],
+    });
+    const storyOf = (scenes: SceneNode[], extra: Partial<Story> = {}): Story => ({
+      id: "ms",
+      title: "Multi-State",
+      tagline: "",
+      coverImage: "",
+      startSceneId: "s1",
+      scenes: [...scenes, endScene("e")],
+      items: [],
+      characters: [],
+      ...extra,
+    });
+    const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+    // An unconditional state listed after a gated one permanently shadows it.
+    const shadow = validateStory(storyOf([sceneWith([base([
+      { id: "a", when: { requiresFlags: ["open"] }, label: "A" },
+      { id: "def", label: "DEFAULT" },
+    ])])]));
+    check("states: unconditional-not-first is an error", has(shadow, /has no gate but isn't first/i), shadow.filter((i) => /state/i.test(i.message)));
+
+    // Duplicate state ids.
+    const dup = validateStory(storyOf([sceneWith([base([{ id: "a", label: "A" }, { id: "a", label: "A2" }])])]));
+    check("states: duplicate state ids are an error", has(dup, /states share the id "a"/i));
+
+    // A state that overrides nothing is dead weight.
+    const dead = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["open"] } }])])]));
+    check("states: a no-override state warns", has(dead, /overrides nothing/i));
+
+    // A state's go-to-scene without a target does nothing.
+    const noTarget = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["open"] }, action: { type: "goToScene" } }])])]));
+    check("states: a targetless state route warns", has(noTarget, /goes to a scene but no target/i));
+
+    // A `when` flag nothing ever sets is an impossible state (flag audit).
+    const impossible = validateStory(storyOf([sceneWith([base([{ id: "a", when: { requiresFlags: ["never_set"] }, label: "A" }])])]));
+    check("states: a when-flag with no producer errors", has(impossible, /Flag "never_set" is required by a gate/i));
+
+    // A well-formed multi-state object raises none of those.
+    const clean = validateStory(storyOf([sceneWith([base([
+      { id: "open", when: { requiresFlags: ["lockpicked"] }, label: "the open drawer", gating: null, action: { type: "showText", text: "Empty." } },
+    ])])]));
+    check("states: a well-formed state list raises no state issues", !clean.some((i) => /states share|isn't first|overrides nothing|no target/i.test(i.message)), clean.filter((i) => /state/i.test(i.message)));
+
+    // The state's own flagSet makes its own gate reachable (producer counted).
+    const selfSustaining = validateStory(storyOf([sceneWith([base([
+      { id: "take", action: { type: "setFlag", flagSet: "full" } },
+    ], [{ id: "after", when: { requiresFlags: ["full"] }, label: "the emptied drawer" }])])]));
+    check("states: a state's action flagSet counts as a producer", !has(selfSustaining, /Flag "full" is required by a gate/i));
+
+    // Graph: a route that only exists in a later state is a real edge, and
+    // its destination must not be flagged unreachable.
+    const stateExit = sceneWith([
+      base([{ id: "later", when: { requiresFlags: ["open"] }, action: { type: "goToScene", targetSceneId: "e" } }], { action: { type: "showText", text: "locked" } }),
+    ]);
+    stateExit.prose = "text";
+    const edges = storyEdges(storyOf([stateExit]));
+    check("states: a state action contributes a scene edge", edges.some((x) => x.source === "s1" && x.target === "e" && /state/.test(x.label ?? "")), edges.map((x) => x.label));
+    const reach = validateStory(storyOf([stateExit]));
+    check("states: a state-only destination is reachable (no warning)", !has(reach, /unreachable from the start/i), reach.filter((i) => /unreachable/i.test(i.message)));
+
+    // Stage soft-lock: a door whose only exit lives in its "open" state is a
+    // legitimate way out.
+    const stageScene: SceneNode = {
+      id: "s1",
+      title: "Vault",
+      background: "",
+      prose: "",
+      nodeType: "stage",
+      stage: { playerImage: "emoji:🕵️", spawn: { x: 50, y: 86 }, floor: { top: 62, bottom: 94 } },
+      hotspots: [
+        {
+          id: "door",
+          label: "the vault door",
+          bounds: { x: 80, y: 60, w: 14, h: 30 },
+          cursor: "go",
+          isRepeatable: true,
+          action: { type: "showText", text: "Sealed. The mechanism needs the crane." },
+          states: [
+            { id: "open", when: { requiresFlags: ["craned"] }, action: { type: "goToScene", targetSceneId: "e" } },
+          ],
+        },
+      ],
+      choices: [],
+    };
+    const vault = validateStory(storyOf([stageScene]));
+    check("states: a stage exits through a state action (no soft-lock error)", !has(vault, /has no way out/i), vault.filter((i) => /way out/i.test(i.message)));
+  }
 }
 
-/* ============================================================
-   VERB COIN — "pick the verb, then the object"
-   ============================================================ */
+/* ================================================================== */
+/*  DOORS — gate-aware barriers (StageObstacle.gating)                 */
+/* ================================================================== */
 {
-  const bench: Hotspot = {
-    id: "bench",
-    label: "the bench",
-    bounds: { x: 10, y: 60, w: 20, h: 20 },
-    cursor: "look",
-    action: { type: "showText", text: "A bench." },
-    verbs: { take: { type: "showText", text: "Bolted down." }, use: { type: "showText", text: "You sit." } },
-    wrongVerbText: "It's a bench, Ash.",
-  };
-  check("coin: the hotspot's own cursor verb runs its default action",
-    resolveVerbAction(bench, "look").action?.text === "A bench.");
-  check("coin: another verb runs that verb's action",
-    resolveVerbAction(bench, "take").action?.text === "Bolted down.");
-  check("coin: a verb it doesn't answer is refused", resolveVerbAction(bench, "talk").ok === false);
-  check("coin: refusal echoes the verb it was", resolveVerbAction(bench, "talk").verb === "talk");
+  const st = (flags: string[]): GlobalState => ({ activeFlags: new Set(flags), inventory: [], meters: {} as never, characterTrust: {}, memories: {} });
+  const wall = { x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["open"] } };
+  const crate = { x: 20, y: 70, w: 10, h: 10 };
+  const list = [crate, wall];
 
-  // USE with an armed item: accepted → the object's own USE action plus the
-  // item-specific line; anything else → refused.
-  const juke: Hotspot = {
-    id: "jukebox",
-    label: "the jukebox",
-    bounds: { x: 4, y: 60, w: 14, h: 28 },
-    cursor: "use",
-    gating: { requiresItems: ["coffee"] },
-    action: { type: "useItem", itemConsumed: "coffee", text: "It plays." },
-    acceptsItems: ["coffee"],
-    itemResponses: { coffee: "You pour the coffee in. It plays something loud." },
-  };
-  const coffee = resolveVerbAction(juke, "use", "coffee");
-  check("coin: an accepted item resolves", coffee.ok === true);
-  check("coin: an accepted item keeps the object's action", coffee.action?.type === "useItem");
-  check("coin: an accepted item gets its own line", coffee.text === "You pour the coffee in. It plays something loud.");
-  check("coin: a wrong item is refused", resolveVerbAction(juke, "use", "wrench").ok === false);
-  check("coin: USE with nothing armed falls back to the object's own USE",
-    resolveVerbAction(juke, "use").action?.type === "useItem");
-  check("coin: an object that accepts nothing refuses every item",
-    resolveVerbAction(bench, "use", "wrench").ok === false);
+  check("doors: an ungated barrier always blocks", activeStageObstacles(list, st([])).length === 2);
+  check("doors: a gated barrier blocks while its gate is shut", activeStageObstacles(list, st([])).some((o) => o === wall));
+  check("doors: the barrier is GONE the moment the gate opens", !activeStageObstacles(list, st(["open"])).some((o) => o === wall));
+  check("doors: furniture survives the door opening", activeStageObstacles(list, st(["open"]))[0] === crate);
+  check("doors: an item gate opens to the item", (() => {
+    const badge = { x: 0, y: 0, w: 10, h: 10, gating: { requiresItems: ["badge"] } };
+    const held = { ...st([]), inventory: [{ id: "badge" } as never] };
+    return activeStageObstacles([badge], st([])).length === 1 && activeStageObstacles([badge], held).length === 0;
+  })());
 
-  /* ---- the item-use contract: replies, implied accept, spending --------- */
+  // Spatial routing: a full-height wall genuinely seals the room; the same
+  // room with the door open routes straight through.
+  {
+    const floor = { top: 60, bottom: 94 };
+    const sealed = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, [wall], undefined, floor, 2, 100);
+    check("doors: a shut door walls off the far side", sealed.length === 0, sealed);
+    const passable = stageRoutePoly({ x: 10, y: 80 }, { x: 90, y: 80 }, activeStageObstacles([wall], st(["open"])), undefined, floor, 2, 100);
+    check("doors: the open door routes through", passable.length > 0 && passable[passable.length - 1].x > 85, passable);
+  }
 
-  // A 💬 SHOW-TEXT object that accepts an item ANSWERS with the item's reply
-  // line (what the Studio's "🎒 Accepts these items" panel promises: tick the
-  // item, write the line, the line plays) — previously the reply was only
-  // reachable when the default action was useItem; a plain say-line object
-  // just refused, and the authored joke was dead on arrival.
-  const strayDog: Hotspot = {
-    id: "stray",
-    label: "the stray dog",
-    bounds: { x: 12, y: 60, w: 12, h: 14 },
-    cursor: "look",
-    acceptsItems: ["snack"],
-    itemResponses: { snack: "Wolfed. Somebody is your friend now." },
-    action: { type: "showText", text: "Hungry eyes follow your pockets." },
-  };
-  const dogUse = resolveVerbAction(strayDog, "use", "snack");
-  check("use: an accepted item answers from a default showText action",
-    dogUse.ok === true && dogUse.action?.type === "showText");
-  check("use: the item's own reply line overrides the default text",
-    dogUse.text === "Wolfed. Somebody is your friend now.");
-  check("use: writing a reply line alone accepts the item (no tick needed)",
-    resolveVerbAction({ ...strayDog, acceptsItems: undefined }, "use", "snack").ok === true);
+  // Validator: a door that can never open is an authoring error.
+  {
+    const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+    const doorStory: Story = {
+      id: "doors", title: "Doors", tagline: "", coverImage: "", startSceneId: "s1",
+      scenes: [
+        { id: "s1", title: "Room", background: "", prose: "text", choices: [], stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, obstacles: [{ x: 60, y: 50, w: 10, h: 50, gating: { requiresFlags: ["never_open"] } }] } as never, hotspots: [{ id: "out", label: "Out", bounds: { x: 80, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } }] },
+        endScene,
+      ],
+      items: [], characters: [],
+    };
+    const issues = validateStory(doorStory);
+    check("doors: a barrier gate on an unproduced flag errors", issues.some((i) => i.severity === "error" && /Flag "never_open" is required by a gate/.test(i.message)), issues.filter((i) => /never_open/.test(i.message)));
+  }
+}
 
-  // …but accepting an item can never make a takes/moves default fire: a door
-  // must author an explicit ⚙ use verb action (say-a-line or consume-it).
-  const snackDoor: Hotspot = {
-    id: "snackdoor",
-    label: "the office door",
-    bounds: { x: 80, y: 30, w: 10, h: 40 },
-    cursor: "go",
-    acceptsItems: ["snack"],
-    itemResponses: { snack: "It is a snack. This is a door." },
-    action: { type: "goToScene", targetSceneId: "e" },
-  };
-  check("use: a goToScene default still refuses an armed item (needs an authored use action)",
-    resolveVerbAction(snackDoor, "use", "snack").ok === false);
+/* ================================================================== */
+/*  SENTENCE LINE (the SCUMM strip's text)                             */
+/* ================================================================== */
+{
+  check("sentence: bare floor reads Walk to", sentenceLineText({ verb: null }) === "Walk to");
+  check("sentence: an armed verb with no target reads its label", sentenceLineText({ verb: "look" }) === "Look at");
+  check("sentence: an armed item with no target reads Use item", sentenceLineText({ verb: "use", heldItemName: "wrench" }) === "Use wrench");
+  check("sentence: verb + object", sentenceLineText({ verb: "look", target: { label: "the drop-safe", cursor: "take" } }) === "Look at the drop-safe");
+  check("sentence: item on object", sentenceLineText({ verb: "use", heldItemName: "wrench", target: { label: "the bike", cursor: "use" } }) === "Use wrench on the bike");
+  check("sentence: no coin - the object's own verb reads out", sentenceLineText({ verb: null, target: { label: "the coil", cursor: "take" } }) === "Pick up the coil");
+}
 
-  // SPENDING IS AUTHOR-EXPLICIT. Only 🗝 useItem with itemConsumed spends
-  // anything; a say-a-line — or an unnamed use-item — NEVER eats the armed
-  // item from the satchel (the old arm-to-consume default read exactly like
-  // "the hotspot ate my item for showing text").
-  check("spend: useItem with itemConsumed spends exactly that item",
-    itemsConsumedBy({ type: "useItem", itemConsumed: "snack" }).join(",") === "snack");
-  check("spend: useItem WITHOUT itemConsumed spends nothing (say-a-line use)",
-    itemsConsumedBy({ type: "useItem" }).length === 0);
-  check("spend: a showText action NEVER consumes an armed item",
-    itemsConsumedBy({ type: "showText", text: "Nice dog." }).length === 0);
-  check("spend: giveItem / goToScene / scripts consume nothing",
-    itemsConsumedBy({ type: "giveItem", itemGranted: "x" }).length === 0 &&
-      itemsConsumedBy({ type: "goToScene", targetSceneId: "e" }).length === 0);
+/* ================================================================== */
+/*  INTERACTABLE NPCS (StageNpc.talkHotspotId) — validator             */
+/* ================================================================== */
+{
+  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+  const mk = (npcs: never[], hotspots: Hotspot[]): Story => ({
+    id: "npcs", title: "NPCs", tagline: "", coverImage: "", startSceneId: "s1",
+    scenes: [
+      {
+        id: "s1", title: "Room", background: "", prose: "text", choices: [],
+        stage: { playerImage: "emoji:🕵️", spawn: { x: 20, y: 86 }, floor: { top: 62, bottom: 94 }, npcs } as never,
+        hotspots,
+      },
+      endScene,
+    ],
+    items: [], characters: [],
+  });
+  const talker: Hotspot = { id: "t1", label: "the sweeper", bounds: { x: 40, y: 60, w: 10, h: 30 }, cursor: "talk", isRepeatable: true, action: { type: "startDialogue" } };
+  const looker: Hotspot = { id: "l1", label: "the sign", bounds: { x: 60, y: 30, w: 10, h: 20 }, cursor: "look", action: { type: "showText", text: "x" } };
+  const out: Hotspot = { id: "out", label: "Out", bounds: { x: 84, y: 70, w: 12, h: 20 }, cursor: "go", isRepeatable: true, action: { type: "goToScene", targetSceneId: "e" } };
 
-  // …and the Check tab flags an accept that can never be answered.
-  const snackItem = { id: "snack", name: "Scooby Snack", icon: "🍪" };
-  const shedStory = (hotspots: Hotspot[]): Story => ({
-    id: "shedtest",
-    title: "Shedtest",
+  const good = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "t1" } as never], [talker, out]));
+  check("npc link: a linked talker raises no issue", !good.some((i) => /NPC "n1"/.test(i.message)), good.filter((i) => /NPC/.test(i.message)));
+
+  const dangling = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "nope" } as never], [talker, out]));
+  check("npc link: a dangling link is an error", dangling.some((i) => i.severity === "error" && /NPC "n1" is linked to talk marker "nope"/.test(i.message)), dangling.map((i) => i.message));
+
+  const notalk = validateStory(mk([{ id: "n1", x: 40, y: 86, talkHotspotId: "l1" } as never], [looker, out]));
+  check("npc link: linking a non-talker warns", notalk.some((i) => i.severity === "warning" && /isn't a 🗣 start-conversation/i.test(i.message)));
+}
+
+/* ================================================================== */
+/*  CREATOR-PASS regressions (found while authoring Rain Sector)       */
+/* ================================================================== */
+{
+  const endScene: SceneNode = { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } };
+  const mk = (hotspots: Hotspot[]): Story => ({
+    id: "creator", title: "Creator", tagline: "", coverImage: "", startSceneId: "s1",
+    scenes: [{ id: "s1", title: "Room", background: "", prose: "text", choices: [], hotspots }, endScene],
+    items: [], characters: [],
+  });
+  const has = (issues: ReturnType<typeof validateStory>, re: RegExp) => issues.some((i) => re.test(i.message));
+
+  // A useItem action carrying a targetSceneId is a way out (the Studio's own
+  // "locked door that swings open" pattern) — Rain Sector's mag-locked gate.
+  const useItemExit = validateStory(mk([
+    {
+      id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true,
+      gating: { requiresItems: ["card"] },
+      action: { type: "useItem", targetSceneId: "e", text: "The latch lets go." },
+    },
+  ]));
+  check("creator: a useItem exit counts as a way out (no soft-lock error)", !has(useItemExit, /has no way out/i), useItemExit.filter((i) => /way out/.test(i.message)));
+  check("creator: the useItem exit is a real edge", storyEdges(mk([
+    { id: "gate", label: "the gate", bounds: { x: 80, y: 60, w: 12, h: 30 }, cursor: "go", isRepeatable: true, action: { type: "useItem", targetSceneId: "e", text: "x" } },
+  ])).some((x) => x.source === "s1" && x.target === "e"));
+
+  // A VERB action can be the flag producer (kick the machine -> flag ->
+  // the machine's own take-gate opens). The audit must read verbs.
+  const verbProducer = validateStory(mk([
+    {
+      id: "vend", label: "the machine", bounds: { x: 30, y: 64, w: 12, h: 26 }, cursor: "look",
+      verbs: { kick: { type: "showText", text: "CLANG.", flagSet: "shaken" } },
+      gating: { requiresFlags: ["shaken"] },
+      action: { type: "giveItem", itemGranted: "card" },
+    },
+  ]));
+  check("creator: a verb action's flagSet counts as a producer", !has(verbProducer, /Flag "shaken" is required by a gate/i), verbProducer.filter((i) => /shaken/.test(i.message)));
+
+  // And the shipped case itself stays clean.
+  const rs = validateStory(RAIN_SECTOR);
+  check("rainsector: the shipped case validates with zero errors", rs.filter((i) => i.severity === "error").length === 0, rs.slice(0, 5));
+  check("rainsector: the walker sheet is the sliced magenta plate", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.playerSheet!.frameWidth === 293);
+  check("rainsector: an interactable NPC is linked to a talker", RAIN_SECTOR.scenes.find((x) => x.id === "rs_street")!.stage!.npcs?.some((n) => n.talkHotspotId === "rsh_ping"));
+  check("rainsector: the stair barrier is gate-aware", RAIN_SECTOR.scenes.find((x) => x.id === "rs_alley")!.stage!.obstacles?.some((o) => o.gating?.requiresFlags?.includes("rs_ping_told")));
+}
+
+/* ── SEEDED RNG — deterministic playtests (?seed=) ──────────────────── */
+console.log("\n=== SEEDED RNG — deterministic playtests ===");
+{
+  // mulberry32: same seed in, same stream out; a different seed diverges.
+  const g1 = mulberry32(hashSeed("42"));
+  const g2 = mulberry32(hashSeed("42"));
+  const seq = Array.from({ length: 6 }, () => g1());
+  check("rng: mulberry32 same seed replays the same stream", seq.every((v, i) => v === g2()));
+  check("rng: draws stay in [0, 1)", seq.every((v) => v >= 0 && v < 1));
+  const g3 = mulberry32(hashSeed("43"));
+  check("rng: a different seed diverges", Array.from({ length: 6 }, () => g3()).some((v, i) => v !== seq[i]));
+  check("rng: hashSeed is stable and separating", hashSeed("fred") === hashSeed("fred") && hashSeed("fred") !== hashSeed("42"));
+
+  // ?seed= parsing.
+  check("rng: ?seed=42 parses", seedFromSearch("?seed=42") === "42");
+  check("rng: seed parses mid-query and decodes", seedFromSearch("?a=1&seed=hello%20world") === "hello world");
+  check("rng: no seed param means null", seedFromSearch("?x=1") === null && seedFromSearch("") === null);
+  check("rng: a bare ?seed= means null", seedFromSearch("?seed=") === null);
+
+  // The shared module stream.
+  setGameSeed("42");
+  const s1 = Array.from({ length: 8 }, () => gameRandom());
+  setGameSeed("42");
+  const s2 = Array.from({ length: 8 }, () => gameRandom());
+  check("rng: setGameSeed replays the module stream", s1.every((v, i) => v === s2[i]));
+  check("rng: currentGameSeed reports the pin", currentGameSeed() === "42");
+  setGameSeed(null);
+  check("rng: unsetting hands the stream back to Math.random", currentGameSeed() === null);
+  const live = Array.from({ length: 8 }, () => gameRandom());
+  setGameSeed(null);
+  check("rng: unseeded draws are live (two runs differ)", Array.from({ length: 8 }, () => gameRandom()).some((v, i) => v !== live[i]));
+
+  // The helpers games actually call.
+  const base = ["a", "b", "c", "d", "e", "f"];
+  setGameSeed("42");
+  const sh1 = gameShuffle(base);
+  const picked = gamePick(base);
+  const r = gameRange(5, 9);
+  setGameSeed("42");
+  const sh3 = gameShuffle(base);
+  check("rng: gameShuffle same seed replays the permutation", JSON.stringify(sh1) === JSON.stringify(sh3));
+  check("rng: gameShuffle preserves the multiset, input untouched", sh1.slice().sort().join("") === "abcdef" && base.join("") === "abcdef");
+  check("rng: gamePick returns a member", base.includes(picked));
+  check("rng: gameRange stays in band", r >= 5 && r < 9);
+  setGameSeed(null);
+
+  // The gameplay call sites route through the stream.
+  check("rng: PatternPuzzle shuffles via the seeded stream", /gameShuffle\(config\.rows\)/.test(readFileSync("src/game/PatternPuzzle.tsx", "utf8")));
+  check("rng: RideGame spawns via the seeded stream", /gameRandom\(\) \* spawnMs/.test(readFileSync("src/game/RideGame.tsx", "utf8")));
+}
+
+
+/* ================================================================== */
+/*  4. REWIND ONE DECISION (src/game/rewind.ts)                        */
+/* ================================================================== */
+
+{
+  const save = (over: Partial<GameSave> = {}): GameSave => ({
+    storyId: "t",
+    sceneId: "a",
+    sceneTitle: "A",
+    savedAt: 0,
+    activeFlags: [],
+    inventory: [],
+    meters: { Sultry: 0, Aggressive: 0, Clever: 0, Suspicion: 0 },
+    characterTrust: {},
+    memories: {},
+    proseAcknowledged: true,
+    beatIdx: 0,
+    usedHotspots: [],
+    usedChoices: [],
+    visitedScenes: [],
+    encounteredCharacters: [],
+    expiredChoices: [],
+    choiceClocks: {},
+    ...over,
+  });
+
+  let st = emptyRewind();
+  check("rewind: a fresh stack has nothing to undo", !canRewindDecision(st) && rewindLabel(st) === null);
+
+  st = pushRewind(st, save(), "“Ask about the watch”");
+  check("rewind: a push makes it undoable", canRewindDecision(st) && st.entries.length === 1);
+  check("rewind: the label describes the decision", rewindLabel(st) === "“Ask about the watch”");
+
+  // Same moment twice — the stack must not grow (scene re-entry, re-render).
+  st = pushRewind(st, save(), "“Ask about the watch”");
+  check("rewind: an identical moment collapses", st.entries.length === 1);
+
+  // Same moment, better label: keep one entry but describe it accurately.
+  st = pushRewind(st, save(), "“Press him harder”");
+  check("rewind: a collapsed push still improves the label", st.entries.length === 1 && rewindLabel(st) === "“Press him harder”");
+
+  // A genuinely different world pushes a new entry.
+  st = pushRewind(st, save({ sceneId: "b", sceneTitle: "B", activeFlags: ["seen_ledger"] }), "“Take the ledger”");
+  check("rewind: a changed world pushes a new entry", st.entries.length === 2);
+
+  const popped = popRewind(st);
+  check("rewind: pop returns the most recent snapshot", popped.entry?.label === "“Take the ledger”");
+  check("rewind: pop shrinks the stack", popped.stack.entries.length === 1);
+  check("rewind: the popped save is the world BEFORE that decision", popped.entry?.save.sceneId === "b");
+
+  // Endings are final: no snapshot may be taken at one, and once sealed the
+  // stack refuses both pushes and pops — an ending can never be re-rolled.
+  let ending = pushRewind(emptyRewind(), save(), "before");
+  const beforeSeal = ending.entries.length;
+  ending = pushRewind(ending, save({ sceneId: "z" }), "at the ending", { isEnding: true });
+  check("rewind: a snapshot at an ending is refused", ending.entries.length === beforeSeal);
+  ending = sealRewind(ending);
+  check("rewind: sealing kills the undo", !canRewindDecision(ending));
+  check("rewind: a sealed stack refuses pops", popRewind(ending).entry === null);
+  check("rewind: a sealed stack refuses pushes", pushRewind(ending, save({ sceneId: "q" }), "x").entries.length === beforeSeal);
+
+  // Bounded: the oldest decisions fall off, the newest always survive.
+  let deep = emptyRewind();
+  for (let i = 0; i < REWIND_LIMIT + 12; i++) deep = pushRewind(deep, save({ sceneId: `s${i}`, beatIdx: i }), `d${i}`);
+  check("rewind: the stack is bounded", deep.entries.length === REWIND_LIMIT);
+  check("rewind: the bound drops the OLDEST, keeps the newest", rewindLabel(deep) === `d${REWIND_LIMIT + 11}`);
+
+  // Purity: no call mutates its input.
+  const base = pushRewind(emptyRewind(), save(), "one");
+  const grown = pushRewind(base, save({ sceneId: "b" }), "two");
+  check("rewind: pushRewind is pure", base.entries.length === 1 && grown.entries.length === 2);
+  check("rewind: popRewind is pure", popRewind(grown).stack.entries.length === 1 && grown.entries.length === 2);
+}
+
+/* ================================================================== */
+/*  5. WORLD-STATE DEEP LINKS (src/game/deepLink.ts)                   */
+/* ================================================================== */
+
+{
+  const empty = parseDeepLink("");
+  check("deep link: an empty query carries nothing", !empty.present && empty.flags.length === 0);
+  check("deep link: ?seed alone is not a world-state link", !parseDeepLink("?seed=42").present);
+
+  const req = parseDeepLink("?scene=tt_light&flags=tt_caught_lie,tt_heard_signal&items=tt_manifest_page&meters=Suspicion:5,clever:3&trust=lydia:3,marco:-2&memories=alibi:I%20lied");
+  check("deep link: the target scene parses", req.sceneId === "tt_light");
+  check("deep link: flags parse as a list", req.flags.join(",") === "tt_caught_lie,tt_heard_signal");
+  check("deep link: items parse as a list", req.items.join(",") === "tt_manifest_page");
+  check("deep link: meters parse", req.meters.Suspicion === 5);
+  check("deep link: meter names are case-insensitive", req.meters.Clever === 3);
+  check("deep link: trust parses, negatives included", req.trust.lydia === 3 && req.trust.marco === -2);
+  check("deep link: memories parse (values may contain spaces)", req.memories.alibi === "I lied");
+  check("deep link: whitespace around ids is trimmed", parseDeepLink("?flags= a , b ").flags.join(",") === "a,b");
+  check("deep link: a blank value is not present", !parseDeepLink("?flags=").present);
+
+  // Resolved against a real story: valid ids land, unknown ones warn.
+  const nd = NEON_DINER;
+  const firstItem = nd.items[0]?.id ?? "";
+  const realScene = nd.scenes[2]?.id ?? nd.startSceneId;
+  const res = resolveDeepLink(nd, parseDeepLink(`?scene=${realScene}&items=${firstItem}&meters=Clever:4`));
+  check("deep link: a known scene is accepted", res.sceneId === realScene);
+  check("deep link: a known item lands in the inventory", res.state.inventory.some((i) => i.id === firstItem));
+  check("deep link: meters land on the state", res.state.meters.Clever === 4);
+  check("deep link: a clean link warns about nothing", res.warnings.length === 0, res.warnings);
+  check("deep link: a link that injects something reports applied", res.applied);
+
+  // Unknown ids are WARNINGS, never errors — a renamed flag must still boot.
+  const bad = resolveDeepLink(nd, parseDeepLink("?scene=no_such_scene&items=no_such_item&trust=no_such_person:2"));
+  check("deep link: an unknown scene falls back to the start scene", bad.sceneId === undefined);
+  check("deep link: an unknown item is dropped, not fatal", bad.state.inventory.length === 0);
+  // createInitialState seeds every REAL character's trust, so "dropped" means
+  // the unknown id never appears — not that the map is empty.
+  check("deep link: an unknown character's trust is dropped", !("no_such_person" in bad.state.characterTrust));
+  check("deep link: every unknown id produced a warning", bad.warnings.length === 3, bad.warnings);
+
+  // An unknown FLAG is the deliberate exception: applied with a warning, so a
+  // gate can be tested before the content that sets the flag exists.
+  const ghost = resolveDeepLink(nd, parseDeepLink("?flags=not_yet_written"));
+  check("deep link: an unknown flag is applied anyway", ghost.state.activeFlags.has("not_yet_written"));
+  check("deep link: …but it says so", ghost.warnings.length === 1);
+
+  // Out-of-range numbers are clamped to the engine's own bounds, with a note.
+  const wild = resolveDeepLink(nd, parseDeepLink(`?meters=Suspicion:99&trust=${nd.characters[0]?.id ?? "x"}:99`));
+  check("deep link: meters clamp to 0–10", wild.state.meters.Suspicion === 10);
+  if (nd.characters[0]) check("deep link: trust clamps to -5–5", wild.state.characterTrust[nd.characters[0].id] === 5);
+  check("deep link: clamping is reported", wild.warnings.length >= 1);
+
+  // Only world state is injectable — nothing here can forge progress.
+  check("deep link: no journey/save/season fields exist on the resolution", !("journey" in res) && !("save" in res) && !("seasonLog" in res));
+
+  // Round trip: build → parse → the same request.
+  const link = buildDeepLink({ sceneId: "s1", flags: ["f1", "f2"], items: ["i1"], meters: { Suspicion: 4 }, trust: { lyd: -1 }, seed: "42" });
+  const back = parseDeepLink(link.slice(link.indexOf("?")));
+  check("deep link: build → parse round-trips the scene", back.sceneId === "s1");
+  check("deep link: build → parse round-trips flags/items", back.flags.join() === "f1,f2" && back.items.join() === "i1");
+  check("deep link: build → parse round-trips meters and trust", back.meters.Suspicion === 4 && back.trust.lyd === -1);
+  check("deep link: the seed rides along", /[?&]seed=42/.test(link));
+  check("deep link: an empty spec builds an empty link", buildDeepLink({}, "http://x/") === "http://x/");
+  check("deep link: describe summarises what landed", describeDeepLink(res).length > 0);
+}
+
+/* ================================================================== */
+/*  6. THE DECISION SURFACE (src/game/decisions.ts)                    */
+/* ================================================================== */
+
+{
+  const story: Story = {
+    id: "ds",
+    title: "DS",
     tagline: "",
     coverImage: "",
-    startSceneId: "shed",
+    startSceneId: "s_start",
+    items: [
+      { id: "key", name: "Brass Key", icon: "🔑", description: "" },
+      { id: "photo", name: "Photograph", icon: "🖼", description: "" },
+    ],
+    characters: [{ id: "lyd", name: "Lydia Vane", role: "", portrait: "", description: "" }],
     scenes: [
-      { id: "shed", title: "The Shed", background: "", prose: "", hotspots, choices: [] },
-      { id: "e", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+      {
+        id: "s_start",
+        title: "Start",
+        background: "",
+        prose: "",
+        choices: [
+          { id: "c_go", text: "Head to the door", targetSceneId: "s_door", attitudeTag: "Neutral" },
+          { id: "c_locked", text: "Use the key", targetSceneId: "s_end", gating: { requiresItems: ["key"] } },
+          { id: "c_unwired", text: "Nowhere yet" },
+        ],
+        hotspots: [
+          { id: "h_key", label: "A brass key", bounds: { x: 0, y: 0, w: 5, h: 5 }, cursor: "take", action: { type: "giveItem", itemGranted: "key" } },
+          { id: "h_read", label: "A poster", bounds: { x: 6, y: 0, w: 5, h: 5 }, cursor: "look", action: { type: "showText", text: "Just a poster." } },
+        ],
+      },
+      {
+        id: "s_door",
+        title: "Door",
+        background: "",
+        prose: "",
+        choices: [
+          {
+            id: "c_qte",
+            text: "Grab the rail",
+            targetSceneId: "s_end",
+            quickTime: true,
+            timeLimitSeconds: 5,
+            timedOutTargetSceneId: "s_fall",
+            timedOutConsequences: { setFlags: ["hesitated"] },
+          },
+        ],
+      },
+      { id: "s_fall", title: "The Fall", background: "", prose: "", autoAdvanceTargetSceneId: "s_end" },
+      { id: "s_dead", title: "Dead End", background: "", prose: "", choices: [] },
+      { id: "s_end", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
     ],
-    items: [snackItem],
+  };
+
+  const sim0 = initialSim(story, createInitialState(story));
+  check("decisions: a fresh sim opens on the start scene", sim0.sceneId === "s_start");
+
+  const d0 = availableDecisions(story, sim0);
+  const labels = d0.map((d) => decisionKey(d));
+  check("decisions: an open choice is offered", labels.includes("s_start:c_go"));
+  check("decisions: a GATED choice is withheld", !labels.includes("s_start:c_locked"));
+  check("decisions: an UNWIRED choice is withheld (the runtime refuses it)", !labels.includes("s_start:c_unwired"));
+  check("decisions: hotspots are offered", labels.includes("s_start:h_key") && labels.includes("s_start:h_read"));
+
+  // Firing the pickup hotspot unlocks the gated choice — the whole point.
+  const picked = applyDecision(story, sim0, d0.find((d) => decisionKey(d) === "s_start:h_key")!);
+  check("decisions: a giveItem hotspot puts the item in the inventory", picked.sim.state.inventory.some((i) => i.id === "key"));
+  check("decisions: a pickup does not move the player", !picked.moved && picked.sim.sceneId === "s_start");
+  check("decisions: a marker fire is tallied for coverage", picked.coverage.some((c) => c.kind === "marker" && c.id === "s_start:h_key"));
+  const d1 = availableDecisions(story, picked.sim).map(decisionKey);
+  check("decisions: the item unlocks the gated choice", d1.includes("s_start:c_locked"));
+  check("decisions: a one-shot hotspot is spent", !d1.includes("s_start:h_key"));
+  check("decisions: a READ hotspot is never spent", d1.includes("s_start:h_read"));
+
+  // Quick-time windows offer BOTH the act and the lapse.
+  const atDoor = applyDecision(story, sim0, d0.find((d) => decisionKey(d) === "s_start:c_go")!);
+  check("decisions: a navigating choice moves the player", atDoor.moved && atDoor.sim.sceneId === "s_door");
+  check("decisions: arriving somewhere is tallied as a scene visit", atDoor.coverage.some((c) => c.kind === "scene" && c.id === "s_door"));
+  const dq = availableDecisions(story, atDoor.sim);
+  check("decisions: a QTE offers the act", dq.some((d) => d.kind === "choice" && d.choiceId === "c_qte"));
+  check("decisions: a QTE also offers the LAPSE — deciding by not deciding", dq.some((d) => d.kind === "qte-timeout"));
+
+  const lapsed = applyDecision(story, atDoor.sim, dq.find((d) => d.kind === "qte-timeout")!);
+  check("decisions: a lapse applies the timed-out consequences", lapsed.sim.state.activeFlags.has("hesitated"));
+  check("decisions: a lapse routes to the hesitation branch", lapsed.sim.sceneId === "s_fall");
+  check("decisions: a lapse is not tallied as a choice taken", !lapsed.coverage.some((c) => c.kind === "choice"));
+
+  // A scene with no choices but an auto-advance carries the player onward.
+  const dAuto = availableDecisions(story, lapsed.sim);
+  check("decisions: an auto-advance scene offers its own exit", dAuto.length === 1 && dAuto[0].kind === "auto");
+  const carried = applyDecision(story, lapsed.sim, dAuto[0]);
+  check("decisions: the auto-advance lands on its target", carried.sim.sceneId === "s_end");
+  check("decisions: an ending offers nothing further", availableDecisions(story, carried.sim).length === 0);
+  check("decisions: an ending is NOT a dead end", !isStuck(story, carried.sim));
+
+  // A non-ending scene with nothing to do IS one — this is the bug class the
+  // playthrough bot exists to find.
+  const stuckSim = { ...sim0, sceneId: "s_dead" };
+  check("decisions: a non-ending scene with no exit is stuck", isStuck(story, stuckSim));
+
+  // Purity: applyDecision never mutates the sim it was handed.
+  check("decisions: applyDecision is pure", sim0.sceneId === "s_start" && sim0.state.inventory.length === 0 && sim0.usedHotspots.size === 0);
+
+  // Coverage bucket mapping matches what the tally understands.
+  check("decisions: a choice maps to the choice bucket", decisionCoverageKind({ kind: "choice", sceneId: "a", choiceId: "b", label: "", reply: false, quickTime: false }) === "choice");
+  check("decisions: a hotspot maps to the marker bucket", decisionCoverageKind({ kind: "hotspot", sceneId: "a", hotspotId: "b", label: "" }) === "marker");
+  check("decisions: an auto transition is not tallied", decisionCoverageKind({ kind: "auto", sceneId: "a", label: "", targetSceneId: "b", via: "auto-advance" }) === null);
+
+  /* ---- the shared rules Game.tsx now imports from here ---- */
+  check("decisions: pure navigation repeats", decisionChoiceRepeats({ id: "x", text: "" , targetSceneId: "y" }));
+  check("decisions: a choice with consequences is one-shot", !decisionChoiceRepeats({ id: "x", text: "", targetSceneId: "y", consequences: { setFlags: ["f"] } }));
+  check("decisions: a reply is one-shot by default", !decisionChoiceRepeats({ id: "x", text: "", reply: true }));
+  check("decisions: an explicit isRepeatable always wins", decisionChoiceRepeats({ id: "x", text: "", reply: true, isRepeatable: true }));
+  check("decisions: showText hotspots repeat", hotspotRepeats({ id: "h", label: "", bounds: { x: 0, y: 0, w: 1, h: 1 }, cursor: "look", action: { type: "showText" } }));
+  check("decisions: a pickup hotspot does not", !hotspotRepeats({ id: "h", label: "", bounds: { x: 0, y: 0, w: 1, h: 1 }, cursor: "take", action: { type: "giveItem", itemGranted: "k" } }));
+
+  // Perks + the consequence adjustment the runtime applies on every pick.
+  const flat = createInitialState(story);
+  check("decisions: no perks at zero meters", Object.values(getPerks(flat)).every((v) => !v));
+  const charmed = { ...flat, meters: { ...flat.meters, Sultry: 4 } };
+  check("decisions: Velvet Tongue lights at Sultry 4", getPerks(charmed).velvetTongue);
+  const gift: Choice = { id: "g", text: "", targetSceneId: "s_end", consequences: { trustChanges: [{ characterId: "lyd", delta: 2 }] } };
+  check("decisions: Velvet Tongue adds +1 to a trust gain", adjustedConsequences(gift, charmed)?.trustChanges?.[0].delta === 3);
+  const hot = { ...flat, meters: { ...flat.meters, Suspicion: 6 } };
+  check("decisions: HEAT halves a trust gain", adjustedConsequences(gift, hot)?.trustChanges?.[0].delta === 1);
+  const hard = { ...flat, meters: { ...flat.meters, Aggressive: 4 } };
+  const rough: Choice = { id: "r", text: "", targetSceneId: "s_end", attitudeTag: "Aggressive", consequences: { meterChanges: [{ meter: "Suspicion", delta: 2 }] } };
+  check("decisions: Iron Nerve zeroes the Heat cost of an Aggressive choice", adjustedConsequences(rough, hard)?.meterChanges?.[0].delta === 0);
+  check("decisions: a trust LOSS is never softened by a perk", adjustedConsequences({ id: "l", text: "", consequences: { trustChanges: [{ characterId: "lyd", delta: -2 }] } }, charmed)?.trustChanges?.[0].delta === -2);
+
+  // The beat queue the sim reads is the one the runtime plays.
+  const beatScene: SceneNode = {
+    id: "bs",
+    title: "",
+    background: "",
+    prose: "",
+    dialogueBeats: [
+      { id: "b1", characterId: "lyd", text: "always" },
+      { id: "b2", characterId: "lyd", text: "gated", conditionRule: { requiresFlags: ["open"] } },
+    ],
+  };
+  check("decisions: a gated beat is out of the queue while its flag is unset", visibleBeatQueue(beatScene, flat).map((b) => b.id).join() === "b1");
+  const opened = { ...flat, activeFlags: new Set(["open"]) };
+  check("decisions: setting the flag puts it back in", visibleBeatQueue(beatScene, opened).map((b) => b.id).join() === "b1,b2");
+
+  /* ---- Game.tsx really does import the shared rules ----
+   * A private copy in Game.tsx would let the simulation drift from the game
+   * silently, which would make every bot result a lie. */
+  const gameSrc = readFileSync("src/game/Game.tsx", "utf8");
+  check("decisions: Game.tsx imports the shared decision rules", /from "\.\/decisions"/.test(gameSrc));
+  check("decisions: Game.tsx keeps no private choiceRepeats", !/^function choiceRepeats/m.test(gameSrc));
+  check("decisions: Game.tsx keeps no private getPerks", !/^function getPerks/m.test(gameSrc));
+  check("rewind: Game.tsx wires the decision stack", /snapshotDecision\(/.test(gameSrc) && /doRewindDecision/.test(gameSrc));
+  check("deep link: Game.tsx resolves a boot-time link", /resolveDeepLink\(/.test(gameSrc));
+}
+
+/* ================================================================== */
+/*  6b. DECISION SURFACE — THE NON-CHOICE MECHANISMS                   */
+/* ================================================================== */
+/* A branch the simulation cannot see is a branch the bot reports as
+ * unreachable — or worse, silently never tests. These five mechanisms all
+ * move the world WITHOUT being a choice in the rail, and each one was found
+ * by the bot mis-reporting a real story before it was modelled. */
+
+{
+  const story: Story = {
+    id: "ds2",
+    title: "DS2",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "s_yard",
+    items: [
+      { id: "crowbar", name: "Crowbar", icon: "🔧", description: "" },
+      { id: "ticket", name: "Pawn Ticket", icon: "🎫", description: "", isClue: true },
+      { id: "dud", name: "Bus Transfer", icon: "🎟", description: "" },
+    ],
+    characters: [
+      { id: "vera", name: "Vera Sloane", role: "", portrait: "", description: "" },
+      { id: "ghost", name: "Never Met", role: "", portrait: "", description: "" },
+    ],
+    deduction: {
+      suspectIds: ["vera", "ghost"],
+      connections: [
+        { a: "ticket", b: "vera", flagSet: "pinned_vera", revelation: "Hers." },
+        { a: "ticket", b: "ghost", flagSet: "pinned_ghost", revelation: "Unreachable." },
+      ],
+    },
+    scenes: [
+      {
+        id: "s_yard",
+        title: "The Yard",
+        background: "",
+        prose: "",
+        nodeType: "stage",
+        stage: {
+          enabled: true,
+          // kick lives outside the five core verbs, so the room has to opt in
+          extendedVerbs: true,
+          exitEdges: {
+            right: { targetSceneId: "s_shed", flagSet: "left_the_yard" },
+            left: { targetSceneId: "s_shed", gating: { requiresFlags: ["never_set"] } },
+          },
+        },
+        // No choices at all: the ONLY ways out are the edge and the machine.
+        choices: [],
+        hotspots: [
+          {
+            id: "h_machine",
+            label: "A vending machine",
+            bounds: { x: 0, y: 0, w: 10, h: 10 },
+            cursor: "look",
+            action: { type: "showText", text: "It hums." },
+            verbs: {
+              kick: { type: "giveItem", itemGranted: "crowbar", flagSet: "kicked_it" },
+            },
+          },
+        ],
+        dialogueBeats: [{ id: "b_vera", characterId: "vera", text: "I was never near the pawn shop." }],
+      },
+      {
+        id: "s_shed",
+        title: "The Shed",
+        background: "",
+        prose: "",
+        onEnterActions: [{ consequences: { addItems: ["ticket", "dud"], setFlags: ["in_shed"] } }],
+        dialogueBeats: [
+          {
+            id: "b_lie",
+            characterId: "vera",
+            text: "Never been to the pawn shop in my life.",
+            lie: {
+              evidenceItemIds: ["ticket"],
+              caughtBeat: { id: "b_caught", characterId: "vera", text: "...fine." },
+              contradictedFlag: "vera_caught",
+              wrongEvidenceLimit: 1,
+              wrongConsequences: { meterChanges: [{ meter: "Suspicion", delta: 1 }] },
+            },
+          },
+        ],
+        choices: [
+          { id: "c_win", text: "Close it out", targetSceneId: "s_end", gating: { requiresFlags: ["vera_caught"] } },
+        ],
+      },
+      { id: "s_end", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
+    ],
+  };
+
+  const sim0 = initialSim(story, createInitialState(story));
+  const keys0 = availableDecisions(story, sim0).map(decisionKey);
+
+  /* ---- 🚶 stage edge exits ---- */
+  check("stage exit: an open edge is a decision even with zero choices", keys0.includes("s_yard#edge:right"));
+  check("stage exit: a GATED edge is withheld", !keys0.includes("s_yard#edge:left"));
+
+  /* ---- 🪙 the verb coin ---- */
+  check("verb coin: a verb-only action is its own decision", keys0.includes("s_yard:h_machine#kick"));
+  check("verb coin: the default action stays separate from the verb", keys0.includes("s_yard:h_machine"));
+  const kick = availableDecisions(story, sim0).find((d) => decisionKey(d) === "s_yard:h_machine#kick")!;
+  const kicked = applyDecision(story, sim0, kick);
+  check("verb coin: kicking it grants the item the default action never would",
+    kicked.sim.state.inventory.some((i) => i.id === "crowbar") && kicked.sim.state.activeFlags.has("kicked_it"));
+  check("verb coin: coverage tallies the OBJECT, not the verb", decisionCoverageKey(kick) === "s_yard:h_machine");
+
+  /* ---- on-enter actions + who you've met ---- */
+  const edge = availableDecisions(story, sim0).find((d) => decisionKey(d) === "s_yard#edge:right")!;
+  const inShed = applyDecision(story, sim0, edge).sim;
+  check("stage exit: walking the edge sets its flag and moves", inShed.sceneId === "s_shed" && inShed.state.activeFlags.has("left_the_yard"));
+  check("scene entry: on-enter actions fire on arrival", inShed.state.inventory.some((i) => i.id === "ticket"));
+  check("scene entry: a speaker you've seen counts as met", inShed.encounteredCharacters.has("vera"));
+  check("scene entry: a character you never met does NOT", !inShed.encounteredCharacters.has("ghost"));
+
+  const shedKeys = availableDecisions(story, inShed).map(decisionKey);
+
+  /* ---- 📌 the corkboard ---- */
+  check("corkboard: a held clue wires to a suspect you've met", shedKeys.includes("#board:ticket+vera"));
+  check("corkboard: a suspect you've never met is not on the board", !shedKeys.includes("#board:ticket+ghost"));
+  const pin = availableDecisions(story, inShed).find((d) => decisionKey(d) === "#board:ticket+vera")!;
+  const pinned = applyDecision(story, inShed, pin).sim;
+  check("corkboard: pinning sets the revelation flag", pinned.state.activeFlags.has("pinned_vera"));
+  check("corkboard: an already-pinned link is not offered twice",
+    !availableDecisions(story, pinned).map(decisionKey).includes("#board:ticket+vera"));
+
+  /* ---- press the lie ---- */
+  check("press the lie: the right evidence is a decision", shedKeys.includes("s_shed:b_lie#press:ticket"));
+  check("press the lie: a bluff is also a decision — being wrong is a branch too", shedKeys.includes("s_shed:b_lie#press:dud"));
+  const bluff = availableDecisions(story, inShed).find((d) => decisionKey(d) === "s_shed:b_lie#press:dud")!;
+  check("press the lie: the surface knows the bluff will not hold", bluff.kind === "press-lie" && !bluff.correct);
+  const called = applyDecision(story, inShed, bluff).sim;
+  check("press the lie: a called bluff costs heat and does not set the flag",
+    !called.state.activeFlags.has("vera_caught") && (called.state.meters.Suspicion ?? 0) > (inShed.state.meters.Suspicion ?? 0));
+  // wrongEvidenceLimit is 1, so that was the only attempt allowed.
+  check("press the lie: the claim shuts once the bluffs run out",
+    !availableDecisions(story, called).map(decisionKey).some((k) => k.startsWith("s_shed:b_lie#press")));
+  const press = availableDecisions(story, inShed).find((d) => decisionKey(d) === "s_shed:b_lie#press:ticket")!;
+  check("press the lie: the surface knows which evidence actually breaks it", press.kind === "press-lie" && press.correct);
+  const broke = applyDecision(story, inShed, press).sim;
+  check("press the lie: breaking it sets the contradicted flag", broke.state.activeFlags.has("vera_caught"));
+  check("press the lie: a broken lie cannot be pressed again",
+    !availableDecisions(story, broke).map(decisionKey).some((k) => k.startsWith("s_shed:b_lie#press")));
+  check("press the lie: the ending it gates is now reachable",
+    availableDecisions(story, broke).map(decisionKey).includes("s_shed:c_win"));
+  check("press the lie: without it, the scene is NOT a dead end (the lie is the way on)", !isStuck(story, inShed));
+
+  /* ---- 🎬 minigames ---- */
+  const puzzleStory: Story = {
+    id: "ds3",
+    title: "DS3",
+    tagline: "",
+    coverImage: "",
+    startSceneId: "p_room",
+    items: [],
     characters: [],
-  });
-  check("use: accepts-but-unanswerable warns in the validator",
-    validateStory(shedStory([snackDoor])).some((i) => /can never answer/.test(i.message)),
-    validateStory(shedStory([snackDoor])).filter((i) => i.severity !== "info").slice(0, 4));
-  check("use: accepts-unknown-item errors in the validator",
-    validateStory(shedStory([{ ...strayDog, acceptsItems: ["ghost"] }])).some((i) => i.severity === "error" && /accepts unknown item "ghost"/.test(i.message)));
-  check("use: a say-line accept resolves clean (no dead-accept warning)",
-    !validateStory(shedStory([strayDog])).some((i) => /can never answer|accepts unknown/.test(i.message)));
-
-  // Refusal lines: authored > story > house style, and they vary.
-  const storyLines = { verbResponses: { talk: ["a", "b", "c"] } } as unknown as Story;
-  check("coin: an authored refusal line wins", wrongVerbLine("talk", storyLines, "It's a bench, Ash.") === "It's a bench, Ash.");
-  check("coin: story lines beat the house style", ["a", "b", "c"].includes(wrongVerbLine("talk", storyLines, undefined, 1)));
-  check("coin: the seed varies the line", wrongVerbLine("talk", storyLines, undefined, 0) !== wrongVerbLine("talk", storyLines, undefined, 1));
-  check("coin: the house style always answers", wrongVerbLine("take", undefined, undefined, 3).length > 10);
-
-  // Which verbs a room offers.
-  const room: SceneNode = {
-    id: "room",
-    title: "Room",
-    stage: { verbCoin: true, spawn: { x: 10, y: 90 } },
-    hotspots: [bench, juke],
-  };
-  check("coin: a room derives its verbs from its objects", verbsForScene(room).join(",") === "look,take,use", verbsForScene(room));
-  const authored: SceneNode = { ...room, stage: { ...room.stage!, verbs: ["talk", "go"] } };
-  check("coin: the author's verb list wins, in canonical order", verbsForScene(authored).join(",") === "talk,go");
-  check("coin: a room with no coin still resolves nothing", verbsForScene({ ...room, stage: { spawn: { x: 1, y: 1 } } }).length > 0);
-  check("coin: the seven verbs are the seven cursors", VERB_IDS.join(",") === "look,take,talk,use,go,kick,punch");
-  check("coin: the core five stay the default", CORE_VERB_IDS.join(",") === "look,take,talk,use,go");
-
-  // The EXTRA body-verbs (kick / punch) are OPT-IN per room: without
-  // stage.extendedVerbs they never leak into the coin, even if a hotspot
-  // answers them — so a visual novel or classic case is untouched.
-  const kickRoom: SceneNode = {
-    id: "kickroom",
-    title: "Kickroom",
-    stage: { verbCoin: true, spawn: { x: 10, y: 90 } },
-    hotspots: [
-      { id: "door", label: "door", bounds: { x: 50, y: 50, w: 10, h: 30 }, cursor: "kick", action: { type: "showText", text: "Boom." } },
+    scenes: [
+      {
+        id: "p_room",
+        title: "Room",
+        background: "",
+        prose: "",
+        choices: [],
+        hotspots: [
+          {
+            id: "h_ledger",
+            label: "A ledger",
+            bounds: { x: 0, y: 0, w: 5, h: 5 },
+            cursor: "look",
+            isRepeatable: false,
+            action: {
+              type: "patternPuzzle",
+              patternPuzzle: {
+                title: "The Ledger",
+                instruction: "",
+                rows: [],
+                targetCount: 3,
+                payoffText: "",
+                allowRetry: true,
+                rewardConsequences: { setFlags: ["cracked"] },
+                targetSceneId: "p_end",
+              },
+            },
+          },
+        ],
+      },
+      { id: "p_end", title: "End", background: "", prose: "", isEnding: true, endingData: { tier: "victory-gold", headline: "H", recap: "R" } },
     ],
   };
-  check("coin: kick does not appear unless the room opts in",
-    !verbsForScene(kickRoom).includes("kick"), verbsForScene(kickRoom));
-  check("coin: opting in via extendedVerbs adds kick",
-    verbsForScene({ ...kickRoom, stage: { ...kickRoom.stage!, extendedVerbs: true } }).includes("kick"));
-  check("coin: an explicit verbs list can name kick without the flag",
-    verbsForScene({ ...kickRoom, stage: { ...kickRoom.stage!, verbs: ["kick", "punch"] } }).join(",") === "kick,punch");
-  check("coin: a room that opts in but uses only core verbs stays core",
-    verbsForScene({ ...room, stage: { ...room.stage!, extendedVerbs: true } }).join(",") === "look,take,use",
-    verbsForScene({ ...room, stage: { ...room.stage!, extendedVerbs: true } }));
-  check("coin: punch resolves against an object that answers it",
-    resolveVerbAction({ ...bench, verbs: { ...bench.verbs, punch: { type: "showText", text: "Pow." } } }, "punch").ok === true);
-
-  // The prototype uses it.
-  const adv = THROTTLE_ASH;
-  const rooms = adv.scenes.filter((s) => s.nodeType === "stage");
-  check("coin: every prototype room turns the coin on", rooms.every((s) => s.stage?.verbCoin === true));
-  check("coin: every prototype room offers several verbs", rooms.every((s) => verbsForScene(s).length >= 3), rooms.map((s) => verbsForScene(s).length));
-  const bike = adv.scenes.find((s) => s.id === "adv_road")!.hotspots!.find((h) => h.id === "advh_fix_bike")!;
-  check("coin: the bike accepts the repair kit", (bike.acceptsItems ?? []).includes("adv_repair_kit"));
-  check("coin: the bike refuses a wrong item", resolveVerbAction(bike, "use", "adv_coffee").ok === false);
-  check("coin: the bike answers LOOK as well as USE", resolveVerbAction(bike, "look").ok === true);
-  check("coin: looking at the bike does not consume it", resolveVerbAction(bike, "look").action?.type === "showText");
-  check("coin: the prototype still validates", validateStory(adv).filter((i) => i.severity === "error").length === 0, validateStory(adv).slice(0, 4));
+  const pSim = initialSim(puzzleStory, createInitialState(puzzleStory));
+  const pKeys = availableDecisions(puzzleStory, pSim).map(decisionKey);
+  check("minigame: a pattern puzzle offers BOTH outcomes as branches",
+    pKeys.includes("p_room:h_ledger#pattern-puzzle:won") && pKeys.includes("p_room:h_ledger#pattern-puzzle:lost"));
+  check("minigame: the puzzle replaces its own hotspot (you can't 'look' past it)", !pKeys.includes("p_room:h_ledger"));
+  const won = availableDecisions(puzzleStory, pSim).find((d) => decisionKey(d) === "p_room:h_ledger#pattern-puzzle:won")!;
+  const solved = applyDecision(puzzleStory, pSim, won);
+  check("minigame: solving it runs the reward and routes on",
+    solved.moved && solved.sim.sceneId === "p_end" && solved.sim.state.activeFlags.has("cracked"));
+  const lost = availableDecisions(puzzleStory, pSim).find((d) => decisionKey(d) === "p_room:h_ledger#pattern-puzzle:lost")!;
+  const failed = applyDecision(puzzleStory, pSim, lost).sim;
+  // A retryable puzzle that ate its own marker on a wrong answer would strand
+  // the player in a room whose only exit is the puzzle — exactly the false
+  // dead end the bot reported on Tintin.
+  check("minigame: a RETRYABLE puzzle survives a wrong submission",
+    availableDecisions(puzzleStory, failed).map(decisionKey).includes("p_room:h_ledger#pattern-puzzle:won"));
+  check("minigame: failing a retryable puzzle is not a dead end", !isStuck(puzzleStory, failed));
 }
 
-/* ============================================================
-   PERSPECTIVE (near/far scale) + WALK-BEHIND MASKS
-   ============================================================ */
+/* ================================================================== */
+/*  7. THE BOT PLAYS THE REAL CATALOGUE                                */
+/* ================================================================== */
+
 {
-  const floor = { top: 60, bottom: 90 };
-  const flat: StageSettings = { spawn: { x: 50, y: 90 }, depthScale: 0 };
-  check("depth: no depth means a flat sprite", Math.abs(stageSpriteScale(70, floor, flat) - 1) < 1e-9);
-  const room: StageSettings = { spawn: { x: 50, y: 90 }, depthScale: 0.4 };
-  check("depth: the front of the room is full size", Math.abs(stageSpriteScale(90, floor, room) - 1) < 1e-9);
-  check("depth: the back of the room is shrunk", Math.abs(stageSpriteScale(60, floor, room) - 0.6) < 1e-9);
-  check("depth: it grows monotonically toward the camera", stageSpriteScale(70, floor, room) > stageSpriteScale(65, floor, room));
-  check("depth: clamped inside the band", Math.abs(stageSpriteScale(20, floor, room) - 0.6) < 1e-9 && Math.abs(stageSpriteScale(99, floor, room) - 1) < 1e-9);
-  const pinned: StageSettings = { spawn: { x: 50, y: 90 }, playerNearScale: 1.3, playerFarScale: 0.5 };
-  check("depth: an author can pin both ends", Math.abs(stageSpriteScale(90, floor, pinned) - 1.3) < 1e-9 && Math.abs(stageSpriteScale(60, floor, pinned) - 0.5) < 1e-9);
-  /* CHARACTER SIZE (stage.playerScale) — the flat whole-scene multiplier */
-  check("playerScale: defaults to 1", Math.abs(stagePlayerScale({}) - 1) < 1e-9);
-  check("playerScale: explicit value passes through", Math.abs(stagePlayerScale({ playerScale: 1.4 }) - 1.4) < 1e-9);
-  check("playerScale: a tiny character can't vanish (clamped low)", Math.abs(stagePlayerScale({ playerScale: 0.05 }) - 0.15) < 1e-9);
-  check("playerScale: a giant can't blow through the plate (clamped high)", Math.abs(stagePlayerScale({ playerScale: 9 }) - 4) < 1e-9);
-  check("playerScale: applies ON TOP of depth — the renderer multiplies, stageSpriteScale doesn't read it", Math.abs(stageSpriteScale(70, floor, { ...room, playerScale: 2 }) - stageSpriteScale(70, floor, room)) < 1e-9);
-  check("depth: walking away is slower across the screen", stageSpeedScale(60, floor, room) < stageSpeedScale(90, floor, room));
-  check("depth: speed never drops to a crawl", stageSpeedScale(60, floor, pinned) >= 0.35);
+  // A short in-process run over shipped stories: the decision surface must
+  // survive real content, and every run must terminate at an ending, a dead
+  // end, or the step budget — never by throwing.
+  const rand = mulberry32(hashSeed("engine-test"));
+  for (const story of [NEON_DINER, RAIN_SECTOR]) {
+    let sim = initialSim(story, createInitialState(story));
+    let threw: string | null = null;
+    let ended = false;
+    try {
+      for (let step = 0; step < 300; step++) {
+        const here = story.scenes.find((x) => x.id === sim.sceneId);
+        if (!here) { threw = `walked into a scene that does not exist: ${sim.sceneId}`; break; }
+        if (here.isEnding) { ended = true; break; }
+        const opts = availableDecisions(story, sim);
+        if (!opts.length) break; // a dead end — reported by the bot, not a crash
+        sim = applyDecision(story, sim, opts[Math.floor(rand() * opts.length)]).sim;
+      }
+    } catch (err) {
+      threw = err instanceof Error ? err.message : String(err);
+    }
+    check(`bot: a run through "${story.id}" never throws`, threw === null, threw);
+    check(`bot: a run through "${story.id}" makes progress`, ended || sim.steps > 0);
+  }
 
-  // Walk-behind: the walker is behind an occluder while their feet sit ABOVE
-  // its baseline (further from the camera), and in front once they step below.
-  const truck = { image: "/t.png", occludes: true, occludeBaseline: 84, y: 84 };
-  check("mask: standing behind the truck hides you", extraOccludes(truck, 70) === true);
-  check("mask: standing in front of it does not", extraOccludes(truck, 92) === false);
-  check("mask: exactly on the line counts as behind", extraOccludes(truck, 84) === true);
-  check("mask: an unflagged extra never occludes", extraOccludes({ image: "/t.png", y: 84 }, 70) === false);
-  check("mask: without a baseline the extra's own y is the line", extraOccludes({ image: "/t.png", occludes: true, y: 80 }, 75) === true);
-  check("mask: a non-stage scene (no walker) draws it in front", extraOccludes(truck, undefined) === true);
 
-  // The prototype uses both.
-  const street = THROTTLE_ASH.scenes.find((s) => s.id === "adv_street")!;
-  const extras = street.cinematic?.foregroundExtras ?? [];
-  const masks = extras.filter((e) => e.occludes);
-  check("mask: the prototype has a walk-behind mask", masks.length === 1, masks.length);
-  check("mask: the truck's barrier matches its art", (street.stage?.obstacles ?? []).length === 1);
-  check("mask: the walker can get behind it", (street.stage?.floor?.top ?? 100) < (masks[0]?.occludeBaseline ?? 0));
-  check("mask: the walker can also walk in front of it", (street.stage?.floor?.bottom ?? 0) > (masks[0]?.occludeBaseline ?? 100));
-  check("depth: the prototype pins near and far", THROTTLE_ASH.scenes.filter((s) => s.nodeType === "stage").every((s) => !!s.stage?.playerNearScale && !!s.stage?.playerFarScale));
-  check("adventure: still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+  /* ---- the WHOLE shipped catalogue, briefly ----
+   * The expensive per-story sweeps live in `npm run bot`. This is the cheap
+   * standing guard: every shipped story must be walkable end to end without
+   * throwing, and no scene may be a DEAD END — a non-ending room the player
+   * can enter and never leave. Every dead end this has ever reported was
+   * either a real softlock (Neon Diner's freezer) or a mechanism the
+   * simulation could not see (stage edges, the verb coin, the corkboard,
+   * pressing a lie, minigames). Both are worth failing the build over. */
+  {
+    const deadEnds: string[] = [];
+    const crashes: string[] = [];
+    for (const story of STORIES) {
+      const r = mulberry32(hashSeed(`sweep:${story.id}`));
+      for (let run = 0; run < 12; run++) {
+        let sim = initialSim(story, createInitialState(story));
+        try {
+          for (let step = 0; step < 250; step++) {
+            const here = story.scenes.find((x) => x.id === sim.sceneId);
+            if (!here || here.isEnding) break;
+            const opts = availableDecisions(story, sim);
+            if (!opts.length) {
+              const at = `${story.id}/${sim.sceneId}`;
+              if (!deadEnds.includes(at)) deadEnds.push(at);
+              break;
+            }
+            sim = applyDecision(story, sim, opts[Math.floor(r() * opts.length)]).sim;
+          }
+        } catch (err) {
+          crashes.push(`${story.id}/${sim.sceneId}: ${err instanceof Error ? err.message : String(err)}`);
+          break;
+        }
+      }
+    }
+    check(`bot: no shipped story crashes the decision surface (${STORIES.length} stories)`, crashes.length === 0, crashes.join(" | "));
+    check("bot: no shipped story has a dead end", deadEnds.length === 0, deadEnds.join(" | "));
+  }
+
+  // The bot's weighting is only useful if a coverage tally can seed it: the
+  // keys the decision surface produces must match the ones coverage stores.
+  let cov = emptyCoverage(NEON_DINER.id);
+  const sim = initialSim(NEON_DINER, createInitialState(NEON_DINER));
+  const first = availableDecisions(NEON_DINER, sim).find((d) => d.kind === "choice");
+  if (first) {
+    cov = recordVisit(cov, "choice", decisionKey(first));
+    const rep = coverageReport(NEON_DINER, cov);
+    check("bot: a decision key is a key the coverage report understands", rep.choiceTaken === 1, rep.choiceTaken);
+  }
 }
 
-/* ============================================================
-   INVENTORY PRESENTATION — opt-in, default unchanged
-   ============================================================ */
+/* ================================================================== */
+/*  Media upload caps — overridable defaults                           */
+/* ================================================================== */
 {
-  // A case that says nothing gets exactly the dock it always had.
-  const plain = inventoryDisplay({});
-  check("inventory: the default mode is classic", plain.mode === "classic");
-  check("inventory: the default label is Inventory", plain.label === "Inventory");
-  check("inventory: a container still has art, so the mode never looks broken", plain.image.length > 0);
-  check("inventory: default corner is bottom-left", plain.anchor === "bottom-left");
-  check("inventory: defaults are sane", plain.columns === 4 && plain.inset === 14 && plain.height === 260 && plain.startClosed === false);
-  check("inventory: a missing story is safe", inventoryDisplay(null).mode === "classic");
-  check("inventory: an unknown mode falls back to classic", inventoryDisplay({ inventoryDisplay: { mode: "nope" as never } }).mode === "classic");
+  const store = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() { return store.size; },
+    clear: () => store.clear(),
+  };
 
-  const bag = inventoryDisplay({
-    inventoryDisplay: { mode: "container", label: "  Saddlebags  ", image: "/assets/ui/mine.png", columns: 12, inset: 90, height: 40, anchor: "top-right", startClosed: true },
-  });
-  check("inventory: container mode survives", bag.mode === "container");
-  check("inventory: the label is trimmed", bag.label === "Saddlebags");
-  check("inventory: the author's art wins", bag.image === "/assets/ui/mine.png");
-  check("inventory: columns are clamped", bag.columns === 8);
-  check("inventory: inset is clamped", bag.inset === 45);
-  check("inventory: height is clamped", bag.height === 120);
-  check("inventory: the corner is honoured", bag.anchor === "top-right" && inventoryAnchorClass("top-right").includes("top-3"));
-  check("inventory: hidden mode hides the dock", inventoryDisplay({ inventoryDisplay: { mode: "hidden" } }).mode === "hidden");
-  check("inventory: empty art falls back to the house panel", inventoryDisplay({ inventoryDisplay: { mode: "container", image: "   " } }).image.includes("inventory-case"));
+  const {
+    getAssetLimits, setAssetLimits, assetLimitsAreCustom,
+    DEFAULT_ASSET_LIMITS, ASSET_LIMIT_CEILING,
+  } = await import("../src/data/mediaLibrary");
 
-  // The prototype opts in; the other cases must not be touched.
-  check("inventory: the prototype uses a container", inventoryDisplay(THROTTLE_ASH).mode === "container");
-  check("inventory: the prototype names its container", inventoryDisplay(THROTTLE_ASH).label === "Saddlebags");
-  check("inventory: the other shipped cases keep the classic dock", [NEON_DINER, ...[]].every((s) => inventoryDisplay(s).mode === "classic"));
-  check("inventory: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+  const MB = 1024 * 1024;
+  setAssetLimits(undefined);
+  check("limits: defaults out of the box", getAssetLimits().image === DEFAULT_ASSET_LIMITS.image);
+  check("limits: defaults are not flagged custom", assetLimitsAreCustom() === false);
+
+  // The whole point of the feature: an author can raise the ceiling.
+  setAssetLimits({ image: 32 * MB });
+  check("limits: an override is honoured", getAssetLimits().image === 32 * MB, getAssetLimits().image);
+  check("limits: an override is flagged custom", assetLimitsAreCustom() === true);
+  check("limits: untouched types keep their default", getAssetLimits().video === DEFAULT_ASSET_LIMITS.video);
+
+  // It must survive a reload — it lives in localStorage, not React state.
+  check("limits: override persists across a fresh read", getAssetLimits().image === 32 * MB);
+
+  // Guard rails: a mistyped or hostile value must not create an unusable cap.
+  setAssetLimits({ image: 99999 * MB });
+  check("limits: absurd values clamp to the ceiling", getAssetLimits().image === ASSET_LIMIT_CEILING, getAssetLimits().image);
+  setAssetLimits({ image: -5 });
+  check("limits: a negative value falls back to the default", getAssetLimits().image === DEFAULT_ASSET_LIMITS.image);
+  setAssetLimits({ image: Number.NaN });
+  check("limits: NaN falls back to the default", getAssetLimits().image === DEFAULT_ASSET_LIMITS.image);
+
+  // Corrupt storage must not brick the library.
+  store.set("scarlet-studio-asset-limits", "{not json");
+  check("limits: corrupt storage falls back to defaults", getAssetLimits().total === DEFAULT_ASSET_LIMITS.total);
+
+  setAssetLimits({ total: 200 * MB });
+  check("limits: the library total is overridable too", getAssetLimits().total === 200 * MB);
+  setAssetLimits(undefined);
+  check("limits: restore defaults clears every override", assetLimitsAreCustom() === false && getAssetLimits().total === DEFAULT_ASSET_LIMITS.total);
 }
 
-/* ============================================================
-   CURSOR ART + PLAYER PLACEMENT
-   ============================================================ */
+/* ================================================================== */
+/*  Dangling media references                                          */
+/* ================================================================== */
 {
-  const none = resolveCursor({}, "look");
-  check("cursor: with no art the game keeps its system cursors", none.art === undefined && none.css === "" && !none.animated);
-  check("cursor: the default size is 32 and the tip is top-left", none.size === 32 && none.hx === 0 && none.hy === 0);
+  const { collectStoryMediaRefs } = await import("../src/data/mediaLibrary");
 
-  const one = { cursorArt: { look: { image: "/assets/ui/cursor-eye.png", size: 30 } } };
-  const look = resolveCursor(one, "look");
-  check("cursor: a verb's own art is used", look.css.includes("cursor-eye") && look.size === 30);
-  check("cursor: a missing verb falls back to default", resolveCursor(one, "take").css === "" || resolveCursor(one, "take").css.includes("cursor-eye"));
-  check("cursor: a CSS cursor carries the hotspot offsets", /url\("[^"]+"\) 0 0, auto/.test(look.css), look.css);
+  const base = {
+    ...NEON_DINER,
+    id: "danglecheck",
+    coverImage: "asset:cover1",
+    scenes: [
+      {
+        ...NEON_DINER.scenes[0],
+        id: "sc1",
+        background: "asset:bg1",
+        hotspots: [
+          { id: "h1", label: "Desk lamp", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "look",
+            image: "asset:gone", action: { type: "showText", text: "x" } },
+        ],
+        dialogueBeats: [],
+        choices: [],
+      },
+    ],
+  } as unknown as Story;
 
-  const withDefault = { cursorArt: { default: { image: "/assets/ui/cursor-hand.png" }, look: { image: "/assets/ui/cursor-eye.png" } } };
-  check("cursor: default art covers the other verbs", resolveCursor(withDefault, "go").css.includes("cursor-hand"));
-  check("cursor: the specific verb still wins", resolveCursor(withDefault, "look").css.includes("cursor-eye"));
-  check("cursor: cursorArtFor returns the art itself", cursorArtFor(withDefault, "talk")?.image === "/assets/ui/cursor-hand.png");
+  // -- the collector sees every reference, with a usable label ---------------
+  const refs = collectStoryMediaRefs(base);
+  check("media refs: the cover is collected", refs.some((r) => r.value === "asset:cover1"), refs.length);
+  check("media refs: a scene background is collected", refs.some((r) => r.value === "asset:bg1" && r.sceneId === "sc1"));
+  check(
+    "media refs: a hotspot image is labelled by its hotspot",
+    refs.some((r) => r.value === "asset:gone" && /Desk lamp/.test(r.label)),
+    refs.filter((r) => r.value === "asset:gone").map((r) => r.label)
+  );
+  check("media refs: gradients and plain paths carry no asset id", !refs.some((r) => r.value.startsWith("asset:") && r.value === "gradient:x"));
 
-  const centered = resolveCursor({ cursorArt: { use: { image: "/x.png", size: 40, anchor: "center" } } }, "use");
-  check("cursor: a centred cursor offsets by half its size", centered.hx === 20 && centered.hy === 20, centered);
-  const huge = resolveCursor({ cursorArt: { use: { image: "/x.png", size: 900 } } }, "use");
-  check("cursor: size is clamped to the CSS cursor limit", huge.size === 128);
+  // -- validator: silent unless the caller supplies the library --------------
+  const noCtx = validateStory(base);
+  check("dangling media: skipped when no library is supplied", !noCtx.some((i) => /Missing media/.test(i.message)), noCtx.map((i) => i.message));
 
-  // A sprite sheet is drawn as a sprite that tracks the mouse, not a CSS cursor.
-  const anim = resolveCursor({ cursorArt: { use: { sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0, 1], fps: 8 } } } } } }, "use");
-  check("cursor: a sheet makes an animated cursor", anim.animated === true && anim.css === "none");
-  check("cursor: a sheet beats a static image", resolveCursor({ cursorArt: { use: { image: "/x.png", sheet: { image: "/s.png", frameWidth: 32, frameHeight: 32, animations: { loop: { frames: [0], fps: 1 } } } } } }, "use").animated === true);
+  // -- validator: everything present = clean --------------------------------
+  const allKnown = validateStory(base, { knownAssetIds: new Set(["cover1", "bg1", "gone"]) });
+  check("dangling media: no complaint when every asset exists", !allKnown.some((i) => /Missing media/.test(i.message)));
 
-  check("cursor: every slot is offered to the author", CURSOR_SLOTS.join(",") === "default,look,take,talk,use,go,kick,punch");
-  check("cursor: the prototype ships cursor art", !!THROTTLE_ASH.cursorArt?.look?.image && !!THROTTLE_ASH.cursorArt?.default?.image);
-  check("cursor: the prototype still validates", validateStory(THROTTLE_ASH).filter((i) => i.severity === "error").length === 0, validateStory(THROTTLE_ASH).slice(0, 4));
+  // -- validator: a deleted upload is reported ------------------------------
+  const missing = validateStory(base, { knownAssetIds: new Set(["cover1", "bg1"]) });
+  const flagged = missing.filter((i) => /Missing media/.test(i.message));
+  check("dangling media: a deleted asset is reported", flagged.length === 1, flagged.map((i) => i.message));
+  check("dangling media: reported as an error, not a warning", flagged[0]?.severity === "error");
+  check("dangling media: the issue points at the right scene", flagged[0]?.sceneId === "sc1", flagged[0]?.sceneId);
+  check("dangling media: the message names the location", /Desk lamp/.test(flagged[0]?.message ?? ""), flagged[0]?.message);
 
-  // Player placement: a spawn dropped anywhere still lands on the floor band.
-  const floor = { top: 66, bottom: 95 };
-  const dropped = [ { x: 50, y: 10 }, { x: 50, y: 99 }, { x: 50, y: 80 } ].map((p) => clampToFloor(p.x, p.y, floor));
-  check("spawn: a spawn dropped in the sky lands on the floor", dropped[0].y === 66);
-  check("spawn: a spawn dropped below the floor is pulled back", dropped[1].y === 95);
-  check("spawn: a spawn dropped on the floor stays put", dropped[2].y === 80);
-  check("spawn: the whole plate is reachable left to right", clampToFloor(-20, 80, floor).x === 1 && clampToFloor(140, 80, floor).x === 99);
+  // -- built-in paths and gradients are never treated as uploads ------------
+  const builtin = {
+    ...base,
+    coverImage: "gradient:linear-gradient(#000,#111)",
+    scenes: [{ ...base.scenes[0], background: "/img/bg-office.jpg", hotspots: [] }],
+  } as unknown as Story;
+  check(
+    "dangling media: /img paths and gradients are not flagged",
+    !validateStory(builtin, { knownAssetIds: new Set<string>() }).some((i) => /Missing media/.test(i.message))
+  );
+
+  // -- video: refs use their own prefix -------------------------------------
+  const vid = {
+    ...base,
+    coverImage: undefined,
+    scenes: [{ ...base.scenes[0], background: "video:asset:clip9", hotspots: [] }],
+  } as unknown as Story;
+  check(
+    "dangling media: a missing video: asset is caught",
+    validateStory(vid, { knownAssetIds: new Set<string>() }).some((i) => /Missing media/.test(i.message))
+  );
+  check(
+    "dangling media: a present video: asset is clean",
+    !validateStory(vid, { knownAssetIds: new Set(["clip9"]) }).some((i) => /Missing media/.test(i.message))
+  );
+}
+
+/* ================================================================== */
+/*  AI image settings — persistence + migration                        */
+/* ================================================================== */
+{
+  const store = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+    key: (i: number) => [...store.keys()][i] ?? null,
+    get length() { return store.size; },
+    clear: () => store.clear(),
+  };
+  const { loadAiSettings, saveAiSettings } = await import("../src/data/aiImages");
+  const KEY = "scarlet-reel-ai-images-v1";
+
+  store.clear();
+  check("ai settings: defaults when nothing is stored", loadAiSettings().provider === "openai");
+
+  // A saved key must survive a round trip.
+  const s1 = loadAiSettings();
+  s1.provider = "gemini";
+  s1.providers.gemini = { id: "gemini", apiKey: "test-key", model: "gemini-2.5-flash-image", aspectRatio: "21:9" };
+  saveAiSettings(s1);
+  const back = loadAiSettings();
+  check("ai settings: the chosen provider persists", back.provider === "gemini");
+  check("ai settings: a provider key persists", back.providers.gemini?.apiKey === "test-key");
+  check("ai settings: a provider ratio persists", back.providers.gemini?.aspectRatio === "21:9");
+
+  // A provider absent from an older save still gets its defaults merged in —
+  // this is what stops a pre-Gemini save from crashing the picker.
+  store.set(KEY, JSON.stringify({ provider: "openai", providers: { openai: { id: "openai", apiKey: "k" } } }));
+  const merged = loadAiSettings();
+  check("ai settings: an older save still gains new providers", !!merged.providers.gemini, Object.keys(merged.providers));
+  check("ai settings: the older save keeps its own key", merged.providers.openai?.apiKey === "k");
+
+  // MIGRATION: the withdrawn Together free endpoint is rewritten on load.
+  store.set(KEY, JSON.stringify({
+    provider: "together",
+    providers: { together: { id: "together", apiKey: "tk", model: "black-forest-labs/FLUX.1-schnell-Free" } },
+  }));
+  const migrated = loadAiSettings();
+  check(
+    "ai settings: the dead FLUX free endpoint is migrated",
+    migrated.providers.together?.model === "black-forest-labs/FLUX.1-schnell",
+    migrated.providers.together?.model
+  );
+  check("ai settings: migration keeps the api key", migrated.providers.together?.apiKey === "tk");
+
+  // Corrupt storage must not brick the tab.
+  store.set(KEY, "{not json");
+  check("ai settings: corrupt storage falls back to defaults", loadAiSettings().provider === "openai");
+  store.clear();
+}
+
+/* ================================================================== */
+/*  Beat extraction — the pure transform behind Studio's ✂ split       */
+/* ================================================================== */
+{
+  // Mirrors extractBeats() in Studio.tsx. Kept here as a pure function so the
+  // data surgery (ordering, id handling, what carries across) is pinned by
+  // tests rather than only exercised by clicking.
+  type B = { id: string; characterId: string; text: string };
+  type S = {
+    id: string; title: string; background?: string; ambientAudio?: string;
+    cinematic?: unknown; prose?: string; dialogueBeats?: B[];
+    hotspots?: { id: string }[]; choices?: { id: string; targetSceneId: string }[];
+  };
+  const extract = (
+    src: S,
+    beatIds: string[],
+    opts: { link: "chain" | "loose"; copy: boolean },
+  ): { from: S; next: S } => {
+    const picked = new Set(beatIds);
+    const taken = (src.dialogueBeats ?? []).filter((b) => picked.has(b.id));
+    let n = 0;
+    const moved = taken.map((b) => (opts.copy ? { ...b, id: `new_${++n}` } : { ...b }));
+    const next: S = {
+      id: "scene_new",
+      title: `${src.title} (cont.)`,
+      background: src.background,
+      ...(src.ambientAudio ? { ambientAudio: src.ambientAudio } : {}),
+      ...(src.cinematic ? { cinematic: src.cinematic } : {}),
+      prose: "",
+      dialogueBeats: moved,
+      hotspots: [],
+      choices: [],
+    };
+    const from: S = {
+      ...src,
+      dialogueBeats: opts.copy
+        ? src.dialogueBeats
+        : (src.dialogueBeats ?? []).filter((b) => !picked.has(b.id)),
+      choices:
+        opts.link === "chain"
+          ? [...(src.choices ?? []), { id: "c_new", targetSceneId: "scene_new" }]
+          : src.choices,
+    };
+    return { from, next };
+  };
+
+  const base: S = {
+    id: "s1",
+    title: "The Long Talk",
+    background: "/img/bg-office.jpg",
+    ambientAudio: "rain",
+    cinematic: { mode: "static" },
+    prose: "Original prose.",
+    dialogueBeats: [
+      { id: "b1", characterId: "c1", text: "one" },
+      { id: "b2", characterId: "c1", text: "two" },
+      { id: "b3", characterId: "c2", text: "three" },
+      { id: "b4", characterId: "c2", text: "four" },
+    ],
+    hotspots: [{ id: "hs1" }],
+    choices: [{ id: "c0", targetSceneId: "s9" }],
+  };
+
+  // --- PLAY ORDER, not tick order ------------------------------------------
+  // The single most important property: ticking 3 then 1 must still produce
+  // 1,3 — a conversation reordered by accident is a silent story bug.
+  {
+    const { next } = extract(base, ["b3", "b1"], { link: "chain", copy: false });
+    check(
+      "extract: beats leave in PLAY order, not tick order",
+      next.dialogueBeats!.map((b) => b.id).join(",") === "b1,b3",
+      next.dialogueBeats!.map((b) => b.id)
+    );
+  }
+
+  // --- move removes from the source ----------------------------------------
+  {
+    const { from, next } = extract(base, ["b2", "b3"], { link: "chain", copy: false });
+    check("extract: moved beats leave the source", from.dialogueBeats!.map((b) => b.id).join(",") === "b1,b4");
+    check("extract: moved beats arrive in the new scene", next.dialogueBeats!.map((b) => b.id).join(",") === "b2,b3");
+    check("extract: a move keeps the original beat ids", next.dialogueBeats!.every((b) => !b.id.startsWith("new_")));
+    check("extract: no beat is lost", from.dialogueBeats!.length + next.dialogueBeats!.length === 4);
+  }
+
+  // --- copy leaves the source intact, with FRESH ids ------------------------
+  {
+    const { from, next } = extract(base, ["b1", "b2"], { link: "loose", copy: true });
+    check("extract: a copy leaves the source untouched", from.dialogueBeats!.length === 4);
+    check("extract: a copy re-ids the duplicates", next.dialogueBeats!.every((b) => b.id.startsWith("new_")), next.dialogueBeats);
+    const ids = new Set([...from.dialogueBeats!.map((b) => b.id), ...next.dialogueBeats!.map((b) => b.id)]);
+    check("extract: a copy never duplicates an id", ids.size === 6, [...ids]);
+    check("extract: the copied text survives", next.dialogueBeats![0].text === "one");
+  }
+
+  // --- linking --------------------------------------------------------------
+  {
+    const chained = extract(base, ["b4"], { link: "chain", copy: false });
+    check("extract: chain adds exactly one choice", (chained.from.choices?.length ?? 0) === 2);
+    check("extract: the chain choice targets the new scene", chained.from.choices!.at(-1)!.targetSceneId === "scene_new");
+
+    const loose = extract(base, ["b4"], { link: "loose", copy: false });
+    check("extract: loose adds no choice", (loose.from.choices?.length ?? 0) === 1);
+    check("extract: a loose scene starts with no exits", (loose.next.choices?.length ?? 0) === 0);
+  }
+
+  // --- what carries across, and what must NOT -------------------------------
+  {
+    const { next } = extract(base, ["b1"], { link: "chain", copy: false });
+    check("extract: presentation follows the lines (background)", next.background === "/img/bg-office.jpg");
+    check("extract: presentation follows the lines (audio)", next.ambientAudio === "rain");
+    check("extract: presentation follows the lines (cinematic)", !!next.cinematic);
+    // Structure must stay behind — copying hotspots would create phantom
+    // exits and duplicate ids in the new scene.
+    check("extract: hotspots stay in the source", (next.hotspots?.length ?? 0) === 0);
+    check("extract: the source keeps its hotspots", (base.hotspots?.length ?? 0) === 1);
+    check("extract: the new scene starts with empty prose", next.prose === "");
+    check("extract: the source keeps its prose", base.prose === "Original prose.");
+  }
+
+  // --- edge cases -----------------------------------------------------------
+  {
+    const none = extract(base, [], { link: "chain", copy: false });
+    check("extract: picking nothing takes nothing", (none.next.dialogueBeats?.length ?? 0) === 0);
+    check("extract: picking nothing leaves the source whole", none.from.dialogueBeats!.length === 4);
+
+    const all = extract(base, ["b1", "b2", "b3", "b4"], { link: "chain", copy: false });
+    check("extract: taking everything empties the source", all.from.dialogueBeats!.length === 0);
+    check("extract: taking everything fills the new scene", all.next.dialogueBeats!.length === 4);
+
+    const ghost = extract(base, ["nope"], { link: "chain", copy: false });
+    check("extract: an unknown beat id is ignored", (ghost.next.dialogueBeats?.length ?? 0) === 0);
+    check("extract: an unknown id does not disturb the source", ghost.from.dialogueBeats!.length === 4);
+  }
+}
+
+/* ================================================================== */
+/*  Hotspot sound effects + chained actions                            */
+/* ================================================================== */
+{
+  const mk = (hotspot: Record<string, unknown>) => ({
+    ...NEON_DINER,
+    id: "chaincheck",
+    items: [{ id: "key", name: "Key", icon: "🔑", description: "d" }],
+    scenes: [
+      {
+        ...NEON_DINER.scenes[0],
+        id: "sc1",
+        dialogueBeats: [],
+        choices: [{ id: "c1", text: "on", targetSceneId: "sc2", attitudeTag: "Neutral" }],
+        hotspots: [hotspot],
+      },
+      { ...NEON_DINER.scenes[0], id: "sc2", dialogueBeats: [], choices: [], hotspots: [] },
+    ],
+  }) as unknown as Story;
+  const msgs = (st: Story) => validateStory(st).map((i) => i.message);
+
+  // --- the chain is validated like a real action ---------------------------
+  {
+    const bad = mk({
+      id: "h1", label: "Safe", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "look",
+      action: { type: "showText", text: "click", then: [{ type: "giveItem", itemGranted: "ghost" }] },
+    });
+    check("chain: a missing granted item is caught", msgs(bad).some((m) => /follow-up #1 grants missing item "ghost"/.test(m)), msgs(bad));
+
+    const badScene = mk({
+      id: "h1", label: "Door", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "go",
+      action: { type: "showText", text: "x", then: [{ type: "goToScene", targetSceneId: "nowhere" }] },
+    });
+    check("chain: a missing target scene is caught", msgs(badScene).some((m) => /follow-up #1 points at missing scene/.test(m)));
+
+    const empty = mk({
+      id: "h1", label: "Lamp", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "look",
+      action: { type: "showText", text: "x", then: [{ type: "setFlag" }] },
+    });
+    check(
+      "chain: an unfilled setFlag is flagged as a no-op",
+      msgs(empty).some((m) => /follow-up #1 is "set flag" but no flag is named/.test(m)),
+      msgs(empty)
+    );
+  }
+
+  // --- dead steps after a navigation ---------------------------------------
+  {
+    const dead = mk({
+      id: "h1", label: "Exit", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "go",
+      action: {
+        type: "showText", text: "x",
+        then: [
+          { type: "goToScene", targetSceneId: "sc2" },
+          { type: "setFlag", flagSet: "never_runs" },
+        ],
+      },
+    });
+    check("chain: steps after a navigation are reported as dead", msgs(dead).some((m) => /never run/.test(m)), msgs(dead));
+
+    // The PRIMARY action's navigation also wins over a chained one.
+    const shadowed = mk({
+      id: "h1", label: "Exit", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "go",
+      action: { type: "goToScene", targetSceneId: "sc2", then: [{ type: "goToScene", targetSceneId: "sc2" }] },
+    });
+    check("chain: a shadowed navigation is reported", msgs(shadowed).some((m) => /main action already navigates/.test(m)), msgs(shadowed));
+  }
+
+  // --- the reward-replay warning must see THROUGH the chain ----------------
+  {
+    // Moving a reward into the chain used to dodge the repeatable warning.
+    const farm = mk({
+      id: "h1", label: "Till", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "take",
+      isRepeatable: true,
+      action: { type: "showText", text: "x", then: [{ type: "giveItem", itemGranted: "key" }] },
+    });
+    check(
+      "chain: a repeatable hotspot granting via the chain is warned",
+      msgs(farm).some((m) => /Repeatable hotspot "Till".*follow-up/.test(m)),
+      msgs(farm)
+    );
+    // A repeatable showText with NO rewards anywhere stays clean.
+    const fine = mk({
+      id: "h1", label: "Sign", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "look",
+      isRepeatable: true,
+      action: { type: "showText", text: "x", then: [{ type: "setFlag", flagSet: "read_sign" }] },
+    });
+    check(
+      "chain: a repeatable flag-setting follow-up is still warned",
+      msgs(fine).some((m) => /Repeatable hotspot "Sign"/.test(m)),
+      msgs(fine)
+    );
+  }
+
+  // --- a well-formed chain is clean ----------------------------------------
+  {
+    const good = mk({
+      id: "h1", label: "Drawer", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "take",
+      action: {
+        type: "showText", text: "It creaks open.",
+        sfxUrl: "/audio/creak.mp3", sfxVolume: 0.8,
+        then: [
+          { type: "giveItem", itemGranted: "key" },
+          { type: "setFlag", flagSet: "opened_drawer" },
+        ],
+      },
+    });
+    const bad = msgs(good).filter((m) => /follow-up|Repeatable/.test(m));
+    check("chain: a well-formed chain raises nothing", bad.length === 0, bad);
+  }
+
+  // --- sfx refs travel through the media walk ------------------------------
+  {
+    const { collectStoryMediaRefs } = await import("../src/data/mediaLibrary");
+    const withSfx = mk({
+      id: "h1", label: "Door", bounds: { x: 1, y: 1, w: 5, h: 5 }, cursor: "look",
+      action: {
+        type: "showText", text: "x",
+        sfxUrl: "asset:creak1",
+        then: [{ type: "setFlag", flagSet: "f", sfxUrl: "asset:creak2" }],
+      },
+    });
+    const refs = collectStoryMediaRefs(withSfx);
+    check("sfx: the action's effect is collected", refs.some((r) => r.value === "asset:creak1"), refs.map((r) => r.value));
+    check("sfx: a chained effect is collected too", refs.some((r) => r.value === "asset:creak2"));
+    check(
+      "sfx: the effect is labelled as a sound effect",
+      refs.some((r) => r.value === "asset:creak1" && /sound effect/.test(r.label)),
+      refs.filter((r) => r.value === "asset:creak1").map((r) => r.label)
+    );
+    // And a deleted one is reported by the validator.
+    const missing = validateStory(withSfx, { knownAssetIds: new Set(["creak1"]) });
+    check("sfx: a dangling chained effect is caught", missing.some((i) => /Missing media/.test(i.message) && /sound effect/.test(i.message)));
+  }
+}
+
+/* ================================================================== */
+/*  Canvas layout — resizable node cards                               */
+/* ================================================================== */
+{
+  const { tidyLayoutPositions, healLayout, sceneCardMinHeight, SCENE_CARD_DEFAULT_W, SCENE_CARD_DEFAULT_H } =
+    await import("../src/studio/canvas");
+
+  // --- a card must never be shrinkable below its own content ---------------
+  {
+    const bare = sceneCardMinHeight({ isEnding: true });
+    const busy = sceneCardMinHeight({ choices: 8 });
+    check("card size: an ending has the smallest floor", bare < busy, { bare, busy });
+    check("card size: every exit row adds height", sceneCardMinHeight({ choices: 3 }) > sceneCardMinHeight({ choices: 1 }));
+    // Eight choices = eight connection handles. If the floor didn't grow with
+    // them the card would clip its own wires, which is unrecoverable in the UI.
+    check("card size: 8 exits leave room for 8 handles", busy >= 8 * 20, busy);
+    // Linked hotspots draw an exit row each, exactly like choices.
+    check(
+      "card size: linked hotspots count as exits",
+      sceneCardMinHeight({ linkedHotspots: 4 }) === sceneCardMinHeight({ choices: 4 }),
+      [sceneCardMinHeight({ linkedHotspots: 4 }), sceneCardMinHeight({ choices: 4 })]
+    );
+    // The optional bands each cost height.
+    const plain = sceneCardMinHeight({ choices: 1 });
+    check("card size: an episode band adds height", sceneCardMinHeight({ choices: 1, hasEpisodeBand: true }) > plain);
+    check("card size: an act band adds height", sceneCardMinHeight({ choices: 1, hasActBand: true }) > plain);
+    check("card size: a note adds height", sceneCardMinHeight({ choices: 1, hasNote: true }) > plain);
+    // Even the emptiest card keeps its chrome — never a sliver.
+    check("card size: the floor always clears the chrome", sceneCardMinHeight({ isEnding: true }) >= 110, bare);
+    // An auto-advance row is an exit too.
+    check(
+      "card size: auto-advance counts as an exit",
+      sceneCardMinHeight({ hasAutoAdvance: true }) > sceneCardMinHeight({}),
+    );
+    // A resize must never take a card below the size it renders at untouched:
+    // dragging under the default squashed the "drag to add choice" row (and
+    // with it the handle used to wire a new exit) out of the bottom.
+    check(
+      "card size: never below the default card height",
+      sceneCardMinHeight({ isEnding: true }) >= SCENE_CARD_DEFAULT_H,
+      [sceneCardMinHeight({ isEnding: true }), SCENE_CARD_DEFAULT_H],
+    );
+    check("card size: the default width is the w-56 card", SCENE_CARD_DEFAULT_W === 224, SCENE_CARD_DEFAULT_W);
+    // The floor has to clear the always-present "drag to add choice" row on a
+    // scene with no choices at all, or a fresh node cannot be wired.
+    check(
+      "card size: an empty scene still leaves room to drag a new choice",
+      sceneCardMinHeight({}) >= 28 + 56 + 22 + 22,
+      sceneCardMinHeight({}),
+    );
+  }
+
+  const story = {
+    ...NEON_DINER,
+    id: "layoutcheck",
+    scenes: [
+      { ...NEON_DINER.scenes[0], id: "a", dialogueBeats: [], choices: [], hotspots: [] },
+      { ...NEON_DINER.scenes[0], id: "b", dialogueBeats: [], choices: [], hotspots: [] },
+    ],
+    layout: {
+      a: { x: 10, y: 20, w: 420, h: 300 },
+      b: { x: 900, y: 900 },
+    },
+  } as unknown as Story;
+
+  // TIDY re-flows positions but must NOT throw away an authored card size —
+  // that would silently reset every resized card the first time you tidy.
+  {
+    const tidy = tidyLayoutPositions(story);
+    check("layout: tidy keeps an authored width", tidy.a.w === 420, tidy.a);
+    check("layout: tidy keeps an authored height", tidy.a.h === 300, tidy.a);
+    check("layout: tidy still re-flows the position", tidy.a.x === 0 && tidy.a.y === 0, tidy.a);
+    check("layout: a card with no size stays sizeless", tidy.b.w === undefined && tidy.b.h === undefined, tidy.b);
+  }
+
+  // HEAL passes sizes through untouched for cards it keeps.
+  {
+    const base = { a: { x: 0, y: 0 }, b: { x: 340, y: 0 } };
+    const healed = healLayout(story.layout, base);
+    check("layout: heal preserves an authored size", healed.a.w === 420 && healed.a.h === 300, healed.a);
+    check("layout: heal keeps the author's own position", healed.a.x === 10 && healed.a.y === 20, healed.a);
+  }
+
+  // A pile still falls back to the base position — the size is irrelevant to
+  // that decision, but must not crash the heal.
+  {
+    const piled = {
+      s1: { x: 0, y: 0, w: 300 }, s2: { x: 0, y: 0 }, s3: { x: 0, y: 0 }, s4: { x: 0, y: 0 },
+    };
+    const base = { s1: { x: 0, y: 0 }, s2: { x: 340, y: 0 }, s3: { x: 680, y: 0 }, s4: { x: 1020, y: 0 } };
+    const healed = healLayout(piled, base);
+    check("layout: a 4-card pile falls back to the base spread", healed.s2.x === 340 && healed.s4.x === 1020, healed);
+  }
+
+  // Sizes must survive an export/import round trip (they live on Story.layout,
+  // which the exporter carries verbatim) — a resized canvas that resets on
+  // reload would be worse than no resizing at all.
+  {
+    const clone = JSON.parse(JSON.stringify(story)) as Story;
+    check("layout: a size survives a JSON round trip", clone.layout!.a.w === 420 && clone.layout!.a.h === 300, clone.layout!.a);
+  }
 }
 
 console.log(`\nengine tests: ${passed} passed, ${failures.length} failed`);

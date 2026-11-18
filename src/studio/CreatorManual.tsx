@@ -407,6 +407,7 @@ const MANUAL_ARTICLES: ManualArticle[] = [
           { label: "In-Game Theme", text: "Choose a HUD palette or custom accent/danger colours, body and heading fonts, reading text scale, minimal HUD behaviour and the dialogue panel treatment." },
           { label: "Cinematic controls", text: "On a scene or replacement background, choose a colour grade, film grade strength, parallax depth and camera treatment. Preview the result before repeating it across scenes." },
           { label: "Credits", text: "On a credits node, set title, subtitle, role/name lines, typography, line motion, card timing, gate weave and an optional full-bleed montage." },
+          { label: "Game Info", text: "In Game Objective, write a spoiler-free synopsis for the Info button on your case's Newsreel card. Explain the premise, player role, mood and style of play; keep the objective field for the concrete in-game goal." },
           { label: "Newsstand Theme", text: "Shape the outer title page: title text, tagline, background and music. This is the catalogue frame, not a replacement for the case's in-game theme." },
         ],
       },

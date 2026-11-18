@@ -26,7 +26,7 @@
  * never the Studio's own rendering of them.
  */
 import { build } from "esbuild";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -38,6 +38,14 @@ const entry = path.join(dir, "entry.mjs");
 const probeOut = path.join(dir, "probe-bundle.mjs");
 
 let probeExitCode = 0;
+// The probe runs inside a GENERATED entry.mjs, which is a separate module —
+// it cannot close over anything in this file. It therefore reports its exit
+// code by writing this sidecar file, which we read back below. (Passing
+// `exit: (code) => { probeExitCode = code; }` as source text into the
+// generated entry threw ReferenceError on EVERY run: the harness caught it,
+// set the code to 1, and `npm test` could never pass however green the
+// probe's own 74 checks were.)
+const exitCodeFile = path.join(dir, "exit-code");
 // The happy-dom rAF loop can keep the event loop alive after the probe has
 // finished — hard-exit + clean the scratch dir (same trick as the other
 // beta harnesses).
@@ -54,6 +62,7 @@ writeFileSync(
   entry,
   `
 import { Window } from "happy-dom";
+import { writeFileSync } from "node:fs";
 
 const win = new Window({ url: "http://localhost:5173/" });
 const doc = win.document;
@@ -95,7 +104,12 @@ globalThis.Image = EagerImage;
 win.Image = EagerImage;
 
 const probe = await import(${JSON.stringify(pathToFileURL(probeOut).href)});
-await probe.run({ win, doc, container: doc.getElementById("root"), exit: (code) => { probeExitCode = code; } });
+await probe.run({
+  win,
+  doc,
+  container: doc.getElementById("root"),
+  exit: (code) => { writeFileSync(${JSON.stringify(exitCodeFile)}, String(code)); },
+});
 `,
 );
 
@@ -139,8 +153,15 @@ console.log("probe bundle built — mounting Studio in happy-dom…\n");
 try {
   await import(pathToFileURL(entry).href);
 } catch (err) {
-  console.error("studio beta harness crashed:");
-  console.error(err);
+  // The probe replaces console.error to capture React's output and never puts
+  // it back, so a harness-level crash reported through console.error is
+  // swallowed. Write straight to stderr instead.
+  process.stderr.write("studio beta harness crashed:\n" + ((err && err.stack) || String(err)) + "\n");
+  probeExitCode = 1;
+}
+if (existsSync(exitCodeFile)) probeExitCode = Number(readFileSync(exitCodeFile, "utf8")) || 0;
+else {
+  process.stderr.write("studio beta harness: the probe never reported an exit code.\n");
   probeExitCode = 1;
 }
 process.exit(probeExitCode);

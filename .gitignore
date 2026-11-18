@@ -3,3 +3,16 @@ dist/
 dist_electron/
 .env
 scripts/.tmp-dom-smoke/
+scripts/.tmp-studio-probe/
+scripts/.tmp-caption-probe/
+scripts/.tmp-stage-beta/
+
+# South Park asset prep: raw chroma plates + job lists (scratch, regenerated)
+scripts/.tmp-sp-*/
+scripts/.tmp-sp-patch*.py
+scripts/.tmp-studio-beta/
+
+# Neon Salt art-room intermediates: raw magenta sprite plates and FX source
+# JPEGs. The SHIPPED assets are the forged sheets (sprites/) and alpha PNGs
+# (fx/) built from these; the sources are large and regenerable.
+public/img/*/src/

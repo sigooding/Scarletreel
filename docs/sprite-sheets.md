@@ -129,3 +129,28 @@ import/export round-trip seed (`scripts/ie-roundtrip/export-side.ts`) and
 preflight's asset-exists check. `spriteSheetIssues()` validates every sheet
 and surfaces problems as Check-tab **warnings** (never errors), each call
 site passing the animation names it expects.
+
+## Upload size caps (Media Tools ▸ Library ▸ ⚙ limits)
+
+The per-file and whole-library ceilings are **defaults, not hard limits**.
+They ship conservative because a browser draft keeps every asset in IndexedDB
+and a `.reel.json` export embeds them as base64 (about +33% on top of the raw
+bytes), so a library of native-resolution plates makes a draft that is slow to
+save and awkward to share.
+
+If that trade-off is wrong for your project — big painted backdrops, or
+source-resolution sheets — raise them. The editor is under the usage bar in
+Media Tools ▸ Library. Values are clamped to a 512MB guard rail and stored in
+`localStorage` per machine, **never in the story file**, because they describe
+this machine's tolerance rather than a property of the case.
+
+Rough sizing, for a 1376×768 painted plate:
+
+| | size |
+|---|---|
+| PNG on disk | ~2.3MB |
+| stored in IndexedDB (base64) | ~3.0MB |
+| plates before the default 60MB cap | ~26 |
+
+The desktop app also copies uploads to a real folder on disk, so it tolerates a
+far larger library than a browser draft does.

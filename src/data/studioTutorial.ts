@@ -8,7 +8,9 @@ import type { Story } from "../types";
  * item, working hotspots, meter changes, a gated choice, and coverage of
  * cinematic / audio / structure / export topics.
  *
- * 12 scenes, 1 character, 1 item, 2 endings, 3 hotspots.
+ * 14 scenes, 1 character, 1 item, 2 endings, 3 hotspots. Covers the art
+ * pipeline (background removal, sprite sheets, and how SCALE is authored
+ * rather than baked into the image) and the walkable stage.
  */
 export const STUDIO_TUTORIAL: Story = {
   id: "studio-tutorial",
@@ -47,6 +49,7 @@ export const STUDIO_TUTORIAL: Story = {
       choices: [
         { id: "c-w-scene", text: "Show me how to build a scene", targetSceneId: "tut-scenes", attitudeTag: "Clever" },
         { id: "c-w-people", text: "Who will I meet? (Characters)", targetSceneId: "tut-people", attitudeTag: "Sultry" },
+        { id: "c-w-art", text: "I have my own art — how do I bring it in?", targetSceneId: "tut-art", attitudeTag: "Clever" },
         { id: "c-w-skip", text: "Skip the tour", targetSceneId: "tut-ending-skip", attitudeTag: "Aggressive" },
       ],
       hotspots: [],
@@ -99,7 +102,7 @@ export const STUDIO_TUTORIAL: Story = {
       ambientAudio: "tension",
       prose: "The penthouse is quiet. Too quiet. Three paths lie before you — and one of them is locked.",
       dialogueBeats: [
-        { id: "b-c1", characterId: "narrator", text: "Every choice has an ATTITUDE TAG — Charm (smooth), Intimidate (force), Deduce (insight), or Neutral. The tag colours the button. Put a meter delta in the choice's consequences and the matching meter rises (or falls)." },
+        { id: "b-c1", characterId: "narrator", text: "Every choice has an ATTITUDE TAG — Sultry (smooth), Aggressive (force), Clever (insight), or Neutral. The tag colours the button and drives the matching meter. Put a meter delta in the choice's consequences and that meter rises (or falls)." },
         { id: "b-c2", characterId: "narrator", text: "Choices can be GATED — locked until the player holds an item, has a flag, or meets a meter threshold. A gated choice shows a hint so the player knows what they need. Try the locked choice below — you'll need the Studio Blueprint first." },
         { id: "b-c3", characterId: "narrator", text: "A REPLY choice (💬) stays in the scene instead of navigating — pair it with a dialogue beat gated on the flag it sets, and that beat becomes the NPC's response. Great for conversational Q&A." },
       ],
@@ -162,8 +165,52 @@ export const STUDIO_TUTORIAL: Story = {
         { id: "b-l3", characterId: "narrator", text: "STRUCTURE: acts divide a case into titled sections (with title cards and route-map scoping). Episodes split it into a season with per-episode save slots, recaps and 'next time on...' teasers. Both are optional — a case can be one continuous run." },
       ],
       choices: [
+        { id: "c-l-art", text: "How do I get my own art in?", targetSceneId: "tut-art", attitudeTag: "Clever" },
         { id: "c-l-workflow", text: "How do I test and publish?", targetSceneId: "tut-workflow", attitudeTag: "Neutral" },
         { id: "c-l-scenes", text: "Tell me about scenes again", targetSceneId: "tut-scenes", attitudeTag: "Clever", isRepeatable: true },
+      ],
+      hotspots: [],
+    },
+
+    // ── 6b. Art pipeline: cutouts, sheets, background removal ─────────
+    {
+      id: "tut-art",
+      title: "The Cutting Room",
+      background: "/img/bg-dressing.jpg",
+      ambientAudio: "drone",
+      prose:
+        "Scissors, glue and a lightbox. This is where outside art becomes game art.\n\nEverything here lives in the MEDIA TOOLS tab.",
+      dialogueBeats: [
+        { id: "b-a1", characterId: "narrator", text: "🪄 BACKGROUND REMOVER takes any image — a photo, a scan, an AI render — and hands back a transparent PNG. Two modes, and picking the right one is the whole trick. EDGE FLOOD only removes backdrop CONNECTED to the border, so a pale shirt survives a pale wall. COLOUR KEY removes every pixel near the picked colour, which is what flat magenta or green-screen art wants." },
+        { id: "b-a2", characterId: "narrator", text: "If nothing disappears, the KEY COLOUR is wrong — not the tool. Click the backdrop directly in the preview to pick the colour under your cursor, or press ⟲ auto to re-sample. The panel under the preview tells you what percentage was actually removed, so you never have to guess." },
+        { id: "b-a3", characterId: "narrator", text: "TOLERANCE is how far from that colour still counts as backdrop — raise it if specks survive, lower it if the key bites into your subject. SOFTNESS feathers the cut edge. 'Trim to subject' crops the empty margin, which matters: a sprite padded with transparency looks tiny on stage even at full scale." },
+        { id: "b-a4", characterId: "ch_sam", text: "Backdrop that isn't one flat colour? No single key will ever cut it cleanly. Use edge flood, or repaint the plate behind your figure. Don't fight the slider — it can't win that one." },
+        { id: "b-a5", characterId: "narrator", text: "⚡ AUTO-BUILD SHEET is the other half. Lay your frames side by side on ONE flat colour and upload: it keys the backdrop, finds the frames by the gaps, and crops them to a uniform bottom-aligned grid. If it miscounts — two touching figures read as one — just type the real number and it slices into even bands instead." },
+        { id: "b-a6", characterId: "narrator", text: "SIZE IS AUTHORED, NOT BAKED IN. A sprite sheet's frame height only sets its resolution. How big it looks on screen is the SCALE field wherever you place it: talkingScale for portraits, scale for foreground extras and stage NPCs, playerScale for the walker. Sprite looking too small? Raise the scale — don't re-export the art." },
+      ],
+      choices: [
+        { id: "c-a-stage", text: "Show me the walkable stage", targetSceneId: "tut-stage", attitudeTag: "Clever" },
+        { id: "c-a-workflow", text: "How do I test and publish?", targetSceneId: "tut-workflow", attitudeTag: "Neutral" },
+      ],
+      hotspots: [],
+    },
+
+    // ── 6c. The walkable stage ────────────────────────────────────────
+    {
+      id: "tut-stage",
+      title: "Room to Move",
+      background: "/img/bg-docks.jpg",
+      ambientAudio: "rain",
+      prose: "Some scenes aren't read — they're walked. This is the Walkable Stage, the point-and-click room.",
+      dialogueBeats: [
+        { id: "b-st1", characterId: "narrator", text: "Set a scene's node type to STAGE and it stops being a page and becomes a room. The player gets a character who walks to whatever they click. The FLOOR band (top and bottom percentages) is the walkable strip — everything above it is wall, everything below is the camera's edge." },
+        { id: "b-st2", characterId: "narrator", text: "DEPTH SCALE is what sells the perspective: the walker shrinks as they move toward the back of the floor band. 0.2 is a gentle, believable amount. Add OBSTACLES to block furniture, and EXIT EDGES so walking off the left of frame carries you to the next room." },
+        { id: "b-st3", characterId: "narrator", text: "NPCs live on the stage too, each with their own sheet, scale, facing and patrol waypoints. Link one to a TALK hotspot and the player clicks the character rather than a floating marker — your detective walks over before the dialogue starts." },
+        { id: "b-st4", characterId: "ch_sam", text: "Scale everything against the DOORS in your background art. A person shorter than a doorknob breaks the room instantly, and no amount of clever writing wins that back." },
+      ],
+      choices: [
+        { id: "c-st-workflow", text: "How do I test and publish?", targetSceneId: "tut-workflow", attitudeTag: "Neutral" },
+        { id: "c-st-art", text: "Back to the cutting room", targetSceneId: "tut-art", attitudeTag: "Clever", isRepeatable: true },
       ],
       hotspots: [],
     },
@@ -184,6 +231,7 @@ export const STUDIO_TUTORIAL: Story = {
       ],
       choices: [
         { id: "c-w-win", text: "I'm ready to build my own case!", targetSceneId: "tut-ending-win", attitudeTag: "Sultry" },
+        { id: "c-w-art", text: "Go over the art tools again", targetSceneId: "tut-art", attitudeTag: "Clever", isRepeatable: true },
         { id: "c-w-look", text: "Show me cinematic controls", targetSceneId: "tut-look", attitudeTag: "Clever", isRepeatable: true },
         { id: "c-w-back", text: "Back to the start", targetSceneId: "tut-welcome", attitudeTag: "Neutral", isRepeatable: true },
       ],
@@ -197,7 +245,7 @@ export const STUDIO_TUTORIAL: Story = {
       background: "/img/bg-end-gold.jpg",
       ambientAudio: "jazz",
       prose:
-        "That's the tour.\n\nYou've walked through scenes, met a character, found a clue, triggered a meter change, opened a locked gate, explored cinematic controls, and learned the publish workflow.\n\nOpen Studio Mode, click '+ New Story', and start building. The city is waiting, detective.",
+        "That's the tour.\n\nYou've walked through scenes, met a character, found a clue, triggered a meter change, opened a locked gate, explored cinematic controls, cut your own art into sprites, stood in a walkable room, and learned the publish workflow.\n\nOpen Studio Mode, click '+ New Story', and start building. The city is waiting, detective.",
       choices: [],
       hotspots: [],
       isEnding: true,

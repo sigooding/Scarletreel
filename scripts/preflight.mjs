@@ -21,7 +21,7 @@
  * Exit code 0 = ship it. Anything else = fix first.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = process.cwd();
@@ -44,7 +44,10 @@ mkdirSync(TMP, { recursive: true });
 writeFileSync(join(TMP, "package.json"), '{"type":"commonjs"}');
 const tsc = spawnSync("npx", ["tsc", "src/data/stories.ts", "src/logic.ts", "src/studio/canvas.ts", "--outDir", TMP,
   "--module", "commonjs", "--target", "es2020", "--moduleResolution", "node",
-  "--esModuleInterop", "--skipLibCheck"], { stdio: "pipe", encoding: "utf8", cwd: ROOT });
+  // resolveJsonModule: the catalogue imports at least one story as a raw
+  // .reel.json (undertow). The repo tsconfig enables it; this standalone
+  // invocation must too, or preflight dies on a file `tsc --noEmit` accepts.
+  "--esModuleInterop", "--resolveJsonModule", "--skipLibCheck"], { stdio: "pipe", encoding: "utf8", cwd: ROOT });
 if (tsc.status !== 0) {
   console.log(RED("Compile failed — TypeScript errors in the shipped data/logic:"));
   console.log(tsc.stdout || tsc.stderr);
@@ -91,6 +94,16 @@ function walk(story, avoidEndings = true) {
   const used = new Set();
   const visited = [];
   let cur = story.startSceneId;
+  // A scenic effect is one that changes the walker's state (flag / item /
+  // meter). showText-only actions are flavour and must NOT stall the fixpoint.
+  const actionEff = (action) => {
+    if (!action) return null;
+    const eff = {};
+    if (action.itemGranted) eff.addItems = [action.itemGranted];
+    if (action.flagSet) eff.setFlags = [action.flagSet];
+    if (action.meterChange) eff.meterChanges = [action.meterChange];
+    return Object.keys(eff).length ? eff : null;
+  };
   for (let step = 0; step < 300; step++) {
     const sc = sceneById(story, cur);
     if (!sc) return { ending: null, visited, stuck: cur };
@@ -98,13 +111,18 @@ function walk(story, avoidEndings = true) {
     pfLog(story.id, `step ${step} @ ${sc.id} flags={${[...state.activeFlags].join(",")}} items={${(state.inventory??[]).map(i=>i.id).join(",")}}`);
     if (sc.onEnterActions) for (const a of sc.onEnterActions) state = applyConsequences(story, a.consequences, state);
     if (sc.isEnding) return { ending: sc, visited, state };
+    // effectiveChoiceGating folds a presentItem requirement into the gate, so
+    // the walker can't "show" an item it never picked up (game parity).
+    const gateOf = (c) => (effectiveChoiceGating ? effectiveChoiceGating(c) : c.gating);
     // Interaction passes — mirror a player working a room before leaving:
     // TOPIC dialogues first (a topic's flag can unlock a marker), then the
     // scenery clicks (giveItem / setFlag / meterChange land in the walker's
-    // state, exactly what completeHotspot() does in Game.tsx), looped to a
-    // fixpoint so "ask the bartender" → "grab the keys" happens in ONE visit.
-    // Without the loop, a one-shot door can carry the walker out of the room
-    // before the flag a topic just set ever unlocks the marker it gates.
+    // state, exactly what completeHotspot() does in Game.tsx), then direct
+    // conversation replies (a linear stage talk can set a flag that unlocks
+    // the room's exit), all looped to a fixpoint so "ask the bartender" →
+    // "grab the keys" happens in ONE visit. Without the loop, a one-shot
+    // door can carry the walker out of the room before the flag a topic or a
+    // reply just set ever unlocks the marker it gates.
     for (let pass = 0, changed = true; changed && pass < 8; pass++) {
       changed = false;
       // Topic-list dialogues — a competent player asks every askable topic:
@@ -123,21 +141,58 @@ function walk(story, avoidEndings = true) {
           if (t.flagSet) { state = applyConsequences(story, { setFlags: [t.flagSet] }, state); pfLog(story.id, `  topic ${t.id} -> ${t.flagSet}`); }
         }
       }
-      // Scenery pass — every visible non-routing hotspot.
+      // Scenery pass — every visible non-routing hotspot. This mirrors what
+      // a competent player actually does in the room, including stage verbs
+      // (kick the vending machine) and multi-state objects (the tray that
+      // appears once the kick lands). Static showText is skipped; any
+      // flag/item/meter effect is applied once and looped to a fixpoint so a
+      // kick's flag can unlock the state that grants the item.
       for (const h of sc.hotspots ?? []) {
         if (h.action?.targetSceneId || h.action?.patternPuzzle) continue; // routing & minigames handled below
-        const key = `${sc.id}:hs:${h.id}`;
-        if (used.has(key) || !meetsGating(h.gating, state)) continue;
-        const eff = {};
-        if (h.action?.itemGranted) eff.addItems = [h.action.itemGranted];
-        if (h.action?.flagSet) eff.setFlags = [h.action.flagSet];
-        if (h.action?.meterChange) eff.meterChanges = [h.action.meterChange];
-        if (Object.keys(eff).length) {
+        const applyEffect = (action, key, label) => {
+          if (used.has(key)) return;
+          const eff = actionEff(action);
+          if (!eff) return;
           used.add(key);
           changed = true;
           state = applyConsequences(story, eff, state);
-          pfLog(story.id, `  hotspot ${h.id} eff=${JSON.stringify(eff)}`);
+          pfLog(story.id, `  ${label} ${h.id} eff=${JSON.stringify(eff)}`);
+        };
+        // Default action (with the hotspot's own gate).
+        if (meetsGating(h.gating, state))
+          applyEffect(h.action, `${sc.id}:hs:${h.id}:default`, "hotspot");
+        // Verb coin actions — an extended-verb action can set a flag or hand
+        // over an item even when the default action is only flavour text.
+        for (const [verb, vAction] of Object.entries(h.verbs ?? {})) {
+          if (vAction?.targetSceneId || vAction?.patternPuzzle) continue;
+          if (!meetsGating(h.gating, state)) continue;
+          applyEffect(vAction, `${sc.id}:hs:${h.id}:verb:${verb}`, `verb:${verb}`);
         }
+        // Multi-state object actions — a state can gate on a flag the verbs
+        // above just set (kick -> tray), so this must run after verbs in the
+        // same fixpoint pass and independently of the base hotspot's gate.
+        for (const st of h.states ?? []) {
+          const stateGate = st.gating === undefined ? h.gating : st.gating;
+          if (st.when && !meetsGating(st.when, state)) continue;
+          if (stateGate && !meetsGating(stateGate, state)) continue;
+          applyEffect(st.action, `${sc.id}:hs:${h.id}:state:${st.id}`, `state:${st.id}`);
+        }
+      }
+      // Direct conversation replies — a linear stage talk's answer choices
+      // are not routing hotspots, but a "leave it bolted" reply can gate the
+      // room's exit. A competent player works those answers before walking
+      // out, so land them in the same fixpoint.
+      for (const c of sc.choices ?? []) {
+        if (!c.reply || c.targetSceneId) continue; // in-place replies only; navs handled below
+        const key = `${sc.id}:${c.id}`;
+        if (used.has(key)) continue;
+        if (c.hidden && !meetsGating(gateOf(c), state)) continue;
+        if (!meetsGating(gateOf(c), state)) continue;
+        used.add(key);
+        changed = true;
+        state = applyConsequences(story, c.consequences, state);
+        if (c.memoryLog) state = { ...state, memories: { ...state.memories, [c.memoryLog]: c.text } };
+        pfLog(story.id, `  reply ${c.id} eff=${JSON.stringify(c.consequences ?? {})}`);
       }
     }
     // Press-the-lie pass — a competent player who HOLDS the breaking evidence
@@ -156,9 +211,17 @@ function walk(story, avoidEndings = true) {
         if (lie.contradictedConsequences) state = applyConsequences(story, lie.contradictedConsequences, state);
       }
     }
-    // effectiveChoiceGating folds a presentItem requirement into the gate, so
-    // the walker can't "show" an item it never picked up (game parity).
-    const gateOf = (c) => (effectiveChoiceGating ? effectiveChoiceGating(c) : c.gating);
+    // A final dialogue beat can perform a cinematic cut without a dummy
+    // choice. The runtime routes from the last visible beat after its
+    // authored hold, before the scene's choices become interactive; the
+    // walker must give that edge the same priority.
+    const beatRoute = (sc.dialogueBeats ?? [])
+      .filter((b) => b.afterBeatTargetSceneId && (!b.conditionRule || meetsGating(b.conditionRule, state)))
+      .at(-1);
+    if (beatRoute?.afterBeatTargetSceneId) {
+      cur = beatRoute.afterBeatTargetSceneId;
+      continue;
+    }
     const usable = (sc.choices ?? []).filter((c) =>
       !used.has(`${sc.id}:${c.id}`) &&
       !(c.hidden && !meetsGating(gateOf(c), state)) &&
@@ -180,10 +243,22 @@ function walk(story, avoidEndings = true) {
     // No navigation choice yet — on a stage node the exit is a walk-to door
     // hotspot, not a choice. Only consider hotspots that actually route
     // somewhere (give-item / show-text markers must not be mistaken for exits).
-    const routes = (sc.hotspots ?? []).filter((h) => h.action.targetSceneId || h.action.patternPuzzle?.targetSceneId);
-    const hs = routes.find((h) => !used.has(`${sc.id}:${h.id}`) && meetsGating(h.gating, state));
+    // Non-repeatable exits are one-shot; repeatable doors/back-exits may be
+    // crossed more than once (a room you must leave and re-enter). Prefer an
+    // exit into a scene we haven't visited yet so “back to the street” isn't
+    // chosen ahead of “up the stairs” the first time both are open.
+    const routes = (sc.hotspots ?? []).filter((h) =>
+      (h.action?.targetSceneId || h.action?.patternPuzzle?.targetSceneId) &&
+      (h.isRepeatable || !used.has(`${sc.id}:${h.id}`)) &&
+      meetsGating(h.gating, state));
+    const hs = routes
+      .map((h) => {
+        const target = h.action?.targetSceneId || h.action?.patternPuzzle?.targetSceneId;
+        return { h, target, fresh: !!target && !visited.includes(target) };
+      })
+      .sort((a, b) => (b.fresh ? 1 : 0) - (a.fresh ? 1 : 0))[0]?.h;
     if (hs) {
-      used.add(`${sc.id}:${hs.id}`);
+      if (!hs.isRepeatable) used.add(`${sc.id}:${hs.id}`);
       const target = hs.action.targetSceneId || hs.action.patternPuzzle?.targetSceneId;
       pfLog(story.id, `  route via hotspot ${hs.id} -> ${target}`);
       // A walker that "solves" a pattern puzzle earns what the player earns —
@@ -286,6 +361,54 @@ function musicTrace(story, order) {
   return spans;
 }
 
+
+/* ---------- sprite-sheet geometry ----------
+ * A sheet's authored frameWidth must divide the actual PNG exactly. If the
+ * art is regenerated at a different width the story keeps the OLD number and
+ * every frame is sliced off-centre - portraits get cut mid-face. Nothing in
+ * the type system or the runtime validator can see this, because only the
+ * file on disk knows how wide it really is. */
+function pngSize(abs) {
+  try {
+    const b = readFileSync(abs);
+    if (b.length < 24 || b.readUInt32BE(12) !== 0x49484452) return null;
+    return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  } catch { return null; }
+}
+
+function collectSheets(s) {
+  const out = [];
+  const add = (sheet, where) => {
+    if (sheet && sheet.image && sheet.frameWidth) out.push({ ...sheet, where });
+  };
+  for (const c of s.characters ?? []) {
+    add(c.talkingSheet, `${c.name}: talkingSheet`);
+    for (const t of c.talkingSheets ?? []) add(t.sheet, `${c.name}: "${t.name}"`);
+  }
+  for (const sc of s.scenes ?? []) {
+    add(sc.stage?.playerSheet, `${sc.id}: playerSheet`);
+    for (const n of sc.stage?.npcs ?? []) add(n.sheet, `${sc.id}: npc ${n.id ?? ""}`);
+    for (const [i, e] of (sc.cinematic?.foregroundExtras ?? []).entries())
+      add(e.sheet, `${sc.id}: foreground #${i + 1}`);
+  }
+  return out;
+}
+
+function auditSheets(s) {
+  const sheets = collectSheets(s);
+  if (!sheets.length) return;
+  const bad = [];
+  for (const sh of sheets) {
+    const size = pngSize(join(ROOT, "public", sh.image.replace(/^\//, "")));
+    if (!size) continue;
+    if (size.w % sh.frameWidth !== 0) {
+      bad.push(`${sh.where} — frameWidth ${sh.frameWidth} does not divide the ${size.w}px sheet (${(size.w / sh.frameWidth).toFixed(2)} frames; try ${size.w % 3 === 0 ? size.w / 3 : size.w / 4})`);
+    }
+  }
+  if (bad.length) bad.forEach((b) => fail(`sprite geometry: ${b}`));
+  else pass(`${sheets.length} sprite sheet(s) slice cleanly`);
+}
+
 /* ---------- 2. audit every story ---------- */
 console.log(`\n${GOLD("PREFLIGHT")} — ${STORIES.length} stories in the catalogue\n`);
 for (const s of STORIES) {
@@ -296,6 +419,8 @@ for (const s of STORIES) {
   if (errors.length) fail(`${errors.length} validator error(s): ${errors.map((e) => e.message).join(" | ")}`);
   else pass(`validator clean${warnings.length ? ` (${warnings.length} warning(s))` : ""}`);
   warnings.slice(0, 4).forEach((w) => note(`warn: ${w.message.slice(0, 100)}`));
+
+  auditSheets(s);
 
   const anyRun = walk(s, false);
   if (anyRun.ending) pass(`playable: walk ends on "${anyRun.ending.title}" [${anyRun.ending.endingData?.tier}] after ${anyRun.visited.length} scenes`);

@@ -57,7 +57,21 @@ Save locations (per machine, NOT in the repo):
   npm run desktop:pack         electron-builder unpacked dir (no installer)
   npm run desktop:dist         Build + NSIS installer (+portable) in
                                dist_electron/. RUN ON WINDOWS for the exe.
-  npm test                     222 engine tests (node scripts/engine-tests.mjs)
+  npm run bot                  Automated playthrough bot: plays a case over
+                               and over through the pure decision surface
+                               (src/game/decisions.ts) and reports crashes,
+                               dead ends, unreached scenes/choices/endings and
+                               coverage growth. Prefers never-taken branches.
+                                 npm run bot -- --story neon-diner --runs 1000
+                                 npm run bot -- --seed unlucky --verbose
+                                 npm run bot -- --coverage cov.json --out cov.json
+                                 npm run bot -- --links   (deep link per problem)
+  npm test                     Full suite: engine tests (node
+                               scripts/engine-tests.mjs), media round-trip
+                               (scripts/ie-roundtrip), DOM smoke
+                               (scripts/dom-smoke.mjs) and the walking-stage
+                               beta (scripts/beta/stage-harness.mjs —
+                               `npm run test:stage` runs it alone)
   npm run check                Setup check: node version, deps, and that
                                EVERY asset referenced by a playable story
                                exists on disk under public/.

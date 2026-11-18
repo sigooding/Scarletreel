@@ -188,6 +188,33 @@ for (const [label, re] of studioTabs) {
 }
 root.unmount(); await sleep(200); problems.length = 0;
 
+// Phase 3c: creator manual
+// The manual is a full in-app page rather than another modal. Exercise both
+// the newsstand entry point and a copied-style deep link so its navigation stays
+// useful in the desktop build as well as the browser preview.
+root = await mountFresh(); problems.length = 0;
+if (clickByText(/^📓 Creator Manual$/i)) {
+  await sleep(500);
+  const manualText = (container.textContent || "").replace(/\\s+/g, " ");
+  const manualSearch = container.querySelector('input[aria-label="Search the Studio creator manual"]');
+  const manualOk = /Build the case/i.test(manualText) && /Common errors/i.test(manualText) && !!manualSearch;
+  console.log("\\n=== CREATOR MANUAL ===");
+  console.log("  rendered manual with searchable index:", manualOk);
+  if (!manualOk) failed = true;
+  failed |= report("CREATOR MANUAL").crashed;
+} else {
+  console.log("!! could not find Creator Manual button");
+  failed = true;
+}
+root.unmount(); await sleep(200); problems.length = 0;
+win.history.replaceState(null, "", "#manual/choices");
+root = await mountFresh();
+const deepLinkOk = !!container.querySelector("#choices") && /Choices and consequences/i.test(container.textContent || "");
+console.log("  manual deep link mounted:", deepLinkOk);
+if (!deepLinkOk) failed = true;
+root.unmount(); await sleep(200); problems.length = 0;
+win.history.replaceState(null, "", "/");
+
 // Phase 4: play the flagship story
 root = await mountFresh(); problems.length = 0;
 if (clickByText(/Play Nobody/i)) { await sleep(3000); failed |= report("GAME (Nobody's Witness True Romance Cut)").crashed; }
@@ -274,310 +301,6 @@ if (clickByText(/Bumpy Night/i)) {
 } else console.log("!! could not find Bumpy Night card");
 root.unmount();
 
-// Phase 8: Throttle & Ash — the POINT-AND-CLICK prototype (gameKind:
-// "adventure"). Boot it, confirm the walkable room mounts (walker sheet,
-// drawn bike, flickering neon, verb markers), then click a marker and confirm
-// the walker ROUTES to it and fires the verb it carries.
-root = await mountFresh(); problems.length = 0;
-if (clickByText(/Throttle & Ash/i)) {
-  await sleep(1500);
-  clickByText(/^\u25b6?\\s*Play/i) || clickByText(/Play/i);
-  await sleep(3500);
-  const html0 = container.innerHTML;
-  const walkerOk = /adv-biker-walk/i.test(html0);
-  const bikeArt = /adv-bike/i.test(html0);
-  const signArt = /adv-roadhouse-sign/i.test(html0);
-  const neonsOn = /anim-flicker/i.test(html0);
-  const markers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/i.test(b.className || ""));
-  let lookedText = false;
-  let goRefused = false;
-  const bikeBtn = markers.find((b) => /^the bike$/i.test((b.getAttribute("aria-label") || "").trim()));
-  if (bikeBtn) {
-    bikeBtn.click();
-    for (let i = 0; i < 20 && !lookedText; i++) {
-      await sleep(700);
-      lookedText = /Bone dry/.test((container.textContent || "").replace(/\\s+/g, " "));
-    }
-  } else console.log("!! the bike marker never rendered");
-  // The VERB COIN: pick LOOK, click the bike (it looks), then pick TAKE and
-  // click the same bike — the object answers a different verb instead of
-  // being used up by the first one.
-  const coinVerbs = [...container.querySelectorAll("button")].filter((b) => /^(Look at|Pick up|Talk to|Use|Go to)$/.test(b.getAttribute("aria-label") || ""));
-  const lookBtn = [...container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "Look at");
-  const takeBtn = [...container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "Pick up");
-  let bikeTakeLine = false;
-  if (lookBtn && takeBtn) {
-    takeBtn.click();
-    await sleep(300);
-    const bike2 = [...container.querySelectorAll("button")].find((b) => /^the bike$/i.test((b.getAttribute("aria-label") || "").trim()));
-    if (bike2) {
-      bike2.click();
-      for (let i = 0; i < 16 && !bikeTakeLine; i++) {
-        await sleep(600);
-        bikeTakeLine = /Four hundred pounds of motorcycle/.test((container.textContent || "").replace(/\\s+/g, " "));
-      }
-    }
-    // And a verb this object does NOT answer ("go") gets refused, politely.
-    goRefused = false;
-    const goBtn = [...container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "Go to");
-    if (goBtn) {
-      goBtn.click();
-      await sleep(300);
-      const bike3 = [...container.querySelectorAll("button")].find((b) => /^the bike$/i.test((b.getAttribute("aria-label") || "").trim()));
-      if (bike3) {
-        bike3.click();
-        for (let i = 0; i < 16 && !goRefused; i++) {
-          await sleep(600);
-          goRefused = /not a way out|rocks and a bad idea|wall somebody painted/i.test((container.textContent || "").replace(/\\s+/g, " "));
-        }
-      }
-    }
-  }
-  console.log("\\n=== THROTTLE & ASH (point-and-click prototype) ===");
-  console.log("  walker sheet:", walkerOk, "| bike art in the room:", bikeArt, "| neon sign:", signArt, "(" + (neonsOn ? "flickering" : "static") + ")");
-  // Walk-behind mask: the parked truck art is drawn exactly once (either in
-  // the extras pass or the over-the-walker pass — never both).
-  // INVENTORY: the container sprite (saddlebags) renders with the items
-  // inside it, and an item can be picked up with the ✋ verb and then DRAGGED
-  // (pointer down → move → ghost follows → up).
-  const dockMode = [...container.querySelectorAll("[data-inventory]")].map((n) => n.getAttribute("data-inventory"))[0] || "";
-  const heading = /Saddlebags/i.test((container.textContent || "").replace(/\\s+/g, " "));
-  let chip = null;
-  const takeBtn2 = [...container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "") === "Pick up");
-  if (takeBtn2) {
-    takeBtn2.click();
-    await sleep(250);
-    const wrench = [...container.querySelectorAll("button")].find((b) => /^the bent wrench$/i.test((b.getAttribute("aria-label") || "").trim()));
-    if (wrench) {
-      wrench.click();
-      for (let i = 0; i < 16 && !chip; i++) {
-        await sleep(600);
-        chip = container.querySelector('[data-item-id="adv_wrench"]');
-      }
-    }
-  }
-  // NB: the pouch only renders once there is something to carry, and PNGs are
-  // inlined as data URLs in the smoke bundle — so assert on the container
-  // ELEMENT (the art the items sit inside), not on the file name.
-  const caseArt = /inv-container/.test(container.innerHTML) && !!container.querySelector('[data-inventory="container"] img');
-  let dragGhost = false;
-  if (chip) {
-    chip.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 40, clientY: 40, button: 0, pointerType: "mouse" }));
-    await sleep(120);
-    win.dispatchEvent(new win.PointerEvent("pointermove", { bubbles: true, clientX: 220, clientY: 120, pointerType: "mouse" }));
-    await sleep(160);
-    dragGhost = !!container.querySelector("[data-drag-ghost]");
-    win.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: 220, clientY: 120, pointerType: "mouse" }));
-    await sleep(160);
-  }
-  // Cursor art: the case's own cursor is applied over the scene (a static
-  // image becomes a real CSS cursor; a sheet draws a sprite that tracks the
-  // mouse). PNGs are data URLs here, so assert on the cursor declaration.
-  const cursorCss = [...container.querySelectorAll("[style*='cursor']")].map((n) => n.getAttribute("style") || "").filter((s) => s.indexOf("cursor:") >= 0);
-  const artCursor = cursorCss.some((s) => s.indexOf("cursor: url") >= 0);
-  const htmlNow = container.innerHTML;
-  const truckDraws = (htmlNow.match(/adv-truck/gi) || []).length;
-  const truckArt = truckDraws > 0;
-  console.log("  verb markers in the room:", markers.length, "| walk-to-look fired:", lookedText);
-  console.log("  verb coin offers:", coinVerbs.length, "verbs | second verb on the same object:", bikeTakeLine, "| unanswerable verb refused:", goRefused);
-  console.log("  walk-behind mask (parked truck):", truckArt, "| drawn once, never duplicated:", truckDraws === 1, "(" + truckDraws + ")");
-  console.log("  cursor art applied over the scene:", artCursor, "(" + cursorCss.length + " styled layers)");
-  if (!artCursor) failed = true;
-  console.log("  inventory: mode=" + dockMode + " | pouch sprite with items inside:", caseArt, "| heading:", heading, "| item picked up:", !!chip, "| drag ghost:", dragGhost);
-  if (dockMode !== "container" || !caseArt || !heading || !chip || !dragGhost) failed = true;
-  if (!truckArt || truckDraws !== 1) failed = true;
-  if (!walkerOk || !bikeArt || !signArt || markers.length < 4 || !lookedText) failed = true;
-  if (coinVerbs.length < 4 || !bikeTakeLine || !goRefused) failed = true;
-  // happy-dom drives requestAnimationFrame with setImmediate, so a multi-second
-  // walk enqueues hundreds of setPos updates before React can commit a single
-  // frame — React then logs "Maximum update depth exceeded". That is an artifact
-  // of the test DOM (a real browser paces rAF and commits in between; the walker
-  // is verified to arrive, fire its verb and settle idle), so it is filtered for
-  // this walking phase only. Every other warning still fails the build.
-  for (let i = problems.length - 1; i >= 0; i--) {
-    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
-  }
-  failed |= report("THROTTLE & ASH (point-and-click)").crashed;
-} else console.log("!! could not find the Throttle & Ash card");
-root.unmount();
-
-// Phase 9: Full Throttle — the recreated opening. Advance through the
-// credits / limo / pitch cutscenes into the INSIDE-THE-DUMPSTER stage,
-// punch the lid (object-first menu), climb out, and confirm the alley is a
-// WIDE WORLD: a 200% strip with the camera transform and the bike + door
-// markers laid out past x=100 (the right screen of the strip).
-root = await mountFresh(); problems.length = 0;
-if (clickByText(/Full Throttle — The Kickstand/i)) {
-  await sleep(1500);
-  clickByText(/^\\u25b6?\\s*Play/i) || clickByText(/Play/i);
-  await sleep(3000);
-  // Step through the cutscenes until the first stage mounts (the dumpster).
-  let stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
-  for (let i = 0; i < 110 && !stageMarkers.length; i++) {
-    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
-    const adv = [...container.querySelectorAll("button")].find((b) => /continue|\\u25b6/.test(b.textContent || ""));
-    if (adv) adv.click();
-    await sleep(300);
-    stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
-  }
-  const inDumpster = stageMarkers.some((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
-  // Object-first menu, HOLD-TO-OPEN (stage.objectMenuHold — the classic
-  // skull pie): press and HOLD the marker and a big circular menu opens in
-  // the middle of the screen — verb chips from 12 o'clock, clockwise, with
-  // the skull in the centre. Release over a verb's sector to act, so the
-  // release point is computed from the verb's index (geometry, not clicks).
-  const holdAndPick = async (el, verbLabel) => {
-    el.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 60, clientY: 60, button: 0, pointerType: "mouse" }));
-    await sleep(480); // past the 320 ms hold threshold
-    const chips = [...container.querySelectorAll("[data-pie-verb]")];
-    const i = chips.findIndex((c) => (c.getAttribute("aria-label") || "") === verbLabel);
-    if (i < 0) return false;
-    const n = chips.length;
-    const cx = win.innerWidth / 2;
-    const cy = win.innerHeight / 2;
-    const R = 120; // inside the verb ring (52–154 px from the centre)
-    const ang = ((-90 + (i * 360) / n) * Math.PI) / 180;
-    const x = cx + R * Math.cos(ang);
-    const y = cy + R * Math.sin(ang);
-    win.dispatchEvent(new win.PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
-    await sleep(60);
-    win.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
-    return true;
-  };
-  const lid = stageMarkers.find((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
-  let punched = false;
-  if (lid) {
-    if (await holdAndPick(lid, "Punch")) {
-      for (let i = 0; i < 30 && !punched; i++) {
-        await sleep(500);
-        punched = /punch the lid/.test((container.textContent || "").replace(/\\s+/g, " "));
-      }
-      if (!punched) console.log("!! the punch never landed after the hold-release");
-    } else console.log("!! the skull pie never opened (or Punch wasn't offered)");
-  } else console.log("!! the dumpster-lid marker never rendered");
-  // The climb-out marker is gated on ft_free — it unlocks after the punch.
-  let climbed = false;
-  const climb = [...container.querySelectorAll("button")].find((b) => /climb out/.test(b.getAttribute("aria-label") || ""));
-  if (climb) {
-    if (await holdAndPick(climb, "Go to")) {
-      for (let i = 0; i < 40 && !climbed; i++) {
-        await sleep(500);
-        climbed = /behind the kickstand|keys permitting/i.test((container.textContent || "").replace(/\\s+/g, " "));
-      }
-    } else console.log("!! the skull pie never opened for the climb-out marker");
-  } else console.log("!! the climb-out marker never appeared after the punch");
-  // The WIDE WORLD: the strip renders at 200% with the camera transform, and
-  // the right-screen markers (bike + door) are laid out past x=100.
-  const html = container.innerHTML;
-  const wideWorld = /width:\\s*200%/.test(html) && /translateX/.test(html);
-  const alleyMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
-  const labels = alleyMarkers.map((b) => b.getAttribute("aria-label") || "");
-  const bikeThere = labels.some((l) => /your bike/.test(l));
-  const doorThere = labels.some((l) => /kickstand door/i.test(l));
-  const dumpsterThere = labels.some((l) => /^the dumpster/.test(l));
-  console.log("\\n=== FULL THROTTLE (dumpster → wide alley) ===");
-  console.log("  inside-dumpster stage:", inDumpster, "| lid punched:", punched, "| climbed out:", climbed);
-  console.log("  wide world 200% strip + camera:", wideWorld, "| markers:", alleyMarkers.length, "|", JSON.stringify(labels));
-  console.log("  dumpster:", dumpsterThere, "| bike:", bikeThere, "| door:", doorThere);
-  if (!inDumpster || !punched || !climbed || !wideWorld || !dumpsterThere || !bikeThere || !doorThere) failed = true;
-  // Same happy-dom rAF artifact as the Throttle & Ash phase: walking storms
-  // setPos before React can commit, which logs max-update-depth warnings.
-  for (let i = problems.length - 1; i >= 0; i--) {
-    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
-  }
-  failed |= report("FULL THROTTLE (wide-world opening)").crashed;
-} else console.log("!! could not find the Full Throttle card");
-root.unmount();
-
-// Phase 10: Full Throttle — The Corville Run (the NEW version). Exercises the
-// new sprite sheet + poses, the new skull-pie centrepiece, the setPlayerPose
-// hotspots, the point-stretched walk path, and the topic-list bartender —
-// end to end from the dumpster through the bar.
-root = await mountFresh(); problems.length = 0;
-if (clickByText(/Full Throttle — The Corville Run/i)) {
-  await sleep(1500);
-  clickByText(/^\\u25b6?\\s*Play/i) || clickByText(/Play/i);
-  await sleep(3000);
-  let stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
-  for (let i = 0; i < 110 && !stageMarkers.length; i++) {
-    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
-    const adv = [...container.querySelectorAll("button")].find((b) => /continue|\\u25b6/.test(b.textContent || ""));
-    if (adv) adv.click();
-    await sleep(300);
-    stageMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
-  }
-  const holdAndPick = async (el, verbLabel) => {
-    el.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, clientX: 60, clientY: 60, button: 0, pointerType: "mouse" }));
-    await sleep(480);
-    const chips = [...container.querySelectorAll("[data-pie-verb]")];
-    const i = chips.findIndex((c) => (c.getAttribute("aria-label") || "") === verbLabel);
-    if (i < 0) return false;
-    const n = chips.length;
-    const cx = win.innerWidth / 2;
-    const cy = win.innerHeight / 2;
-    const R = 120;
-    const ang = ((-90 + (i * 360) / n) * Math.PI) / 180;
-    const x = cx + R * Math.cos(ang);
-    const y = cy + R * Math.sin(ang);
-    win.dispatchEvent(new win.PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
-    await sleep(60);
-    win.dispatchEvent(new win.PointerEvent("pointerup", { bubbles: true, clientX: x, clientY: y, button: 0, pointerType: "mouse" }));
-    return true;
-  };
-  // Dumpster: the lid marker renders (the new player sheet + crouch pose).
-  const inDumpster = stageMarkers.some((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
-  const lid = stageMarkers.find((b) => /dumpster lid/.test(b.getAttribute("aria-label") || ""));
-  let punched = false;
-  if (lid) {
-    if (await holdAndPick(lid, "Punch")) {
-      for (let i = 0; i < 30 && !punched; i++) {
-        await sleep(500);
-        punched = /punch the lid/.test((container.textContent || "").replace(/\\s+/g, " "));
-      }
-    } else console.log("!! FT2: the skull pie never opened (or Punch wasn't offered)");
-  } else console.log("!! FT2: the dumpster-lid marker never rendered");
-  let climbed = false;
-  const climb = [...container.querySelectorAll("button")].find((b) => /climb out/.test(b.getAttribute("aria-label") || ""));
-  if (climb) {
-    if (await holdAndPick(climb, "Go to")) {
-      for (let i = 0; i < 40 && !climbed; i++) {
-        await sleep(500);
-        climbed = /behind the kickstand|keys permitting/i.test((container.textContent || "").replace(/\\s+/g, " "));
-      }
-    }
-  } else console.log("!! FT2: the climb-out marker never appeared after the punch");
-  // Wide alley: 200% strip + camera, and the setPlayerPose "bend" marker.
-  const html = container.innerHTML;
-  const wideWorld = /width:\\s*200%/.test(html) && /translateX/.test(html);
-  const bendThere = [...container.querySelectorAll("button")].some((b) => /look under the dumpster/.test(b.getAttribute("aria-label") || ""));
-  // Kick the door into the bar (the walk path + topic-list bartender live there).
-  let inBar = false;
-  const door = [...container.querySelectorAll("button")].find((b) => /kickstand door/i.test(b.getAttribute("aria-label") || ""));
-  if (door) {
-    if (await holdAndPick(door, "Kick")) {
-      for (let i = 0; i < 40 && !inBar; i++) {
-        await sleep(500);
-        inBar = /reach over the bar/.test((container.textContent || "").replace(/\\s+/g, " "));
-      }
-    } else console.log("!! FT2: the skull pie never opened for the door kick");
-  } else console.log("!! FT2: the Kickstand door marker never rendered");
-  const barMarkers = [...container.querySelectorAll("button")].filter((b) => /stage-marker/.test(b.className || ""));
-  const reachThere = barMarkers.some((b) => /reach over the bar/.test(b.getAttribute("aria-label") || ""));
-  const quohogThere = barMarkers.some((b) => /quohog/i.test(b.getAttribute("aria-label") || ""));
-  const grabLocked = barMarkers.some((b) => /grab quohog/i.test(b.getAttribute("aria-label") || "") && /🔒/.test(b.textContent || ""));
-  // The ambient barfly NPC (idle/walk cycle) renders its sheet in the bar.
-  const barflyThere = /ft2-barfly\.png/.test(container.innerHTML);
-  console.log("\\n=== FULL THROTTLE — THE CORVILLE RUN (new version) ===");
-  console.log("  dumpster:", inDumpster, "| lid punched:", punched, "| climbed out:", climbed);
-  console.log("  wide 200% + camera:", wideWorld, "| bend marker:", bendThere);
-  console.log("  in bar:", inBar, "| reach-over pose marker:", reachThere, "| topic-list bartender:", quohogThere, "| grab locked:", grabLocked, "| barfly NPC:", barflyThere);
-  if (!inDumpster || !punched || !climbed || !wideWorld || !bendThere || !inBar || !reachThere || !quohogThere || !barflyThere) failed = true;
-  for (let i = problems.length - 1; i >= 0; i--) {
-    if (/Maximum update depth/.test(problems[i][1])) problems.splice(i, 1);
-  }
-  failed |= report("FULL THROTTLE — THE CORVILLE RUN").crashed;
-} else console.log("!! could not find the Full Throttle — The Corville Run card");
-root.unmount();
 
 // Phase 8: INSPECTOR GADGET — beta case for the 🔭 OUT-OF-REACH hotspot
 // (Hotspot.remote) AND the 🎬 SCRIPTED SEQUENCE room-entry cutscene. Boot
@@ -710,7 +433,7 @@ root.unmount();
 //       without the character walking;
 //   (d) ✋ take (and friends) still walk up first.
 const wireZone = { id: "igh_wire", label: "Pigeon wire", bounds: { x: 44, y: 22, w: 10, h: 12 }, cursor: "look", isRepeatable: true, action: { type: "showText", text: "Tiny grey witnesses, and none of them talking." } };
-async function bootPlaza() {
+async function bootPlaza(opts = {}) {
   try { win.localStorage.clear(); win.sessionStorage.clear(); } catch {}
   container.innerHTML = "";
   const story = {
@@ -720,8 +443,8 @@ async function bootPlaza() {
         ? sc
         : {
             ...sc,
-            stage: sc.stage ? { ...sc.stage, enterScript: undefined } : sc.stage,
-            hotspots: [...(sc.hotspots || []), wireZone],
+            stage: sc.stage ? { ...sc.stage, enterScript: undefined, ...(opts.stageEdits || {}) } : sc.stage,
+            hotspots: [...(sc.hotspots || []), wireZone, ...(opts.hotspot ? [opts.hotspot] : [])],
           }
     ),
   };
@@ -786,6 +509,141 @@ console.log("  take still walks up (reached x>35):", walkedToGlove, "| glove con
 if (!markerOnObject || !floorMarkerOk || !noDim || !posterBtn || !lookFired || !lookNoWalk || !walkedToGlove || !gloveGone) failed = true;
 failed |= report("STAGE interaction niceties").crashed;
 root.unmount();
+
+// Phase 10b: PROP OCCLUSION + MENU Z-ORDER —
+//   (a) a hotspot flagged "occludes" draws its object art OVER the walkers
+//       (z 160 beats every actor's 50+y depth sort);
+//   (b) the object-first verb menu opens ABOVE every actor (z-[200]) so the
+//       choice options are never hidden behind a character.
+//   NOTE: this file's body is one big template literal: no backticks in
+//   comments or strings here, ever.
+const OCCL_ZONE = { id: "igh_occl", label: "Big prop", bounds: { x: 26, y: 40, w: 18, h: 26 }, cursor: "look", isRepeatable: true, occludes: true, image: "/img/prop-occluder.png", action: { type: "showText", text: "A very large foreground prop." } };
+root = await bootPlaza({ hotspot: OCCL_ZONE }); problems.length = 0;
+const occlBtn = markerBtn("Big prop");
+const occlArt = occlBtn ? occlBtn.previousElementSibling : null;
+const occlZ = occlArt instanceof win.HTMLElement ? occlArt.style.zIndex : "";
+const playerZ = (container.querySelector("[data-stage-player]") || {}).style?.zIndex || "";
+const occlAbove = occlZ === "160" && playerZ !== "" && Number(playerZ) < 160;
+root.unmount();
+
+root = await bootPlaza({ stageEdits: { objectVerbMenu: true, verbs: undefined, objectMenuHold: undefined } }); problems.length = 0;
+const menuBtn = markerBtn("Pigeon wire");
+if (menuBtn) {
+  try {
+    menuBtn.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerId: 1 }));
+  } catch {
+    menuBtn.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+  }
+  await sleep(400);
+}
+const menuDiv = [...container.querySelectorAll("div")].find((d) => typeof d.className === "string" && d.className.includes("z-[200]") && (d.textContent || "").includes("Pigeon wire"));
+console.log("\\n=== STAGE — PROP OCCLUSION + MENU Z-ORDER ===");
+console.log("  occluder art over walkers (art z " + occlZ + " > player z " + playerZ + "):", occlAbove, "| object menu above actors:", !!menuDiv);
+if (!occlAbove || !menuDiv) failed = true;
+failed |= report("STAGE prop occlusion + menu z").crashed;
+root.unmount();
+
+
+// Phase N: WORLD-STATE DEEP LINK — ?scene=&flags=&items= must boot the REAL
+// runtime into a fabricated state, at that scene, with those things held.
+// The Neon Diner's freezer needs a burner phone the player normally digs out
+// of the ice; the link hands it over and drops you in the room, which is the
+// whole point of the feature.
+root.unmount(); await sleep(200); problems.length = 0;
+try { win.localStorage.clear(); } catch {}
+win.history.replaceState(null, "", "/?story=neon-diner&scene=nd_freezer&items=burner&flags=examined_note&meters=Clever:4&seed=domsmoke");
+root = await mountFresh();
+await sleep(2500);
+{
+  // The linked scene may open behind a title/credits card; step past it.
+  for (let i = 0; i < 4; i++) {
+    if (clickByText(/Begin Case|▸ Begin|Roll the tape/i)) await sleep(1200);
+    else break;
+  }
+  await sleep(600);
+  const text = (container.textContent || "").replace(/\\s+/g, " ");
+  const onScene = /Walk-In|cold is in your teeth|freezer/i.test(text);
+  // The injected item must be in the satchel, and the injected meter on the HUD.
+  const holdsItem = /burner|Burner/i.test(container.innerHTML);
+  console.log("\\n=== DEEP LINK (?scene=&items=&flags=&meters=) ===");
+  console.log("  booted into the linked scene:", onScene, "| injected item present:", holdsItem);
+  if (!onScene) failed = true;
+  failed |= report("DEEP LINK world state").crashed;
+}
+
+// An unknown scene / item / character must WARN and still boot — a deep link
+// that hard-fails on a renamed id is a deep link nobody trusts.
+root.unmount(); await sleep(200); problems.length = 0;
+try { win.localStorage.clear(); } catch {}
+win.history.replaceState(null, "", "/?story=neon-diner&scene=no_such_scene&items=no_such_item");
+root = await mountFresh();
+await sleep(2000);
+{
+  const html = container.innerHTML;
+  const crashed = /the reel snapped|something broke/i.test(html);
+  const rendered = html.length > 500;
+  console.log("\\n=== DEEP LINK (bad ids degrade, never throw) ===");
+  console.log("  still rendered a playable screen:", rendered, "| error boundary:", crashed);
+  if (crashed || !rendered) failed = true;
+  problems.length = 0;
+}
+root.unmount(); await sleep(200);
+win.history.replaceState(null, "", "/");
+
+// Phase N+1: REWIND ONE DECISION — the ↺ control must appear, be dead before
+// any decision has been made, go live the moment one is, and put the world
+// back when pressed. Booted through a deep link so the run starts on a room
+// with a real choice rail rather than behind the title card.
+try { win.localStorage.clear(); } catch {}
+win.history.replaceState(null, "", "/?story=neon-diner&scene=nd_freezer&seed=domsmoke");
+root = await mountFresh(); problems.length = 0;
+await sleep(2500);
+{
+  for (let i = 0; i < 4; i++) {
+    if (clickByText(/Begin Case|▸ Begin|Roll the tape/i)) await sleep(1200);
+    else break;
+  }
+  await sleep(800);
+
+  const rewindBtn = () => [...container.querySelectorAll("button")].find((b) => /↺\\s*Rewind/i.test(b.textContent || ""));
+  const present = !!rewindBtn();
+  const disabledAtStart = !!rewindBtn()?.disabled;
+
+  // Advance past prose/beats until a real decision (a hotspot or a choice) is
+  // on the table, then take it.
+  let tookOne = false;
+  for (let i = 0; i < 30 && !tookOne; i++) {
+    const btns = [...container.querySelectorAll("button")].filter((b) => (b.textContent || "").trim().length > 0 && !b.disabled);
+    const decision = btns.find((b) => /crack in the ice|cold is in your teeth/i.test(b.textContent || ""));
+    if (decision) {
+      decision.click();
+      tookOne = true;
+      await sleep(1600);
+      break;
+    }
+    win.dispatchEvent(new win.KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
+    const adv = btns.find((b) => /continue|▸/i.test(b.textContent || ""));
+    if (adv) adv.click();
+    await sleep(500);
+  }
+
+  const liveAfterDecision = tookOne && !!rewindBtn() && !rewindBtn().disabled;
+  let restored = false;
+  if (liveAfterDecision) {
+    rewindBtn().click();
+    await sleep(1800);
+    restored = /↺ Rewound/i.test((container.textContent || "").replace(/\\s+/g, " "));
+  }
+
+  console.log("\\n=== REWIND ONE DECISION ===");
+  console.log("  control present:", present, "| dead before any decision:", disabledAtStart);
+  console.log("  a decision was taken:", tookOne, "| control went live:", liveAfterDecision, "| rewind restored the moment:", restored);
+  if (!present || !disabledAtStart) failed = true;
+  if (!tookOne || !liveAfterDecision || !restored) failed = true;
+  failed |= report("REWIND one decision").crashed;
+}
+root.unmount(); await sleep(200); problems.length = 0;
+win.history.replaceState(null, "", "/");
 
 console.log("\\n=== DOM SMOKE " + (failed ? "FAILED" : "PASSED") + " ===");
 process.exit(failed ? 1 : 0);

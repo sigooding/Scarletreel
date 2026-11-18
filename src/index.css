@@ -205,6 +205,15 @@ body,
   border: 0;
   cursor: pointer;
 }
+/* HINT KEY (H) — every marker + NPC chip pulses so the player can see what
+   is interactive. Filter-only: no transforms, so marker layout never jumps. */
+.stage-marker-flash {
+  animation: stage-flash-pulse 0.55s ease-in-out 4;
+}
+@keyframes stage-flash-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(2) drop-shadow(0 0 8px rgba(232, 178, 60, 0.95)); }
+}
 .stage-marker-reticle {
   width: 13px;
   height: 13px;
@@ -263,7 +272,8 @@ body,
   animation: stage-caption-in 0.3s ease-out both;
 }
 @keyframes stage-caption-in {
-  from { opacity: 0; transform: translateY(6px); }
+  /* The bar lives at the TOP of the plate now — it drops in from above. */
+  from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
@@ -2222,7 +2232,7 @@ body,
 }
 
 /* ---------------------------------------------------------------------
-   RIDE MINIGAME (Full Throttle highway chase) — the scrolling road,
+   RIDE MINIGAME (highway chase) — the scrolling road,
    the oncoming traffic and the rider's bike are styled here so the
    RideGame component can stay lean. All motion is CSS/RAF-driven.
    --------------------------------------------------------------------- */
@@ -2241,6 +2251,22 @@ body,
   from { background-position: 0 0; }
   to { background-position: 0 88px; }
 }
+/* AUTHORED ROAD ART (RideConfig.roadImage) — the same march-toward-you as
+   .road-scroll, but driving a real tiling image. The tile is sized to half
+   the frame height and scrolled exactly one tile per cycle, so a seamless
+   plate loops with no visible jump. Duration is set inline from the ride's
+   `speed`. */
+.ride-road {
+  animation: ride-road-scroll 0.8s linear infinite;
+}
+@keyframes ride-road-scroll {
+  from { background-position: 0 0; }
+  to { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ride-road { animation: none; }
+}
+
 /* Oncoming traffic sways slightly as it bears down on you. */
 .road-traffic {
   animation: road-sway 0.7s ease-in-out infinite;
@@ -2261,4 +2287,40 @@ body,
   0% { transform: rotate(0deg) translateY(0); opacity: 1; }
   40% { transform: rotate(70deg) translateY(8px); opacity: 1; }
   100% { transform: rotate(95deg) translateY(26px); opacity: 0.55; }
+}
+
+/* ------------------------------------------------------------------ */
+/*  CANVAS NODE RESIZING                                               */
+/*                                                                     */
+/*  The default ReactFlow handles are small white squares pinned at    */
+/*  every corner and edge midpoint. On a dark card they read as        */
+/*  detached dots floating around the node — and at 5px they are a     */
+/*  fiddly target. We drop the visible mark entirely: the node itself  */
+/*  is the affordance, and the handles become invisible oversized      */
+/*  grips so the corners and edges are simply draggable.               */
+/* ------------------------------------------------------------------ */
+
+/* All eight handles: no visible mark at all, just a generous invisible grip.
+   The card's own border already shows where the edges and corners are, so a
+   bead or a bracket on top of it is redundant decoration. Corners get a square
+   grip, edges a long thin one, and every one of them is bigger than the 5px
+   vendor default, so the drag is easier to catch than it was when it was
+   visible. */
+.scarlet-resizer.react-flow__resize-control.handle {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: 1;
+}
+.scarlet-resizer.react-flow__resize-control.handle.top:not(.left):not(.right),
+.scarlet-resizer.react-flow__resize-control.handle.bottom:not(.left):not(.right) {
+  width: 40px;
+  height: 12px;
+}
+.scarlet-resizer.react-flow__resize-control.handle.left:not(.top):not(.bottom),
+.scarlet-resizer.react-flow__resize-control.handle.right:not(.top):not(.bottom) {
+  width: 12px;
+  height: 40px;
 }

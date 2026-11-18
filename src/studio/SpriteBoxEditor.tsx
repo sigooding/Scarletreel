@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../assetPath";
 import { SheetSprite } from "../game/SheetSprite";
 import { sheetDrawable, type SpriteSheet } from "../game/spriteSheet";
@@ -46,6 +46,19 @@ export function SpriteBoxEditor({
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const drag = useRef<null | { kind: "move" | "resize"; startY: number; startScale: number }>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  // Full-screen mode is useful for checking silhouette, transparent edges and
+  // frame pacing at the size the player will actually see. Escape always gets
+  // the author back to the editor without changing any authored values.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
 
   const scaleLo = mode === "extra" ? 0.2 : 0.3;
   const scaleHi = mode === "extra" ? 2.5 : 2;
@@ -93,7 +106,7 @@ export function SpriteBoxEditor({
     <div className="space-y-1">
       <div
         ref={frameRef}
-        className="relative aspect-video w-full touch-none select-none overflow-hidden border border-gold/30 bg-noir-950"
+        className={`relative aspect-video w-full touch-none select-none overflow-hidden border border-gold/30 bg-noir-950 ${expanded ? "fixed inset-4 z-[100] m-auto max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] shadow-[0_0_0_9999px_rgba(3,5,12,.88),0_0_40px_rgba(232,178,60,.35)]" : ""}`}
         style={
           !isVideo && bgUrl
             ? { backgroundImage: `url(${assetUrl(bgUrl)})`, backgroundSize: "cover", backgroundPosition: "center" }
@@ -125,6 +138,19 @@ export function SpriteBoxEditor({
         {isVideo && bgUrl && (
           <video src={assetUrl(bgUrl)} muted loop autoPlay playsInline className="absolute inset-0 h-full w-full object-cover" />
         )}
+        <div className="absolute inset-x-2 top-2 z-10 flex items-center justify-between gap-2">
+          <span className="border border-noir-700 bg-noir-950/80 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-paper/70">
+            {hasSheet ? "🎞 sheet preview" : "🖼 foreground preview"}
+          </span>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+            className="border border-gold/60 bg-noir-950/90 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-gold hover:bg-gold/15"
+            title={expanded ? "Close full-screen preview (Escape)" : "Open full-screen preview"}
+          >
+            {expanded ? "✕ close preview" : "⛶ full screen"}
+          </button>
+        </div>
         {/* the sprite, engine-positioned */}
         <div className="absolute cursor-move" style={spriteStyle}>
           <div className="relative h-full" style={flip ? { transform: "scaleX(-1)" } : undefined}>
@@ -153,9 +179,10 @@ export function SpriteBoxEditor({
             ◢
           </div>
         </div>
-        <p className="pointer-events-none absolute inset-x-0 bottom-1 z-[2] text-center font-pulp text-[8px] uppercase tracking-widest text-paper/70">
-          Drag to place · corner ◢ or scroll to resize
-        </p>
+        <div className="pointer-events-none absolute inset-x-0 bottom-1 z-[2] flex justify-center gap-2 text-center font-pulp text-[8px] uppercase tracking-widest text-paper/70">
+          <span className="bg-noir-950/65 px-2 py-1">Drag to place · corner ◢ or scroll to resize</span>
+          {expanded && <span className="bg-noir-950/65 px-2 py-1 text-gold">Escape to close · values save live</span>}
+        </div>
       </div>
       <p className="font-type text-[8px] text-paper/40">
         X {Math.round(x)}% · {mode === "extra" ? "Y" : "lift"} {Math.round(y)}% · scale {scale.toFixed(2)}× — matches the in-game position exactly.

@@ -160,7 +160,7 @@ const SOFTLOCK_CHECKLIST = [
 
 /** The full help modal. Sections mirror the instruction manual so the terms
  * match what the rest of Studio calls things. */
-export function StudioHelpModal({ onClose }: { onClose: () => void }) {
+export function StudioHelpModal({ onClose, onOpenManual }: { onClose: () => void; onOpenManual?: () => void }) {
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -181,13 +181,23 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
         className="pop-in flex max-h-[88vh] w-full max-w-3xl flex-col border-2 border-gold/60 bg-noir-950 shadow-[0_0_60px_rgba(232,178,60,0.15)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-gold/30 px-4 py-2">
+        <div className="flex items-center justify-between gap-3 border-b border-gold/30 px-4 py-2">
           <h3 className="font-pulp text-sm uppercase tracking-wide text-gold">
             ? Studio Help — the field manual
           </h3>
-          <button onClick={onClose} className="px-2 text-lg leading-none text-paper/60 hover:text-neon" aria-label="Close help">
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenManual && (
+              <button
+                onClick={onOpenManual}
+                className="border border-cyan-neon/50 px-2 py-1 font-pulp text-[9px] uppercase tracking-widest text-cyan-neon hover:bg-cyan-neon/10"
+              >
+                ↗ Full manual
+              </button>
+            )}
+            <button onClick={onClose} className="px-2 text-lg leading-none text-paper/60 hover:text-neon" aria-label="Close help">
+              ✕
+            </button>
+          </div>
         </div>
 
         <div className="space-y-2 overflow-y-auto p-4">
@@ -383,7 +393,7 @@ export function StudioHelpModal({ onClose }: { onClose: () => void }) {
               Walking onto a hotspot zone fires it <b>through the same hotspot action</b> — give-item pickups, show-text, exits
               and gating all behave identically; it's only the input that changes from click-the-zone to walk-to-the-zone.
               Set the spawn point, walk speed, reach distance and sprite (image / <code>emoji:…</code>). Put hotspots where the
-              player should walk to something. The 💀 <b>object-first verb menu</b> (Full Throttle's skull) can open on
+              player should walk to something. The 💀 <b>object-first verb menu</b> can open on
               click, or <b>hold-to-open</b> as a big circular pie in the middle of the screen — its centrepiece sprite
               is set on the 🎮 <b>In-game theme</b> tab. Try the office in <b>Demo Lab: Press the Lie</b>.
             </p>
